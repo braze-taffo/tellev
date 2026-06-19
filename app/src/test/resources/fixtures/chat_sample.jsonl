@@ -1,0 +1,4 @@
+{"user_name":"unused","character_name":"unused","chat_metadata":{"session_id":"test_chat_001","title":"Test Conversation"}}
+{"name":"Alice","is_user":false,"is_system":false,"send_date":"2024-06-15T10:30:00.000Z","mes":"Hello! Welcome to the adventure. What brings you here today?","swipes":["Hello! Welcome to the adventure. What brings you here today?","Greetings, traveler! State your purpose."],"swipe_id":0,"extra":{}}
+{"name":"You","is_user":true,"is_system":false,"send_date":"2024-06-15T10:31:00.000Z","mes":"I'm looking for the ancient castle on the hill. Can you guide me there?","extra":{}}
+{"name":"Alice","is_user":false,"is_system":false,"send_date":"2024-06-15T10:32:00.000Z","mes":"The castle? It's through the dark forest, but be careful — few return unscathed.","extra":{}}
