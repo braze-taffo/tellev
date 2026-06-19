@@ -1,0 +1,13 @@
+tellev is an AGPL-3.0 Android rewrite inspired by and compatible with SillyTavern.
+
+Compatibility baseline:
+- Project: SillyTavern
+- Repository: https://github.com/SillyTavern/SillyTavern
+- License: AGPL-3.0
+- Local baseline branch: release
+- Local baseline version: 1.18.0
+- Local baseline commit: 51ad27fb86d39a3daca3adaa970375c9670c12df
+
+This project is not the official SillyTavern application. Public releases must
+keep this notice, the AGPL-3.0 license, and a clear source-code link.
+

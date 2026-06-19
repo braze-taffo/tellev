@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+      Default: require TLS for all remote providers.  Public API
+      endpoints (OpenAI, Anthropic, Gemini, ...) must use HTTPS.
+    -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!--
+      Permit cleartext only for the loopback, where local LLM backends
+      (Ollama, KoboldCpp, llama.cpp server, TextGen) run.  LAN hosts on
+      192.168.x.x / 10.x.x.x are intentionally NOT covered here; route
+      those through HTTPS or add explicit domain entries as needed.
+    -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>
