@@ -678,7 +678,13 @@ class ChatViewModel(
         )
 
         runCatching {
-            permissionManager.grantAll(extensionId, manifest.permissions)
+            // Only grant safe permissions on load; ProviderRequest must be
+            // requested at runtime via requestPermissionAsync so the user
+            // can approve before any paid API calls happen.
+            val safePerms = manifest.permissions.filter {
+                it != ExtensionPermission.ProviderRequest && it != ExtensionPermission.Secrets
+            }
+            permissionManager.grantAll(extensionId, safePerms)
             extensionHost.load(manifest, scriptSource)
             loadedCharacterScriptExtensionId = extensionId
             emitStEvent(StEventCatalog.APP_INITIALIZED)
@@ -841,6 +847,19 @@ class ChatViewModel(
             }
             putJsonObject("extensionPrompts") { }
             put("extensionPrompts", buildJsonObject { })
+            // Extension settings map (extensions read their settings from here)
+            put("extensionSettings", buildJsonObject { })
+            put("extension_settings", buildJsonObject { })
+            // Tags
+            putJsonArray("tags") { }
+            put("tagMap", buildJsonObject { })
+            put("tag_map", buildJsonObject { })
+            // OAI / text completion settings (empty defaults)
+            put("chatCompletionSettings", buildJsonObject { })
+            put("oai_settings", buildJsonObject { })
+            put("textCompletionSettings", buildJsonObject { })
+            put("powerUserSettings", buildJsonObject { })
+            put("power_user", buildJsonObject { })
         }
     }
 

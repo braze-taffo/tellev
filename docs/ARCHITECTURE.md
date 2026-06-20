@@ -75,17 +75,44 @@ JS-Slash-Runner scripts depend on: `SillyTavern`, `getContext`, `eventSource`,
 requests through the native virtual API.
 
 Implemented compatibility scope:
-- event bus (`eventSource` + `event_types`) mirroring `StEventCatalog`
+- event bus (`eventSource` + `event_types`) mirroring `StEventCatalog` (all
+  108 ST event constants + tellev-specific extensions)
 - `SillyTavern.getContext()` backed by a pluggable `ExtensionContextProvider`
-- `TavernHelper` script / variable / message helpers
-- slash commands (single + batched) with autocomplete metadata
-- virtual `/api/` routing to `StDataStore`, providers, and secrets
+  wired from `ChatViewModel` (chat, characters, name1, name2, chatMetadata,
+  extensionSettings, tags, etc.)
+- `TavernHelper` API: ~140 methods covering generate, character CRUD,
+  lorebook CRUD, preset CRUD, persona CRUD, worldbook CRUD, inject prompts,
+  regex scripts, macro-like, audio, script trees, extension management,
+  variables, slash commands, and version info
+- slash commands: built-in `SlashCommandEngine` with 200+ ST built-in
+  commands (echo, setvar, getvar, gen, send, if, while, etc.) plus
+  extension-registered commands; supports pipe (`|`), named args, and
+  quoted strings
+- virtual `/api/` routing to `StDataStore`, providers, and secrets —
+  includes ST-compatible endpoints: `/api/characters/edit`, `/api/chats/get`,
+  `/api/settings/get`, `/api/backends/chat-completions/status`,
+  `/api/secrets/write`, `/api/extensions/version`, `/version`, and more
 - per-extension settings, capabilities, and permission gating
 - async permission request / grant flow closed through the UI layer
+- `ExtensionManifest` schema compatible with real ST `manifest.json`
+  (`display_name`, `js`, `css`, `requires`, `loading_order`,
+  `minimum_client_version`, `i18n`, etc.)
 
-Out of scope (do not assume these work): arbitrary Node server plugins,
-direct filesystem access from JS, non-`/api` network fetches (blocked by CSP),
-and in-place chat-message field mutation (returns 501; owned by the UI layer).
+Out of scope (do not assume these work):
+- **Message iframe rendering** (`TH-message--<id>--` iframes with
+  Tailwind/Vue/jQuery/toastr injection and auto-height adjustment).
+  Only script-style extensions are supported — character-card scripts
+  that depend on Tailwind classes, Vue components, or `toastr` will not
+  render correctly.
+- **Per-scope variables** (character, preset, chat, message, script,
+  extension).  Currently only a global variable scope is implemented.
+- Arbitrary Node server plugins
+- Direct filesystem access from JS
+- Non-`/api` network fetches (blocked by CSP)
+- In-place chat-message field mutation via virtual API (returns 501;
+  owned by the UI layer via `ExtensionContextProvider.setChatMessage`)
+- CDN-loaded dependencies in extension WebViews (CSP blocks
+  `img-src`/`font-src`/`media-src` from external origins)
 
 The host is assembled in `TellevGraph` and wired into `ExtensionsViewModel`,
 which scans the `extensions/` directory for installed extensions and drives
