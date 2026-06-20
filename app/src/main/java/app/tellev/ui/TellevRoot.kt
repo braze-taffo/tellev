@@ -75,6 +75,8 @@ fun TellevRoot() {
             providerRegistry = graph.providerRegistry,
             promptEngine = graph.promptEngine,
             secretStore = graph.secretStore,
+            extensionHost = graph.extensionHost,
+            permissionManager = graph.permissionManager,
         ),
     )
 

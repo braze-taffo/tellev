@@ -2,6 +2,14 @@ package app.tellev.feature.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.tellev.core.extension.CharacterTavernHelperScripts
+import app.tellev.core.extension.ExtensionContextProvider
+import app.tellev.core.extension.ExtensionEvent
+import app.tellev.core.extension.ExtensionHost
+import app.tellev.core.extension.ExtensionManifest
+import app.tellev.core.extension.ExtensionPermission
+import app.tellev.core.extension.ExtensionPermissionManager
+import app.tellev.core.extension.StEventCatalog
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterSummary
 import app.tellev.core.model.ChatMessage
@@ -20,14 +28,23 @@ import app.tellev.core.provider.ProviderDefaults
 import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.StDataStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import java.util.UUID
 
 data class ChatUiState(
@@ -54,14 +71,24 @@ class ChatViewModel(
     private val providerRegistry: ProviderRegistry,
     private val promptEngine: PromptEngine,
     private val secretStore: SecretStore,
+    private val extensionHost: ExtensionHost,
+    private val permissionManager: ExtensionPermissionManager,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
     private var generationJob: Job? = null
+    @Volatile
+    private var loadedCharacterScriptExtensionId: String? = null
 
     init {
+        extensionHost.setContextProvider(object : ExtensionContextProvider {
+            override fun snapshot(): JsonObject = buildTavernContext(_uiState.value)
+
+            override suspend fun setChatMessage(index: Int, field: String, value: String): Boolean =
+                setChatMessageFromExtension(index, field, value)
+        })
         loadInitialData()
     }
 
@@ -134,6 +161,10 @@ class ChatViewModel(
                         isLoading = false,
                     )
                 }
+                reloadCharacterTavernHelperScripts(character)
+                emitCharacterSelected(character)
+                emitChatChanged(session)
+                emitRenderedEventsForMessages(session.messages)
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -200,6 +231,19 @@ class ChatViewModel(
                         error = null,
                     )
                 }
+                val userMessageIndex = updatedMessages.lastIndex
+                emitStEvent(StEventCatalog.MESSAGE_SENT, userMessageIndex)
+                emitStEvent(StEventCatalog.USER_MESSAGE_RENDERED, userMessageIndex)
+                emitStEvent(
+                    StEventCatalog.GENERATION_STARTED,
+                    "normal",
+                    buildJsonObject {
+                        put("chatId", updatedSession.id)
+                        put("characterId", character.id)
+                        put("providerType", config.providerType)
+                    },
+                    false,
+                )
 
                 val promptRequest = PromptBuildRequest(
                     character = character,
@@ -215,6 +259,25 @@ class ChatViewModel(
                 )
 
                 val promptResult = promptEngine.build(promptRequest)
+
+                emitStEvent(
+                    StEventCatalog.GENERATION_AFTER_COMMANDS,
+                    "normal",
+                    buildJsonObject {
+                        put("chatId", updatedSession.id)
+                        put("characterId", character.id)
+                    },
+                    false,
+                )
+
+                emitStEvent(
+                    StEventCatalog.CHAT_COMPLETION_PROMPT_READY,
+                    buildJsonObject {
+                        put("chatId", updatedSession.id)
+                        put("characterId", character.id)
+                        put("providerType", config.providerType)
+                    },
+                )
 
                 val generateRequest = GenerateRequest(
                     prompt = promptResult,
@@ -244,8 +307,16 @@ class ChatViewModel(
                                 swipes = listOf(finalText),
                                 swipeIndex = 0,
                             )
-                            val finalMessages = updatedMessages + assistantMessage
-                            val finalSession = updatedSession.copy(messages = finalMessages)
+                            val latestState = _uiState.value
+                            val latestSession = latestState.currentSession
+                            val baseMessages = if (latestSession?.id == updatedSession.id) {
+                                latestState.messages
+                            } else {
+                                updatedMessages
+                            }
+                            val finalMessages = baseMessages + assistantMessage
+                            val finalSession = (latestSession?.takeIf { it.id == updatedSession.id } ?: updatedSession)
+                                .copy(messages = finalMessages)
 
                             dataStore.saveChatSession(finalSession)
 
@@ -257,6 +328,10 @@ class ChatViewModel(
                                     streamingText = "",
                                 )
                             }
+                            val assistantMessageIndex = finalMessages.lastIndex
+                            emitStEvent(StEventCatalog.MESSAGE_RECEIVED, assistantMessageIndex, "normal")
+                            emitStEvent(StEventCatalog.CHARACTER_MESSAGE_RENDERED, assistantMessageIndex, "normal")
+                            emitStEvent(StEventCatalog.GENERATION_ENDED, finalMessages.size)
                         }
                         is GenerateChunk.Failed -> {
                             _uiState.update {
@@ -266,9 +341,12 @@ class ChatViewModel(
                                     error = "生成失败：${chunk.error.message}",
                                 )
                             }
+                            emitStEvent(StEventCatalog.GENERATION_STOPPED)
                         }
                     }
                 }
+            } catch (_: CancellationException) {
+                // stopGeneration owns the interrupted-message state update.
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -277,6 +355,7 @@ class ChatViewModel(
                         error = "出错了：${e.message}",
                     )
                 }
+                emitStEvent(StEventCatalog.GENERATION_STOPPED)
             }
         }.also { generationJob = it }
         return true
@@ -349,6 +428,8 @@ class ChatViewModel(
 
         viewModelScope.launch {
             dataStore.saveChatSession(updatedSession)
+            emitStEvent(StEventCatalog.MESSAGE_SWIPED, messageIndex)
+            emitRenderedEventForMessage(messageIndex, updatedMessage, "swipe")
         }
     }
 
@@ -390,6 +471,9 @@ class ChatViewModel(
 
         viewModelScope.launch {
             dataStore.saveChatSession(updatedSession)
+            emitStEvent(StEventCatalog.MESSAGE_EDITED, messageIndex)
+            emitStEvent(StEventCatalog.MESSAGE_UPDATED, messageIndex)
+            emitRenderedEventForMessage(messageIndex, updatedMessage, "edit")
         }
 
         if (message.role == MessageRole.User) {
@@ -423,6 +507,7 @@ class ChatViewModel(
 
         viewModelScope.launch {
             dataStore.saveChatSession(updatedSession)
+            emitStEvent(StEventCatalog.MESSAGE_DELETED, messageIndex)
         }
     }
 
@@ -448,6 +533,7 @@ class ChatViewModel(
 
             if (session != null) {
                 val updatedSession = session.copy(messages = updatedMessages)
+                val partialMessageIndex = updatedMessages.lastIndex
                 _uiState.update {
                     it.copy(
                         messages = updatedMessages,
@@ -458,6 +544,9 @@ class ChatViewModel(
                 }
                 viewModelScope.launch {
                     dataStore.saveChatSession(updatedSession)
+                    emitStEvent(StEventCatalog.MESSAGE_RECEIVED, partialMessageIndex, "interrupted")
+                    emitStEvent(StEventCatalog.CHARACTER_MESSAGE_RENDERED, partialMessageIndex, "interrupted")
+                    emitStEvent(StEventCatalog.GENERATION_STOPPED)
                 }
             } else {
                 _uiState.update {
@@ -466,6 +555,9 @@ class ChatViewModel(
                         streamingText = "",
                     )
                 }
+                viewModelScope.launch {
+                    emitStEvent(StEventCatalog.GENERATION_STOPPED)
+                }
             }
         } else {
             _uiState.update {
@@ -473,6 +565,9 @@ class ChatViewModel(
                     isGenerating = false,
                     streamingText = "",
                 )
+            }
+            viewModelScope.launch {
+                emitStEvent(StEventCatalog.GENERATION_STOPPED)
             }
         }
     }
@@ -493,6 +588,8 @@ class ChatViewModel(
                         sessions = sessions,
                     )
                 }
+                emitChatChanged(newSession)
+                emitRenderedEventsForMessages(newSession.messages)
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(error = "创建会话失败：${e.message}")
@@ -511,6 +608,8 @@ class ChatViewModel(
                         messages = session.messages,
                     )
                 }
+                emitChatChanged(session)
+                emitRenderedEventsForMessages(session.messages)
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(error = "切换会话失败：${e.message}")
@@ -551,7 +650,259 @@ class ChatViewModel(
                 sessions = emptyList(),
             )
         }
+        viewModelScope.launch {
+            unloadCharacterTavernHelperScripts()
+            emitStEvent(StEventCatalog.CHAT_CHANGED, "")
+        }
     }
+
+    private suspend fun reloadCharacterTavernHelperScripts(character: CharacterCard) {
+        unloadCharacterTavernHelperScripts()
+
+        val scriptSource = CharacterTavernHelperScripts.buildScriptSource(character)
+        if (scriptSource.isBlank()) return
+
+        val extensionId = characterScriptExtensionId(character.id)
+        val manifest = ExtensionManifest(
+            id = extensionId,
+            name = "Character TavernHelper: ${character.name}",
+            version = "character-card",
+            author = "character-card",
+            description = "Scripts embedded in the selected character card.",
+            permissions = setOf(
+                ExtensionPermission.Storage,
+                ExtensionPermission.ProviderRequest,
+                ExtensionPermission.Clipboard,
+                ExtensionPermission.UiPanel,
+            ),
+        )
+
+        runCatching {
+            permissionManager.grantAll(extensionId, manifest.permissions)
+            extensionHost.load(manifest, scriptSource)
+            loadedCharacterScriptExtensionId = extensionId
+            emitStEvent(StEventCatalog.APP_INITIALIZED)
+            emitStEvent(StEventCatalog.APP_READY)
+        }.onFailure { e ->
+            _uiState.update { it.copy(error = "加载角色卡脚本失败：${e.message}") }
+        }
+    }
+
+    private suspend fun unloadCharacterTavernHelperScripts() {
+        val extensionId = loadedCharacterScriptExtensionId ?: return
+        loadedCharacterScriptExtensionId = null
+        runCatching { extensionHost.unload(extensionId) }
+    }
+
+    private fun characterScriptExtensionId(characterId: String): String =
+        "character-tavern-helper-" + characterId.replace(Regex("[^A-Za-z0-9_.-]"), "_")
+
+    private suspend fun emitCharacterSelected(character: CharacterCard) {
+        emitStEvent(
+            StEventCatalog.CHARACTER_SELECTED,
+            buildJsonObject {
+                put("id", character.id)
+                put("name", character.name)
+            },
+        )
+    }
+
+    private suspend fun emitChatChanged(session: ChatSession) {
+        emitStEvent(StEventCatalog.CHAT_CHANGED, session.id)
+    }
+
+    private suspend fun emitRenderedEventsForMessages(messages: List<ChatMessage>) {
+        messages.forEachIndexed { index, message ->
+            emitRenderedEventForMessage(index, message, "load")
+        }
+    }
+
+    private suspend fun emitRenderedEventForMessage(index: Int, message: ChatMessage, type: String = "normal") {
+        when (message.role) {
+            MessageRole.User -> emitStEvent(StEventCatalog.USER_MESSAGE_RENDERED, index)
+            MessageRole.Character,
+            MessageRole.Assistant -> emitStEvent(StEventCatalog.CHARACTER_MESSAGE_RENDERED, index, type)
+            else -> Unit
+        }
+    }
+
+    private suspend fun emitStEvent(name: String, vararg args: Any?) {
+        extensionHost.emit(
+            ExtensionEvent(
+                name = name,
+                payload = buildJsonObject {
+                    putJsonArray("args") {
+                        args.forEach { add(jsonElementOf(it)) }
+                    }
+                },
+            ),
+        )
+    }
+
+    private suspend fun setChatMessageFromExtension(index: Int, field: String, value: String): Boolean {
+        val state = _uiState.value
+        val session = state.currentSession ?: return false
+        val messages = state.messages.toMutableList()
+        if (index !in messages.indices) return false
+
+        val original = messages[index]
+        val updated = when (field.lowercase()) {
+            "message", "mes" -> original.withContent(value)
+            "name" -> original.copy(name = value)
+            "role" -> {
+                val newRole = when (value.lowercase()) {
+                    "user" -> MessageRole.User
+                    "assistant" -> MessageRole.Assistant
+                    "system" -> MessageRole.System
+                    "character" -> MessageRole.Character
+                    else -> original.role
+                }
+                original.copy(role = newRole)
+            }
+            "is_hidden" -> original.copy(isHidden = value.toBooleanStrictOrNull() ?: original.isHidden)
+            "swipe_id" -> {
+                val swipes = original.swipes.ifEmpty { listOf(original.content) }
+                val swipeIndex = value.toIntOrNull()?.coerceIn(0, swipes.lastIndex) ?: original.swipeIndex
+                original.copy(
+                    swipeIndex = swipeIndex,
+                    swipes = swipes,
+                    content = swipes[swipeIndex],
+                )
+            }
+            "extra" -> {
+                val parsed = runCatching { Json.parseToJsonElement(value) as? JsonObject }.getOrNull()
+                original.copy(metadata = parsed ?: original.metadata)
+            }
+            else -> original.copy(
+                metadata = buildJsonObject {
+                    original.metadata.forEach { (key, element) -> put(key, element) }
+                    put(field, value)
+                },
+            )
+        }
+
+        messages[index] = updated
+        val updatedSession = session.copy(messages = messages)
+        _uiState.update {
+            it.copy(
+                messages = messages,
+                currentSession = updatedSession,
+            )
+        }
+        dataStore.saveChatSession(updatedSession)
+        emitStEvent(StEventCatalog.MESSAGE_UPDATED, index)
+        emitRenderedEventForMessage(index, updated, "script")
+        return true
+    }
+
+    private fun ChatMessage.withContent(value: String): ChatMessage {
+        val updatedSwipes = swipes.ifEmpty { listOf(content) }.toMutableList()
+        val targetIndex = swipeIndex.coerceIn(0, updatedSwipes.lastIndex)
+        updatedSwipes[targetIndex] = value
+        return copy(
+            content = value,
+            swipes = updatedSwipes,
+            swipeIndex = targetIndex,
+        )
+    }
+
+    private fun buildTavernContext(state: ChatUiState): JsonObject {
+        val character = state.selectedCharacter
+        val session = state.currentSession
+        val personaName = state.selectedPersona?.name ?: "User"
+        val characterName = character?.name ?: "Character"
+
+        return buildJsonObject {
+            put("name1", personaName)
+            put("name2", characterName)
+            put("chatId", session?.id ?: "")
+            put("characterId", character?.id ?: "")
+            put("this_chid", if (character != null) 0 else -1)
+            put("groupId", session?.groupId ?: "")
+            put("selected_group", session?.groupId ?: "")
+            put("mainApi", state.providerConfig?.providerType ?: state.selectedProvider)
+            put("main_api", state.providerConfig?.providerType ?: state.selectedProvider)
+            put("onlineStatus", "connected")
+            put("maxContext", 8192)
+            put("lastMessageId", state.messages.lastIndex)
+            put("chatMetadata", session?.metadata ?: buildJsonObject { })
+            put("chat_metadata", session?.metadata ?: buildJsonObject { })
+            putJsonArray("chat") {
+                state.messages.forEachIndexed { index, message ->
+                    add(message.toTavernJson(index))
+                }
+            }
+            putJsonArray("characters") {
+                character?.let { add(it.toTavernJson()) }
+            }
+            putJsonArray("groups") { }
+            character?.let {
+                put("character", it.toTavernJson())
+            }
+            putJsonObject("extensionPrompts") { }
+            put("extensionPrompts", buildJsonObject { })
+        }
+    }
+
+    private fun ChatMessage.toTavernJson(index: Int): JsonObject =
+        buildJsonObject {
+            val user = role == MessageRole.User
+            val system = role == MessageRole.System
+            put("id", id)
+            put("index", index)
+            put("name", name)
+            put("mes", content)
+            put("is_user", user)
+            put("is_system", system)
+            put("role", role.name.lowercase())
+            put("send_date", createdAtMillis.toString())
+            put("send_date_unix", createdAtMillis)
+            put("swipe_id", swipeIndex)
+            putJsonArray("swipes") {
+                val values = swipes.ifEmpty { listOf(content) }
+                values.forEach { add(JsonPrimitive(it)) }
+            }
+            put("extra", metadata)
+        }
+
+    private fun CharacterCard.toTavernJson(): JsonObject =
+        buildJsonObject {
+            put("id", id)
+            put("name", name)
+            put("description", description)
+            put("personality", personality)
+            put("scenario", scenario)
+            put("first_mes", firstMessage)
+            put("mes_example", exampleMessages)
+            put("avatar", avatarRelativePath ?: "")
+            putJsonArray("tags") {
+                tags.forEach { add(JsonPrimitive(it)) }
+            }
+            put("raw", raw)
+            put("data", (raw["data"] as? JsonObject) ?: raw)
+        }
+
+    private fun jsonElementOf(value: Any?): JsonElement =
+        when (value) {
+            null -> JsonNull
+            is JsonElement -> value
+            is String -> JsonPrimitive(value)
+            is Boolean -> JsonPrimitive(value)
+            is Int -> JsonPrimitive(value)
+            is Long -> JsonPrimitive(value)
+            is Float -> JsonPrimitive(value.toDouble())
+            is Double -> JsonPrimitive(value)
+            is Number -> JsonPrimitive(value.toDouble())
+            is List<*> -> buildJsonArray {
+                value.forEach { add(jsonElementOf(it)) }
+            }
+            is Map<*, *> -> buildJsonObject {
+                value.forEach { (key, element) ->
+                    if (key != null) put(key.toString(), jsonElementOf(element))
+                }
+            }
+            else -> JsonPrimitive(value.toString())
+        }
 
     private suspend fun createSessionForCharacter(character: CharacterCard): ChatSession {
         val sessionId = generateSessionId()
@@ -649,6 +1000,8 @@ class ChatViewModelFactory(
     private val providerRegistry: ProviderRegistry,
     private val promptEngine: PromptEngine,
     private val secretStore: SecretStore,
+    private val extensionHost: ExtensionHost,
+    private val permissionManager: ExtensionPermissionManager,
 ) : androidx.lifecycle.ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -658,6 +1011,8 @@ class ChatViewModelFactory(
                 providerRegistry = providerRegistry,
                 promptEngine = promptEngine,
                 secretStore = secretStore,
+                extensionHost = extensionHost,
+                permissionManager = permissionManager,
             ) as T
         }
         throw IllegalArgumentException("未知 ViewModel 类型：${modelClass.name}")
