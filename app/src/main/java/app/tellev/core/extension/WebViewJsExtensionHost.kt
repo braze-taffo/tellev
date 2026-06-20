@@ -54,6 +54,7 @@ class WebViewJsExtensionHost(
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
     private val commandTimeoutMs: Long = 10_000L,
     private val apiCallTimeoutMs: Long = 30_000L,
+    private val scriptReadyTimeoutMs: Long = 5_000L,
 ) : ExtensionHost {
 
     // 鈹€鈹€ state 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -72,6 +73,7 @@ class WebViewJsExtensionHost(
     private val pendingVirtualApiOwners = ConcurrentHashMap<String, String>()
     private val pendingPermissions = ConcurrentHashMap<String, String>()
     private val pendingPermissionOwners = ConcurrentHashMap<String, String>()
+    private val pendingLoads = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
 
     private val settingsCache = ConcurrentHashMap<String, String>()
     private val settingsWriteMutex = Mutex()
@@ -82,7 +84,7 @@ class WebViewJsExtensionHost(
     private var _contextProvider: ExtensionContextProvider? = contextProvider
 
     /** Update the context provider used to answer getContext() from JS. */
-    fun setContextProvider(provider: ExtensionContextProvider?) {
+    override fun setContextProvider(provider: ExtensionContextProvider?) {
         _contextProvider = provider
     }
 
@@ -91,53 +93,66 @@ class WebViewJsExtensionHost(
     override suspend fun load(
         manifest: ExtensionManifest,
         scriptSource: String,
-    ): ExtensionHandle = withContext(Dispatchers.Main) {
-        webViews.remove(manifest.id)?.destroy()
+    ): ExtensionHandle {
+        val readySignal = CompletableDeferred<Unit>()
+        val handle = try {
+            withContext(Dispatchers.Main) {
+                webViews.remove(manifest.id)?.destroy()
+                pendingLoads.remove(manifest.id)?.cancel()
 
-        val token = UUID.randomUUID().toString()
-        capabilityTokens[manifest.id] = token
+                val token = UUID.randomUUID().toString()
+                capabilityTokens[manifest.id] = token
+                pendingLoads[manifest.id] = readySignal
 
-        val settingsJson = settingsStore.getSettings(manifest.id)
-        settingsCache[manifest.id] = json.encodeToString(JsonObject.serializer(), settingsJson)
+                val settingsJson = settingsStore.getSettings(manifest.id)
+                settingsCache[manifest.id] = json.encodeToString(JsonObject.serializer(), settingsJson)
 
-        if (tavernHelperVariables.isEmpty()) {
-            runCatching {
-                tavernHelperVariables[TAVERN_HELPER_VARS_KEY] = settingsStore.getSettings(TAVERN_HELPER_VARS_KEY)
+                if (tavernHelperVariables.isEmpty()) {
+                    runCatching {
+                        tavernHelperVariables[TAVERN_HELPER_VARS_KEY] = settingsStore.getSettings(TAVERN_HELPER_VARS_KEY)
+                    }
+                }
+
+                val webView = WebView(context.applicationContext).apply {
+                    settings.javaScriptEnabled = true
+                    settings.allowFileAccess = false
+                    settings.allowContentAccess = false
+                    settings.allowFileAccessFromFileURLs = false
+                    settings.allowUniversalAccessFromFileURLs = false
+                    settings.domStorageEnabled = false
+                    settings.databaseEnabled = false
+
+                    addJavascriptInterface(Bridge(manifest.id, token), "tellevNative")
+
+                    loadDataWithBaseURL(
+                        "https://extensions.tellev.local/${manifest.id}/",
+                        buildExtensionHtml(manifest.id, token, scriptSource),
+                        "text/html",
+                        "UTF-8",
+                        null,
+                    )
+                }
+
+                webViews[manifest.id] = webView
+
+                ExtensionHandle(
+                    id = manifest.id,
+                    name = manifest.name,
+                    loaded = true,
+                    version = manifest.version,
+                    capabilities = defaultCapabilities(manifest),
+                    capabilityToken = token,
+                )
             }
+        } catch (e: Throwable) {
+            pendingLoads.remove(manifest.id, readySignal)
+            throw e
         }
 
-        val webView = WebView(context.applicationContext).apply {
-            settings.javaScriptEnabled = true
-            settings.allowFileAccess = false
-            settings.allowContentAccess = false
-            settings.allowFileAccessFromFileURLs = false
-            settings.allowUniversalAccessFromFileURLs = false
-            settings.domStorageEnabled = false
-            settings.databaseEnabled = false
-
-            addJavascriptInterface(Bridge(manifest.id, token), "tellevNative")
-
-            loadDataWithBaseURL(
-                "https://extensions.tellev.local/${manifest.id}/",
-                buildExtensionHtml(manifest.id, token, scriptSource),
-                "text/html",
-                "UTF-8",
-                null,
-            )
-        }
-
-        webViews[manifest.id] = webView
-
+        withTimeoutOrNull(scriptReadyTimeoutMs) { readySignal.await() }
+        pendingLoads.remove(manifest.id, readySignal)
         emit(ExtensionEvent(name = "extension_loaded", extensionId = manifest.id))
-
-        ExtensionHandle(
-            id = manifest.id,
-            name = manifest.name,
-            loaded = true,
-            version = manifest.version,
-            capabilities = defaultCapabilities(manifest),
-            capabilityToken = token,
-        )
+        return handle
     }
 
     override suspend fun unload(extensionId: String) {
@@ -152,6 +167,7 @@ class WebViewJsExtensionHost(
         cancelPending(pendingVirtualApiOwners, pendingVirtualApi, extensionId)
         pendingPermissions.entries.removeIf { (_, owner) -> owner == extensionId }
         pendingPermissionOwners.entries.removeIf { (_, owner) -> owner == extensionId }
+        pendingLoads.remove(extensionId)?.cancel()
         permissionManager.clearExtension(extensionId)
         emit(ExtensionEvent(name = "extension_unloaded", extensionId = extensionId))
     }
@@ -176,7 +192,7 @@ class WebViewJsExtensionHost(
             val escapedPayload = jsEscape(payloadStr)
             val js = "if(window.Tellev&&window.Tellev.onEvent){" +
                 "window.Tellev.onEvent('" + escapedName + "','" + escapedPayload + "');" +
-                "}if(window.eventSource&&window.eventSource._fireNative){" +
+                "}else if(window.eventSource&&window.eventSource._fireNative){" +
                 "window.eventSource._fireNative('" + escapedName + "','" + escapedPayload + "');}"
             for ((_, webView) in webViews) {
                 runCatching { webView.evaluateJavascript(js, null) }
@@ -475,6 +491,11 @@ class WebViewJsExtensionHost(
         @JavascriptInterface
         fun getCapabilityToken(): String = token
 
+        @JavascriptInterface
+        fun extensionReady() {
+            pendingLoads.remove(extensionId)?.complete(Unit)
+        }
+
         // 鈹€鈹€ SillyTavern / 閰掗鍔╂墜 shim bridge methods 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
         @JavascriptInterface
@@ -519,6 +540,10 @@ class WebViewJsExtensionHost(
         @JavascriptInterface
         fun stSetChatMessage(index: String, field: String, value: String) {
             scope.launch {
+                val messageIndex = index.toIntOrNull()
+                if (messageIndex != null && _contextProvider?.setChatMessage(messageIndex, field, value) == true) {
+                    return@launch
+                }
                 val body = buildJsonObject {
                     put("index", index)
                     put("field", field)
@@ -683,7 +708,7 @@ class WebViewJsExtensionHost(
             "on:function(n,h){if(!_eventHandlers[n])_eventHandlers[n]=[];_eventHandlers[n].push(h);}," +
             "off:function(n,h){var a=_eventHandlers[n];if(!a)return;var i=a.indexOf(h);if(i>=0)a.splice(i,1);}," +
             "emit:function(n,p){tellevNative.emit(String(n),JSON.stringify(p||{}));}," +
-            "onEvent:function(n,pj){var p;try{p=JSON.parse(pj);}catch(e){p={};}var hs=_eventHandlers[n];if(hs){for(var i=0;i<hs.length;i++){try{hs[i](n,p);}catch(e){tellevNative.log('error','Event handler error: '+e);}}}var wc=_eventHandlers['*'];if(wc){for(var j=0;j<wc.length;j++){try{wc[j](n,p);}catch(e){}}}if(window.eventSource)window.eventSource._fireLocal(n,p);}," +
+            "onEvent:function(n,pj){var p;try{p=JSON.parse(pj);}catch(e){p={};}var hs=_eventHandlers[n];if(hs){for(var i=0;i<hs.length;i++){try{hs[i](n,p);}catch(e){tellevNative.log('error','Event handler error: '+e);}}}var wc=_eventHandlers['*'];if(wc){for(var j=0;j<wc.length;j++){try{wc[j](n,p);}catch(e){}}}if(window.eventSource)window.eventSource._fireNative(n,pj);}," +
             "registerCommand:function(n,d,a,h){_commandHandlers[n]=h;tellevNative.registerCommand(String(n),String(d),JSON.stringify(a||{}));}," +
             "finishCommand:function(rid,r){tellevNative.commandResult(String(rid),JSON.stringify(r||{handled:true}));}," +
             "onCommandExecute:function(rid,cn,ri,aj){var a;try{a=JSON.parse(aj);}catch(e){a={};}var h=_commandHandlers[cn];if(h){try{h(rid,ri,a);}catch(e){tellevNative.log('error','Command handler error: '+e);tellevNative.commandResult(rid,JSON.stringify({handled:false,output:'',metadata:{error:String(e)}}));}}else{tellevNative.commandResult(rid,JSON.stringify({handled:false}));}}," +
@@ -698,19 +723,19 @@ class WebViewJsExtensionHost(
             "onSlashCommandsResult:function(rid,pj){var cb=_slashCallbacks[rid];if(!cb)return;delete _slashCallbacks[rid];var p;try{p=JSON.parse(pj);}catch(e){p={results:[]};}cb(p);}," +
             "log:function(l,m){tellevNative.log(String(l),String(m));}" +
             "};" +
-            "var event_types={MESSAGE_RECEIVED:'MESSAGE_RECEIVED',MESSAGE_SENT:'MESSAGE_SENT',MESSAGE_EDITED:'MESSAGE_EDITED',MESSAGE_DELETED:'MESSAGE_DELETED',MESSAGE_SWIPED:'MESSAGE_SWIPED',CHARACTER_SELECTED:'CHARACTER_SELECTED',CHARACTER_CREATED:'CHARACTER_CREATED',CHARACTER_EDITED:'CHARACTER_EDITED',CHARACTER_DELETED:'CHARACTER_DELETED',CHARACTER_IMPORTED:'CHARACTER_IMPORTED',CHARACTER_EXPORTED:'CHARACTER_EXPORTED',CHAT_CHANGED:'CHAT_CHANGED',CHAT_CREATED:'CHAT_CREATED',CHAT_DELETED:'CHAT_DELETED',CHAT_IMPORTED:'CHAT_IMPORTED',CHAT_EXPORTED:'CHAT_EXPORTED',GENERATION_STARTED:'GENERATION_STARTED',GENERATION_ENDED:'GENERATION_ENDED',GENERATION_STOPPED:'GENERATION_STOPPED',WORLD_INFO_ACTIVATED:'WORLD_INFO_ACTIVATED',WORLD_INFO_CHANGED:'WORLD_INFO_CHANGED',EXTENSION_SETTINGS_OPENED:'EXTENSION_SETTINGS_OPENED',EXTENSION_SETTINGS_CLOSED:'EXTENSION_SETTINGS_CLOSED',GROUP_SELECTED:'GROUP_SELECTED',GROUP_CHAT_STARTED:'GROUP_CHAT_STARTED',APP_READY:'APP_READY',SETTINGS_CHANGED:'SETTINGS_CHANGED'};" +
-            "var _stHandlers={};function _fireLocal(t,d){var a=_stHandlers[t];if(a){var e={type:t,detail:d};for(var i=0;i<a.length;i++){try{a[i](e);}catch(e){tellevNative.log('error','eventSource handler error: '+e);}}}}" +
-            "var eventSource={on:function(t,c){if(!_stHandlers[t])_stHandlers[t]=[];_stHandlers[t].push(c);return c;},off:function(t,c){var a=_stHandlers[t];if(!a)return;var i=a.indexOf(c);if(i>=0)a.splice(i,1);},once:function(t,c){var w=function(e){eventSource.off(t,w);c(e);};return eventSource.on(t,w);},make:function(t,d){return{type:t,detail:d};},emit:function(t,d){tellevNative.emit(String(t),JSON.stringify(d||{}));_fireLocal(t,d);},_fireNative:function(n,pj){var p;try{p=JSON.parse(pj);}catch(e){p={};}_fireLocal(n,p);},_fireLocal:_fireLocal};" +
-            "function _getContext(){var r;try{r=tellevNative.stGetContext();}catch(e){r='{}';}var c;try{c=JSON.parse(r);}catch(e){c={};}if(!c.chat)c.chat=[];if(!c.characters)c.characters=[];if(!c.name1)c.name1='User';if(!c.name2)c.name2='Character';if(!c.characterId)c.characterId='';if(!c.chatId)c.chatId='';return c;}" +
+            "var event_types={APP_INITIALIZED:'app_initialized',APP_READY:'app_ready',EXTRAS_CONNECTED:'extras_connected',MESSAGE_SWIPED:'message_swiped',MESSAGE_SENT:'message_sent',MESSAGE_RECEIVED:'message_received',MESSAGE_EDITED:'message_edited',MESSAGE_DELETED:'message_deleted',MESSAGE_UPDATED:'message_updated',MESSAGE_FILE_EMBEDDED:'message_file_embedded',MESSAGE_REASONING_EDITED:'message_reasoning_edited',MESSAGE_REASONING_DELETED:'message_reasoning_deleted',MESSAGE_SWIPE_DELETED:'message_swipe_deleted',MORE_MESSAGES_LOADED:'more_messages_loaded',IMPERSONATE_READY:'impersonate_ready',CHAT_CHANGED:'chat_id_changed',CHAT_LOADED:'chatLoaded',GENERATION_AFTER_COMMANDS:'GENERATION_AFTER_COMMANDS',GENERATION_STARTED:'generation_started',GENERATION_STOPPED:'generation_stopped',GENERATION_ENDED:'generation_ended',SD_PROMPT_PROCESSING:'sd_prompt_processing',EXTENSIONS_FIRST_LOAD:'extensions_first_load',EXTENSION_SETTINGS_LOADED:'extension_settings_loaded',SETTINGS_LOADED:'settings_loaded',SETTINGS_UPDATED:'settings_updated',GROUP_UPDATED:'group_updated',MOVABLE_PANELS_RESET:'movable_panels_reset',SETTINGS_LOADED_BEFORE:'settings_loaded_before',SETTINGS_LOADED_AFTER:'settings_loaded_after',CHATCOMPLETION_SOURCE_CHANGED:'chatcompletion_source_changed',CHATCOMPLETION_MODEL_CHANGED:'chatcompletion_model_changed',OAI_PRESET_CHANGED_BEFORE:'oai_preset_changed_before',OAI_PRESET_CHANGED_AFTER:'oai_preset_changed_after',OAI_PRESET_EXPORT_READY:'oai_preset_export_ready',OAI_PRESET_IMPORT_READY:'oai_preset_import_ready',WORLDINFO_SETTINGS_UPDATED:'worldinfo_settings_updated',WORLDINFO_UPDATED:'worldinfo_updated',CHARACTER_EDITOR_OPENED:'character_editor_opened',CHARACTER_EDITED:'character_edited',CHARACTER_PAGE_LOADED:'character_page_loaded',CHARACTER_GROUP_OVERLAY_STATE_CHANGE_BEFORE:'character_group_overlay_state_change_before',CHARACTER_GROUP_OVERLAY_STATE_CHANGE_AFTER:'character_group_overlay_state_change_after',USER_MESSAGE_RENDERED:'user_message_rendered',CHARACTER_MESSAGE_RENDERED:'character_message_rendered',FORCE_SET_BACKGROUND:'force_set_background',CHAT_DELETED:'chat_deleted',CHAT_CREATED:'chat_created',CHAT_RENAMED:'chat_renamed',GROUP_CHAT_DELETED:'group_chat_deleted',GROUP_CHAT_CREATED:'group_chat_created',GENERATE_BEFORE_COMBINE_PROMPTS:'generate_before_combine_prompts',GENERATE_AFTER_COMBINE_PROMPTS:'generate_after_combine_prompts',GENERATE_AFTER_DATA:'generate_after_data',GROUP_MEMBER_DRAFTED:'group_member_drafted',GROUP_WRAPPER_STARTED:'group_wrapper_started',GROUP_WRAPPER_FINISHED:'group_wrapper_finished',WORLD_INFO_ACTIVATED:'world_info_activated',TEXT_COMPLETION_SETTINGS_READY:'text_completion_settings_ready',CHAT_COMPLETION_SETTINGS_READY:'chat_completion_settings_ready',CHAT_COMPLETION_PROMPT_READY:'chat_completion_prompt_ready',CHARACTER_FIRST_MESSAGE_SELECTED:'character_first_message_selected',CHARACTER_DELETED:'characterDeleted',CHARACTER_DUPLICATED:'character_duplicated',CHARACTER_RENAMED:'character_renamed',CHARACTER_RENAMED_IN_PAST_CHAT:'character_renamed_in_past_chat',SMOOTH_STREAM_TOKEN_RECEIVED:'stream_token_received',STREAM_TOKEN_RECEIVED:'stream_token_received',STREAM_REASONING_DONE:'stream_reasoning_done',FILE_ATTACHMENT_DELETED:'file_attachment_deleted',WORLDINFO_FORCE_ACTIVATE:'worldinfo_force_activate',OPEN_CHARACTER_LIBRARY:'open_character_library',ONLINE_STATUS_CHANGED:'online_status_changed',IMAGE_SWIPED:'image_swiped',CONNECTION_PROFILE_LOADED:'connection_profile_loaded',CONNECTION_PROFILE_CREATED:'connection_profile_created',CONNECTION_PROFILE_DELETED:'connection_profile_deleted',CONNECTION_PROFILE_UPDATED:'connection_profile_updated',TOOL_CALLS_PERFORMED:'tool_calls_performed',TOOL_CALLS_RENDERED:'tool_calls_rendered',CHARACTER_MANAGEMENT_DROPDOWN:'charManagementDropdown',SECRET_WRITTEN:'secret_written',SECRET_DELETED:'secret_deleted',SECRET_ROTATED:'secret_rotated',SECRET_EDITED:'secret_edited',PRESET_CHANGED:'preset_changed',PRESET_DELETED:'preset_deleted',PRESET_RENAMED:'preset_renamed',PRESET_RENAMED_BEFORE:'preset_renamed_before',MAIN_API_CHANGED:'main_api_changed',WORLDINFO_ENTRIES_LOADED:'worldinfo_entries_loaded',WORLDINFO_SCAN_DONE:'worldinfo_scan_done',MEDIA_ATTACHMENT_DELETED:'media_attachment_deleted',PERSONA_CHANGED:'persona_changed',PERSONA_CREATED:'persona_created',PERSONA_UPDATED:'persona_updated',PERSONA_RENAMED:'persona_renamed',PERSONA_DELETED:'persona_deleted',TTS_JOB_STARTED:'tts_job_started',TTS_AUDIO_READY:'tts_audio_ready',TTS_JOB_COMPLETE:'tts_job_complete',ITEMIZED_PROMPTS_LOADED:'itemized_prompts_loaded',ITEMIZED_PROMPTS_SAVED:'itemized_prompts_saved',ITEMIZED_PROMPTS_DELETED:'itemized_prompts_deleted',CHARACTER_SELECTED:'character_selected',CHARACTER_CREATED:'character_created',CHARACTER_IMPORTED:'character_imported',CHARACTER_EXPORTED:'character_exported',CHAT_IMPORTED:'chat_imported',CHAT_EXPORTED:'chat_exported',EXTENSION_SETTINGS_OPENED:'extension_settings_opened',EXTENSION_SETTINGS_CLOSED:'extension_settings_closed',GROUP_SELECTED:'group_selected',GROUP_CHAT_STARTED:'group_chat_started',SETTINGS_CHANGED:'settings_updated'};" +
+            "var _stHandlers={};var _autoFire={app_ready:true,app_initialized:true};var _lastArgs={};function _normEvent(t){if(event_types[t])return event_types[t];return String(t||'');}function _argsFromPayload(p){if(p&&Array.isArray(p.args))return p.args;if(p&&Object.prototype.hasOwnProperty.call(p,'detail'))return[p.detail];if(p&&Object.keys&&Object.keys(p).length)return[p];return[];}async function _fireLocal(t,args){t=_normEvent(t);args=args||[];var a=_stHandlers[t];if(a){var copy=a.slice();for(var i=0;i<copy.length;i++){try{var r=copy[i].apply(eventSource,args);if(r&&typeof r.then==='function')await r;}catch(e){tellevNative.log('error','eventSource handler error: '+e);}}}if(_autoFire[t])_lastArgs[t]=args;}" +
+            "var eventSource={on:function(t,c){t=_normEvent(t);if(!_stHandlers[t])_stHandlers[t]=[];_stHandlers[t].push(c);if(_autoFire[t]&&Object.prototype.hasOwnProperty.call(_lastArgs,t)){try{c.apply(eventSource,_lastArgs[t]);}catch(e){tellevNative.log('error','eventSource handler error: '+e);}}return c;},makeFirst:function(t,c){t=_normEvent(t);if(!_stHandlers[t])_stHandlers[t]=[];var a=_stHandlers[t];var i=a.indexOf(c);if(i>=0)a.splice(i,1);a.unshift(c);if(_autoFire[t]&&Object.prototype.hasOwnProperty.call(_lastArgs,t)){try{c.apply(eventSource,_lastArgs[t]);}catch(e){}}return c;},makeLast:function(t,c){t=_normEvent(t);if(!_stHandlers[t])_stHandlers[t]=[];var a=_stHandlers[t];var i=a.indexOf(c);if(i>=0)a.splice(i,1);a.push(c);if(_autoFire[t]&&Object.prototype.hasOwnProperty.call(_lastArgs,t)){try{c.apply(eventSource,_lastArgs[t]);}catch(e){}}return c;},removeListener:function(t,c){t=_normEvent(t);var a=_stHandlers[t];if(!a)return;var i=a.indexOf(c);if(i>=0)a.splice(i,1);},off:function(t,c){return eventSource.removeListener(t,c);},once:function(t,c){var w=function(){eventSource.removeListener(t,w);return c.apply(eventSource,arguments);};return eventSource.on(t,w);},make:function(t,d){return{type:_normEvent(t),detail:d};},emit:function(t){var args=[].slice.call(arguments,1);var n=_normEvent(t);tellevNative.emit(String(n),JSON.stringify({args:args}));return _fireLocal(n,args);},emitAndWait:function(t){return eventSource.emit.apply(eventSource,arguments);},_fireNative:function(n,pj){var p;try{p=JSON.parse(pj);}catch(e){p={};}return _fireLocal(n,_argsFromPayload(p));},_fireLocal:function(n,p){return _fireLocal(n,Array.isArray(p)?p:_argsFromPayload(p));}};" +
+            "function _getContext(){var r;try{r=tellevNative.stGetContext();}catch(e){r='{}';}var c;try{c=JSON.parse(r);}catch(e){c={};}if(!c.chat)c.chat=[];if(!c.characters)c.characters=[];if(!c.groups)c.groups=[];if(!c.name1)c.name1='User';if(!c.name2)c.name2='Character';if(!c.characterId)c.characterId='';if(!c.chatId)c.chatId='';if(!c.groupId)c.groupId='';if(!c.mainApi)c.mainApi='openai-compatible';if(!c.chatMetadata)c.chatMetadata={};if(!c.onlineStatus)c.onlineStatus='connected';if(!c.maxContext)c.maxContext=8192;if(!c.extensionPrompts)c.extensionPrompts={};if(!c.eventSource)c.eventSource=eventSource;if(!c.eventTypes)c.eventTypes=event_types;if(!c.event_types)c.event_types=event_types;return c;}" +
             "var SillyTavern={getContext:_getContext};" +
             "var getContext=_getContext;" +
-            "var TavernHelper={addSlashCommand:function(n,c,o){o=o||{};_commandHandlers[n]=c;tellevNative.registerCommand(String(n),String(o.help||o.description||''),JSON.stringify(o.args||{}));},registerEvent:function(t,c){return eventSource.on(t,c);},getChatMessages:function(a){var c=_getContext();var m=c.chat||[];if(a===undefined||a===null||a==='')return m;if(typeof a==='number')return m[a]!==undefined?[m[a]]:[];if(typeof a==='string'){var ps=a.split('-');var s=parseInt(ps[0],10);var e=ps[1]!==undefined?parseInt(ps[1],10):s;if(isNaN(s))return[];if(isNaN(e))e=s;return m.slice(s,e+1);}return m;},setChatMessage:function(i,f,v){tellevNative.stSetChatMessage(String(i),String(f),String(v));},getVariables:function(){var r;try{r=tellevNative.stGetVariables();}catch(e){r='{}';}try{return JSON.parse(r);}catch(e){return{};}},setVariables:function(v){tellevNative.stSetVariables(JSON.stringify(v||{}));},replaceVariables:function(s){try{return tellevNative.stReplaceVariables(String(s));}catch(e){return String(s);}},getExtensionPrompt:function(){return'';},firstUserMessageIndex:function(){var c=_getContext();for(var i=0;i<c.chat.length;i++){if(c.chat[i]&&c.chat[i].is_user)return i;}return-1;},firstBotMessageIndex:function(){var c=_getContext();for(var i=0;i<c.chat.length;i++){if(c.chat[i]&&!c.chat[i].is_user)return i;}return-1;}};" +
+            "var TavernHelper={tavern_events:event_types,iframe_events:{MESSAGE_IFRAME_RENDER_STARTED:'message_iframe_render_started',MESSAGE_IFRAME_RENDER_ENDED:'message_iframe_render_ended',GENERATION_STARTED:'js_generation_started',STREAM_TOKEN_RECEIVED_FULLY:'js_stream_token_received_fully',STREAM_TOKEN_RECEIVED_INCREMENTALLY:'js_stream_token_received_incrementally',GENERATION_ENDED:'js_generation_ended'},getChatMessages:function(range,opts){opts=opts||{};var c=_getContext();var m=c.chat||[];function _mapMsg(msg,i){return{message_id:msg.index!==undefined?msg.index:i,name:msg.name,role:msg.is_user?'user':(msg.is_system?'system':'assistant'),is_hidden:msg.is_system||false,message:msg.mes,data:msg.variables||{},extra:msg.extra||{},swipe_id:msg.swipe_id||0,swipes:msg.swipes||[],swipes_data:[]};}if(range===undefined||range===null||range==='')return m.map(_mapMsg);var r;if(typeof range==='number'){r=range>=0&&range<m.length?{start:range,end:range}:null;}else{var s=String(range);var mt=s.match(/^(-?\\d+)(?:-(-?\\d+))?$/);if(!mt)r=null;else{var a=parseInt(mt[1],10);var b=mt[2]!==undefined?parseInt(mt[2],10):a;if(a<0)a=m.length+a;if(b<0)b=m.length+b;if(isNaN(a)||isNaN(b))r=null;else{a=Math.max(0,Math.min(a,m.length-1));b=Math.max(0,Math.min(b,m.length-1));r={start:Math.min(a,b),end:Math.max(a,b)};}}}if(!r)return[];return m.slice(r.start,r.end+1).map(function(msg,i){return _mapMsg(msg,r.start+i);});},setChatMessage:function(fv,mid,opts){fv=typeof fv==='string'?{message:fv}:fv;if(!fv)return;if(fv.message!==undefined)tellevNative.stSetChatMessage(String(mid),'message',String(fv.message));if(fv.data!==undefined)tellevNative.stSetChatMessage(String(mid),'data',JSON.stringify(fv.data));},setChatMessages:function(cms,opts){if(!Array.isArray(cms))return;cms.forEach(function(cm){var mid=cm.message_id;if(mid===undefined)return;if(cm.message!==undefined)tellevNative.stSetChatMessage(String(mid),'message',String(cm.message));if(cm.name!==undefined)tellevNative.stSetChatMessage(String(mid),'name',String(cm.name));if(cm.role!==undefined)tellevNative.stSetChatMessage(String(mid),'role',String(cm.role));if(cm.is_hidden!==undefined)tellevNative.stSetChatMessage(String(mid),'is_hidden',String(cm.is_hidden));if(cm.extra!==undefined)tellevNative.stSetChatMessage(String(mid),'extra',JSON.stringify(cm.extra));if(cm.swipe_id!==undefined)tellevNative.stSetChatMessage(String(mid),'swipe_id',String(cm.swipe_id));if(cm.swipes!==undefined)tellevNative.stSetChatMessage(String(mid),'swipes',JSON.stringify(cm.swipes));});},getVariables:function(opt){var r;try{r=tellevNative.stGetVariables();}catch(e){r='{}';}try{return JSON.parse(r);}catch(e){return{};}},replaceVariables:function(vars,opt){tellevNative.stSetVariables(JSON.stringify(vars||{}));},updateVariablesWith:function(updater,opt){var v=TavernHelper.getVariables(opt);var r=updater(v);TavernHelper.replaceVariables(r||v,opt);},insertOrAssignVariables:function(nv,opt){var v=TavernHelper.getVariables(opt);var merged={};for(var k in v)merged[k]=v[k];for(var k in nv)merged[k]=nv[k];TavernHelper.replaceVariables(merged,opt);},insertVariables:function(nv,opt){var v=TavernHelper.getVariables(opt);var merged={};for(var k in nv)merged[k]=nv[k];for(var k in v)if(!(k in merged))merged[k]=v[k];TavernHelper.replaceVariables(merged,opt);},deleteVariable:function(path,opt){var v=TavernHelper.getVariables(opt);var parts=String(path).split('.');var obj=v;for(var i=0;i<parts.length-1;i++){if(!obj[parts[i]])return;obj=obj[parts[i]];}delete obj[parts[parts.length-1]];TavernHelper.replaceVariables(v,opt);},substitudeMacros:function(s){try{return tellevNative.stReplaceVariables(String(s));}catch(e){return String(s);}},eventOn:function(t,c){return eventSource.on(t,c);},eventMakeLast:function(t,c){return eventSource.makeLast(t,c);},eventMakeFirst:function(t,c){return eventSource.makeFirst(t,c);},eventOnce:function(t,c){return eventSource.once(t,c);},eventEmit:function(t){return eventSource.emit.apply(eventSource,arguments);},eventEmitAndWait:function(t){return eventSource.emitAndWait.apply(eventSource,arguments);},eventRemoveListener:function(t,c){return eventSource.removeListener(t,c);},eventClearEvent:function(t){var n=_normEvent(t);_stHandlers[n]=[];},eventClearAll:function(){_stHandlers={};},triggerSlash:function(text){return executeSlashCommandsWithOptions(text);},addSlashCommand:function(n,c,o){o=o||{};_commandHandlers[n]=c;tellevNative.registerCommand(String(n),String(o.help||o.description||''),JSON.stringify(o.args||{}));},registerEvent:function(t,c){return eventSource.on(t,c);},setVariables:function(v){tellevNative.stSetVariables(JSON.stringify(v||{}));},getLastMessageId:function(){var c=_getContext();return c.chat?c.chat.length-1:-1;},getMessageId:function(){return TavernHelper.getLastMessageId();},getTavernHelperVersion:function(){return'4.8.11';},getFrontendVersion:function(){return TavernHelper.getTavernHelperVersion();},getTavernVersion:function(){return'1.12.0';},errorCatched:function(fn){return function(){try{return fn.apply(this,arguments);}catch(e){tellevNative.log('error',String(e));}};},getExtensionPrompt:function(){return'';},firstUserMessageIndex:function(){var c=_getContext();for(var i=0;i<c.chat.length;i++){if(c.chat[i]&&c.chat[i].is_user)return i;}return-1;},firstBotMessageIndex:function(){var c=_getContext();for(var i=0;i<c.chat.length;i++){if(c.chat[i]&&!c.chat[i].is_user)return i;}return-1;}};" +
             "function executeSlashCommandsWithOptions(cs){var a=Array.isArray(cs)?cs:[cs];_apiReqCounter+=1;var rid='slash_'+_apiReqCounter+'_'+Date.now();return new Promise(function(resolve){_slashCallbacks[rid]=resolve;tellevNative.executeSlashCommands(rid,JSON.stringify(a));});}" +
             "function executeSlashCommands(cs){return executeSlashCommandsWithOptions(cs);}" +
             "function _isApiPath(u){var p=u.split('?')[0];if(p.indexOf('/api/')===0)return true;if(p.indexOf('extensions.tellev.local')>=0&&p.indexOf('/api/')>=0)return true;return false;}" +
             "window.fetch=function(input,init){try{var u=typeof input==='string'?input:((input&&input.url)||'');if(_isApiPath(u)){var p=u.split('extensions.tellev.local')[1]||u;var m=(init&&init.method)||'GET';var b=init&&init.body;var bo=null;if(b!==undefined&&b!==null){if(typeof b==='string'){try{bo=JSON.parse(b);}catch(e){bo=b;}}else{bo=b;}}return window.Tellev.apiCall(m,p,bo).then(function(r){var bt=(r.body!==undefined&&r.body!==null)?(typeof r.body==='string'?r.body:JSON.stringify(r.body)):'';return new Response(bt,{status:r.status,headers:{'Content-Type':'application/json'}});});}}catch(e){return Promise.reject(e);}return Promise.reject(new Error('Network access is not permitted for extensions'));};" +
-            "window.SillyTavern=SillyTavern;window.getContext=getContext;window.eventSource=eventSource;window.event_types=event_types;window.TavernHelper=TavernHelper;window.executeSlashCommandsWithOptions=executeSlashCommandsWithOptions;window.executeSlashCommands=executeSlashCommands;" +
+            "window.SillyTavern=SillyTavern;window.getContext=getContext;window.eventSource=eventSource;window.event_types=event_types;window.eventTypes=event_types;window.TavernHelper=TavernHelper;window.tavern_events=event_types;window.executeSlashCommandsWithOptions=executeSlashCommandsWithOptions;window.executeSlashCommands=executeSlashCommands;window.eventOn=TavernHelper.eventOn;window.eventMakeLast=TavernHelper.eventMakeLast;window.eventMakeFirst=TavernHelper.eventMakeFirst;window.eventOnce=TavernHelper.eventOnce;window.eventEmit=TavernHelper.eventEmit;window.eventEmitAndWait=TavernHelper.eventEmitAndWait;window.eventRemoveListener=TavernHelper.eventRemoveListener;window.getVariables=TavernHelper.getVariables;window.replaceVariables=TavernHelper.replaceVariables;window.updateVariablesWith=TavernHelper.updateVariablesWith;window.insertOrAssignVariables=TavernHelper.insertOrAssignVariables;window.insertVariables=TavernHelper.insertVariables;window.deleteVariable=TavernHelper.deleteVariable;window.substitudeMacros=TavernHelper.substitudeMacros;window.triggerSlash=TavernHelper.triggerSlash;window.getLastMessageId=TavernHelper.getLastMessageId;window.getChatMessages=TavernHelper.getChatMessages;window.setChatMessages=TavernHelper.setChatMessages;" +
             "})();" +
-            "\n</script>\n<script>\n__SCRIPT_SOURCE__\n</script></body></html>"
+            "\n</script>\n<script>\n__SCRIPT_SOURCE__\n</script><script>try{tellevNative.extensionReady();}catch(e){}</script></body></html>"
     }
 }

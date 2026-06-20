@@ -13,10 +13,14 @@ import kotlinx.serialization.json.buildJsonObject
  */
 interface ExtensionContextProvider {
     fun snapshot(): JsonObject
+
+    suspend fun setChatMessage(index: Int, field: String, value: String): Boolean = false
 }
 
 interface ExtensionHost {
     val events: SharedFlow<ExtensionEvent>
+
+    fun setContextProvider(provider: ExtensionContextProvider?) {}
 
     suspend fun load(manifest: ExtensionManifest, scriptSource: String): ExtensionHandle
     suspend fun unload(extensionId: String)
