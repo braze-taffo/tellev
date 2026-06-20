@@ -18,7 +18,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.Base64
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -125,7 +124,7 @@ class OpenAiSpeechAdapter(
                     return@use
                 }
 
-                val base64Audio = Base64.getEncoder().encodeToString(audioBytes)
+                val base64Audio = android.util.Base64.encodeToString(audioBytes, android.util.Base64.NO_WRAP)
                 emit(GenerateChunk.Completed(base64Audio, "audio_generated"))
             }
         } catch (e: kotlinx.coroutines.CancellationException) {

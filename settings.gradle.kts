@@ -16,4 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "tellev"
 include(":app")
-include(":desktop")
+
