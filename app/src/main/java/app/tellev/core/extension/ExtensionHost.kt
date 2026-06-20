@@ -1,6 +1,7 @@
 package app.tellev.core.extension
 
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -58,14 +59,40 @@ interface ExtensionHost {
 
 @Serializable
 data class ExtensionManifest(
-    val id: String,
-    val name: String,
-    val version: String,
+    // ── SillyTavern-compatible manifest fields ──────────────────────────
+    @SerialName("display_name")
+    val displayName: String = "",
+    @SerialName("loading_order")
+    val loadingOrder: Int = 0,
+    val requires: List<String> = emptyList(),
+    val optional: List<String> = emptyList(),
+    /** Relative path to the entry JS file (e.g. "dist/index.js"). */
+    val js: String = "",
+    /** Relative path to the CSS file (e.g. "dist/index.css"). */
+    val css: String = "",
     val author: String? = null,
+    val version: String = "",
+    @SerialName("homePage")
+    val homePage: String = "",
+    @SerialName("auto_update")
+    val autoUpdate: Boolean = true,
+    @SerialName("minimum_client_version")
+    val minimumClientVersion: String = "",
+    val i18n: Map<String, String> = emptyMap(),
+
+    // ── tellev-specific fields (not in standard ST manifests) ───────────
+    /** Unique identifier; for installed extensions, derived from the directory name. */
+    val id: String = "",
+    /** Human-readable name; falls back to [displayName] then [id] via [effectiveName]. */
+    val name: String = "",
     val description: String = "",
     val permissions: Set<ExtensionPermission> = emptySet(),
     val metadata: JsonObject = buildJsonObject { },
-)
+) {
+    /** Resolve the display name: explicit name → ST display_name → id. */
+    val effectiveName: String
+        get() = name.ifBlank { displayName }.ifBlank { id }
+}
 
 @Serializable
 enum class ExtensionPermission {

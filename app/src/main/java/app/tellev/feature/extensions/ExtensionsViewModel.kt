@@ -59,6 +59,19 @@ class ExtensionsViewModel(
     val uiState: StateFlow<ExtensionsUiState> = _uiState.asStateFlow()
     private val json = Json { ignoreUnknownKeys = true }
 
+    /**
+     * Permissions that are safe to auto-grant on extension install without
+     * explicit runtime approval.  `Secrets`, `ProviderRequest`, and `Network`
+     * are excluded — they gate API keys, paid API calls, and arbitrary
+     * outbound traffic respectively, so they must go through the
+     * `permission_requested` → UI prompt → `deliverPermissionResult` flow.
+     */
+    private val safeInstallPermissions: Set<ExtensionPermission> = setOf(
+        ExtensionPermission.Storage,
+        ExtensionPermission.UiPanel,
+        ExtensionPermission.Clipboard,
+    )
+
     /** Manifests for extensions discovered on disk, keyed by id. */
     private val installedManifests = mutableMapOf<String, ExtensionManifest>()
 
@@ -119,11 +132,15 @@ class ExtensionsViewModel(
                         _uiState.update { s -> s.copy(error = "未找到扩展清单：$id") }
                         return@runCatching
                     }
-                    // Pre-grant permissions the extension declares in its
-                    // manifest, so the host can service virtual-API calls
-                    // immediately.  The trust model is "install = consent":
-                    // installing an extension is an explicit user action.
-                    permissionManager.grantAll(id, manifest.permissions)
+                    // Only pre-grant low-risk permissions (Storage, UiPanel,
+                    // Clipboard).  High-risk permissions (Secrets,
+                    // ProviderRequest, Network) require explicit runtime
+                    // approval via requestPermissionAsync → permission_requested
+                    // event → UI prompt → deliverPermissionResult.
+                    val safePermissions = manifest.permissions.filter {
+                        it in safeInstallPermissions
+                    }
+                    permissionManager.grantAll(id, safePermissions)
                     extensionHost.load(manifest, script)
                     updateExtension(id) { it.copy(loaded = true) }
                 }
@@ -224,18 +241,35 @@ class ExtensionsViewModel(
                 .forEach { dir ->
                     val manifestPath = dir.resolve("manifest.json")
                     if (!Files.isRegularFile(manifestPath)) return@forEach
-                    val manifest = runCatching {
-                        val text = Files.readAllBytes(manifestPath).toString(Charsets.UTF_8)
-                        json.decodeFromString(ExtensionManifest.serializer(), text)
+                    val raw = runCatching {
+                        Files.readAllBytes(manifestPath).toString(Charsets.UTF_8)
+                    }.getOrNull() ?: return@forEach
+                    val parsed = runCatching {
+                        json.decodeFromString(ExtensionManifest.serializer(), raw)
                     }.getOrNull() ?: return@forEach
 
-                    val scriptFile = manifest.metadata["main"]?.jsonPrimitive?.contentOrNull
+                    // For installed extensions, the id is the directory name
+                    // (ST manifests don't have an "id" field).
+                    val dirName = dir.fileName.toString()
+                    val manifest = parsed.copy(id = parsed.id.ifBlank { dirName })
+
+                    // Resolve the entry script: prefer the manifest's "js"
+                    // field (e.g. "dist/index.js"), then fall back to common
+                    // filenames in the extension root.
+                    val scriptFile = manifest.js
+                        .takeIf { it.isNotBlank() }
                         ?.let { dir.resolve(it) }
                         ?.takeIf { Files.isRegularFile(it) }
+                        ?: manifest.metadata["main"]?.jsonPrimitive?.contentOrNull
+                            ?.let { dir.resolve(it) }
+                            ?.takeIf { Files.isRegularFile(it) }
+                        ?: dir.resolve("dist/index.js").takeIf { Files.isRegularFile(it) }
                         ?: dir.resolve("script.js").takeIf { Files.isRegularFile(it) }
                         ?: dir.resolve("index.js").takeIf { Files.isRegularFile(it) }
 
-                    val script = scriptFile?.let { runCatching { Files.readAllBytes(it).toString(Charsets.UTF_8) }.getOrNull() } ?: ""
+                    val script = scriptFile?.let {
+                        runCatching { Files.readAllBytes(it).toString(Charsets.UTF_8) }.getOrNull()
+                    } ?: ""
 
                     installedManifests[manifest.id] = manifest
                     installedScripts[manifest.id] = script
@@ -243,7 +277,7 @@ class ExtensionsViewModel(
                     results.add(
                         ExtensionInfo(
                             id = manifest.id,
-                            name = manifest.name,
+                            name = manifest.effectiveName,
                             description = manifest.description,
                             loaded = false,
                             permissions = manifest.permissions.map { it.name },

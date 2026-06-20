@@ -32,16 +32,16 @@ boundaries instead of replacing them.
 
 ## Build Note
 
-This workspace has Android SDK files but no Gradle executable or wrapper. Open
-this folder in Android Studio, let it sync the Gradle project, then run:
+The Gradle wrapper is included in the repository (`gradlew`, `gradlew.bat`,
+`gradle/wrapper/*`).  Open this folder in Android Studio to let it sync the
+Gradle project, then run:
 
 ```powershell
 .\gradlew.bat test
 .\gradlew.bat assembleDebug
 ```
 
-If Android Studio generates wrapper files, commit `gradlew`, `gradlew.bat`, and
-`gradle/wrapper/*`.
+The wrapper uses Gradle 8.11.1 with AGP 8.10.1 and Kotlin 2.1.21.
 
 ## AI Handoff
 

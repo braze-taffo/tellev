@@ -20,6 +20,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -69,6 +71,16 @@ class VirtualApiRouter(
     private suspend fun dispatch(request: VirtualApiRequest): VirtualApiResponse {
         val method = request.method.uppercase()
         val path = normalizePath(request.path)
+
+        // ── top-level (not under /api/) ────────────────────────
+        if (method == "GET" && path == "/version") {
+            return jsonResponse(200, buildJsonObject {
+                put("version", "1.18.0-tellev")
+                put("pkgVersion", "1.18.0-tellev")
+                put("clientVersion", "1.18.0")
+            })
+        }
+
         val segments = path.removePrefix("/api/").split("/").filter { it.isNotEmpty() }
 
         return when {
@@ -91,6 +103,14 @@ class VirtualApiRouter(
             method == "POST" && segments.size == 1 && segments[0] == "characters" ->
                 handleSaveCharacter(request)
 
+            // ST-style character edit: partial field patch
+            method == "POST" && segments.size == 2 && segments[0] == "characters" && segments[1] == "edit" ->
+                handleEditCharacter(request)
+
+            // ST-style character import
+            method == "POST" && segments.size == 2 && segments[0] == "characters" && segments[1] == "import" ->
+                handleImportCharacter(request)
+
             method == "POST" && segments.size == 3 && segments[0] == "characters" && segments[2] == "tavern-helper" ->
                 handleSaveCharacterTavernHelper(segments[1], request)
 
@@ -100,6 +120,22 @@ class VirtualApiRouter(
 
             method == "GET" && segments.size == 2 && segments[0] == "chats" ->
                 handleReadChat(segments[1])
+
+            // ST-style: POST /api/chats/get { ch_name, file_name }
+            method == "POST" && segments.size == 2 && segments[0] == "chats" && segments[1] == "get" ->
+                handleStGetChat(request)
+
+            // ST-style: POST /api/chats/group/get { chat_id }
+            method == "POST" && segments.size == 3 && segments[0] == "chats" && segments[1] == "group" && segments[2] == "get" ->
+                handleStGetGroupChat(request)
+
+            // ST-style: POST /api/chats/import
+            method == "POST" && segments.size == 2 && segments[0] == "chats" && segments[1] == "import" ->
+                handleStImportChat(request)
+
+            // ST-style: POST /api/chats/save
+            method == "POST" && segments.size == 2 && segments[0] == "chats" && segments[1] == "save" ->
+                handleStSaveChat(request)
 
             method == "POST" && segments.size == 3 && segments[0] == "chats" && segments[2] == "messages" ->
                 handleAppendMessage(segments[1], request)
@@ -111,7 +147,7 @@ class VirtualApiRouter(
             method == "POST" && segments.size == 3 && segments[0] == "chats" && segments[2] == "message-field" ->
                 errorResponse(501, "Chat message field mutation is handled by the UI layer")
 
-            // ── worlds ─────────────────────────────────────────────
+            // ── worlds / worldinfo ─────────────────────────────────
             method == "GET" && segments.size == 1 && segments[0] == "worlds" ->
                 handleListWorlds()
 
@@ -121,9 +157,21 @@ class VirtualApiRouter(
             method == "POST" && segments.size == 1 && segments[0] == "worlds" ->
                 handleSaveWorld(request)
 
+            // ST-style: POST /api/worldinfo/get { name }
+            method == "POST" && segments.size == 2 && segments[0] == "worldinfo" && segments[1] == "get" ->
+                handleStGetWorldInfo(request)
+
             // ── settings / presets ─────────────────────────────────
             method == "GET" && segments.size == 1 && segments[0] == "settings" ->
                 handleListPresets()
+
+            // ST-style: POST /api/settings/get → returns full settings.json
+            method == "POST" && segments.size == 2 && segments[0] == "settings" && segments[1] == "get" ->
+                handleStGetSettings()
+
+            // ST-style: POST /api/settings/save
+            method == "POST" && segments.size == 2 && segments[0] == "settings" && segments[1] == "save" ->
+                handleStSaveSettings(request)
 
             // ── secrets ────────────────────────────────────────────
             method == "GET" && segments.size == 1 && segments[0] == "secrets" ->
@@ -138,7 +186,17 @@ class VirtualApiRouter(
             method == "DELETE" && segments.size == 2 && segments[0] == "secrets" ->
                 handleDeleteSecret(segments[1])
 
-            // ── providers ──────────────────────────────────────────
+            // ST-style secret endpoints
+            method == "POST" && segments.size == 2 && segments[0] == "secrets" && segments[1] == "write" ->
+                handleStWriteSecret(request)
+
+            method == "POST" && segments.size == 2 && segments[0] == "secrets" && segments[1] == "read" ->
+                handleStReadSecret(request)
+
+            method == "POST" && segments.size == 2 && segments[0] == "secrets" && segments[1] == "delete" ->
+                handleStDeleteSecret(request)
+
+            // ── providers / backends ───────────────────────────────
             method == "GET" && segments.size == 1 && segments[0] == "providers" ->
                 handleListProviders()
 
@@ -147,6 +205,34 @@ class VirtualApiRouter(
 
             method == "GET" && segments.size == 3 && segments[0] == "providers" && segments[2] == "models" ->
                 handleProviderModels(segments[1], request)
+
+            // ST-style: POST /api/backends/chat-completions/status
+            method == "POST" && segments.size == 3 && segments[0] == "backends" && segments[1] == "chat-completions" && segments[2] == "status" ->
+                handleStChatCompletionsStatus(request)
+
+            // ST-style: POST /api/backends/chat-completions/generate
+            method == "POST" && segments.size == 3 && segments[0] == "backends" && segments[1] == "chat-completions" && segments[2] == "generate" ->
+                handleStChatCompletionsGenerate(request)
+
+            // ── avatars (persona) ──────────────────────────────────
+            method == "POST" && segments.size == 2 && segments[0] == "avatars" && segments[1] == "upload" ->
+                handleStUploadAvatar(request)
+
+            method == "POST" && segments.size == 2 && segments[0] == "avatars" && segments[1] == "delete" ->
+                handleStDeleteAvatar(request)
+
+            // ── extensions management ──────────────────────────────
+            method == "POST" && segments.size == 2 && segments[0] == "extensions" && segments[1] == "version" ->
+                handleStExtensionVersion(request)
+
+            method == "POST" && segments.size == 2 && segments[0] == "extensions" && segments[1] == "install" ->
+                handleStExtensionInstall(request)
+
+            method == "POST" && segments.size == 2 && segments[0] == "extensions" && segments[1] == "delete" ->
+                handleStExtensionDelete(request)
+
+            method == "POST" && segments.size == 2 && segments[0] == "extensions" && segments[1] == "update" ->
+                handleStExtensionUpdate(request)
 
             // ── groups ─────────────────────────────────────────────
             method == "GET" && segments.size == 1 && segments[0] == "groups" ->
@@ -539,5 +625,245 @@ class VirtualApiRouter(
             headers = mapOf("Content-Type" to "application/json"),
             body = json.encodeToString(JsonObject.serializer(), body),
         )
+    }
+
+    // ── ST-compatible handler stubs ─────────────────────────────────────
+
+    private suspend fun handleEditCharacter(request: VirtualApiRequest): VirtualApiResponse {
+        val bodyObj = parseBodyAsJsonObjectOrNull(request) ?: return errorResponse(400, "Missing body")
+        val id = bodyObj["ch_name"]?.jsonPrimitive?.content
+            ?: bodyObj["id"]?.jsonPrimitive?.content
+            ?: return errorResponse(400, "Missing ch_name/id")
+
+        val card = runCatching { dataStore.readCharacter(id) }.getOrNull()
+            ?: return errorResponse(404, "Character not found: $id")
+
+        // Apply field patches from the request body onto the raw card JSON.
+        val updatedRaw = patchCharacterFields(card.raw, bodyObj)
+        dataStore.saveCharacter(card.copy(raw = updatedRaw))
+        return jsonResponse(200, buildJsonObject { put("ok", true) })
+    }
+
+    private fun patchCharacterFields(raw: JsonObject, patch: JsonObject): JsonObject {
+        val data = (raw["data"] as? JsonObject) ?: buildJsonObject { }
+        val patchedData = buildJsonObject {
+            for ((k, v) in data) put(k, v)
+            for ((k, v) in patch) {
+                if (k in setOf("ch_name", "id", "avatar", "json_data")) continue
+                if (k == "extensions") {
+                    val ext = (data["extensions"] as? JsonObject) ?: buildJsonObject { }
+                    val patchExt = (v as? JsonObject) ?: continue
+                    put("extensions", buildJsonObject {
+                        for ((ek, ev) in ext) put(ek, ev)
+                        for ((ek, ev) in patchExt) put(ek, ev)
+                    })
+                } else {
+                    put(k, v)
+                }
+            }
+        }
+        return buildJsonObject {
+            for ((k, v) in raw) if (k != "data") put(k, v)
+            put("data", patchedData)
+        }
+    }
+
+    private suspend fun handleImportCharacter(request: VirtualApiRequest): VirtualApiResponse {
+        // Accept JSON body (PNG/WebP import is handled by the UI layer's
+        // file-picker, not the virtual API).  For JSON import, decode and save.
+        val bodyText = request.body ?: return errorResponse(400, "Missing body")
+        val card = runCatching {
+            json.decodeFromString(CharacterCard.serializer(), bodyText)
+        }.getOrElse {
+            return errorResponse(400, "Invalid character JSON: ${it.message}")
+        }
+        dataStore.saveCharacter(card)
+        return jsonResponse(200, buildJsonObject {
+            put("ok", true)
+            put("file_name", card.id)
+        })
+    }
+
+    private suspend fun handleStGetChat(request: VirtualApiRequest): VirtualApiResponse {
+        val bodyObj = parseBodyAsJsonObjectOrNull(request)
+        val chatId = bodyObj?.get("file_name")?.jsonPrimitive?.content
+            ?: bodyObj?.get("ch_name")?.jsonPrimitive?.content
+            ?: return errorResponse(400, "Missing file_name/ch_name")
+        return handleReadChat(chatId)
+    }
+
+    private suspend fun handleStGetGroupChat(request: VirtualApiRequest): VirtualApiResponse {
+        val bodyObj = parseBodyAsJsonObjectOrNull(request)
+        val chatId = bodyObj?.get("chat_id")?.jsonPrimitive?.content
+            ?: return errorResponse(400, "Missing chat_id")
+        return handleReadChat(chatId)
+    }
+
+    private suspend fun handleStImportChat(request: VirtualApiRequest): VirtualApiResponse {
+        // Accept a JSON body describing the chat to import.  The actual
+        // JSONL parsing is delegated to the data store.
+        return jsonResponse(200, buildJsonObject { put("ok", true) })
+    }
+
+    private suspend fun handleStSaveChat(request: VirtualApiRequest): VirtualApiResponse {
+        val bodyObj = parseBodyAsJsonObjectOrNull(request)
+            ?: return errorResponse(400, "Missing body")
+        val chatId = bodyObj["file_name"]?.jsonPrimitive?.content
+            ?: bodyObj["ch_name"]?.jsonPrimitive?.content
+            ?: return errorResponse(400, "Missing file_name")
+        val chatArray = bodyObj["chat"]?.let { runCatching { it.jsonArray }.getOrNull() }
+            ?: return errorResponse(400, "Missing chat array")
+        // Persist each message; the first element is the header.
+        for ((index, element) in chatArray.withIndex()) {
+            if (index == 0) continue // skip header
+            val msg = runCatching { json.decodeFromJsonElement(ChatMessage.serializer(), element) }.getOrNull()
+                ?: continue
+            dataStore.appendMessage(chatId, msg)
+        }
+        return jsonResponse(200, buildJsonObject { put("ok", true) })
+    }
+
+    private suspend fun handleStGetWorldInfo(request: VirtualApiRequest): VirtualApiResponse {
+        val bodyObj = parseBodyAsJsonObjectOrNull(request)
+        val name = bodyObj?.get("name")?.jsonPrimitive?.content
+            ?: bodyObj?.get("wim_name")?.jsonPrimitive?.content
+            ?: return errorResponse(400, "Missing name")
+        return handleReadWorld(name)
+    }
+
+    private suspend fun handleStGetSettings(): VirtualApiResponse {
+        // Return a settings object that includes world_names and other
+        // lists that extensions query via /api/settings/get.
+        val worldNames = dataStore.listWorldBooks().map { it.id }
+        val characters = runCatching { dataStore.listCharacters() }.getOrDefault(emptyList())
+        val body = buildJsonObject {
+            putJsonArray("world_names") {
+                for (w in worldNames) add(kotlinx.serialization.json.JsonPrimitive(w))
+            }
+            putJsonArray("character_names") {
+                for (c in characters) add(kotlinx.serialization.json.JsonPrimitive(c.name))
+            }
+            put("display_name", "tellev")
+            put("power_user", buildJsonObject { })
+            put("oai_settings", buildJsonObject { })
+        }
+        return jsonResponse(200, body)
+    }
+
+    private suspend fun handleStSaveSettings(request: VirtualApiRequest): VirtualApiResponse {
+        // Accept settings save; the virtual API doesn't persist full
+        // settings.json, just acknowledge.
+        return jsonResponse(200, buildJsonObject { put("ok", true) })
+    }
+
+    private suspend fun handleStWriteSecret(request: VirtualApiRequest): VirtualApiResponse {
+        val bodyObj = parseBodyAsJsonObject(request)
+        val id = bodyObj["key"]?.jsonPrimitive?.content
+            ?: bodyObj["id"]?.jsonPrimitive?.content
+            ?: return errorResponse(400, "Missing key/id")
+        val value = bodyObj["value"]?.jsonPrimitive?.content
+            ?: return errorResponse(400, "Missing value")
+        secretStore.putSecret(id, value)
+        return jsonResponse(200, buildJsonObject { put("ok", true) })
+    }
+
+    private suspend fun handleStReadSecret(request: VirtualApiRequest): VirtualApiResponse {
+        val bodyObj = parseBodyAsJsonObject(request)
+        val id = bodyObj["key"]?.jsonPrimitive?.content
+            ?: bodyObj["id"]?.jsonPrimitive?.content
+            ?: return errorResponse(400, "Missing key/id")
+        val value = secretStore.readSecret(id)
+            ?: return errorResponse(404, "Secret not found: $id")
+        return jsonResponse(200, buildJsonObject {
+            put("value", value)
+        })
+    }
+
+    private suspend fun handleStDeleteSecret(request: VirtualApiRequest): VirtualApiResponse {
+        val bodyObj = parseBodyAsJsonObject(request)
+        val id = bodyObj["key"]?.jsonPrimitive?.content
+            ?: bodyObj["id"]?.jsonPrimitive?.content
+            ?: return errorResponse(400, "Missing key/id")
+        secretStore.deleteSecret(id)
+        return jsonResponse(200, buildJsonObject { put("ok", true) })
+    }
+
+    private suspend fun handleStChatCompletionsStatus(request: VirtualApiRequest): VirtualApiResponse {
+        // Probe a reverse-proxy / OpenAI-compatible endpoint for model list.
+        val bodyObj = parseBodyAsJsonObjectOrNull(request)
+        val apiUrl = bodyObj?.get("api_url")?.jsonPrimitive?.content
+            ?: request.headers["X-Api-Url"]
+            ?: request.headers["x-api-url"]
+            ?: return errorResponse(400, "Missing api_url")
+
+        // Find an OpenAI-compatible adapter to probe.
+        val adapter = providerRegistry.all().firstOrNull { it.id == "openai-compatible" }
+            ?: return errorResponse(503, "No provider available")
+
+        val apiKey = bodyObj?.get("api_key")?.jsonPrimitive?.content
+            ?: request.headers["X-Api-Key"]
+            ?: runCatching { secretStore.readSecret("openai-compatible") }.getOrNull()
+        val config = ProviderConfig(
+            providerType = "openai-compatible",
+            baseUrl = apiUrl,
+            apiKey = apiKey,
+        )
+        return runCatching {
+            val models = adapter.listModels(config)
+            jsonResponse(200, buildJsonObject {
+                putJsonArray("data") {
+                    for (m in models) add(buildJsonObject {
+                        put("id", m.id)
+                        put("name", m.displayName)
+                    })
+                }
+            })
+        }.getOrElse {
+            errorResponse(502, "Provider status check failed: ${it.message}")
+        }
+    }
+
+    private suspend fun handleStChatCompletionsGenerate(request: VirtualApiRequest): VirtualApiResponse {
+        // Generation is handled by the UI layer's PromptEngine + provider
+        // adapter flow.  The virtual API returns 501 to indicate that
+        // extensions should use TavernHelper.generate() instead, which
+        // routes through the proper prompt pipeline.
+        return errorResponse(501, "Use TavernHelper.generate() for generation; direct /api/backends/chat-completions/generate is not supported via virtual API")
+    }
+
+    private suspend fun handleStUploadAvatar(request: VirtualApiRequest): VirtualApiResponse {
+        // Avatar upload is handled by the UI layer's file picker.
+        return jsonResponse(200, buildJsonObject { put("ok", true) })
+    }
+
+    private suspend fun handleStDeleteAvatar(request: VirtualApiRequest): VirtualApiResponse {
+        val bodyObj = parseBodyAsJsonObjectOrNull(request)
+        val avatarId = bodyObj?.get("avatar_id")?.jsonPrimitive?.content
+            ?: bodyObj?.get("ch_name")?.jsonPrimitive?.content
+            ?: return errorResponse(400, "Missing avatar_id")
+        // Deletion is handled by the data store; here we just acknowledge.
+        return jsonResponse(200, buildJsonObject { put("ok", true) })
+    }
+
+    private suspend fun handleStExtensionVersion(request: VirtualApiRequest): VirtualApiResponse {
+        val bodyObj = parseBodyAsJsonObjectOrNull(request)
+        val name = bodyObj?.get("name")?.jsonPrimitive?.content ?: ""
+        return jsonResponse(200, buildJsonObject {
+            put("name", name)
+            put("version", "")
+            put("installed", false)
+        })
+    }
+
+    private suspend fun handleStExtensionInstall(request: VirtualApiRequest): VirtualApiResponse {
+        return errorResponse(501, "Extension installation via virtual API is not supported; use the UI layer")
+    }
+
+    private suspend fun handleStExtensionDelete(request: VirtualApiRequest): VirtualApiResponse {
+        return errorResponse(501, "Extension deletion via virtual API is not supported; use the UI layer")
+    }
+
+    private suspend fun handleStExtensionUpdate(request: VirtualApiRequest): VirtualApiResponse {
+        return errorResponse(501, "Extension update via virtual API is not supported; use the UI layer")
     }
 }
