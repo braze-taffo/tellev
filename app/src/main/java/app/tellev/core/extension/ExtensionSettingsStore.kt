@@ -10,6 +10,7 @@ import kotlinx.serialization.json.buildJsonObject
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import java.util.stream.Collectors
 
 /**
  * Persists per-extension settings as JSON files in a SillyTavern-compatible
@@ -90,7 +91,7 @@ class ExtensionSettingsStore(
                     .filter { Files.exists(it.resolve("settings.json")) }
                     .map { it.fileName.toString() }
                     .sorted()
-                    .toList()
+                    .collect(Collectors.toList())
             }
         }
     }

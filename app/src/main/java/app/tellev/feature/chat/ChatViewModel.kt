@@ -42,6 +42,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
@@ -88,6 +89,9 @@ class ChatViewModel(
 
             override suspend fun setChatMessage(index: Int, field: String, value: String): Boolean =
                 setChatMessageFromExtension(index, field, value)
+
+            override suspend fun generateText(options: JsonObject): JsonObject? =
+                generateTextFromExtension(options)
         })
         loadInitialData()
     }
@@ -745,6 +749,86 @@ class ChatViewModel(
         )
     }
 
+    private suspend fun generateTextFromExtension(options: JsonObject): JsonObject {
+        val state = _uiState.value
+        val character = state.selectedCharacter
+            ?: throw IllegalStateException("No character is selected")
+        val preset = state.selectedPreset
+            ?: throw IllegalStateException("No generation preset is selected")
+
+        val selectedProvider = secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
+            ?: state.selectedProvider
+        val config = loadProviderConfig(selectedProvider)
+        val userInput = options.stringOption("user_input", "userInput", "prompt").orEmpty()
+        val shouldStream = options.booleanOption("should_stream", "shouldStream", "stream") ?: false
+        val generationId = options.stringOption("generation_id", "generationId")
+            ?: UUID.randomUUID().toString()
+
+        return try {
+            emitStEvent("js_generation_started", generationId)
+
+            val promptRequest = PromptBuildRequest(
+                character = character,
+                persona = state.selectedPersona,
+                messages = state.messages,
+                worldBooks = worldBooksForCharacter(state, character),
+                preset = preset,
+                userInput = userInput,
+                providerType = config.providerType,
+                metadata = buildJsonObject {
+                    put("providerType", config.providerType)
+                },
+            )
+            val promptResult = promptEngine.build(promptRequest)
+            val adapter = providerRegistry.require(config.providerType)
+
+            var accumulatedText = ""
+            var finalText = ""
+            adapter.streamGenerate(
+                config,
+                GenerateRequest(
+                    prompt = promptResult,
+                    preset = preset,
+                    stream = shouldStream,
+                ),
+            ).collect { chunk ->
+                when (chunk) {
+                    is GenerateChunk.Delta -> {
+                        accumulatedText += chunk.text
+                        if (shouldStream) {
+                            emitStEvent("js_stream_token_received_fully", accumulatedText, generationId)
+                            emitStEvent("js_stream_token_received_incrementally", chunk.text, generationId)
+                        }
+                    }
+                    is GenerateChunk.Completed -> {
+                        finalText = chunk.text.ifBlank { accumulatedText }
+                    }
+                    is GenerateChunk.Failed -> {
+                        throw IllegalStateException(chunk.error.message)
+                    }
+                }
+            }
+
+            val resultText = finalText.ifBlank { accumulatedText }
+            emitStEvent(
+                "js_generation_before_end",
+                buildJsonObject { put("message", resultText) },
+                generationId,
+            )
+            emitStEvent("js_generation_ended", resultText, generationId)
+
+            buildJsonObject {
+                put("text", resultText)
+                put("message", resultText)
+                put("content", resultText)
+                put("generation_id", generationId)
+            }
+        } catch (e: Exception) {
+            emitStEvent(StEventCatalog.GENERATION_STOPPED, generationId)
+            throw e
+        }
+    }
+
     private suspend fun setChatMessageFromExtension(index: Int, field: String, value: String): Boolean {
         val state = _uiState.value
         val session = state.currentSession ?: return false
@@ -900,6 +984,25 @@ class ChatViewModel(
             put("raw", raw)
             put("data", (raw["data"] as? JsonObject) ?: raw)
         }
+
+    private fun JsonObject.stringOption(vararg keys: String): String? {
+        for (key in keys) {
+            val value = this[key]
+                ?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+                ?.takeIf { it.isNotBlank() }
+            if (value != null) return value
+        }
+        return null
+    }
+
+    private fun JsonObject.booleanOption(vararg keys: String): Boolean? {
+        for (key in keys) {
+            val value = this[key]
+                ?.let { runCatching { it.jsonPrimitive.content.toBooleanStrictOrNull() }.getOrNull() }
+            if (value != null) return value
+        }
+        return null
+    }
 
     private fun jsonElementOf(value: Any?): JsonElement =
         when (value) {

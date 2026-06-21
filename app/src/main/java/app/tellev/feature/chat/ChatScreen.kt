@@ -476,7 +476,8 @@ private fun ChatBubble(
 
         val rawText = message.swipes.getOrNull(message.swipeIndex) ?: message.content
         val displayText = CharacterRegexApplier.applyForDisplay(rawText, message.role, character)
-        val html = extractTavernHtml(displayText)
+        val renderSegments = TavernRenderParser.parse(displayText)
+        val hasFrontend = renderSegments.any { it is TavernRenderSegment.Frontend }
         val dragModifier = Modifier.pointerInput(message.id) {
             detectHorizontalDragGestures(
                 onDragEnd = {
@@ -493,7 +494,7 @@ private fun ChatBubble(
             )
         }
 
-        if (html != null && !isUser) {
+        if (hasFrontend && !isUser) {
             if (message.swipes.size > 1) {
                 HtmlSwipeControls(
                     currentIndex = message.swipeIndex,
@@ -514,8 +515,8 @@ private fun ChatBubble(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant,
                 ),
             ) {
-                TavernHtmlPanel(
-                    html = html,
+                TavernMessageContent(
+                    segments = renderSegments,
                     availableMaxHeight = htmlPanelMaxHeight,
                 )
             }
@@ -547,7 +548,7 @@ private fun ChatBubble(
             }
         }
 
-        if (message.swipes.size > 1 && (html == null || isUser)) {
+        if (message.swipes.size > 1 && (!hasFrontend || isUser)) {
             SwipeIndicator(
                 currentIndex = message.swipeIndex,
                 totalSwipes = message.swipes.size,
@@ -556,47 +557,36 @@ private fun ChatBubble(
     }
 }
 
-private fun extractTavernHtml(text: String): String? {
-    val fenced = Regex("""```(?:html)?\s*([\s\S]*?)```""", RegexOption.IGNORE_CASE)
-        .findAll(text)
-        .mapNotNull { it.groups[1]?.value?.trim() }
-        .firstOrNull { it.looksLikeTavernHtml() }
-    if (!fenced.isNullOrBlank()) return fenced
-
-    val htmlBlock = Regex("""<html[\s\S]*?</html>""", RegexOption.IGNORE_CASE)
-        .find(text)
-        ?.value
-        ?.trim()
-    if (!htmlBlock.isNullOrBlank()) return htmlBlock
-
-    val bodyBlock = Regex("""<body[\s\S]*?</body>""", RegexOption.IGNORE_CASE)
-        .find(text)
-        ?.value
-        ?.trim()
-    if (bodyBlock.isNullOrBlank()) return null
-
-    val styles = Regex("""<style[\s\S]*?</style>""", RegexOption.IGNORE_CASE)
-        .findAll(text)
-        .map { it.value.trim() }
-        .distinct()
-        .joinToString("\n")
-    val scripts = Regex("""<script[\s\S]*?</script>""", RegexOption.IGNORE_CASE)
-        .findAll(text)
-        .map { it.value.trim() }
-        .distinct()
-        .joinToString("\n")
-
-    return listOf(styles, bodyBlock, scripts)
-        .filter { it.isNotBlank() }
-        .joinToString("\n")
+@Composable
+private fun TavernMessageContent(
+    segments: List<TavernRenderSegment>,
+    availableMaxHeight: Dp,
+) {
+    Column {
+        segments.forEachIndexed { index, segment ->
+            when (segment) {
+                is TavernRenderSegment.Text -> {
+                    Text(
+                        text = segment.text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(
+                            start = 12.dp,
+                            top = if (index == 0) 12.dp else 8.dp,
+                            end = 12.dp,
+                            bottom = 8.dp,
+                        ),
+                    )
+                }
+                is TavernRenderSegment.Frontend -> {
+                    TavernHtmlPanel(
+                        html = segment.html,
+                        availableMaxHeight = availableMaxHeight,
+                    )
+                }
+            }
+        }
+    }
 }
-
-private fun String.looksLikeTavernHtml(): Boolean =
-    contains("<html", ignoreCase = true) ||
-        contains("<body", ignoreCase = true) ||
-        contains("<style", ignoreCase = true) ||
-        contains("<script", ignoreCase = true) ||
-        contains("<div", ignoreCase = true)
 
 private class TavernHeightBridge(
     private val onHeightChanged: (Int) -> Unit,
