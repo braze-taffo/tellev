@@ -16,6 +16,8 @@ interface ExtensionContextProvider {
     fun snapshot(): JsonObject
 
     suspend fun setChatMessage(index: Int, field: String, value: String): Boolean = false
+
+    suspend fun generateText(options: JsonObject): JsonObject? = null
 }
 
 interface ExtensionHost {

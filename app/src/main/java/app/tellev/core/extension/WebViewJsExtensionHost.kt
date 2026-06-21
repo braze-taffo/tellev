@@ -414,9 +414,45 @@ class WebViewJsExtensionHost(
                     headers = mapOf("X-Extension-Id" to extensionId, "X-Capability-Token" to token),
                 )
                 if (!checkApiPermissions(path, requestId)) return@launch
-                val response = apiRouter.route(request)
+                val response = runCatching {
+                    routeApiRequestForExtension(request)
+                }.getOrElse { error ->
+                    VirtualApiResponse(
+                        status = 500,
+                        headers = mapOf("Content-Type" to "application/json"),
+                        body = json.encodeToString(
+                            JsonObject.serializer(),
+                            buildJsonObject {
+                                put("error", error.message ?: "Extension API call failed")
+                                put("status", 500)
+                            },
+                        ),
+                    )
+                }
                 deliverApiResponseToJs(requestId, response)
             }
+        }
+
+        private suspend fun routeApiRequestForExtension(request: VirtualApiRequest): VirtualApiResponse {
+            if (
+                request.method.equals("POST", ignoreCase = true) &&
+                request.path.substringBefore("?") == "/api/backends/chat-completions/generate"
+            ) {
+                val options = request.body
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { runCatching { json.parseToJsonElement(it).jsonObject }.getOrNull() }
+                    ?: buildJsonObject { }
+                val result = _contextProvider?.generateText(options)
+                if (result != null) {
+                    return VirtualApiResponse(
+                        status = 200,
+                        headers = mapOf("Content-Type" to "application/json"),
+                        body = json.encodeToString(JsonObject.serializer(), result),
+                    )
+                }
+            }
+
+            return apiRouter.route(request)
         }
 
         private suspend fun checkApiPermissions(path: String, requestId: String): Boolean {
