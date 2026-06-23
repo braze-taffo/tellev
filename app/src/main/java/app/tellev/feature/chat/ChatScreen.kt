@@ -33,11 +33,13 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MoreVert
@@ -539,12 +541,10 @@ private fun ChatBubble(
                     },
                 ),
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = displayText,
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                }
+                TavernMessageContent(
+                    segments = renderSegments,
+                    availableMaxHeight = htmlPanelMaxHeight,
+                )
             }
         }
 
@@ -566,16 +566,21 @@ private fun TavernMessageContent(
         segments.forEachIndexed { index, segment ->
             when (segment) {
                 is TavernRenderSegment.Text -> {
-                    Text(
-                        text = segment.text,
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(
-                            start = 12.dp,
-                            top = if (index == 0) 12.dp else 8.dp,
-                            end = 12.dp,
-                            bottom = 8.dp,
-                        ),
-                    )
+                    SelectionContainer {
+                        Text(
+                            text = segment.text,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.padding(
+                                start = 12.dp,
+                                top = if (index == 0) 12.dp else 8.dp,
+                                end = 12.dp,
+                                bottom = 8.dp,
+                            ),
+                        )
+                    }
+                }
+                is TavernRenderSegment.Reasoning -> {
+                    ReasoningBlock(content = segment.content)
                 }
                 is TavernRenderSegment.Frontend -> {
                     TavernHtmlPanel(
@@ -583,6 +588,54 @@ private fun TavernMessageContent(
                         availableMaxHeight = availableMaxHeight,
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReasoningBlock(content: String) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 8.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = if (expanded) Icons.Default.KeyboardArrowDown
+                else Icons.Default.KeyboardArrowRight,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = if (expanded) "思考过程" else "思考过程 · 点击展开",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (expanded) {
+            SelectionContainer {
+                Text(
+                    text = content,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(
+                        start = 10.dp,
+                        end = 10.dp,
+                        bottom = 10.dp,
+                    ),
+                )
             }
         }
     }
@@ -828,10 +881,12 @@ private fun StreamingBubble(
             ),
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.bodyLarge,
-                )
+                SelectionContainer {
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
             }
         }
     }

@@ -36,6 +36,7 @@ import app.tellev.core.storage.StDirectoryLayout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
 class TellevGraph private constructor(
@@ -48,6 +49,7 @@ class TellevGraph private constructor(
     val permissionManager: ExtensionPermissionManager,
     val apiRouter: VirtualApiRouter,
 ) {
+    val importedCardSignal = MutableStateFlow(0L)
     companion object {
         fun create(context: Context): TellevGraph {
             val root = context.filesDir.toPath().resolve("st-data")

@@ -27,6 +27,7 @@ data class CharactersUiState(
 
 class CharactersViewModel(
     private val dataStore: StDataStore,
+    private val importedCardSignal: MutableStateFlow<Long>,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CharactersUiState())
@@ -208,6 +209,7 @@ class CharactersViewModel(
                     )
                 }
                 loadCharacters()
+                importedCardSignal.value = importedCardSignal.value + 1L
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -285,11 +287,12 @@ class CharactersViewModel(
 
 class CharactersViewModelFactory(
     private val dataStore: StDataStore,
+    private val importedCardSignal: MutableStateFlow<Long>,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(CharactersViewModel::class.java)) {
-            return CharactersViewModel(dataStore = dataStore) as T
+            return CharactersViewModel(dataStore = dataStore, importedCardSignal = importedCardSignal) as T
         }
         throw IllegalArgumentException("未知 ViewModel 类型：${modelClass.name}")
     }

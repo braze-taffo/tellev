@@ -2,12 +2,21 @@ package app.tellev.feature.chat
 
 sealed interface TavernRenderSegment {
     data class Text(val text: String) : TavernRenderSegment
+    data class Reasoning(val content: String) : TavernRenderSegment
     data class Frontend(val html: String) : TavernRenderSegment
 }
 
 object TavernRenderParser {
     private val fencedCode = Regex(
         """(?m)(^|\n)([ \t]*)(`{3,}|~{3,})([^\r\n]*)\r?\n([\s\S]*?)\r?\n[ \t]*\3[ \t]*(?=\r?\n|$)""",
+    )
+    // Provider-emitted reasoning blocks. OpenAiCompatibleAdapter wraps model
+    // reasoning as <reasoning>...</reasoning>; many models (Qwen, DeepSeek
+    // variants) emit <think>...</think>. Both are stripped out of the message
+    // body and rendered as a separate collapsible Reasoning segment.
+    private val reasoningBlock = Regex(
+        """<(?:reasoning|think)>([\s\S]*?)</(?:reasoning|think)>""",
+        RegexOption.IGNORE_CASE,
     )
     private val htmlDocument = Regex("""<html\b[\s\S]*?</html>""", RegexOption.IGNORE_CASE)
     private val bodyDocument = Regex("""<body\b[\s\S]*?</body>""", RegexOption.IGNORE_CASE)
@@ -29,6 +38,29 @@ object TavernRenderParser {
     )
 
     fun parse(text: String): List<TavernRenderSegment> {
+        if (text.isBlank()) return emptyList()
+
+        // Split out reasoning blocks first so they never leak into the message
+        // body, then run the normal frontend/text parsing on each gap. Gaps are
+        // trimmed so a trailing "\n" left after a reasoning block does not
+        // render as a leading blank line.
+        if (reasoningBlock.containsMatchIn(text)) {
+            val segments = mutableListOf<TavernRenderSegment>()
+            var cursor = 0
+            for (match in reasoningBlock.findAll(text)) {
+                segments += parseWithoutReasoning(text.substring(cursor, match.range.first).trim())
+                val reasoning = match.groupValues[1].trim()
+                if (reasoning.isNotEmpty()) segments += TavernRenderSegment.Reasoning(reasoning)
+                cursor = match.range.last + 1
+            }
+            segments += parseWithoutReasoning(text.substring(cursor).trim())
+            return segments
+        }
+
+        return parseWithoutReasoning(text)
+    }
+
+    private fun parseWithoutReasoning(text: String): List<TavernRenderSegment> {
         if (text.isBlank()) return emptyList()
 
         val fenced = parseFencedFrontendBlocks(text)

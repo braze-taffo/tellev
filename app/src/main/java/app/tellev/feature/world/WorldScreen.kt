@@ -163,7 +163,9 @@ fun WorldBooksListScreen(
                     items(state.worldBooks, key = { it.id }) { book ->
                         WorldBookListItem(
                             book = book,
+                            activated = book.id !in state.disabledWorldIds,
                             onClick = { onBookClick(book.id) },
+                            onToggleActivation = { viewModel.toggleWorldActivation(book.id) },
                             onDelete = { viewModel.deleteBook(book.id) },
                         )
                     }
@@ -209,7 +211,9 @@ fun WorldBooksListScreen(
 @Composable
 private fun WorldBookListItem(
     book: WorldBook,
+    activated: Boolean,
     onClick: () -> Unit,
+    onToggleActivation: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -218,7 +222,8 @@ private fun WorldBookListItem(
         modifier = Modifier.fillMaxWidth(),
         onClick = onClick,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            containerColor = if (activated) MaterialTheme.colorScheme.surfaceVariant
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
         ),
     ) {
         Row(
@@ -239,6 +244,13 @@ private fun WorldBookListItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+
+            Switch(
+                checked = activated,
+                onCheckedChange = { onToggleActivation() },
+                modifier = Modifier.height(24.dp),
+            )
+            Spacer(modifier = Modifier.width(4.dp))
 
             IconButton(onClick = { showDeleteDialog = true }) {
                 Icon(

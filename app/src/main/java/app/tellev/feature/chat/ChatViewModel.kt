@@ -60,6 +60,7 @@ data class ChatUiState(
     val personas: List<Persona> = emptyList(),
     val selectedPersona: Persona? = null,
     val worldBooks: List<WorldBook> = emptyList(),
+    val disabledWorldIds: Set<String> = emptySet(),
     val presets: List<GenerationPreset> = emptyList(),
     val selectedPreset: GenerationPreset? = null,
     val sessions: List<ChatSession> = emptyList(),
@@ -105,6 +106,7 @@ class ChatViewModel(
                 val characters = dataStore.listCharacters()
                 val personas = dataStore.listPersonas()
                 val worldBooks = dataStore.listWorldBooks()
+                val disabledWorldIds = dataStore.readDisabledWorldIds()
                 val presets = dataStore.listPresets()
 
                 val defaultPreset = presets.firstOrNull()
@@ -119,6 +121,7 @@ class ChatViewModel(
                         characters = characters,
                         personas = personas,
                         worldBooks = worldBooks,
+                        disabledWorldIds = disabledWorldIds,
                         presets = presets,
                         selectedPreset = defaultPreset,
                         selectedPersona = defaultPersona,
@@ -253,7 +256,7 @@ class ChatViewModel(
                     character = character,
                     persona = state.selectedPersona,
                     messages = updatedMessages,
-                    worldBooks = worldBooksForCharacter(state, character),
+                    worldBooks = worldBooksForCharacter(state, character, dataStore.readDisabledWorldIds()),
                     preset = preset,
                     userInput = messageText,
                     providerType = config.providerType,
@@ -771,7 +774,7 @@ class ChatViewModel(
                 character = character,
                 persona = state.selectedPersona,
                 messages = state.messages,
-                worldBooks = worldBooksForCharacter(state, character),
+                worldBooks = worldBooksForCharacter(state, character, dataStore.readDisabledWorldIds()),
                 preset = preset,
                 userInput = userInput,
                 providerType = config.providerType,
@@ -1100,17 +1103,15 @@ class ChatViewModel(
         )
     }
 
-    private fun worldBooksForCharacter(state: ChatUiState, character: CharacterCard): List<WorldBook> {
-        val embeddedBook = character.characterBook
-            ?.takeIf { it.entries.isNotEmpty() }
-            ?.copy(id = "${character.id}_character_book")
-            ?: return state.worldBooks
-
-        return if (state.worldBooks.any { it.id == embeddedBook.id }) {
-            state.worldBooks
-        } else {
-            state.worldBooks + embeddedBook
-        }
+    private fun worldBooksForCharacter(
+        state: ChatUiState,
+        character: CharacterCard,
+        disabledIds: Set<String>,
+    ): List<WorldBook> {
+        // Embedded character books are written into worlds/ at import time, so
+        // state.worldBooks already contains them. Filter to only active books;
+        // worlds absent from the disabled set are active (default on).
+        return state.worldBooks.filter { it.id !in disabledIds }
     }
 
     private fun generateMessageId(): String = "msg-${UUID.randomUUID()}"

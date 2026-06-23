@@ -68,6 +68,7 @@ class MainActivity : ComponentActivity() {
             else -> parsed
         }
         graph.dataStore.importCharacter(imported, bytes, fileName)
+        graph.importedCardSignal.value = graph.importedCardSignal.value + 1L
         return imported.name
     }
 

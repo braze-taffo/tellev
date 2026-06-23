@@ -24,6 +24,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -291,6 +292,27 @@ class FileStDataStore(
 
         layout.worlds.resolve("${book.id}.json").writeText(json.encodeToString(JsonObject.serializer(), output))
     }
+
+    override suspend fun readDisabledWorldIds(): Set<String> = withContext(Dispatchers.IO) {
+        val path = layout.worldInfoActivation
+        if (!path.exists()) return@withContext emptySet()
+        val raw = runCatching { json.parseToJsonElement(path.readText()) }.getOrNull() as? JsonObject
+            ?: return@withContext emptySet()
+        val disabled = raw["disabled"] as? JsonArray ?: return@withContext emptySet()
+        disabled.mapNotNull { it.stringContentOrNull() }.toSet()
+    }
+
+    override suspend fun saveDisabledWorldIds(ids: Set<String>): Unit = withContext(Dispatchers.IO) {
+        val output = buildJsonObject {
+            putJsonArray("disabled") {
+                ids.sorted().forEach { add(JsonPrimitive(it)) }
+            }
+        }
+        layout.worldInfoActivation.writeText(json.encodeToString(JsonObject.serializer(), output))
+    }
+
+    private fun JsonElement.stringContentOrNull(): String? =
+        (this as? JsonPrimitive)?.takeIf { it.isString }?.content
 
     override suspend fun listPresets(): List<GenerationPreset> = withContext(Dispatchers.IO) {
         val roots = listOf(layout.openAiSettings, layout.textGenSettings, layout.koboldAiSettings, layout.novelAiSettings)

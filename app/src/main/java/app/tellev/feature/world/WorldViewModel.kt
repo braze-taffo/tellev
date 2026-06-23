@@ -15,6 +15,7 @@ import java.util.UUID
 
 data class WorldUiState(
     val worldBooks: List<WorldBook> = emptyList(),
+    val disabledWorldIds: Set<String> = emptySet(),
     val selectedBook: WorldBook? = null,
     val selectedEntry: WorldBookEntry? = null,
     val searchQuery: String = "",
@@ -40,9 +41,11 @@ class WorldViewModel(
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
                 val books = dataStore.listWorldBooks()
+                val disabledWorldIds = dataStore.readDisabledWorldIds()
                 _uiState.update {
                     it.copy(
                         worldBooks = books,
+                        disabledWorldIds = disabledWorldIds,
                         isLoading = false,
                     )
                 }
@@ -52,6 +55,21 @@ class WorldViewModel(
                         isLoading = false,
                         error = "加载世界书失败：${e.message}",
                     )
+                }
+            }
+        }
+    }
+
+    fun toggleWorldActivation(id: String) {
+        viewModelScope.launch {
+            val current = _uiState.value.disabledWorldIds
+            val updated = if (id in current) current - id else current + id
+            try {
+                dataStore.saveDisabledWorldIds(updated)
+                _uiState.update { it.copy(disabledWorldIds = updated) }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(error = "更新世界书开关失败：${e.message}")
                 }
             }
         }

@@ -8,13 +8,20 @@ import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,6 +90,7 @@ fun TellevRoot() {
     val charactersViewModel: CharactersViewModel = viewModel(
         factory = CharactersViewModelFactory(
             dataStore = graph.dataStore,
+            importedCardSignal = graph.importedCardSignal,
         ),
     )
 
@@ -110,6 +118,31 @@ fun TellevRoot() {
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
+
+    // Restart prompt: triggered when a character card is imported (either from
+    // the in-app importer or from an external share/open intent). The lists in
+    // each tab are one-shot snapshots loaded in the ViewModels' init blocks,
+    // so a restart (activity recreation) is needed to pick up the new card and
+    // any embedded world book.
+    val importedCardSignal by graph.importedCardSignal.collectAsState()
+    var lastHandledSignal by remember { mutableLongStateOf(0L) }
+    var showRestartPrompt by remember { mutableStateOf(false) }
+    if (importedCardSignal > lastHandledSignal) {
+        lastHandledSignal = importedCardSignal
+        showRestartPrompt = true
+    }
+    if (showRestartPrompt) {
+        AlertDialog(
+            onDismissRequest = { showRestartPrompt = false },
+            title = { Text("需要重启应用") },
+            text = { Text("角色卡已导入。请重启应用以在角色和世界书界面加载新的角色卡。") },
+            confirmButton = {
+                TextButton(onClick = { showRestartPrompt = false }) {
+                    Text("我知道了")
+                }
+            },
+        )
+    }
 
     // Determine which bottom tab is selected based on current destination
     val currentTab = TellevTab.entries.find { tab ->

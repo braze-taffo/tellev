@@ -129,4 +129,50 @@ class TavernRenderParserTest {
         )
         assertEquals(TavernRenderSegment.Text("after"), segments[2])
     }
+
+    @Test
+    fun `splits reasoning tag into a separate segment`() {
+        val text = "<reasoning>let me think\nstep by step</reasoning>\nfinal answer"
+
+        val segments = TavernRenderParser.parse(text)
+
+        assertEquals(2, segments.size)
+        assertEquals(TavernRenderSegment.Reasoning("let me think\nstep by step"), segments[0])
+        assertEquals(TavernRenderSegment.Text("final answer"), segments[1])
+    }
+
+    @Test
+    fun `splits think tag variant into a separate segment`() {
+        val openThink = "<" + "think" + ">"
+        val closeThink = "</" + "think" + ">"
+        val text = "preamble\n${openThink}hidden reasoning${closeThink}\nreply"
+
+        val segments = TavernRenderParser.parse(text)
+
+        assertEquals(3, segments.size)
+        assertEquals(TavernRenderSegment.Text("preamble"), segments[0])
+        assertEquals(TavernRenderSegment.Reasoning("hidden reasoning"), segments[1])
+        assertEquals(TavernRenderSegment.Text("reply"), segments[2])
+    }
+
+    @Test
+    fun `reasoning block can sit before a frontend block`() {
+        val text = "<reasoning>plan</reasoning>\n```html\n<html><body>x</body></html>\n```"
+
+        val segments = TavernRenderParser.parse(text)
+
+        assertEquals(2, segments.size)
+        assertEquals(TavernRenderSegment.Reasoning("plan"), segments[0])
+        assertTrue(segments[1] is TavernRenderSegment.Frontend)
+    }
+
+    @Test
+    fun `reasoning only message collapses body to a single reasoning segment`() {
+        val text = "<reasoning>just thinking</reasoning>"
+
+        val segments = TavernRenderParser.parse(text)
+
+        assertEquals(1, segments.size)
+        assertEquals(TavernRenderSegment.Reasoning("just thinking"), segments[0])
+    }
 }
