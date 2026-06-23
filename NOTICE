@@ -12,7 +12,7 @@ This project is not the official SillyTavern application. Public releases must
 keep this notice, the AGPL-3.0 license, and a clear source-code link.
 
 tellev is released under the GNU Affero General Public License v3.0
-(AGPL-3.0). The tellev name, launcher icon, author profile information, and
-donation QR codes identify official builds and the project author. This notice
-does not add restrictions to the AGPL-covered source code, but it does not grant
-permission to impersonate official releases or imply endorsement by the author.
+(AGPL-3.0). The tellev name, launcher icon, and author profile information
+identify official builds and the project author. This notice does not add
+restrictions to the AGPL-covered source code, but it does not grant permission
+to impersonate official releases or imply endorsement by the author.

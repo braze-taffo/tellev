@@ -1,60 +1,83 @@
 # tellev
 
-Native Android architecture shell for a SillyTavern-compatible client.
+tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是在手机上提供更贴近原生应用体验的角色管理、聊天、世界书、扩展和模型服务配置能力，同时尽量保持与 SillyTavern 数据格式和使用习惯兼容。
 
-This repository is intentionally only the architecture layer. It defines the app
-module, core interfaces, compatibility data layout, prompt pipeline, provider
-adapter boundary, extension host boundary, native plugin boundary, and a minimal
-Compose entry point. Feature-complete implementation should happen inside these
-boundaries instead of replacing them.
+> 当前项目仍在早期开发阶段，功能会持续调整。公开版本以 GitHub Releases 中发布的 APK 为准。
 
-## Baseline
+## 主要功能
 
-- App name: `tellev`
-- Package: `app.tellev`
-- Minimum Android: 12 / API 31
-- UI: Kotlin + Jetpack Compose + Material 3
-- Network: OkHttp
-- Serialization: Kotlin Serialization
-- License: AGPL-3.0
-- SillyTavern baseline: `release`, version `1.18.0`, commit `51ad27fb86d39a3daca3adaa970375c9670c12df`
+- 原生 Android / Jetpack Compose 界面
+- 角色卡导入、管理与本地存储
+- 聊天会话、消息渲染和前端 HTML 片段展示
+- 世界书管理与启用状态控制
+- OpenAI 兼容接口配置
+- 预设、密钥、主题和备份管理
+- SillyTavern 风格扩展运行环境的兼容实现
 
-## Current State
+## 下载安装
 
-- Android project skeleton is present under `app/`.
-- `StDataStore` and `FileStDataStore` define SillyTavern-compatible storage roots.
-- `PromptEngine` defines the prompt-building boundary.
-- `ProviderAdapter` and `OpenAiCompatibleAdapter` define remote model integration.
-- `ExtensionHost` and `WebViewJsExtensionHost` define the JS extension bridge.
-- `NativePluginApi` defines the non-Node native plugin replacement.
-- `SecretStore` has an Android Keystore-backed implementation.
-- A minimal Compose shell exists for handoff and visual direction.
+可以在 GitHub Releases 下载最新 APK：
 
-## Build Note
+[tellev Releases](https://github.com/braze-taffo/tellev/releases)
 
-The Gradle wrapper is included in the repository (`gradlew`, `gradlew.bat`,
-`gradle/wrapper/*`).  Open this folder in Android Studio to let it sync the
-Gradle project, then run:
+目前发布的是 debug APK，适合测试和日常试用。安装前请确认设备允许安装来自浏览器或文件管理器的应用。
+
+## 项目信息
+
+- 应用名：`tellev`
+- 包名：`app.tellev`
+- 最低系统：Android 12 / API 31
+- UI：Kotlin + Jetpack Compose + Material 3
+- 网络：OkHttp
+- 序列化：Kotlin Serialization
+- 开源协议：AGPL-3.0
+- SillyTavern 兼容基线：`release`，版本 `1.18.0`，提交 `51ad27fb86d39a3daca3adaa970375c9670c12df`
+
+## 本地构建
+
+项目已包含 Gradle Wrapper。打开本目录后，可以使用 Android Studio 同步工程，也可以直接运行：
 
 ```powershell
 .\gradlew.bat test
 .\gradlew.bat assembleDebug
 ```
 
-The wrapper uses Gradle 8.11.1 with AGP 8.10.1 and Kotlin 2.1.21.
+构建环境：
 
-## License
+- Gradle 8.11.1
+- Android Gradle Plugin 8.10.1
+- Kotlin 2.1.21
 
-tellev is released under the GNU Affero General Public License v3.0
-(AGPL-3.0). See `LICENSE` for the full license text.
+Debug APK 输出路径：
 
-The `tellev` name, launcher icon, author profile information, and donation QR
-codes are used to identify official builds and the project author. This notice
-does not add restrictions to the AGPL-covered source code, but it does not grant
-permission to impersonate official releases or imply endorsement by the author.
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
 
-## AI Handoff
+## 开源协议
 
-Read `docs/ARCHITECTURE.md` first, then implement tasks from `docs/AI_TASKS.md`.
-Do not replace the public interfaces unless a task explicitly says to evolve
-them with tests and migration notes.
+tellev 以 GNU Affero General Public License v3.0（AGPL-3.0）发布。完整协议文本见 [LICENSE](LICENSE)。
+
+你可以自由使用、复制、修改和分发本程序；如果分发修改版，或将修改版作为网络服务提供给他人使用，应按 AGPL-3.0 提供相应源代码。
+
+`tellev` 名称、启动图标和作者信息用于识别官方版本与项目作者。该说明不对 AGPL 覆盖的源代码增加额外限制，但也不表示允许冒充官方版本，或暗示作者为第三方版本背书。
+
+## 与 SillyTavern 的关系
+
+tellev 不是 SillyTavern 官方应用。它是一个受 SillyTavern 启发、并尽量兼容其数据结构和部分工作流的 Android 客户端实现。
+
+SillyTavern 项目地址：
+
+[https://github.com/SillyTavern/SillyTavern](https://github.com/SillyTavern/SillyTavern)
+
+## 作者
+
+- B站：迷迭香のねこ
+- 主页：[https://space.bilibili.com/499259948](https://space.bilibili.com/499259948)
+
+## 开发文档
+
+如果要继续开发，可以先阅读：
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/AI_TASKS.md](docs/AI_TASKS.md)
