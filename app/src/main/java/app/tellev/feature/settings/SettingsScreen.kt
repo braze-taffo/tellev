@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,10 +71,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 import app.tellev.core.model.GenerationPreset
 import java.util.UUID
 import kotlin.math.roundToInt
@@ -87,6 +92,8 @@ fun SettingsScreen(
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
+    val bilibiliProfileUrl = "https://space.bilibili.com/499259948"
 
     var showPresetDialog by remember { mutableStateOf(false) }
     var showAddSecretDialog by remember { mutableStateOf(false) }
@@ -532,10 +539,59 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                             Text(
-                                text = "以 AGPL-3.0 许可发布。",
+                                text = "发布许可",
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            Text(
+                                text = "tellev 继续以 GNU Affero General Public License v3.0（AGPL-3.0）发布。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = "你可以自由使用、复制、修改和分发本程序；分发修改版或提供网络服务时，应按 AGPL-3.0 提供相应源代码。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = "tellev 名称、图标、作者信息和收款码仅用于官方版本展示，未经授权不得用于冒充官方版本或误导性商业分发。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                            Text(
+                                text = "作者",
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            Text(
+                                text = "B站：迷迭香のねこ",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            OutlinedButton(
+                                onClick = { uriHandler.openUri(bilibiliProfileUrl) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("打开作者 B 站主页")
+                            }
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                            Text(
+                                text = "支持作者",
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            Text(
+                                text = "如果这个项目帮到了你，可以通过微信或支付宝自愿打赏。打赏不影响本软件的 AGPL-3.0 开源许可。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            DonationQrImage(
+                                label = "支付宝",
+                                imageResId = R.drawable.donate_alipay,
+                            )
+                            DonationQrImage(
+                                label = "微信",
+                                imageResId = R.drawable.donate_wechat,
                             )
                         }
                     }
@@ -616,6 +672,28 @@ fun SettingsScreen(
                     Text("取消")
                 }
             },
+        )
+    }
+}
+
+@Composable
+private fun DonationQrImage(
+    label: String,
+    imageResId: Int,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Image(
+            painter = painterResource(imageResId),
+            contentDescription = "$label 收款码",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(360.dp),
         )
     }
 }
