@@ -43,6 +43,16 @@ Gradle project, then run:
 
 The wrapper uses Gradle 8.11.1 with AGP 8.10.1 and Kotlin 2.1.21.
 
+## License
+
+tellev is released under the GNU Affero General Public License v3.0
+(AGPL-3.0). See `LICENSE` for the full license text.
+
+The `tellev` name, launcher icon, author profile information, and donation QR
+codes are used to identify official builds and the project author. This notice
+does not add restrictions to the AGPL-covered source code, but it does not grant
+permission to impersonate official releases or imply endorsement by the author.
+
 ## AI Handoff
 
 Read `docs/ARCHITECTURE.md` first, then implement tasks from `docs/AI_TASKS.md`.
