@@ -34,6 +34,9 @@ data class StDirectoryLayout(
     val backups: Path,
     val systemPrompts: Path,
     val reasoning: Path,
+    // tellev-owned app state (not a SillyTavern file format). Single file, not
+    // a directory, so it is intentionally absent from allDirectories.
+    val worldInfoActivation: Path,
 ) {
     val allDirectories: List<Path> = listOf(
         root,
@@ -102,6 +105,7 @@ data class StDirectoryLayout(
             backups = root.resolve("backups"),
             systemPrompts = root.resolve("sysprompt"),
             reasoning = root.resolve("reasoning"),
+            worldInfoActivation = root.resolve("world-info-activation.json"),
         )
     }
 }

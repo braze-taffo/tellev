@@ -34,6 +34,12 @@ interface StDataStore {
     suspend fun readWorldBook(id: String): WorldBook
     suspend fun saveWorldBook(book: WorldBook)
 
+    // World book activation. Worlds absent from the disabled set are active
+    // (default on), so freshly imported character books activate by default
+    // and no migration is needed.
+    suspend fun readDisabledWorldIds(): Set<String>
+    suspend fun saveDisabledWorldIds(ids: Set<String>)
+
     suspend fun listPresets(): List<GenerationPreset>
     suspend fun savePreset(preset: GenerationPreset)
     suspend fun deletePreset(id: String, providerType: String? = null): Boolean

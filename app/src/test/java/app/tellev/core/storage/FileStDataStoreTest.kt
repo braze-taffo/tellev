@@ -185,6 +185,30 @@ class FileStDataStoreTest {
         assertEquals("fixture", entry["extensions"]!!.jsonObject["source"]!!.jsonPrimitive.content)
     }
 
+    // ---- World Book Activation Tests ----
+
+    @Test
+    fun `readDisabledWorldIds returns empty when no activation file exists`() = runBlocking {
+        assertEquals(emptySet<String>(), store.readDisabledWorldIds())
+    }
+
+    @Test
+    fun `saveDisabledWorldIds round-trips and survives reload`() = runBlocking {
+        store.saveDisabledWorldIds(setOf("alice_character_book", "global_lore"))
+
+        assertEquals(setOf("alice_character_book", "global_lore"), store.readDisabledWorldIds())
+    }
+
+    @Test
+    fun `toggling a world id persists add then remove`() = runBlocking {
+        store.saveDisabledWorldIds(emptySet())
+        store.saveDisabledWorldIds(store.readDisabledWorldIds() + "wb_one")
+        assertEquals(setOf("wb_one"), store.readDisabledWorldIds())
+
+        store.saveDisabledWorldIds(store.readDisabledWorldIds() - "wb_one")
+        assertEquals(emptySet<String>(), store.readDisabledWorldIds())
+    }
+
     // ---- Chat JSONL Tests ----
 
     @Test
