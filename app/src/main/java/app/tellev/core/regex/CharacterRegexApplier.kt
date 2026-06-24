@@ -14,10 +14,32 @@ object CharacterRegexApplier {
     private const val USER_INPUT = 1
     private const val AI_OUTPUT = 2
 
+    /** A regex script's stable identifier (for the activation set) and a display name. */
+    data class RegexScriptSummary(
+        val id: String,
+        val name: String,
+    )
+
+    /**
+     * Summarize the scripts in a `regex_scripts` array into stable
+     * [RegexScriptSummary]s. The [id] matches what [applyForDisplay] uses to
+     * decide whether a script is disabled, so toggles persisted by id apply to
+     * the same script both here and at render time.
+     */
+    fun summarizeScripts(scripts: JsonArray): List<RegexScriptSummary> =
+        scripts.mapIndexedNotNull { index, element ->
+            val script = element as? JsonObject ?: return@mapIndexedNotNull null
+            val name = script.stringValue("scriptName")?.takeIf { it.isNotBlank() }
+                ?: script.stringValue("findRegex")?.takeIf { it.isNotBlank() }
+                ?: "未命名脚本"
+            RegexScriptSummary(scriptIdentifier(script, index), name)
+        }
+
     fun applyForDisplay(
         text: String,
         role: MessageRole,
         character: CharacterCard?,
+        disabledScriptIds: Set<String> = emptySet(),
     ): String {
         if (text.isBlank() || character == null) return text
         val placement = when (role) {
@@ -31,11 +53,12 @@ object CharacterRegexApplier {
             ?.arrayValue("regex_scripts")
             ?: return text
 
-        return scripts.fold(text) { current, scriptElement ->
-            val script = scriptElement as? JsonObject ?: return@fold current
-            if (script.booleanValue("disabled") == true) return@fold current
-            if (script.booleanValue("promptOnly") == true) return@fold current
-            if (!script.intArray("placement").contains(placement)) return@fold current
+        return scripts.foldIndexed(text) { index, current, scriptElement ->
+            val script = scriptElement as? JsonObject ?: return@foldIndexed current
+            if (script.booleanValue("disabled") == true) return@foldIndexed current
+            if (script.booleanValue("promptOnly") == true) return@foldIndexed current
+            if (scriptIdentifier(script, index) in disabledScriptIds) return@foldIndexed current
+            if (!script.intArray("placement").contains(placement)) return@foldIndexed current
             runScript(script, current)
         }
     }
@@ -117,6 +140,14 @@ object CharacterRegexApplier {
 
     private fun JsonObject.cardDataObject(): JsonObject =
         (this["data"] as? JsonObject) ?: this
+
+    /**
+     * Stable per-script key. Prefers the card's own `id`; falls back to an
+     * index-based key so scripts without an id can still be toggled (though
+     * such toggles won't survive card reordering).
+     */
+    private fun scriptIdentifier(script: JsonObject, index: Int): String =
+        script.stringValue("id")?.takeIf { it.isNotBlank() } ?: "idx:$index"
 
     private fun JsonObject.objectValue(key: String): JsonObject? =
         this[key] as? JsonObject

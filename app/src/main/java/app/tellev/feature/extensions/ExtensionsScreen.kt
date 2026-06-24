@@ -1,5 +1,6 @@
 package app.tellev.feature.extensions
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.ExtensionOff
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -40,7 +43,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +59,14 @@ fun ExtensionsScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Re-read the regex activation file on entry. ChatViewModel.selectCharacter
+    // clears the selected character's disabled regex set (exclusive activation)
+    // while this app-scoped ViewModel keeps its earlier snapshot, so without a
+    // refresh the per-script switches shown here would lag by one selection.
+    LaunchedEffect(Unit) {
+        viewModel.refreshExtensions()
+    }
 
     LaunchedEffect(state.error) {
         state.error?.let {
@@ -127,7 +140,11 @@ fun ExtensionsScreen(
                     }
                 } else {
                     items(state.characterAssets, key = { it.characterId }) { asset ->
-                        CharacterAssetCard(asset = asset)
+                        CharacterAssetCard(
+                            asset = asset,
+                            disabledScriptIds = state.disabledRegexScripts[asset.characterId] ?: emptySet(),
+                            onToggleScript = { viewModel.toggleRegexScript(asset.characterId, it) },
+                        )
                     }
                 }
             }
@@ -232,7 +249,12 @@ private fun ExtensionCard(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun CharacterAssetCard(asset: CharacterAssetInfo) {
+private fun CharacterAssetCard(
+    asset: CharacterAssetInfo,
+    disabledScriptIds: Set<String>,
+    onToggleScript: (String) -> Unit,
+) {
+    var regexExpanded by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -268,6 +290,56 @@ private fun CharacterAssetCard(asset: CharacterAssetInfo) {
                 AssistChip(onClick = {}, label = { Text("正则 ${asset.regexScripts}") })
                 AssistChip(onClick = {}, label = { Text("酒馆助手脚本 ${asset.tavernHelperScripts}") })
                 AssistChip(onClick = {}, label = { Text("变量数据 ${asset.tavernHelperData}") })
+            }
+            if (asset.regexScriptSummaries.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { regexExpanded = !regexExpanded }
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = if (regexExpanded) Icons.Default.KeyboardArrowUp
+                        else Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "正则脚本（${asset.regexScriptSummaries.size}）",
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = if (regexExpanded) "收起" else "展开",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (regexExpanded) {
+                    asset.regexScriptSummaries.forEach { script ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = script.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                            )
+                            Switch(
+                                checked = script.id !in disabledScriptIds,
+                                onCheckedChange = { onToggleScript(script.id) },
+                                modifier = Modifier.height(24.dp),
+                            )
+                        }
+                    }
+                }
             }
         }
     }

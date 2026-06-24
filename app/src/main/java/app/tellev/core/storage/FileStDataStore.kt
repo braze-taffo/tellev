@@ -311,6 +311,35 @@ class FileStDataStore(
         layout.worldInfoActivation.writeText(json.encodeToString(JsonObject.serializer(), output))
     }
 
+    override suspend fun readDisabledRegexScriptIds(): Map<String, Set<String>> = withContext(Dispatchers.IO) {
+        val path = layout.regexActivation
+        if (!path.exists()) return@withContext emptyMap()
+        val raw = runCatching { json.parseToJsonElement(path.readText()) }.getOrNull() as? JsonObject
+            ?: return@withContext emptyMap()
+        val disabled = raw["disabled"] as? JsonObject ?: return@withContext emptyMap()
+        disabled.entries.mapNotNull { (characterId, value) ->
+            val ids = (value as? JsonArray)?.mapNotNull { it.stringContentOrNull() }?.toSet()
+                ?: return@mapNotNull null
+            if (ids.isEmpty()) return@mapNotNull null
+            characterId to ids
+        }.toMap()
+    }
+
+    override suspend fun saveDisabledRegexScriptIds(map: Map<String, Set<String>>): Unit = withContext(Dispatchers.IO) {
+        val output = buildJsonObject {
+            putJsonObject("disabled") {
+                map.forEach { (characterId, ids) ->
+                    if (ids.isNotEmpty()) {
+                        putJsonArray(characterId) {
+                            ids.sorted().forEach { add(JsonPrimitive(it)) }
+                        }
+                    }
+                }
+            }
+        }
+        layout.regexActivation.writeText(json.encodeToString(JsonObject.serializer(), output))
+    }
+
     private fun JsonElement.stringContentOrNull(): String? =
         (this as? JsonPrimitive)?.takeIf { it.isString }?.content
 
@@ -476,7 +505,7 @@ class FileStDataStore(
             ?.let { embeddedBook ->
                 saveWorldBook(
                     embeddedBook.copy(
-                        id = embeddedCharacterBookId(card.id),
+                        id = StDataStore.embeddedCharacterBookId(card.id),
                         name = embeddedBook.name.ifBlank { "${card.name} 角色书" },
                     ),
                 )
@@ -498,16 +527,13 @@ class FileStDataStore(
         val manifest = buildJsonObject {
             put("character_id", card.id)
             put("character_name", card.name)
-            put("world_book_id", embeddedCharacterBookId(card.id))
+            put("world_book_id", StDataStore.embeddedCharacterBookId(card.id))
             put("regex_scripts", regexScripts.jsonItemCount())
             put("TavernHelper_scripts", tavernHelperScripts.jsonItemCount())
             put("tavern_helper", tavernHelper.tavernHelperVariableCount())
         }
         writeCharacterAsset(assetDir, "manifest.json", manifest)
     }
-
-    private fun embeddedCharacterBookId(characterId: String): String =
-        "${characterId}_character_book"
 
     private fun writeCharacterAsset(assetDir: Path, fileName: String, value: JsonElement?) {
         val path = assetDir.resolve(fileName)

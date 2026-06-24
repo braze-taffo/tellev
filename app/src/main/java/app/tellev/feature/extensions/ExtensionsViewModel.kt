@@ -7,6 +7,7 @@ import app.tellev.core.extension.ExtensionHost
 import app.tellev.core.extension.ExtensionManifest
 import app.tellev.core.extension.ExtensionPermission
 import app.tellev.core.extension.ExtensionPermissionManager
+import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.storage.StDataStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,12 +17,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.nio.file.Files
+import java.nio.file.Path
 
 data class ExtensionInfo(
     val id: String,
@@ -38,6 +41,7 @@ data class CharacterAssetInfo(
     val characterName: String,
     val worldBookId: String?,
     val regexScripts: Int,
+    val regexScriptSummaries: List<CharacterRegexApplier.RegexScriptSummary>,
     val tavernHelperScripts: Int,
     val tavernHelperData: Int,
 )
@@ -45,6 +49,7 @@ data class CharacterAssetInfo(
 data class ExtensionsUiState(
     val extensions: List<ExtensionInfo> = emptyList(),
     val characterAssets: List<CharacterAssetInfo> = emptyList(),
+    val disabledRegexScripts: Map<String, Set<String>> = emptyMap(),
     val isLoading: Boolean = false,
     val error: String? = null,
 )
@@ -91,11 +96,15 @@ class ExtensionsViewModel(
                     dataStore.bootstrap()
                     readCharacterAssets()
                 }
+                val disabledRegex = withContext(Dispatchers.IO) {
+                    dataStore.readDisabledRegexScriptIds()
+                }
                 val installed = withContext(Dispatchers.IO) { scanInstalledExtensions() }
                 _uiState.update {
                     it.copy(
                         extensions = builtInExtensions() + installed,
                         characterAssets = assets,
+                        disabledRegexScripts = disabledRegex,
                         isLoading = false,
                     )
                 }
@@ -152,6 +161,31 @@ class ExtensionsViewModel(
 
     fun refreshExtensions() {
         loadExtensions()
+    }
+
+    /**
+     * Toggle a single character-card regex script on/off. The disabled set is
+     * keyed per character (script ids are only unique within a card) and
+     * persisted via [StDataStore.saveDisabledRegexScriptIds]; absent scripts
+     * are active by default. Mirrors the world-book activation toggle.
+     */
+    fun toggleRegexScript(characterId: String, scriptId: String) {
+        viewModelScope.launch {
+            runCatching {
+                val current = _uiState.value.disabledRegexScripts
+                val charSet = current[characterId] ?: emptySet()
+                val updatedSet = if (scriptId in charSet) charSet - scriptId else charSet + scriptId
+                val updatedMap = if (updatedSet.isEmpty()) {
+                    current - characterId
+                } else {
+                    current + (characterId to updatedSet)
+                }
+                dataStore.saveDisabledRegexScriptIds(updatedMap)
+                _uiState.update { it.copy(disabledRegexScripts = updatedMap) }
+            }.onFailure { e ->
+                _uiState.update { it.copy(error = "更新正则开关失败：${e.message}") }
+            }
+        }
     }
 
     fun clearError() {
@@ -302,11 +336,13 @@ class ExtensionsViewModel(
                     val manifest = dir.resolve("manifest.json")
                     if (!Files.isRegularFile(manifest)) return@mapNotNull null
                     val obj = json.parseToJsonElement(manifest.toFile().readText()).jsonObject
+                    val regexSummaries = readRegexScriptSummaries(dir.resolve("regex_scripts.json"))
                     CharacterAssetInfo(
                         characterId = obj.stringValue("character_id") ?: dir.fileName.toString(),
                         characterName = obj.stringValue("character_name") ?: dir.fileName.toString(),
                         worldBookId = obj.stringValue("world_book_id"),
                         regexScripts = obj.intValue("regex_scripts"),
+                        regexScriptSummaries = regexSummaries,
                         tavernHelperScripts = obj.intValue("TavernHelper_scripts"),
                         tavernHelperData = obj.intValue("tavern_helper"),
                     )
@@ -314,6 +350,13 @@ class ExtensionsViewModel(
                 .sortedBy { it.characterName }
                 .toList()
         }
+    }
+
+    private fun readRegexScriptSummaries(path: Path): List<CharacterRegexApplier.RegexScriptSummary> {
+        if (!Files.isRegularFile(path)) return emptyList()
+        val array = runCatching { json.parseToJsonElement(path.toFile().readText()) as? JsonArray }
+            .getOrNull() ?: return emptyList()
+        return CharacterRegexApplier.summarizeScripts(array)
     }
 
     private fun updateExtension(id: String, transform: (ExtensionInfo) -> ExtensionInfo) {

@@ -75,6 +75,15 @@ fun WorldBooksListScreen(
     var showCreateDialog by remember { mutableStateOf(false) }
     var newBookName by remember { mutableStateOf("") }
 
+    // Re-read the activation file every time this screen enters composition.
+    // ChatViewModel.selectCharacter can write a new exclusive world-book
+    // activation set while this (app-scoped) ViewModel retains its earlier
+    // snapshot, so without this refresh the switches shown here would lag the
+    // file by one selection.
+    LaunchedEffect(Unit) {
+        viewModel.loadBooks()
+    }
+
     LaunchedEffect(state.error) {
         state.error?.let {
             snackbarHostState.showSnackbar(it)
