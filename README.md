@@ -2,7 +2,7 @@
 
 tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是在手机上提供更贴近原生应用体验的角色管理、聊天、世界书、扩展和模型服务配置能力，同时尽量保持与 SillyTavern 数据格式和使用习惯兼容。
 
-> 当前项目仍在早期开发阶段，功能会持续调整。公开版本以 GitHub Releases 中发布的 APK 为准。
+> 公开版本以 GitHub Releases 中发布的 APK 为准。
 
 ## 主要功能
 
@@ -20,7 +20,7 @@ tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是
 
 [tellev Releases](https://github.com/braze-taffo/tellev/releases)
 
-目前发布的是 debug APK，适合测试和日常试用。安装前请确认设备允许安装来自浏览器或文件管理器的应用。
+目前发布的是正式版 APK，适合日常使用。安装前请确认设备允许安装来自浏览器或文件管理器的应用。
 
 ## 项目信息
 
@@ -39,7 +39,7 @@ tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是
 
 ```powershell
 .\gradlew.bat test
-.\gradlew.bat assembleDebug
+.\gradlew.bat assembleRelease
 ```
 
 构建环境：
@@ -48,10 +48,10 @@ tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是
 - Android Gradle Plugin 8.10.1
 - Kotlin 2.1.21
 
-Debug APK 输出路径：
+Release APK 输出路径：
 
 ```text
-app/build/outputs/apk/debug/app-debug.apk
+app/build/outputs/apk/release/app-release.apk
 ```
 
 ## 开源协议
