@@ -209,6 +209,39 @@ class FileStDataStoreTest {
         assertEquals(emptySet<String>(), store.readDisabledWorldIds())
     }
 
+    // ---- Regex Script Activation Tests ----
+
+    @Test
+    fun `readDisabledRegexScriptIds returns empty when no activation file exists`() = runBlocking {
+        assertEquals(emptyMap<String, Set<String>>(), store.readDisabledRegexScriptIds())
+    }
+
+    @Test
+    fun `saveDisabledRegexScriptIds round-trips per character sets`() = runBlocking {
+        store.saveDisabledRegexScriptIds(
+            mapOf("alice" to setOf("r1", "r2"), "bob" to setOf("r3")),
+        )
+
+        assertEquals(
+            mapOf("alice" to setOf("r1", "r2"), "bob" to setOf("r3")),
+            store.readDisabledRegexScriptIds(),
+        )
+    }
+
+    @Test
+    fun `toggling a regex script id persists add then removes the character entry`() = runBlocking {
+        var map = store.readDisabledRegexScriptIds().toMutableMap()
+        map["alice"] = (map["alice"] ?: emptySet()) + "r1"
+        store.saveDisabledRegexScriptIds(map)
+        assertEquals(setOf("r1"), store.readDisabledRegexScriptIds()["alice"])
+
+        map = store.readDisabledRegexScriptIds().toMutableMap()
+        map["alice"] = (map["alice"] ?: emptySet()) - "r1"
+        store.saveDisabledRegexScriptIds(map)
+        // An empty set drops the character entry entirely (default-on).
+        assertEquals(emptyMap<String, Set<String>>(), store.readDisabledRegexScriptIds())
+    }
+
     // ---- Chat JSONL Tests ----
 
     @Test

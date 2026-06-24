@@ -61,6 +61,10 @@ data class ChatUiState(
     val selectedPersona: Persona? = null,
     val worldBooks: List<WorldBook> = emptyList(),
     val disabledWorldIds: Set<String> = emptySet(),
+    // Disabled regex script ids for the selected character (app-level toggle,
+    // persisted separately from the card's own `disabled` flag). Applied at
+    // display time via CharacterRegexApplier.applyForDisplay.
+    val disabledRegexScriptIds: Set<String> = emptySet(),
     val presets: List<GenerationPreset> = emptyList(),
     val selectedPreset: GenerationPreset? = null,
     val sessions: List<ChatSession> = emptyList(),
@@ -159,12 +163,34 @@ class ChatViewModel(
                 }
                 val allSessions = dataStore.listChatSessions(characterId = characterId)
 
+                // Exclusive activation of world books only: selecting a character
+                // makes its own embedded world book the sole active one and
+                // deactivates the rest, persisted to the activation file so the
+                // world-book screen reflects the same selection.
+                //
+                // Regex scripts are NOT subject to exclusive activation — their
+                // per-character disable set is left untouched, so manual per-script
+                // toggles in the extensions screen survive switching characters.
+                val ownWorldBookId = StDataStore.embeddedCharacterBookId(characterId)
+                // Read the full world-book list from the store directly rather
+                // than relying on uiState.worldBooks being loaded yet, so the
+                // exclusive set is correct even if the user selects a character
+                // before initial data load finishes.
+                val allWorldBookIds = dataStore.listWorldBooks().map { it.id }.toSet()
+                val disabledWorldIds = allWorldBookIds - ownWorldBookId
+                dataStore.saveDisabledWorldIds(disabledWorldIds)
+
+                val disabledRegexScriptIds = dataStore.readDisabledRegexScriptIds()[characterId]
+                    ?: emptySet()
+
                 _uiState.update {
                     it.copy(
                         selectedCharacter = character,
                         currentSession = session,
                         messages = session.messages,
                         sessions = allSessions,
+                        disabledWorldIds = disabledWorldIds,
+                        disabledRegexScriptIds = disabledRegexScriptIds,
                         isLoading = false,
                     )
                 }
@@ -655,6 +681,7 @@ class ChatViewModel(
                 currentSession = null,
                 messages = emptyList(),
                 sessions = emptyList(),
+                disabledRegexScriptIds = emptySet(),
             )
         }
         viewModelScope.launch {

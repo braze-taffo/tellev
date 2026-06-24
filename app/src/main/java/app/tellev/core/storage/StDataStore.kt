@@ -40,6 +40,12 @@ interface StDataStore {
     suspend fun readDisabledWorldIds(): Set<String>
     suspend fun saveDisabledWorldIds(ids: Set<String>)
 
+    // Per-character regex script activation, keyed by character id. Scripts
+    // whose id is in a character's set are skipped at display time. Absent
+    // (or a missing character entry) = all scripts active (default on).
+    suspend fun readDisabledRegexScriptIds(): Map<String, Set<String>>
+    suspend fun saveDisabledRegexScriptIds(map: Map<String, Set<String>>)
+
     suspend fun listPresets(): List<GenerationPreset>
     suspend fun savePreset(preset: GenerationPreset)
     suspend fun deletePreset(id: String, providerType: String? = null): Boolean
@@ -49,4 +55,15 @@ interface StDataStore {
 
     suspend fun exportBackup(targetZip: Path)
     suspend fun importBackup(sourceZip: Path)
+
+    companion object {
+        /**
+         * The id under which a character card's embedded `character_book` is
+         * materialized into `worlds/` at import time. Shared so other layers
+         * (e.g. chat activation logic) can derive the same id without
+         * duplicating the string rule.
+         */
+        fun embeddedCharacterBookId(characterId: String): String =
+            "${characterId}_character_book"
+    }
 }

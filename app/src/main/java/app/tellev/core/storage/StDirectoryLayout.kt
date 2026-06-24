@@ -37,6 +37,9 @@ data class StDirectoryLayout(
     // tellev-owned app state (not a SillyTavern file format). Single file, not
     // a directory, so it is intentionally absent from allDirectories.
     val worldInfoActivation: Path,
+    // Same idea as worldInfoActivation: a single tellev-owned file holding the
+    // per-character set of disabled regex script ids.
+    val regexActivation: Path,
 ) {
     val allDirectories: List<Path> = listOf(
         root,
@@ -106,6 +109,7 @@ data class StDirectoryLayout(
             systemPrompts = root.resolve("sysprompt"),
             reasoning = root.resolve("reasoning"),
             worldInfoActivation = root.resolve("world-info-activation.json"),
+            regexActivation = root.resolve("regex-activation.json"),
         )
     }
 }

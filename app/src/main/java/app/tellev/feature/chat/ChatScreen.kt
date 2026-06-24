@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
+import android.view.MotionEvent
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -65,6 +67,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -133,6 +136,7 @@ private fun CharacterPickerScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .statusBarsPadding()
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -234,14 +238,29 @@ private fun ChatContentScreen(
     var editingMessageIndex by remember { mutableStateOf<Int?>(null) }
     var editTextField by remember { mutableStateOf("") }
 
-    LaunchedEffect(state.messages.size, state.streamingText) {
+    // 用户是否正停在列表底部（或非常接近底部）。流式输出时只在"停在底部"
+    // 的情况下才自动下拉，避免用户上滑阅读历史消息时被每个 token 拽回底部。
+    // 容差为 2：刚追加流式气泡时新 item 还没进入视口，此时不应被判定为"已上滑"。
+    val atBottom by remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index
+            lastVisibleIndex == null || lastVisibleIndex >= totalItems - 2
+        }
+    }
+
+    // 消息条数变化（发送、生成完成、滑动/编辑/删除、切换会话）：总是滚到底。
+    // 这些是离散事件，不是 token 级别的频繁刷新，不会和用户抢手势。
+    LaunchedEffect(state.messages.size) {
         if (state.messages.isNotEmpty()) {
             listState.animateScrollToItem(state.messages.size - 1)
         }
     }
 
+    // 流式输出：仅在用户停在底部时跟随，上滑阅读历史时停止强制下拉。
     LaunchedEffect(state.streamingText) {
-        if (state.streamingText.isNotEmpty() && state.messages.isNotEmpty()) {
+        if (state.streamingText.isNotEmpty() && state.messages.isNotEmpty() && atBottom) {
             listState.animateScrollToItem(state.messages.size)
         }
     }
@@ -356,6 +375,7 @@ private fun ChatContentScreen(
                     ChatBubble(
                         message = message,
                         character = state.selectedCharacter,
+                        disabledRegexScriptIds = state.disabledRegexScriptIds,
                         htmlPanelMaxHeight = htmlPanelMaxHeight,
                         onSwipeLeft = { viewModel.swipeMessage(index, 1) },
                         onSwipeRight = { viewModel.swipeMessage(index, -1) },
@@ -415,6 +435,7 @@ private fun ChatContentScreen(
 private fun ChatBubble(
     message: ChatMessage,
     character: CharacterCard?,
+    disabledRegexScriptIds: Set<String>,
     htmlPanelMaxHeight: Dp,
     onSwipeLeft: () -> Unit,
     onSwipeRight: () -> Unit,
@@ -477,7 +498,12 @@ private fun ChatBubble(
         }
 
         val rawText = message.swipes.getOrNull(message.swipeIndex) ?: message.content
-        val displayText = CharacterRegexApplier.applyForDisplay(rawText, message.role, character)
+        val displayText = CharacterRegexApplier.applyForDisplay(
+            rawText,
+            message.role,
+            character,
+            disabledRegexScriptIds,
+        )
         val renderSegments = TavernRenderParser.parse(displayText)
         val hasFrontend = renderSegments.any { it is TavernRenderSegment.Frontend }
         val dragModifier = Modifier.pointerInput(message.id) {
@@ -687,8 +713,31 @@ private fun TavernHtmlPanel(
                 isVerticalScrollBarEnabled = true
                 isHorizontalScrollBarEnabled = true
                 overScrollMode = WebView.OVER_SCROLL_IF_CONTENT_SCROLLS
-                setOnTouchListener { view, _ ->
-                    view.parent?.requestDisallowInterceptTouchEvent(true)
+                var lastTouchY = 0f
+                setOnTouchListener { view, event ->
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            lastTouchY = event.y
+                            // 先假定由 WebView 接管手势；MOVE 时若 WebView 在该方向上
+                            // 没有可滚动内容，再把拦截权交还给外层聊天列表。
+                            view.parent?.requestDisallowInterceptTouchEvent(true)
+                        }
+                        MotionEvent.ACTION_MOVE -> {
+                            val dy = event.y - lastTouchY
+                            lastTouchY = event.y
+                            val canScrollInDirection = when {
+                                dy > 0 -> view.canScrollVertically(-1)
+                                dy < 0 -> view.canScrollVertically(1)
+                                else -> true
+                            }
+                            if (!canScrollInDirection) {
+                                view.parent?.requestDisallowInterceptTouchEvent(false)
+                            }
+                        }
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            view.parent?.requestDisallowInterceptTouchEvent(false)
+                        }
+                    }
                     false
                 }
                 settings.javaScriptEnabled = true
