@@ -203,6 +203,22 @@ class VirtualApiRouterTest {
         assertEquals(501, response.status)
     }
 
+    @Test
+    fun `POST _api_extensions_version reports prompt template compatibility`() = runBlocking {
+        val response = router.route(
+            VirtualApiRequest(
+                "POST",
+                "/api/extensions/version",
+                body = """{"name":"ST-Prompt-Template"}""",
+            ),
+        )
+
+        assertEquals(200, response.status)
+        val body = json.parseToJsonElement(response.body).jsonObject
+        assertEquals("true", body["installed"]?.jsonPrimitive?.content)
+        assertEquals("true", body["compatible"]?.jsonPrimitive?.content)
+    }
+
     private class InMemorySecretStore : SecretStore {
         private val secrets = ConcurrentHashMap<String, String>()
 

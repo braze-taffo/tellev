@@ -1,10 +1,21 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
+import java.io.File
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+// Load local.properties (gitignored) so release signing credentials
+// can be supplied without committing them to the repo.
+val localProps = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) {
+        file.inputStream().use { load(it) }
+    }
 }
 
 android {
@@ -15,10 +26,37 @@ android {
         applicationId = "app.tellev"
         minSdk = 31
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "1.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // ── Release signing ────────────────────────────────────────────────
+    // Credentials come from (in priority order): Gradle project properties
+    // (-P on CLI / ~/.gradle/gradle.properties) → local.properties.
+    // The keystore itself lives under .keystore/ (gitignored).
+    fun prop(name: String): String? =
+        (project.findProperty(name) as String?) ?: localProps.getProperty(name)
+
+    val tellevStoreFile = prop("tellevStoreFile")
+    val tellevStorePassword = prop("tellevStorePassword")
+    val tellevKeyAlias = prop("tellevKeyAlias")
+    val tellevKeyPassword = prop("tellevKeyPassword")
+
+    signingConfigs {
+        if (tellevStoreFile != null && tellevStorePassword != null &&
+            tellevKeyAlias != null && tellevKeyPassword != null
+        ) {
+            create("release") {
+                storeFile = rootProject.file(tellevStoreFile)
+                storePassword = tellevStorePassword
+                keyAlias = tellevKeyAlias
+                keyPassword = tellevKeyPassword
+                enableV1Signing = true
+                enableV2Signing = true
+            }
+        }
     }
 
     buildTypes {
@@ -28,6 +66,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 

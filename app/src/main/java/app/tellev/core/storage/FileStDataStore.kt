@@ -210,6 +210,22 @@ class FileStDataStore(
                 }
 
                 put("extra", message.metadata)
+
+                // Preserve ST-Prompt-Template per-swipe arrays so template
+                // evaluation state survives a save → reload round-trip.
+                if (message.variables.isNotEmpty()) {
+                    put("variables", JsonArray(message.variables))
+                }
+                if (message.isEjsProcessed.isNotEmpty()) {
+                    putJsonArray("is_ejs_processed") {
+                        message.isEjsProcessed.forEach { add(JsonPrimitive(it)) }
+                    }
+                }
+                if (message.variablesInitialized.isNotEmpty()) {
+                    putJsonArray("variables_initialized") {
+                        message.variablesInitialized.forEach { add(JsonPrimitive(it)) }
+                    }
+                }
             }
             lines.add(compactJson.encodeToString(JsonObject.serializer(), line))
         }
@@ -805,6 +821,21 @@ class FileStDataStore(
 
         val extra = obj["extra"]?.jsonObject ?: buildJsonObject { }
 
+        // ST-Prompt-Template per-swipe arrays (absent on legacy chats → empty)
+        val variables = runCatching {
+            obj["variables"]?.jsonArray?.mapNotNull { it as? JsonObject } ?: emptyList()
+        }.getOrDefault(emptyList())
+        val isEjsProcessed = runCatching {
+            obj["is_ejs_processed"]?.jsonArray?.map {
+                it.jsonPrimitive.content.toBooleanStrictOrNull() ?: false
+            } ?: emptyList()
+        }.getOrDefault(emptyList())
+        val variablesInitialized = runCatching {
+            obj["variables_initialized"]?.jsonArray?.map {
+                it.jsonPrimitive.content.toBooleanStrictOrNull() ?: false
+            } ?: emptyList()
+        }.getOrDefault(emptyList())
+
         return ChatMessage(
             id = "$sessionId-$index",
             role = role,
@@ -814,6 +845,9 @@ class FileStDataStore(
             swipeIndex = swipeId,
             swipes = swipes,
             metadata = extra,
+            variables = variables,
+            isEjsProcessed = isEjsProcessed,
+            variablesInitialized = variablesInitialized,
         )
     }
 

@@ -52,6 +52,12 @@ data class ChatMessage(
     val swipes: List<String> = emptyList(),
     val attachments: List<Attachment> = emptyList(),
     val metadata: JsonObject = buildJsonObject { },
+    // ── ST-Prompt-Template extension arrays (preserved for round-trip) ──
+    // Per-swipe variable snapshots, evaluation flags, and init flags.
+    // Defaults are empty so legacy jsonl without these fields still parses.
+    val variables: List<JsonObject> = emptyList(),
+    val isEjsProcessed: List<Boolean> = emptyList(),
+    val variablesInitialized: List<Boolean> = emptyList(),
 )
 
 @Serializable

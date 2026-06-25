@@ -55,6 +55,13 @@ interface ExtensionHost {
      * extension's WebView so the pending Promise can resolve.
      */
     fun deliverPermissionResult(requestId: String, granted: Boolean)
+
+    /**
+     * Return a snapshot of every loaded extension's settings, keyed by
+     * extension id, so the host can populate `getContext().extension_settings`
+     * for ST-compatible extension code that reads `extension_settings[extId]`.
+     */
+    fun snapshotExtensionSettings(): JsonObject = buildJsonObject { }
 }
 
 // ── Manifest & permissions ─────────────────────────────────────────────

@@ -149,6 +149,13 @@ class ExtensionsViewModel(
                     val safePermissions = manifest.permissions.filter {
                         it in safeInstallPermissions
                     }
+                    val minClient = manifest.minimumClientVersion
+                    if (minClient.isNotBlank() && !meetsMinimumClientVersion(minClient)) {
+                        _uiState.update { s ->
+                            s.copy(error = "扩展 $id 要求客户端版本 ≥ $minClient，当前 tellev 版本更低")
+                        }
+                        return@runCatching
+                    }
                     permissionManager.grantAll(id, safePermissions)
                     extensionHost.load(manifest, script)
                     updateExtension(id) { it.copy(loaded = true) }
@@ -370,6 +377,27 @@ class ExtensionsViewModel(
 
     private fun JsonObject.intValue(key: String): Int =
         this[key]?.jsonPrimitive?.intOrNull ?: 0
+
+    /**
+     * Compare the extension's `minimum_client_version` against tellev's
+     * SillyTavern-compatible client version (`1.18.0`).  Only numeric
+     * `major.minor.patch` components are compared; pre-release suffixes
+     * are ignored.  Returns `true` when tellev meets or exceeds [required].
+     */
+    private fun meetsMinimumClientVersion(required: String): Boolean {
+        val tellevParts = intArrayOf(1, 18, 0)
+        val reqParts = required.split('.')
+            .mapNotNull { it.takeWhile(Char::isDigit).toIntOrNull() }
+            .padToSize(3, 0)
+        for (i in 0 until minOf(3, reqParts.size)) {
+            if (tellevParts[i] < reqParts[i]) return false
+            if (tellevParts[i] > reqParts[i]) return true
+        }
+        return true
+    }
+
+    private fun List<Int>.padToSize(size: Int, filler: Int): List<Int> =
+        if (this.size >= size) this else this + List(size - this.size) { filler }
 }
 
 class ExtensionsViewModelFactory(
