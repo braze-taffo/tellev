@@ -54,6 +54,7 @@ data class PromptDiagnostics(
 
 class DefaultPromptEngine(
     private val macroEngine: MacroEngine = DefaultMacroEngine(),
+    private val promptTemplateProcessor: PromptTemplateProcessor = DefaultPromptTemplateProcessor(),
 ) : PromptEngine {
     override fun build(request: PromptBuildRequest): PromptBuildResult {
         // 1. Build MacroContext from request data
@@ -77,7 +78,16 @@ class DefaultPromptEngine(
         val contextPresetObj = request.metadata["contextPreset"] as? JsonObject
         val contextPreset = contextPresetObj?.let { ContextTemplate.loadPreset(it) }
 
-        val worldInfoContent = activatedEntries.map { macroEngine.expand(it.content, macroContext) }
+        val promptTemplateWorldEntries = activatedEntries.map {
+            PromptTemplateWorldEntry(
+                id = it.id,
+                content = macroEngine.expand(it.content, macroContext),
+                raw = it.raw,
+            )
+        }
+        val worldInfoContent = promptTemplateWorldEntries
+            .map { promptTemplateProcessor.systemPromptContentFor(it) }
+            .filter { it.isNotBlank() }
         val systemPrompt = if (contextPreset != null) {
             buildSystemPromptWithContextTemplate(
                 request = request,
@@ -122,21 +132,33 @@ class DefaultPromptEngine(
         // 7. Handle group chat ordering
         val orderedMessages = applyGroupChatOrdering(rawMessages, request.metadata)
 
-        // 8. Apply token budget
+        // 8. Apply ST-Prompt-Template compatible EJS processing before token trimming/provider formatting.
+        val promptTemplateResult = promptTemplateProcessor.process(
+            PromptTemplateRequest(
+                messages = orderedMessages,
+                context = macroContext,
+                metadata = request.metadata,
+                worldEntries = promptTemplateWorldEntries,
+            ),
+        )
+        val templatedMessages = promptTemplateResult.messages
+        val templatedSystemPrompt = templatedMessages.firstOrNull()?.content ?: systemPrompt
+
+        // 9. Apply token budget
         val maxContextTokens = extractMaxContextTokens(request.metadata)
         val budgetedMessages = if (maxContextTokens != null) {
             TokenBudget.fitToBudget(
-                systemPrompt = systemPrompt,
+                systemPrompt = templatedSystemPrompt,
                 worldInfo = worldInfoContent,
                 characterDescription = expandedCharacter.description,
-                messages = orderedMessages.drop(1), // Drop system message, fitToBudget adds its own
+                messages = templatedMessages.drop(1), // Drop system message, fitToBudget adds its own
                 budget = maxContextTokens - request.preset.maxTokens.orElse(0),
             )
         } else {
-            orderedMessages
+            templatedMessages
         }
 
-        // 9. Check for instruct mode
+        // 10. Check for instruct mode
         val instructPresetObj = request.metadata["instructPreset"] as? JsonObject
         val instructPreset = instructPresetObj?.let { InstructMode.loadPreset(it) }
 
@@ -155,10 +177,10 @@ class DefaultPromptEngine(
             budgetedMessages
         }
 
-        // 10. Build stop sequences
+        // 11. Build stop sequences
         val stopSequences = buildStopSequences(request.preset.stop, instructPreset, contextPreset)
 
-        // 11. Estimate token count for diagnostics
+        // 12. Estimate token count for diagnostics
         val estimatedTokens = TokenBudget.estimateTotalTokens(finalMessages)
 
         return PromptBuildResult(
@@ -169,7 +191,7 @@ class DefaultPromptEngine(
             diagnostics = PromptDiagnostics(
                 activatedWorldEntryIds = activatedEntries.map { it.id },
                 estimatedTokenCount = estimatedTokens,
-                warnings = compatibilityWarnings(request),
+                warnings = compatibilityWarnings(request) + promptTemplateResult.warnings,
             ),
         )
     }
@@ -264,7 +286,14 @@ class DefaultPromptEngine(
         val entriesBefore = mutableListOf<String>()
         val entriesAfter = mutableListOf<String>()
         for (entry in activatedEntries) {
-            val content = macroEngine.expand(entry.content, macroContext)
+            val content = promptTemplateProcessor.systemPromptContentFor(
+                PromptTemplateWorldEntry(
+                    id = entry.id,
+                    content = macroEngine.expand(entry.content, macroContext),
+                    raw = entry.raw,
+                ),
+            )
+            if (content.isBlank()) continue
             if (entry.depth <= 2) {
                 entriesAfter.add(content)
             } else {

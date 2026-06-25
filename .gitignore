@@ -8,4 +8,5 @@ captures/
 *.aab
 *.iml
 backup-*/
+.keystore/
 

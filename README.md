@@ -14,6 +14,14 @@ tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是
 - 预设、密钥、主题和备份管理
 - SillyTavern 风格扩展运行环境的兼容实现
 
+## 兼容性范围说明
+
+tellev 的扩展运行环境是 SillyTavern / 酒馆助手（JS-Slash-Runner）兼容层的一个**脚本风格子集**实现，并非完整复刻。当前兼容范围：
+
+- **支持**：角色卡内嵌的 TavernHelper 脚本（`data.extensions.tavern_helper.scripts`）、EJS 模板语法（`<%= ... %>` / `<% ... %>`）、`eventSource` 事件总线、`TavernHelper.*` API、slash 命令、虚拟 `/api/` 路由。
+- **不支持**：直接安装酒馆助手（JS-Slash-Runner）本体或提示词模板（ST-Prompt-Template）本体的 ESM 产物——这两个扩展以 ES Module 形式打包并依赖大量 SillyTavern 内部模块，tellev 的经典 `<script>` 注入模型无法加载它们。tellev 已内置 `TavernHelper` / `EjsTemplate` 兼容 shim 提供等价的脚本能力。
+- **不支持**：需要 Tailwind / Vue / jQuery UI 渲染的消息 iframe 扩展、Node 服务端插件、直接文件系统访问。
+
 ## 下载安装
 
 可以在 GitHub Releases 下载最新 APK：

@@ -242,6 +242,28 @@ class VirtualApiRouter(
             method == "GET" && segments.size == 1 && segments[0] == "personas" ->
                 handleListPersonas()
 
+            // ── presets (stub: presets are listed via /api/settings) ──
+            method == "GET" && segments.size == 1 && segments[0] == "presets" ->
+                handleListPresets()
+            method == "POST" && segments.size == 2 && segments[0] == "presets" && segments[1] == "save" ->
+                errorResponse(501, "Preset save via virtual API is not supported; use the UI layer")
+            method == "POST" && segments.size == 2 && segments[0] == "presets" && segments[1] == "delete" ->
+                errorResponse(501, "Preset delete via virtual API is not supported; use the UI layer")
+            method == "POST" && segments.size == 2 && segments[0] == "presets" && segments[1] == "restore" ->
+                errorResponse(501, "Preset restore via virtual API is not supported; use the UI layer")
+
+            // ── tags (stub: tags list is empty in tellev) ──────────
+            method == "GET" && segments.size == 1 && segments[0] == "tags" ->
+                jsonResponse(200, buildJsonObject { putJsonArray("tags") { } })
+
+            // ── worldinfo create / save / delete (stub) ────────────
+            method == "POST" && segments.size == 2 && segments[0] == "worldinfo" && segments[1] == "create" ->
+                errorResponse(501, "World Info create via virtual API is not supported; use the UI layer")
+            method == "POST" && segments.size == 2 && segments[0] == "worldinfo" && segments[1] == "save" ->
+                errorResponse(501, "World Info save via virtual API is not supported; use the UI layer")
+            method == "POST" && segments.size == 2 && segments[0] == "worldinfo" && segments[1] == "delete" ->
+                errorResponse(501, "World Info delete via virtual API is not supported; use the UI layer")
+
             else ->
                 errorResponse(404, "No route for $method $path")
         }
@@ -848,11 +870,55 @@ class VirtualApiRouter(
     private suspend fun handleStExtensionVersion(request: VirtualApiRequest): VirtualApiResponse {
         val bodyObj = parseBodyAsJsonObjectOrNull(request)
         val name = bodyObj?.get("name")?.jsonPrimitive?.content ?: ""
+        if (isPromptTemplateExtensionName(name) || isTavernHelperExtensionName(name)) {
+            return jsonResponse(200, buildJsonObject {
+                put("name", name)
+                put("version", "tellev-compat")
+                put("installed", true)
+                put("compatible", true)
+            })
+        }
         return jsonResponse(200, buildJsonObject {
             put("name", name)
             put("version", "")
             put("installed", false)
         })
+    }
+
+    private fun isPromptTemplateExtensionName(name: String): Boolean {
+        val normalized = name
+            .lowercase()
+            .replace("_", "-")
+            .replace(" ", "-")
+        return normalized in setOf(
+            "st-prompt-template",
+            "prompt-template",
+            "prompttemplate",
+            "ejs-template",
+            "ejstemplate",
+            "zonde306/st-prompt-template",
+            "third-party/st-prompt-template",
+        ) || name.contains("提示词模板")
+    }
+
+    /**
+     * Recognize the 酒馆助手 / JS-Slash-Runner extension family so
+     * `TavernHelper.isInstalledExtension('JS-Slash-Runner')` and similar
+     * checks against `/api/extensions/version` report `installed:true`.
+     */
+    private fun isTavernHelperExtensionName(name: String): Boolean {
+        val normalized = name
+            .lowercase()
+            .replace("_", "-")
+            .replace(" ", "-")
+        return normalized in setOf(
+            "js-slash-runner",
+            "js-slash-runner/js-slash-runner",
+            "third-party/js-slash-runner",
+            "tavern-helper",
+            "tavernhelper",
+            "tavern-helper-compat",
+        ) || name.contains("酒馆助手")
     }
 
     private suspend fun handleStExtensionInstall(request: VirtualApiRequest): VirtualApiResponse {

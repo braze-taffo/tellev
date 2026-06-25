@@ -26,6 +26,12 @@ class SlashCommandEngine(
     private val variables: ConcurrentHashMap<String, String> = ConcurrentHashMap(),
     private val extensionCommands: Map<String, RegisteredCommandRef> = emptyMap(),
     private val maxLoopIterations: Int = 1000,
+    /**
+     * Optional callback invoked by the `/event-emit` command so that
+     * custom events actually reach the extension event bus.  Receives
+     * the event name and the positional argument list.
+     */
+    private val eventEmitter: ((String, List<String>) -> Unit)? = null,
 ) {
 
     data class RegisteredCommandRef(
@@ -508,6 +514,10 @@ class SlashCommandEngine(
 
             "event-emit" -> {
                 val event = cmd.namedArgs["event"] ?: cmd.args.getOrNull(0) ?: ""
+                val dataArgs = cmd.args.drop(if (cmd.namedArgs["event"] != null) 0 else 1)
+                val dataFromNamed = cmd.namedArgs.filterKeys { it != "event" }.values.toList()
+                val allData = dataArgs + dataFromNamed
+                eventEmitter?.invoke(event, allData)
                 Result.ok(event)
             }
 

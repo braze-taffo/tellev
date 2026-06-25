@@ -304,6 +304,15 @@ class ChatViewModel(
                 )
 
                 emitStEvent(
+                    StEventCatalog.CHAT_COMPLETION_SETTINGS_READY,
+                    buildJsonObject {
+                        put("chatId", updatedSession.id)
+                        put("characterId", character.id)
+                        put("providerType", config.providerType)
+                    },
+                )
+
+                emitStEvent(
                     StEventCatalog.CHAT_COMPLETION_PROMPT_READY,
                     buildJsonObject {
                         put("chatId", updatedSession.id)
@@ -365,6 +374,7 @@ class ChatViewModel(
                             emitStEvent(StEventCatalog.MESSAGE_RECEIVED, assistantMessageIndex, "normal")
                             emitStEvent(StEventCatalog.CHARACTER_MESSAGE_RENDERED, assistantMessageIndex, "normal")
                             emitStEvent(StEventCatalog.GENERATION_ENDED, finalMessages.size)
+                            emitStEvent(StEventCatalog.GENERATE_AFTER_DATA, finalMessages.size)
                         }
                         is GenerateChunk.Failed -> {
                             _uiState.update {
@@ -663,11 +673,17 @@ class ChatViewModel(
     fun selectPreset(presetId: String) {
         val preset = _uiState.value.presets.firstOrNull { it.id == presetId } ?: return
         _uiState.update { it.copy(selectedPreset = preset) }
+        viewModelScope.launch {
+            emitStEvent(StEventCatalog.SETTINGS_UPDATED, "preset")
+        }
     }
 
     fun selectPersona(personaId: String) {
         val persona = _uiState.value.personas.firstOrNull { it.id == personaId } ?: return
         _uiState.update { it.copy(selectedPersona = persona) }
+        viewModelScope.launch {
+            emitStEvent(StEventCatalog.PERSONA_CHANGED, persona.name)
+        }
     }
 
     fun clearError() {
@@ -749,6 +765,8 @@ class ChatViewModel(
 
     private suspend fun emitChatChanged(session: ChatSession) {
         emitStEvent(StEventCatalog.CHAT_CHANGED, session.id)
+        emitStEvent(StEventCatalog.CHAT_LOADED, session.id)
+        emitStEvent(StEventCatalog.WORLD_INFO_CHANGED, session.id)
     }
 
     private suspend fun emitRenderedEventsForMessages(messages: List<ChatMessage>) {
@@ -846,6 +864,7 @@ class ChatViewModel(
                 generationId,
             )
             emitStEvent("js_generation_ended", resultText, generationId)
+            emitStEvent(StEventCatalog.GENERATE_AFTER_DATA, generationId)
 
             buildJsonObject {
                 put("text", resultText)
@@ -962,8 +981,9 @@ class ChatViewModel(
             putJsonObject("extensionPrompts") { }
             put("extensionPrompts", buildJsonObject { })
             // Extension settings map (extensions read their settings from here)
-            put("extensionSettings", buildJsonObject { })
-            put("extension_settings", buildJsonObject { })
+            val extSettings = extensionHost.snapshotExtensionSettings()
+            put("extensionSettings", extSettings)
+            put("extension_settings", extSettings)
             // Tags
             putJsonArray("tags") { }
             put("tagMap", buildJsonObject { })
@@ -996,6 +1016,16 @@ class ChatViewModel(
                 values.forEach { add(JsonPrimitive(it)) }
             }
             put("extra", metadata)
+            // ST-Prompt-Template per-swipe arrays (only when present)
+            if (variables.isNotEmpty()) {
+                putJsonArray("variables") { variables.forEach { add(it) } }
+            }
+            if (isEjsProcessed.isNotEmpty()) {
+                putJsonArray("is_ejs_processed") { isEjsProcessed.forEach { add(JsonPrimitive(it)) } }
+            }
+            if (variablesInitialized.isNotEmpty()) {
+                putJsonArray("variables_initialized") { variablesInitialized.forEach { add(JsonPrimitive(it)) } }
+            }
         }
 
     private fun CharacterCard.toTavernJson(): JsonObject =
