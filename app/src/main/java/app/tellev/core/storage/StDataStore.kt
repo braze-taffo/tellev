@@ -34,6 +34,11 @@ interface StDataStore {
     suspend fun readWorldBook(id: String): WorldBook
     suspend fun saveWorldBook(book: WorldBook)
 
+    // Permanently remove a world book: deletes worlds/<id>.json and drops the id
+    // from the disabled-activation set. Replaces the old "write an empty book"
+    // approach that left a stub file reappearing in listWorldBooks().
+    suspend fun deleteWorldBook(id: String)
+
     // World book activation. Worlds absent from the disabled set are active
     // (default on), so freshly imported character books activate by default
     // and no migration is needed.

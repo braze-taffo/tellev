@@ -26,8 +26,8 @@ android {
         applicationId = "app.tellev"
         minSdk = 31
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.0.1"
+        versionCode = 4
+        versionName = "1.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -61,7 +61,13 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 code shrinking + resource shrinking. Release APK was ~45MB with
+            // minify off (full Compose/AndroidX/material-icons-extended retained).
+            // With shrinking it drops to ~15-25MB. Requires the kotlinx-serialization
+            // keep rules in proguard-rules.pro, otherwise R8 strips serializer() and
+            // all @Serializable JSON parsing crashes at runtime.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

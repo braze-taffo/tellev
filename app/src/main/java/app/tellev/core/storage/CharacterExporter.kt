@@ -16,7 +16,7 @@ import kotlinx.serialization.json.putJsonObject
 /**
  * Exports character cards to JSON or PNG format.
  * Uses V2 spec format for JSON output.
- * Strips private fields (fav, chat) on export.
+ * Removes the chat field on export; preserves the user's `fav` flag.
  */
 class CharacterExporter(
     private val json: Json = FileStDataStore.defaultJson,
@@ -24,7 +24,7 @@ class CharacterExporter(
 
     /**
      * Export a character card as a V2 spec JSON string.
-     * Strips private fields: fav is set to false, chat is removed.
+     * Removes the chat field; preserves the original `fav` flag.
      */
     fun exportToJson(card: CharacterCard): String {
         val exportData = buildExportObject(card)
@@ -84,7 +84,9 @@ class CharacterExporter(
                 put("character_book", exportCharacterBook(book.raw.takeIf { it.isNotEmpty() }, book))
             }
 
-            put("fav", false)
+            // Preserve the user's favorite flag from the original card data
+            // instead of unconditionally clearing it on every save/export.
+            put("fav", rawData?.get("fav") ?: JsonPrimitive(false))
         }
 
     private fun exportCharacterBook(rawBook: JsonObject?, book: app.tellev.core.model.WorldBook): JsonElement {

@@ -72,7 +72,13 @@ sealed interface GenerateChunk {
     data class Delta(val text: String) : GenerateChunk
 
     @Serializable
-    data class Completed(val text: String, val finishReason: String? = null) : GenerateChunk
+    data class Completed(
+        val text: String,
+        val finishReason: String? = null,
+        // Provider usage/token accounting (e.g. the OpenAI stream
+        // include_usage final chunk). Null when the provider did not report it.
+        val usage: JsonObject? = null,
+    ) : GenerateChunk
 
     @Serializable
     data class Failed(val error: TellevError) : GenerateChunk

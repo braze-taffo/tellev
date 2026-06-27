@@ -158,13 +158,19 @@ class DefaultPromptEngine(
             templatedMessages
         }
 
+        // 9.5. Splice in extension-injected prompts (authored by loaded
+        // extensions via the ST-compatible `injectPrompts` JS API). Applied
+        // after budget trimming so injected system/user/assistant messages
+        // survive into the request and instruct mode sees them too.
+        val withInjections = applyExtensionInjections(budgetedMessages, request.metadata)
+
         // 10. Check for instruct mode
         val instructPresetObj = request.metadata["instructPreset"] as? JsonObject
         val instructPreset = instructPresetObj?.let { InstructMode.loadPreset(it) }
 
         val finalMessages = if (instructPreset != null) {
             val instructText = InstructMode.applyInstruct(
-                messages = budgetedMessages,
+                messages = withInjections,
                 preset = instructPreset,
                 macroEngine = macroEngine,
                 macroContext = macroContext,
@@ -174,7 +180,7 @@ class DefaultPromptEngine(
             // completion-style APIs
             listOf(PromptMessage(role = MessageRole.User, content = instructText))
         } else {
-            budgetedMessages
+            withInjections
         }
 
         // 11. Build stop sequences
@@ -397,6 +403,101 @@ class DefaultPromptEngine(
         appendLine("$title:")
         appendLine(value.trim())
     }
+
+    /**
+     * Splice extension-injected prompts into the message list.
+     *
+     * The convention mirrors SillyTavern's `extension_prompt_types`:
+     * - `position == 2` (BEFORE_PROMPT): prepend before the system prompt.
+     * - `position == 0` (IN_PROMPT): insert immediately after the leading
+     *   run of system messages (i.e. after the system prompt).
+     * - `position == 1` (IN_CHAT): depth-based insertion. `depth == 0`
+     *   inserts at the very end of the message list, `depth == N` inserts
+     *   N positions from the end. Within a depth, entries are grouped by
+     *   role in the order system → user → assistant, matching ST's
+     *   "most important go lower" rule.
+     * - `position == -1` (NONE): skipped.
+     */
+    private fun applyExtensionInjections(
+        messages: List<PromptMessage>,
+        metadata: JsonObject,
+    ): List<PromptMessage> {
+        val injectedObj = metadata["injectedPrompts"] as? JsonObject ?: return messages
+        if (injectedObj.isEmpty()) return messages
+
+        val entries = mutableListOf<ExtensionInjection>()
+        for ((_, entryElement) in injectedObj) {
+            val entry = entryElement as? JsonObject ?: continue
+            val value = runCatching { entry["value"]?.jsonPrimitive?.content }.getOrNull() ?: continue
+            if (value.isBlank()) continue
+            val position = runCatching { entry["position"]?.jsonPrimitive?.intOrNull }.getOrNull() ?: 0
+            val depth = runCatching { entry["depth"]?.jsonPrimitive?.intOrNull }.getOrNull() ?: 4
+            val role = resolveExtensionInjectionRole(
+                runCatching { entry["role"]?.jsonPrimitive?.content }.getOrNull(),
+            )
+            if (position == -1) continue // extension_prompt_types.NONE
+            entries.add(ExtensionInjection(value, position, depth, role, entries.size))
+        }
+        if (entries.isEmpty()) return messages
+
+        val beforePrompts = entries.filter { it.position == 2 }
+        val afterSystemPrompts = entries.filter { it.position == 0 }
+        val inChat = entries.filter { it.position == 1 }
+
+        val result = messages.toMutableList()
+
+        // BEFORE_PROMPT → prepend in arrival order.
+        var frontIdx = 0
+        for (entry in beforePrompts) {
+            result.add(frontIdx, PromptMessage(role = entry.role, content = entry.value))
+            frontIdx++
+        }
+
+        // IN_PROMPT → right after the leading run of system messages.
+        val firstNonSystem = result.indexOfFirst { it.role != MessageRole.System }
+        val inPromptBase = if (firstNonSystem < 0) result.size else firstNonSystem
+        var inPromptIdx = inPromptBase
+        for (entry in afterSystemPrompts) {
+            result.add(inPromptIdx, PromptMessage(role = entry.role, content = entry.value))
+            inPromptIdx++
+        }
+
+        // IN_CHAT at depth → deepest first to keep indices stable.
+        val byDepth = inChat.groupBy { it.depth }.toSortedMap(reverseOrder())
+        for (depth in byDepth.keys) {
+            val atDepth = byDepth[depth] ?: emptyList()
+            val insertIdx = (result.size - depth).coerceIn(0, result.size)
+            val roleOrder = listOf(MessageRole.System, MessageRole.User, MessageRole.Assistant)
+            var offset = 0
+            for (role in roleOrder) {
+                for (entry in atDepth.filter { it.role == role }) {
+                    result.add(insertIdx + offset, PromptMessage(role = entry.role, content = entry.value))
+                    offset++
+                }
+            }
+        }
+
+        return result
+    }
+
+    private fun resolveExtensionInjectionRole(raw: String?): MessageRole {
+        if (raw == null) return MessageRole.System
+        return when (raw.trim().lowercase()) {
+            "0", "system" -> MessageRole.System
+            "1", "user" -> MessageRole.User
+            "2", "assistant", "char", "character" -> MessageRole.Assistant
+            "tool" -> MessageRole.Tool
+            else -> MessageRole.System
+        }
+    }
+
+    private data class ExtensionInjection(
+        val value: String,
+        val position: Int,
+        val depth: Int,
+        val role: MessageRole,
+        val order: Int,
+    )
 
     private fun compatibilityWarnings(request: PromptBuildRequest): List<String> = buildList {
         if (request.character.raw.isNotEmpty()) {

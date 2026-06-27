@@ -187,6 +187,13 @@ class FileStDataStore(
             put("user_name", "unused")
             put("character_name", "unused")
             putJsonObject("chat_metadata") {
+                // Preserve the full original chat_metadata (variables, model_class,
+                // api, extension data, ...) read at parse time into session.metadata,
+                // so ST<->tellev round-trips don't silently lose it. session_id and
+                // title are overwritten with the current values afterward.
+                for ((key, value) in session.metadata) {
+                    put(key, value)
+                }
                 put("session_id", session.id)
                 if (session.title.isNotBlank()) put("title", session.title)
             }
@@ -307,6 +314,18 @@ class FileStDataStore(
         }
 
         layout.worlds.resolve("${book.id}.json").writeText(json.encodeToString(JsonObject.serializer(), output))
+    }
+
+    override suspend fun deleteWorldBook(id: String): Unit = withContext(Dispatchers.IO) {
+        layout.worlds.resolve("$id.json").deleteIfExists()
+        // Drop the id from the disabled-activation set so it doesn't linger as a
+        // stale entry after the book file is gone.
+        val disabled = readDisabledWorldIds() - id
+        if (disabled.isEmpty()) {
+            layout.worldInfoActivation.deleteIfExists()
+        } else {
+            saveDisabledWorldIds(disabled)
+        }
     }
 
     override suspend fun readDisabledWorldIds(): Set<String> = withContext(Dispatchers.IO) {

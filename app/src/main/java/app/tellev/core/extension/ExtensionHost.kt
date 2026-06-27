@@ -62,6 +62,17 @@ interface ExtensionHost {
      * for ST-compatible extension code that reads `extension_settings[extId]`.
      */
     fun snapshotExtensionSettings(): JsonObject = buildJsonObject { }
+
+    /**
+     * Collect every extension-injected prompt currently registered through
+     * the ST-compatible `injectPrompts` API. The returned object is keyed by
+     * a composite `"<extensionId>/<promptId>"` so that prompts from different
+     * extensions never collide. Each entry carries `value`, `position`,
+     * `depth`, `role`, `extensionId`, and `promptId` fields. The result is
+     * meant to be placed under `metadata["injectedPrompts"]` so the prompt
+     * engine can splice the entries into the outgoing prompt.
+     */
+    fun collectInjectedPrompts(): JsonObject = buildJsonObject { }
 }
 
 // ── Manifest & permissions ─────────────────────────────────────────────

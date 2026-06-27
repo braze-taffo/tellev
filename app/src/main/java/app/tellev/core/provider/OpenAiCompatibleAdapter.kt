@@ -125,16 +125,21 @@ class OpenAiCompatibleAdapter(
             .get()
             .build()
 
-        return client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return fallbackModels
-            val body = response.body?.string().orEmpty()
-            val data = json.parseToJsonElement(body).jsonObject["data"]?.jsonArray ?: JsonArray(emptyList())
-            val models = data.mapNotNull { item ->
-                val modelId = item.jsonObject["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                ProviderModel(id = modelId, capabilities = capabilities)
+        // Guard the network call + JSON parse the same way probeModelsEndpoint does:
+        // a connection failure or a non-JSON 200 body would otherwise propagate as
+        // an uncaught exception into the settings screen and crash it.
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@runCatching fallbackModels
+                val body = response.body?.string().orEmpty()
+                val data = json.parseToJsonElement(body).jsonObject["data"]?.jsonArray ?: JsonArray(emptyList())
+                val models = data.mapNotNull { item ->
+                    val modelId = item.jsonObject["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                    ProviderModel(id = modelId, capabilities = capabilities)
+                }
+                models.ifEmpty { fallbackModels }
             }
-            models.ifEmpty { fallbackModels }
-        }
+        }.getOrElse { fallbackModels }
     }
 
     override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> = flow {
@@ -167,6 +172,7 @@ class OpenAiCompatibleAdapter(
                     var fullText = ""
                     var reasoningText = ""
                     var finishReason: String? = null
+                    var lastUsage: JsonObject? = null
                     val toolCallAccumulator = mutableMapOf<Int, ToolCallAccumulator>()
 
                     while (source != null && !source.exhausted()) {
@@ -206,6 +212,10 @@ class OpenAiCompatibleAdapter(
                         if (parsed.finishReason != null) {
                             finishReason = parsed.finishReason
                         }
+
+                        // Capture usage from the final usage-only chunk
+                        // (stream_options.include_usage sends it with empty choices).
+                        parsed.usage?.let { lastUsage = it }
                     }
 
                     // Append reasoning before main text in the completed result
@@ -215,11 +225,11 @@ class OpenAiCompatibleAdapter(
                         fullText
                     }
 
-                    emit(GenerateChunk.Completed(completedText, finishReason))
+                    emit(GenerateChunk.Completed(completedText, finishReason, usage = lastUsage))
                 } else {
                     val body = response.body?.string().orEmpty()
                     val parsed = parseNonStreamResponse(body)
-                    emit(GenerateChunk.Completed(parsed.text, parsed.finishReason))
+                    emit(GenerateChunk.Completed(parsed.text, parsed.finishReason, usage = parsed.usage))
                 }
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -322,8 +332,16 @@ class OpenAiCompatibleAdapter(
     private fun parseStreamChunk(data: String): StreamChunkParsed {
         return runCatching {
             val obj = json.parseToJsonElement(data).jsonObject
-            val choice = obj["choices"]?.jsonArray?.firstOrNull()?.jsonObject ?: return@runCatching StreamChunkParsed()
-            val delta = choice["delta"]?.jsonObject ?: return@runCatching StreamChunkParsed()
+
+            // Usage arrives in a final chunk with empty choices (when
+            // stream_options.include_usage is set). Capture it before the
+            // choice null-check so it isn't discarded.
+            val usage = obj["usage"] as? JsonObject
+
+            val choice = obj["choices"]?.jsonArray?.firstOrNull()?.jsonObject
+                ?: return@runCatching StreamChunkParsed(usage = usage)
+            val delta = choice["delta"]?.jsonObject
+                ?: return@runCatching StreamChunkParsed(usage = usage)
 
             val content = delta["content"]?.jsonPrimitive?.contentOrNull.orEmpty()
 
@@ -341,6 +359,7 @@ class OpenAiCompatibleAdapter(
                 reasoningContent = reasoningContent,
                 finishReason = finishReason,
                 toolCalls = toolCalls,
+                usage = usage,
             )
         }.getOrDefault(StreamChunkParsed())
     }
@@ -376,7 +395,7 @@ class OpenAiCompatibleAdapter(
                 text
             }
 
-            NonStreamParsed(text = fullText, finishReason = finishReason)
+            NonStreamParsed(text = fullText, finishReason = finishReason, usage = obj["usage"] as? JsonObject)
         }.getOrDefault(NonStreamParsed(text = "", finishReason = null))
     }
 
@@ -427,6 +446,7 @@ class OpenAiCompatibleAdapter(
         val reasoningContent: String = "",
         val finishReason: String? = null,
         val toolCalls: List<ToolCallDelta> = emptyList(),
+        val usage: JsonObject? = null,
     )
 
     private data class ToolCallDelta(
@@ -445,6 +465,7 @@ class OpenAiCompatibleAdapter(
     private data class NonStreamParsed(
         val text: String,
         val finishReason: String?,
+        val usage: JsonObject? = null,
     )
 
     private data class StatusProbe(
