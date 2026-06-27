@@ -9,6 +9,7 @@ import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -279,5 +280,75 @@ class DefaultPromptEngineTest {
 
         assertEquals(MessageRole.Assistant, result.messages[2].role)
         assertEquals("Targeted reminder.", result.messages[2].content)
+    }
+
+    @Test
+    fun buildSplicesInExtensionInjectedPromptsByDepth() {
+        val result = DefaultPromptEngine().build(
+            PromptBuildRequest(
+                character = CharacterCard(id = "alice", name = "Alice"),
+                persona = null,
+                messages = listOf(
+                    ChatMessage(id = "m1", role = MessageRole.User, name = "User", content = "Hello.", createdAtMillis = 1L),
+                    ChatMessage(id = "m2", role = MessageRole.Character, name = "Alice", content = "Hi there.", createdAtMillis = 2L),
+                    ChatMessage(id = "m3", role = MessageRole.User, name = "User", content = "How are you?", createdAtMillis = 3L),
+                ),
+                worldBooks = emptyList(),
+                preset = GenerationPreset(id = "default", name = "Default", providerType = "openai-compatible"),
+                userInput = "Tell me a story.",
+                providerType = "openai-compatible",
+                metadata = buildJsonObject {
+                    put("injectedPrompts", buildJsonObject {
+                        putJsonObject("ext-a/an") {
+                            put("extensionId", "ext-a")
+                            put("promptId", "an")
+                            put("value", "Author's note: keep it short.")
+                            put("position", 1)
+                            put("depth", 1)
+                            put("role", "system")
+                        }
+                        putJsonObject("ext-b/before") {
+                            put("extensionId", "ext-b")
+                            put("promptId", "before")
+                            put("value", "Pre-context reminder.")
+                            put("position", 2)
+                            put("depth", 4)
+                            put("role", "system")
+                        }
+                        putJsonObject("ext-c/after") {
+                            put("extensionId", "ext-c")
+                            put("promptId", "after")
+                            put("value", "Right after system prompt.")
+                            put("position", 0)
+                            put("depth", 0)
+                            put("role", "system")
+                        }
+                        putJsonObject("ext-d/none") {
+                            put("extensionId", "ext-d")
+                            put("promptId", "none")
+                            put("value", "Should be skipped.")
+                            put("position", -1)
+                            put("depth", 0)
+                            put("role", "system")
+                        }
+                    })
+                },
+            ),
+        )
+
+        val contents = result.messages.map { it.content }
+
+        // BEFORE_PROMPT reminder should be the very first message.
+        assertEquals("Pre-context reminder.", contents.first())
+        // system prompt should follow the BEFORE_PROMPT reminder.
+        assertTrue(contents[1].contains("Alice"))
+        // IN_PROMPT entry should sit immediately after the system prompt.
+        assertEquals("Right after system prompt.", contents[2])
+        // IN_CHAT at depth=1 should appear right before the last user message,
+        // which is the user's "Tell me a story." prompt from [request.userInput].
+        assertEquals("Author's note: keep it short.", contents[contents.lastIndex - 1])
+        assertEquals("Tell me a story.", contents.last())
+        // NONE entry must never appear.
+        assertFalse(contents.contains("Should be skipped."))
     }
 }

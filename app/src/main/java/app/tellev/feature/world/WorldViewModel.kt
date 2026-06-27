@@ -169,13 +169,7 @@ class WorldViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
-                // Save with empty state to signal deletion
-                val emptyBook = WorldBook(
-                    id = id,
-                    name = "",
-                    entries = emptyList(),
-                )
-                dataStore.saveWorldBook(emptyBook)
+                dataStore.deleteWorldBook(id)
                 _uiState.update {
                     it.copy(
                         selectedBook = null,

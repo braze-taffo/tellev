@@ -286,9 +286,7 @@ class ChatViewModel(
                     preset = preset,
                     userInput = messageText,
                     providerType = config.providerType,
-                    metadata = buildJsonObject {
-                        put("providerType", config.providerType)
-                    },
+                    metadata = buildPromptMetadata(state, config, preset, updatedSession),
                 )
 
                 val promptResult = promptEngine.build(promptRequest)
@@ -823,9 +821,7 @@ class ChatViewModel(
                 preset = preset,
                 userInput = userInput,
                 providerType = config.providerType,
-                metadata = buildJsonObject {
-                    put("providerType", config.providerType)
-                },
+                metadata = buildPromptMetadata(state, config, preset, state.currentSession),
             )
             val promptResult = promptEngine.build(promptRequest)
             val adapter = providerRegistry.require(config.providerType)
@@ -945,6 +941,42 @@ class ChatViewModel(
         )
     }
 
+    /**
+     * Build the metadata JsonObject handed to DefaultPromptEngine.build. Feeding
+     * maxContextTokens is what makes TokenBudget.fitToBudget actually trim long
+     * chats; without it (the previous state — only providerType was passed),
+     * generation silently overflowed the provider context window.
+     *
+     * groupMembers is populated for group chats and unblocks
+     * applyGroupChatOrdering + the {{group}} macro.
+     *
+     * instructPreset / contextPreset are intentionally NOT wired here: the app
+     * has no storage or UI for them yet, so there is no value to feed (applying a
+     * default would silently change message formatting for everyone). Their
+     * branches in DefaultPromptEngine stay dormant until preset management lands.
+     */
+    private suspend fun buildPromptMetadata(
+        state: ChatUiState,
+        config: ProviderConfig,
+        preset: GenerationPreset,
+        session: ChatSession?,
+    ): JsonObject = buildJsonObject {
+        put("providerType", config.providerType)
+        preset.maxTokens?.let { put("maxContextTokens", JsonPrimitive(it)) }
+        val groupId = session?.groupId
+        if (!groupId.isNullOrBlank()) {
+            val group = dataStore.listGroups().firstOrNull { it.id == groupId }
+            if (group != null && group.memberCharacterIds.isNotEmpty()) {
+                val byId = state.characters.associateBy { it.id }
+                val names = group.memberCharacterIds.mapNotNull { id -> byId[id]?.name }
+                if (names.isNotEmpty()) {
+                    putJsonArray("groupMembers") { names.forEach { add(JsonPrimitive(it)) } }
+                }
+            }
+        }
+        put("injectedPrompts", extensionHost.collectInjectedPrompts())
+    }
+
     private fun buildTavernContext(state: ChatUiState): JsonObject {
         val character = state.selectedCharacter
         val session = state.currentSession
@@ -962,7 +994,7 @@ class ChatViewModel(
             put("mainApi", state.providerConfig?.providerType ?: state.selectedProvider)
             put("main_api", state.providerConfig?.providerType ?: state.selectedProvider)
             put("onlineStatus", "connected")
-            put("maxContext", 8192)
+            put("maxContext", state.selectedPreset?.maxTokens ?: 8192)
             put("lastMessageId", state.messages.lastIndex)
             put("chatMetadata", session?.metadata ?: buildJsonObject { })
             put("chat_metadata", session?.metadata ?: buildJsonObject { })
