@@ -1,0 +1,21 @@
+# Normalize all text files to LF in the repo. Working copies are checked
+# out with LF on every platform; commits store LF. This keeps diffs free of
+# whole-file CRLF rewrites.
+* text=auto eol=lf
+
+# Binary types — never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.bmp binary
+*.svg binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.jar binary
+*.keystore binary
+*.jks binary
+*.dex binary
