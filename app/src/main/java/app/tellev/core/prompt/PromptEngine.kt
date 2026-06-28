@@ -90,11 +90,10 @@ class DefaultPromptEngine(
             .filter { it.isNotBlank() }
         val systemPrompt = if (contextPreset != null) {
             buildSystemPromptWithContextTemplate(
-                request = request,
                 expandedCharacter = expandedCharacter,
                 contextPreset = contextPreset,
                 macroContext = macroContext,
-                worldInfoContent = worldInfoContent,
+                activatedEntries = activatedEntries,
             )
         } else {
             buildSystemPrompt(request, expandedCharacter, worldInfoContent, macroContext)
@@ -147,10 +146,16 @@ class DefaultPromptEngine(
         // 9. Apply token budget
         val maxContextTokens = extractMaxContextTokens(request.metadata)
         val budgetedMessages = if (maxContextTokens != null) {
+            // templatedSystemPrompt already contains the world info + character
+            // description text (both buildSystemPrompt and the context-template
+            // path insert them into the system prompt). Passing them again as
+            // separate worldInfo/characterDescription would double-count their
+            // tokens against the budget and trim legitimate chat messages too
+            // eagerly. Pass empties so each token is reserved only once.
             TokenBudget.fitToBudget(
                 systemPrompt = templatedSystemPrompt,
-                worldInfo = worldInfoContent,
-                characterDescription = expandedCharacter.description,
+                worldInfo = emptyList(),
+                characterDescription = "",
                 messages = templatedMessages.drop(1), // Drop system message, fitToBudget adds its own
                 budget = maxContextTokens - request.preset.maxTokens.orElse(0),
             )
@@ -275,19 +280,15 @@ class DefaultPromptEngine(
     }.trim()
 
     private fun buildSystemPromptWithContextTemplate(
-        request: PromptBuildRequest,
         expandedCharacter: CharacterCard,
         contextPreset: ContextPreset,
         macroContext: MacroContext,
-        worldInfoContent: List<String>,
+        activatedEntries: List<app.tellev.core.model.WorldBookEntry>,
     ): String {
         // Split world info into before/after based on entry depth
-        // Entries with depth <= 2 go to wiAfter, others go to wiBefore
-        val activatedEntries = activateWorldEntries(request.worldBooks, buildString {
-            append(request.userInput)
-            append('\n')
-            request.messages.takeLast(12).forEach { appendLine(it.content) }
-        })
+        // Entries with depth <= 2 go to wiAfter, others go to wiBefore.
+        // Reuses the already-activated/expanded entries computed in build()
+        // instead of re-activating with a different (raw) search text.
 
         val entriesBefore = mutableListOf<String>()
         val entriesAfter = mutableListOf<String>()
