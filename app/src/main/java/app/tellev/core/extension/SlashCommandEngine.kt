@@ -720,7 +720,9 @@ class SlashCommandEngine(
             val varName = token.removeSurrounding("{{", "}}")
             return variables[varName] ?: ""
         }
-        return token
+        // Strip matching surrounding quotes so quoted literals compare equal to
+        // bare/macro-expanded values (STScript compares the unquoted value).
+        return token.removeSurrounding("\"").removeSurrounding("'")
     }
 
     companion object {

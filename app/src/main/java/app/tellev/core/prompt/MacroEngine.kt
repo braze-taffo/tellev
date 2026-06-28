@@ -5,6 +5,7 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.random.Random
 
 interface MacroEngine {
@@ -29,7 +30,11 @@ data class MacroContext(
 
 class DefaultMacroEngine : MacroEngine {
 
-    private val customMacros = mutableMapOf<String, (MacroContext) -> String>()
+    // DefaultMacroEngine is shared across requests (constructed once and injected
+    // into DefaultPromptEngine), so customMacros is read from build() coroutines
+    // while extensions write to it. Use a ConcurrentHashMap for safe concurrent
+    // access instead of a plain mutableMapOf.
+    private val customMacros = ConcurrentHashMap<String, (MacroContext) -> String>()
 
     // Matches {{...}} patterns - non-greedy, handles nested colons for transforms
     private val macroPattern = Regex("""\{\{([^{}]+)\}\}""")

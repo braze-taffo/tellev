@@ -1,6 +1,7 @@
 package app.tellev.core.extension
 
 import app.tellev.core.model.CharacterCard
+import java.net.URLDecoder
 import app.tellev.core.model.CharacterSummary
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
@@ -621,7 +622,15 @@ class VirtualApiRouter(
         if (query.isEmpty()) return emptyMap()
         return query.split('&').mapNotNull { param ->
             val parts = param.split('=', limit = 2)
-            if (parts.size == 2) parts[0] to parts[1] else null
+            if (parts.size == 2) {
+                // URL-decode key and value so %-encoded characters (and '+' as
+                // space) match names that contain spaces or non-ASCII chars.
+                runCatching {
+                    URLDecoder.decode(parts[0], "UTF-8") to URLDecoder.decode(parts[1], "UTF-8")
+                }.getOrElse { parts[0] to parts[1] }
+            } else {
+                null
+            }
         }.toMap()
     }
 

@@ -1,5 +1,8 @@
 ﻿package app.tellev.core.extension
 
+import app.tellev.core.model.ChatMessage
+import app.tellev.core.model.ChatSession
+import app.tellev.core.model.MessageRole
 import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.FileStDataStore
@@ -56,6 +59,69 @@ class VirtualApiRouterTest {
         assertEquals(200, response.status)
         val body = json.parseToJsonElement(response.body).jsonObject
         assertTrue(body["characters"]?.jsonArray?.isEmpty() == true)
+    }
+
+    // ── parseSimpleQuery URL-decoding (guard for the parseSimpleQuery fix) ──
+    // Query params must be URL-decoded so %-encoded characters (and '+' as a
+    // space) match real names. Before the fix the raw `My%20Char` / `My+Char`
+    // was passed straight through and never matched a stored session whose
+    // characterId contained a space.
+
+    private suspend fun saveSessionFor(characterId: String) {
+        store.saveChatSession(
+            ChatSession(
+                id = "chat-$characterId",
+                title = "Talk",
+                characterId = characterId,
+                groupId = null,
+                messages = listOf(
+                    ChatMessage(
+                        id = "m1",
+                        role = MessageRole.User,
+                        name = "Bob",
+                        content = "hello",
+                        createdAtMillis = 1L,
+                    ),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `list chats decodes percent-encoded space in characterId`() = runBlocking {
+        saveSessionFor("My Char")
+        val response = router.route(VirtualApiRequest("GET", "/api/chats?characterId=My%20Char"))
+        assertEquals(200, response.status)
+        val body = json.parseToJsonElement(response.body).jsonObject
+        assertEquals(1, body["chats"]?.jsonArray?.size)
+    }
+
+    @Test
+    fun `list chats decodes plus as space in characterId`() = runBlocking {
+        saveSessionFor("My Char")
+        val response = router.route(VirtualApiRequest("GET", "/api/chats?characterId=My+Char"))
+        assertEquals(200, response.status)
+        val body = json.parseToJsonElement(response.body).jsonObject
+        assertEquals(1, body["chats"]?.jsonArray?.size)
+    }
+
+    @Test
+    fun `list chats decodes non-ASCII characters in characterId`() = runBlocking {
+        saveSessionFor("角色甲")
+        val encoded = java.net.URLEncoder.encode("角色甲", "UTF-8")
+        val response = router.route(VirtualApiRequest("GET", "/api/chats?characterId=$encoded"))
+        assertEquals(200, response.status)
+        val body = json.parseToJsonElement(response.body).jsonObject
+        assertEquals(1, body["chats"]?.jsonArray?.size)
+    }
+
+    @Test
+    fun `list chats returns empty when no session matches decoded characterId`() = runBlocking {
+        saveSessionFor("My Char")
+        val response = router.route(VirtualApiRequest("GET", "/api/chats?characterId=Other"))
+        assertEquals(200, response.status)
+        val body = json.parseToJsonElement(response.body).jsonObject
+        assertEquals(0, body["chats"]?.jsonArray?.size)
     }
 
     @Test

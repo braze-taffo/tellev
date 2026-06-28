@@ -66,6 +66,8 @@ object StEventCatalog {
     const val APP_INITIALIZED = "app_initialized"
     const val APP_READY = "app_ready"
     const val SETTINGS_LOADED = "settings_loaded"
+    // Both intentionally map to ST's sole event name "settings_updated"
+    // (ST has no settings_changed event); keep both names for compatibility.
     const val SETTINGS_CHANGED = "settings_updated"
     const val SETTINGS_UPDATED = "settings_updated"
     const val EXTENSIONS_FIRST_LOAD = "extensions_first_load"

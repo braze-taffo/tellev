@@ -317,4 +317,34 @@ class SlashCommandEngineTest {
         assertTrue(SlashCommandEngine.BUILTIN_COMMANDS.contains("send"))
         assertTrue(SlashCommandEngine.BUILTIN_COMMANDS.contains("abort"))
     }
+
+    // ── truthy semantics (guard for the resolveValue change) ──
+    // resolveValue now strips surrounding quotes before the truthy test, so
+    // STScript-style unquoted evaluation holds: the literal "0" / "false" are
+    // falsy, any other non-empty value is true.
+
+    @Test
+    fun `if truthy treats zero as falsy`() {
+        val result = engine.execute("/if 0")
+        assertEquals("false", result.output)
+    }
+
+    @Test
+    fun `if truthy treats false as falsy`() {
+        val result = engine.execute("/if false")
+        assertEquals("false", result.output)
+    }
+
+    @Test
+    fun `if truthy treats a non-empty string as true`() {
+        val result = engine.execute("/if hello")
+        assertEquals("true", result.output)
+    }
+
+    @Test
+    fun `if equality compares a variable to a bare literal`() {
+        engine.execute("/setvar status active")
+        val result = engine.execute("/if {{status}}==active")
+        assertEquals("true", result.output)
+    }
 }

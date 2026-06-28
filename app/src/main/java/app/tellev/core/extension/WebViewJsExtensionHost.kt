@@ -276,9 +276,17 @@ class WebViewJsExtensionHost(
             ),
         )
 
-        val result = withTimeoutOrNull(commandTimeoutMs) { deferred.await() }
-        pendingCommands.remove(requestId)
-        pendingCommandOwners.remove(requestId)
+        // withTimeoutOrNull only swallows TimeoutCancellationException; a parent
+        // cancellation surfaces from await() as a JobCancellationException. Use a
+        // finally block so the pending maps are always cleaned up (no entry leak),
+        // and cancel the deferred so a late WebView-side callback finds it dead.
+        val result = try {
+            withTimeoutOrNull(commandTimeoutMs) { deferred.await() }
+        } finally {
+            pendingCommands.remove(requestId)
+            pendingCommandOwners.remove(requestId)
+            deferred.cancel()
+        }
 
         // A timeout is a failure: the command was NOT handled.
         return result ?: SlashCommandResult(
@@ -319,9 +327,13 @@ class WebViewJsExtensionHost(
                 }
             }
 
-            val result = withTimeoutOrNull(apiCallTimeoutMs) { deferred.await() }
-            pendingVirtualApi.remove(requestId)
-            pendingVirtualApiOwners.remove(requestId)
+            val result = try {
+                withTimeoutOrNull(apiCallTimeoutMs) { deferred.await() }
+            } finally {
+                pendingVirtualApi.remove(requestId)
+                pendingVirtualApiOwners.remove(requestId)
+                deferred.cancel()
+            }
             return result ?: VirtualApiResponse(
                 status = 504,
                 body = "{\"error\":\"Extension route timed out\"}",
