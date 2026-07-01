@@ -145,16 +145,25 @@ data class WorldBookEntry(
     val priority: Int = 0,
     val insertionOrder: Int = 100,
     val depth: Int = 4,
+    // ── SillyTavern world-info advanced fields ───────────────────────────
+    /** world_info_position: 0=before,1=after,2=ANTop,3=ANBottom,4=atDepth,5=EMTop,6=EMBottom,7=outlet. */
+    val position: Int = 0,
+    /** 0-100. Only rolled when [useProbability] is true. */
+    val probability: Int = 100,
+    val useProbability: Boolean = false,
+    /** world_info_logic: 0=AND_ANY,1=NOT_ALL,2=NOT_ANY,3=AND_ALL. Only used when [selective] is true. */
+    val selectiveLogic: Int = 0,
+    /** extension_prompt_roles: 0=SYSTEM,1=USER,2=ASSISTANT. Only meaningful at position=atDepth. */
+    val role: Int = 0,
+    val matchWholeWords: Boolean = false,
+    val useRegex: Boolean = false,
+    val caseSensitive: Boolean = false,
+    val comment: String = "",
+    val excludeRecursion: Boolean = false,
+    val preventRecursion: Boolean = false,
+    val delayUntilRecursion: Boolean = false,
     val raw: JsonObject = buildJsonObject { },
-) {
-    fun matches(text: String): Boolean {
-        if (!enabled || constant) return enabled && constant
-        val haystack = text.lowercase()
-        val primaryMatched = keys.any { it.isNotBlank() && haystack.contains(it.lowercase()) }
-        if (!selective) return primaryMatched
-        return primaryMatched && secondaryKeys.any { it.isNotBlank() && haystack.contains(it.lowercase()) }
-    }
-}
+)
 
 @Serializable
 data class TellevError(

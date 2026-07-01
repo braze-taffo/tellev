@@ -71,8 +71,28 @@ class DefaultPromptEngine(
             request.messages.takeLast(12).forEach { appendLine(it.content) }
         }
 
-        // 4. Activate world book entries with depth/position support
-        val activatedEntries = activateWorldEntries(request.worldBooks, searchText)
+        // 4. Activate world book entries with depth/position support.
+        // The expand callback runs each entry's content through macro
+        // expansion AND the prompt-template processor so that [GENERATE]/@INJECT
+        // instruction blocks are stripped here (their actual injection happens
+        // later via promptTemplateProcessor.process) and EJS is resolved. This
+        // mirrors the previous single-scope path that filtered world content
+        // through systemPromptContentFor before splicing into the system prompt.
+        val worldScanner = WorldInfoScanner()
+        val worldScan = worldScanner.scan(
+            entries = request.worldBooks.flatMap { it.entries },
+            searchText = searchText,
+            expand = {
+                promptTemplateProcessor.systemPromptContentFor(
+                    PromptTemplateWorldEntry(
+                        id = it.id,
+                        content = macroEngine.expand(it.content, macroContext),
+                        raw = it.raw,
+                    ),
+                )
+            },
+        )
+        val activatedEntries = worldScan.allActivated.map { it.entry }
 
         // 5. Build system prompt
         val contextPresetObj = request.metadata["contextPreset"] as? JsonObject
@@ -85,18 +105,15 @@ class DefaultPromptEngine(
                 raw = it.raw,
             )
         }
-        val worldInfoContent = promptTemplateWorldEntries
-            .map { promptTemplateProcessor.systemPromptContentFor(it) }
-            .filter { it.isNotBlank() }
         val systemPrompt = if (contextPreset != null) {
             buildSystemPromptWithContextTemplate(
                 expandedCharacter = expandedCharacter,
                 contextPreset = contextPreset,
                 macroContext = macroContext,
-                activatedEntries = activatedEntries,
+                worldScan = worldScan,
             )
         } else {
-            buildSystemPrompt(request, expandedCharacter, worldInfoContent, macroContext)
+            buildSystemPrompt(request, expandedCharacter, worldScan, macroContext)
         }
 
         // 6. Build prompt messages
@@ -167,7 +184,7 @@ class DefaultPromptEngine(
         // extensions via the ST-compatible `injectPrompts` JS API). Applied
         // after budget trimming so injected system/user/assistant messages
         // survive into the request and instruct mode sees them too.
-        val withInjections = applyExtensionInjections(budgetedMessages, request.metadata)
+        val withInjections = applyExtensionInjections(budgetedMessages, request.metadata, worldScan.atDepth)
 
         // 10. Check for instruct mode
         val instructPresetObj = request.metadata["instructPreset"] as? JsonObject
@@ -244,69 +261,57 @@ class DefaultPromptEngine(
         )
     }
 
-    private fun activateWorldEntries(
-        worldBooks: List<WorldBook>,
-        searchText: String,
-    ): List<app.tellev.core.model.WorldBookEntry> {
-        val allEntries = worldBooks.flatMap { it.entries }.filter { it.enabled || it.constant }
-
-        return allEntries
-            .filter { entry ->
-                if (entry.constant) return@filter true
-                entry.matches(searchText)
-            }
-            .sortedWith(
-                compareByDescending<app.tellev.core.model.WorldBookEntry> { it.priority }
-                    .thenBy { it.insertionOrder }
-            )
-    }
-
     private fun buildSystemPrompt(
         request: PromptBuildRequest,
         expandedCharacter: CharacterCard,
-        worldEntries: List<String>,
+        worldScan: WorldInfoScanner.ScanResult,
         macroContext: MacroContext,
     ): String = buildString {
         appendLine("You are ${expandedCharacter.name}.")
+        // ↑Char (position 0) + outlet (7) folded into before.
+        appendWorldInfo(worldScan.before + worldScan.outlet)
         appendBlock("Character description", expandedCharacter.description)
+        // ↓Char (position 1).
+        appendWorldInfo(worldScan.after)
         appendBlock("Personality", expandedCharacter.personality)
         appendBlock("Scenario", expandedCharacter.scenario)
+        // ↑AT (position 2) before persona.
+        appendWorldInfo(worldScan.anTop)
         appendBlock("Persona", request.persona?.description?.let { macroEngine.expand(it, macroContext) }.orEmpty())
-        if (worldEntries.isNotEmpty()) {
-            appendLine("World info:")
-            worldEntries.forEach { appendLine(it) }
-        }
+        // ↓AT (position 3) after persona.
+        appendWorldInfo(worldScan.anBottom)
+        // ↑EM (position 5) before example messages.
+        appendWorldInfo(worldScan.emTop)
         appendBlock("Example messages", expandedCharacter.exampleMessages)
+        // ↓EM (position 6) after example messages.
+        appendWorldInfo(worldScan.emBottom)
+        // Note: AT_DEPTH (position 4) entries are not part of the system
+        // prompt; they are spliced into the chat history by
+        // [applyExtensionInjections] as depth-based messages.
     }.trim()
+
+    private fun StringBuilder.appendWorldInfo(entries: List<WorldInfoScanner.ActivatedEntry>) {
+        val nonBlank = entries.map { it.content.trim() }.filter { it.isNotEmpty() }
+        if (nonBlank.isEmpty()) return
+        appendLine("World info:")
+        nonBlank.forEach { appendLine(it) }
+    }
 
     private fun buildSystemPromptWithContextTemplate(
         expandedCharacter: CharacterCard,
         contextPreset: ContextPreset,
         macroContext: MacroContext,
-        activatedEntries: List<app.tellev.core.model.WorldBookEntry>,
+        worldScan: WorldInfoScanner.ScanResult,
     ): String {
-        // Split world info into before/after based on entry depth
-        // Entries with depth <= 2 go to wiAfter, others go to wiBefore.
-        // Reuses the already-activated/expanded entries computed in build()
-        // instead of re-activating with a different (raw) search text.
-
-        val entriesBefore = mutableListOf<String>()
-        val entriesAfter = mutableListOf<String>()
-        for (entry in activatedEntries) {
-            val content = promptTemplateProcessor.systemPromptContentFor(
-                PromptTemplateWorldEntry(
-                    id = entry.id,
-                    content = macroEngine.expand(entry.content, macroContext),
-                    raw = entry.raw,
-                ),
-            )
-            if (content.isBlank()) continue
-            if (entry.depth <= 2) {
-                entriesAfter.add(content)
-            } else {
-                entriesBefore.add(content)
-            }
-        }
+        // The context template only exposes wiBefore/wiAfter slots, so map the
+        // 8 ST positions onto the two: before-character positions (before,
+        // outlet, ANTop, EMTop) → wiBefore; after-character positions (after,
+        // ANBottom, EMBottom) → wiAfter. AT_DEPTH is handled as chat-history
+        // injection, not here.
+        val entriesBefore = (worldScan.before + worldScan.outlet + worldScan.anTop + worldScan.emTop)
+            .joinToString("\n") { it.content }
+        val entriesAfter = (worldScan.after + worldScan.anBottom + worldScan.emBottom)
+            .joinToString("\n") { it.content }
 
         val enrichedContext = macroContext.copy(
             characterDescription = expandedCharacter.description,
@@ -319,8 +324,8 @@ class DefaultPromptEngine(
         return ContextTemplate.buildSystemPrompt(
             preset = contextPreset,
             context = enrichedContext,
-            worldInfoBefore = entriesBefore.joinToString("\n"),
-            worldInfoAfter = entriesAfter.joinToString("\n"),
+            worldInfoBefore = entriesBefore,
+            worldInfoAfter = entriesAfter,
         )
     }
 
@@ -422,9 +427,9 @@ class DefaultPromptEngine(
     private fun applyExtensionInjections(
         messages: List<PromptMessage>,
         metadata: JsonObject,
+        wiDepthEntries: List<WorldInfoScanner.ActivatedEntry> = emptyList(),
     ): List<PromptMessage> {
-        val injectedObj = metadata["injectedPrompts"] as? JsonObject ?: return messages
-        if (injectedObj.isEmpty()) return messages
+        val injectedObj = metadata["injectedPrompts"] as? JsonObject ?: buildJsonObject { }
 
         val entries = mutableListOf<ExtensionInjection>()
         for ((_, entryElement) in injectedObj) {
@@ -438,6 +443,14 @@ class DefaultPromptEngine(
             )
             if (position == -1) continue // extension_prompt_types.NONE
             entries.add(ExtensionInjection(value, position, depth, role, entries.size))
+        }
+        // World-info AT_DEPTH entries → IN_CHAT (position 1) injections at the
+        // entry's depth, with the entry's role. Reuses the same depth+role
+        // grouping logic as extension injections.
+        for (wi in wiDepthEntries) {
+            if (wi.content.isBlank()) continue
+            val role = resolveExtensionInjectionRole(wi.entry.role.toString())
+            entries.add(ExtensionInjection(wi.content, 1, wi.entry.depth, role, entries.size))
         }
         if (entries.isEmpty()) return messages
 

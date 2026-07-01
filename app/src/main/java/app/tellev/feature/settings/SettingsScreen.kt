@@ -3,6 +3,13 @@ package app.tellev.feature.settings
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import app.tellev.core.model.Persona
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Image
@@ -97,6 +104,8 @@ fun SettingsScreen(
 
     var showPresetDialog by remember { mutableStateOf(false) }
     var showAddSecretDialog by remember { mutableStateOf(false) }
+    var showPersonaDialog by remember { mutableStateOf(false) }
+    var editingPersona by remember { mutableStateOf<Persona?>(null) }
     var showExportDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
     var apiKeyVisible by remember { mutableStateOf(false) }
@@ -377,6 +386,39 @@ fun SettingsScreen(
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 }
 
+                // Persona Management Section
+                item(key = "persona_header") {
+                    SectionHeader(
+                        icon = Icons.Default.Person,
+                        title = "人设",
+                        action = {
+                            editingPersona = null
+                            showPersonaDialog = true
+                        },
+                    )
+                }
+
+                if (state.personas.isEmpty()) {
+                    item(key = "persona_empty") {
+                        Text(
+                            text = "暂无人设。新建一个来设定你的身份（用于 {{user}} 名字与描述）。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    items(state.personas, key = { "persona_${it.id}" }) { persona ->
+                        PersonaCard(
+                            persona = persona,
+                            onEdit = {
+                                editingPersona = persona
+                                showPersonaDialog = true
+                            },
+                            onDelete = { viewModel.deletePersona(persona.id) },
+                        )
+                    }
+                }
+
                 // Secrets Management Section
                 item(key = "secrets_header") {
                     SectionHeader(
@@ -623,6 +665,27 @@ fun SettingsScreen(
             onSave = { key, value ->
                 viewModel.addSecret(key, value)
                 showAddSecretDialog = false
+            },
+        )
+    }
+
+    // Persona edit dialog
+    if (showPersonaDialog) {
+        PersonaEditDialog(
+            existing = editingPersona,
+            onDismiss = {
+                showPersonaDialog = false
+                editingPersona = null
+            },
+            onSave = { name, description ->
+                val editing = editingPersona
+                if (editing == null) {
+                    viewModel.addPersona(name, description)
+                } else {
+                    viewModel.updatePersona(editing.id, name, description)
+                }
+                showPersonaDialog = false
+                editingPersona = null
             },
         )
     }
@@ -1009,6 +1072,127 @@ private fun AddSecretDialog(
                     if (key.isNotBlank() && value.isNotBlank()) {
                         onSave(key.trim(), value)
                     }
+                },
+            ) {
+                Text("保存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+    )
+}
+
+@Composable
+private fun PersonaCard(
+    persona: Persona,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = persona.name.firstOrNull()?.uppercase() ?: "?",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = persona.name,
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                if (persona.description.isNotBlank()) {
+                    Text(
+                        text = persona.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                    )
+                }
+            }
+            IconButton(
+                onClick = onEdit,
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(
+                    Icons.Default.Edit,
+                    contentDescription = "编辑",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "删除",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PersonaEditDialog(
+    existing: Persona?,
+    onDismiss: () -> Unit,
+    onSave: (String, String) -> Unit,
+) {
+    var name by remember { mutableStateOf(existing?.name ?: "") }
+    var description by remember { mutableStateOf(existing?.description ?: "") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (existing == null) "新建人设" else "编辑人设") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("名称") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("描述") },
+                    minLines = 3,
+                    maxLines = 8,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (name.isNotBlank()) onSave(name.trim(), description)
                 },
             ) {
                 Text("保存")

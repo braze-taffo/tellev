@@ -126,6 +126,7 @@ class DefaultPromptEngineTest {
                                 keys = emptyList(),
                                 constant = true,
                                 content = "Mood is <%= getvar('mood') %>.",
+                                position = 1, // AFTER char defs so setvar in description runs first
                             ),
                         ),
                     ),

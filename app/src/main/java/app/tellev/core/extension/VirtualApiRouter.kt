@@ -115,6 +115,9 @@ class VirtualApiRouter(
             method == "POST" && segments.size == 3 && segments[0] == "characters" && segments[2] == "tavern-helper" ->
                 handleSaveCharacterTavernHelper(segments[1], request)
 
+            method == "DELETE" && segments.size == 2 && segments[0] == "characters" ->
+                handleDeleteCharacter(segments[1])
+
             // ── chats ──────────────────────────────────────────────
             method == "GET" && segments.size == 1 && segments[0] == "chats" ->
                 handleListChats(request)
@@ -242,6 +245,10 @@ class VirtualApiRouter(
             // ── personas ───────────────────────────────────────────
             method == "GET" && segments.size == 1 && segments[0] == "personas" ->
                 handleListPersonas()
+            method == "POST" && segments.size == 1 && segments[0] == "personas" ->
+                handleSavePersona(request)
+            method == "DELETE" && segments.size == 2 && segments[0] == "personas" ->
+                handleDeletePersona(segments[1])
 
             // ── presets (stub: presets are listed via /api/settings) ──
             method == "GET" && segments.size == 1 && segments[0] == "presets" ->
@@ -324,6 +331,11 @@ class VirtualApiRouter(
     private suspend fun handleSaveCharacter(request: VirtualApiRequest): VirtualApiResponse {
         val card = parseBody<CharacterCard>(request)
         dataStore.saveCharacter(card)
+        return jsonResponse(200, buildJsonObject { put("ok", true) })
+    }
+
+    private suspend fun handleDeleteCharacter(id: String): VirtualApiResponse {
+        dataStore.deleteCharacter(id)
         return jsonResponse(200, buildJsonObject { put("ok", true) })
     }
 
@@ -549,6 +561,17 @@ class VirtualApiRouter(
             }
         }
         return jsonResponse(200, body)
+    }
+
+    private suspend fun handleSavePersona(request: VirtualApiRequest): VirtualApiResponse {
+        val persona = parseBody<Persona>(request)
+        dataStore.savePersona(persona)
+        return jsonResponse(200, buildJsonObject { put("ok", true) })
+    }
+
+    private suspend fun handleDeletePersona(id: String): VirtualApiResponse {
+        dataStore.deletePersona(id)
+        return jsonResponse(200, buildJsonObject { put("ok", true) })
     }
 
     // ── helpers ─────────────────────────────────────────────────────────

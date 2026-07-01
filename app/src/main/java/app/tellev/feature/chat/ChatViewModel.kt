@@ -9,7 +9,9 @@ import app.tellev.core.extension.ExtensionHost
 import app.tellev.core.extension.ExtensionManifest
 import app.tellev.core.extension.ExtensionPermission
 import app.tellev.core.extension.ExtensionPermissionManager
+import app.tellev.core.extension.LocalVariableBackend
 import app.tellev.core.extension.StEventCatalog
+import app.tellev.core.model.Attachment
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterSummary
 import app.tellev.core.model.ChatMessage
@@ -30,6 +32,7 @@ import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.StDataStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,6 +45,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -87,6 +91,8 @@ class ChatViewModel(
     private var generationJob: Job? = null
     @Volatile
     private var loadedCharacterScriptExtensionId: String? = null
+    @Volatile
+    private var metadataSaveJob: Job? = null
 
     init {
         extensionHost.setContextProvider(object : ExtensionContextProvider {
@@ -97,6 +103,12 @@ class ChatViewModel(
 
             override suspend fun generateText(options: JsonObject): JsonObject? =
                 generateTextFromExtension(options)
+        })
+        extensionHost.setLocalVariableBackend(object : LocalVariableBackend {
+            override fun snapshot(): Map<String, String> = snapshotLocalVariables()
+
+            override fun update(transform: (MutableMap<String, String>) -> Unit): Map<String, String> =
+                updateChatVariables(transform)
         })
         loadInitialData()
     }
@@ -209,9 +221,9 @@ class ChatViewModel(
         }
     }
 
-    fun sendMessage(text: String): Boolean {
+    fun sendMessage(text: String, attachments: List<Attachment> = emptyList()): Boolean {
         val messageText = text.trim()
-        if (messageText.isBlank()) return false
+        if (messageText.isBlank() && attachments.isEmpty()) return false
 
         val state = _uiState.value
         val character = state.selectedCharacter
@@ -248,6 +260,7 @@ class ChatViewModel(
                     name = state.selectedPersona?.name ?: "你",
                     content = messageText,
                     createdAtMillis = System.currentTimeMillis(),
+                    attachments = attachments,
                 )
 
                 val updatedMessages = state.messages + userMessage
@@ -322,6 +335,7 @@ class ChatViewModel(
                 val generateRequest = GenerateRequest(
                     prompt = promptResult,
                     preset = preset,
+                    attachments = attachments,
                     stream = true,
                 )
 
@@ -429,7 +443,7 @@ class ChatViewModel(
             dataStore.saveChatSession(updatedSession)
         }
 
-        sendMessage(lastUserMessage.content)
+        sendMessage(lastUserMessage.content, lastUserMessage.attachments)
     }
 
     fun swipeMessage(messageIndex: Int, direction: Int) {
@@ -525,7 +539,7 @@ class ChatViewModel(
                     currentSession = updatedSession.copy(messages = trimmedMessages),
                 )
             }
-            sendMessage(newContent)
+            sendMessage(newContent, message.attachments)
         }
     }
 
@@ -975,6 +989,67 @@ class ChatViewModel(
             }
         }
         put("injectedPrompts", extensionHost.collectInjectedPrompts())
+    }
+
+    // ── Local-scope variables (chat_metadata.variables) ─────────────────
+    // The extension host reaches the active chat's variables through the
+    // LocalVariableBackend plugged in at init. Reads are cheap snapshots of
+    // the current session metadata; writes update the session in memory and
+    // persist through a debounced save so frequent /setvar calls don't rewrite
+    // the entire JSONL on every keystroke.
+
+    private fun snapshotLocalVariables(): Map<String, String> {
+        val vars = _uiState.value.currentSession?.metadata?.get("variables") as? JsonObject
+            ?: return emptyMap()
+        return parseVariableMap(vars)
+    }
+
+    private fun updateChatVariables(transform: (MutableMap<String, String>) -> Unit): Map<String, String> {
+        // Capture the transform result, then apply via _uiState.update so we
+        // never clobber concurrent session changes (e.g. streaming message
+        // updates) — we only re-read and rewrite the `variables` slot.
+        val session = _uiState.value.currentSession
+        if (session == null) {
+            // Still run the transform against an empty map so callers observe
+            // a consistent (empty) snapshot rather than a partial one.
+            val empty = mutableMapOf<String, String>()
+            transform(empty)
+            return empty
+        }
+        val current = parseVariableMap(session.metadata["variables"] as? JsonObject)
+        val mutable = current.toMutableMap()
+        transform(mutable)
+        val newVars = buildJsonObject {
+            mutable.forEach { (k, v) -> put(k, JsonPrimitive(v)) }
+        }
+        _uiState.update { state ->
+            val s = state.currentSession ?: return@update state
+            val newMetadata = JsonObject(s.metadata.toMutableMap().apply { put("variables", newVars) })
+            state.copy(currentSession = s.copy(metadata = newMetadata))
+        }
+        scheduleMetadataSave()
+        return mutable
+    }
+
+    private fun scheduleMetadataSave() {
+        metadataSaveJob?.cancel()
+        metadataSaveJob = viewModelScope.launch {
+            delay(400L)
+            _uiState.value.currentSession?.let { dataStore.saveChatSession(it) }
+        }
+    }
+
+    private fun parseVariableMap(obj: JsonObject?): Map<String, String> {
+        if (obj == null) return emptyMap()
+        val out = LinkedHashMap<String, String>()
+        obj.forEach { (k, v) ->
+            out[k] = when (v) {
+                is JsonPrimitive -> v.content
+                is JsonObject -> v.toString()
+                else -> v.toString()
+            }
+        }
+        return out
     }
 
     private fun buildTavernContext(state: ChatUiState): JsonObject {

@@ -2,6 +2,7 @@ package app.tellev.core.storage
 
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterSummary
+import app.tellev.core.model.Attachment
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
@@ -60,6 +61,7 @@ class FileStDataStore(
     override suspend fun bootstrap(): Unit = withContext(Dispatchers.IO) {
         layout.allDirectories.forEach { it.createDirectories() }
         ensureDefaultPreset()
+        ensureDefaultPersona()
         rebuildEmbeddedCharacterAssets()
     }
 
@@ -151,6 +153,18 @@ class FileStDataStore(
         }
     }
 
+    override suspend fun deleteCharacter(id: String): Unit = withContext(Dispatchers.IO) {
+        // Remove all character card files (png/webp/json).
+        removeCharacterVariants(id, keepExtension = "")
+        // Remove embedded character assets (extensions/character-assets/<id>/).
+        val assetDir = layout.extensions.resolve("character-assets").resolve(id)
+        if (assetDir.exists()) assetDir.toFile().deleteRecursively()
+        // Remove the materialized embedded character book and drop it from the
+        // disabled-activation set. Replaces the prior "save an empty card"
+        // soft-delete that left files on disk and a stub reappearing in listCharacters().
+        runCatching { deleteWorldBook(StDataStore.embeddedCharacterBookId(id)) }
+    }
+
     override suspend fun listChatSessions(characterId: String?, groupId: String?): List<ChatSession> = withContext(Dispatchers.IO) {
         val roots = buildList {
             if (characterId != null) add(layout.chats.resolve(characterId))
@@ -233,6 +247,18 @@ class FileStDataStore(
                         message.variablesInitialized.forEach { add(JsonPrimitive(it)) }
                     }
                 }
+
+                // Vision attachments (base64 in metadata). Persisted so history round-trips.
+                if (message.attachments.isNotEmpty()) {
+                    put(
+                        "attachments",
+                        kotlinx.serialization.json.JsonArray(
+                            message.attachments.map {
+                                json.encodeToJsonElement(Attachment.serializer(), it)
+                            },
+                        ),
+                    )
+                }
             }
             lines.add(compactJson.encodeToString(JsonObject.serializer(), line))
         }
@@ -301,11 +327,21 @@ class FileStDataStore(
                     merged["order"] = JsonPrimitive(entry.insertionOrder)
                     merged["disable"] = JsonPrimitive(!entry.enabled)
                     merged["depth"] = JsonPrimitive(entry.depth)
+                    merged["position"] = JsonPrimitive(entry.position)
+                    merged["probability"] = JsonPrimitive(entry.probability)
+                    merged["useProbability"] = JsonPrimitive(entry.useProbability)
+                    merged["selectiveLogic"] = JsonPrimitive(entry.selectiveLogic)
+                    merged["role"] = JsonPrimitive(entry.role)
+                    merged["matchWholeWords"] = JsonPrimitive(entry.matchWholeWords)
+                    merged["useRegex"] = JsonPrimitive(entry.useRegex)
+                    merged["caseSensitive"] = JsonPrimitive(entry.caseSensitive)
+                    merged["comment"] = JsonPrimitive(entry.comment)
+                    merged["excludeRecursion"] = JsonPrimitive(entry.excludeRecursion)
+                    merged["preventRecursion"] = JsonPrimitive(entry.preventRecursion)
+                    merged["delayUntilRecursion"] = JsonPrimitive(entry.delayUntilRecursion)
                     if (entry.priority != 0 || entry.raw.containsKey("priority")) {
                         merged["priority"] = JsonPrimitive(entry.priority)
                     }
-                    if (!merged.containsKey("comment")) merged["comment"] = JsonPrimitive("")
-                    if (!merged.containsKey("position")) merged["position"] = JsonPrimitive(0)
                     if (!merged.containsKey("displayIndex")) merged["displayIndex"] = JsonPrimitive(index)
                     if (!merged.containsKey("extensions")) merged["extensions"] = buildJsonObject { }
                     put(index.toString(), JsonObject(merged))
@@ -422,6 +458,9 @@ class FileStDataStore(
                 id = path.nameWithoutExtension,
                 name = raw["name"]?.jsonPrimitive?.content ?: path.nameWithoutExtension,
                 description = raw["description"]?.jsonPrimitive?.content ?: "",
+                avatarRelativePath = raw["avatar"]
+                    ?.takeIf { it !is kotlinx.serialization.json.JsonNull }
+                    ?.jsonPrimitive?.content,
                 metadata = raw,
             )
         }
@@ -430,6 +469,23 @@ class FileStDataStore(
     override suspend fun savePersona(persona: Persona): Unit = withContext(Dispatchers.IO) {
         layout.user.createDirectories()
         layout.user.resolve("${persona.id}.json").writeText(json.encodeToString(persona))
+    }
+
+    override suspend fun deletePersona(id: String): Unit = withContext(Dispatchers.IO) {
+        layout.user.resolve("$id.json").deleteIfExists()
+    }
+
+    // A fresh install has no persona, which makes {{user}} fall back to "User".
+    // Seed a default so the user has something to edit without an explicit create step.
+    private fun ensureDefaultPersona() {
+        if (layout.user.listDirectoryEntries("*.json").isNotEmpty()) return
+        layout.user.createDirectories()
+        val default = Persona(
+            id = "default-user",
+            name = "用户",
+            description = "默认用户人设。",
+        )
+        layout.user.resolve("${default.id}.json").writeText(json.encodeToString(default))
     }
 
     override suspend fun exportBackup(targetZip: Path): Unit = withContext(Dispatchers.IO) {
@@ -855,6 +911,12 @@ class FileStDataStore(
             } ?: emptyList()
         }.getOrDefault(emptyList())
 
+        val attachments = runCatching {
+            obj["attachments"]?.jsonArray?.mapNotNull {
+                json.decodeFromJsonElement(Attachment.serializer(), it)
+            } ?: emptyList()
+        }.getOrDefault(emptyList())
+
         return ChatMessage(
             id = "$sessionId-$index",
             role = role,
@@ -863,6 +925,7 @@ class FileStDataStore(
             createdAtMillis = createdAtMillis,
             swipeIndex = swipeId,
             swipes = swipes,
+            attachments = attachments,
             metadata = extra,
             variables = variables,
             isEjsProcessed = isEjsProcessed,
@@ -904,6 +967,18 @@ class FileStDataStore(
                     priority = entryObj["priority"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
                     insertionOrder = entryObj["order"]?.jsonPrimitive?.content?.toIntOrNull() ?: 100,
                     depth = entryObj["depth"]?.jsonPrimitive?.content?.toIntOrNull() ?: 4,
+                    position = entryObj["position"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
+                    probability = entryObj["probability"]?.jsonPrimitive?.content?.toIntOrNull() ?: 100,
+                    useProbability = entryObj["useProbability"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+                    selectiveLogic = entryObj["selectiveLogic"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
+                    role = entryObj["role"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
+                    matchWholeWords = entryObj["matchWholeWords"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+                    useRegex = entryObj["useRegex"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+                    caseSensitive = entryObj["caseSensitive"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+                    comment = entryObj["comment"]?.jsonPrimitive?.content ?: "",
+                    excludeRecursion = entryObj["excludeRecursion"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+                    preventRecursion = entryObj["preventRecursion"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+                    delayUntilRecursion = entryObj["delayUntilRecursion"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
                     raw = entryObj,
                 )
             }.getOrNull()

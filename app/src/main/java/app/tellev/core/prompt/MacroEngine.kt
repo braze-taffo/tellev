@@ -1,5 +1,6 @@
 package app.tellev.core.prompt
 
+import app.tellev.core.extension.VariableStore
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -35,6 +36,15 @@ class DefaultMacroEngine : MacroEngine {
     // while extensions write to it. Use a ConcurrentHashMap for safe concurrent
     // access instead of a plain mutableMapOf.
     private val customMacros = ConcurrentHashMap<String, (MacroContext) -> String>()
+
+    /**
+     * Backing store for the SillyTavern variable macros (`{{getvar::}}`,
+     * `{{setvar::name::value}}`, ...).  Plugged in by the extension graph;
+     * when null the variable macros degrade safely (getters return "",
+     * setters are no-ops).
+     */
+    @Volatile
+    var variableStore: VariableStore? = null
 
     // Matches {{...}} patterns - non-greedy, handles nested colons for transforms
     private val macroPattern = Regex("""\{\{([^{}]+)\}\}""")
@@ -102,6 +112,9 @@ class DefaultMacroEngine : MacroEngine {
             val format = expression.removePrefix("datetimeformat").trim()
             return resolveDateTimeFormat(format)
         }
+
+        // SillyTavern variable macros: {{getvar::name}}, {{setvar::name::value}}, ...
+        resolveVariableMacro(expression)?.let { return it }
 
         // Bias macro: {{bias "text"}} -> pass through
         if (expression.startsWith("bias ")) {
@@ -194,6 +207,76 @@ class DefaultMacroEngine : MacroEngine {
                     "${date}T${time}"
                 }
             }
+        }
+    }
+
+    /**
+     * SillyTavern variable macros. Local scope: getvar/setvar/addvar/incvar/
+     * decvar/deletevar/hasvar (and the getchatvar/setchatvar aliases).
+     * Global scope: the `*globalvar` variants. Returns null if [expression]
+     * is not a variable macro, so the caller can continue resolution.
+     */
+    private fun resolveVariableMacro(expression: String): String? {
+        val separator = "::"
+        val firstSep = expression.indexOf(separator)
+        if (firstSep <= 0) return null
+        val head = expression.substring(0, firstSep).lowercase()
+        val rest = expression.substring(firstSep + separator.length)
+
+        // Commands that take only a name.
+        return when (head) {
+            "getvar", "getchatvar" -> {
+                variableStore?.getLocal(rest.trim()) ?: ""
+            }
+            "getglobalvar" -> {
+                variableStore?.getGlobal(rest.trim()) ?: ""
+            }
+            "incvar", "incchatvar" -> {
+                variableStore?.incLocal(rest.trim()) ?: "0"
+            }
+            "incglobalvar" -> {
+                variableStore?.incGlobal(rest.trim()) ?: "0"
+            }
+            "decvar", "decchatvar" -> {
+                variableStore?.decLocal(rest.trim()) ?: "0"
+            }
+            "decglobalvar" -> {
+                variableStore?.decGlobal(rest.trim()) ?: "0"
+            }
+            "deletevar", "delvar" -> {
+                variableStore?.deleteLocal(rest.trim()); ""
+            }
+            "deleteglobalvar", "delglobalvar" -> {
+                variableStore?.deleteGlobal(rest.trim()); ""
+            }
+            "hasvar", "varexists" -> {
+                if (variableStore?.hasLocal(rest.trim()) == true) "true" else "false"
+            }
+            "hasglobalvar", "globalvarexists" -> {
+                if (variableStore?.hasGlobal(rest.trim()) == true) "true" else "false"
+            }
+            "setvar", "setchatvar", "setglobalvar",
+            "addvar", "addchatvar", "addglobalvar" -> {
+                // name::value — value may itself contain "::", so split only once.
+                val nameEnd = rest.indexOf(separator)
+                val name: String
+                val value: String
+                if (nameEnd < 0) {
+                    name = rest.trim()
+                    value = ""
+                } else {
+                    name = rest.substring(0, nameEnd).trim()
+                    value = rest.substring(nameEnd + separator.length)
+                }
+                when (head) {
+                    "setvar", "setchatvar" -> { variableStore?.setLocal(name, value); "" }
+                    "setglobalvar" -> { variableStore?.setGlobal(name, value); "" }
+                    "addvar", "addchatvar" -> variableStore?.addLocal(name, value) ?: "0"
+                    "addglobalvar" -> variableStore?.addGlobal(name, value) ?: "0"
+                    else -> ""
+                }
+            }
+            else -> null
         }
     }
 }

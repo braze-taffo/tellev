@@ -166,6 +166,8 @@ class FileStDataStoreTest {
                     id = "42",
                     keys = listOf("key"),
                     content = "Updated content",
+                    probability = 37,
+                    comment = "keep me",
                     raw = entryRaw,
                 ),
             ),

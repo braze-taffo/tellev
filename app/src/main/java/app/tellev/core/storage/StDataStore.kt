@@ -18,6 +18,7 @@ interface StDataStore {
     suspend fun listCharacters(): List<CharacterSummary>
     suspend fun readCharacter(id: String): CharacterCard
     suspend fun saveCharacter(card: CharacterCard)
+    suspend fun deleteCharacter(id: String)
     suspend fun importCharacter(card: CharacterCard, sourceBytes: ByteArray, sourceFileName: String) {
         saveCharacter(card)
     }
@@ -57,6 +58,7 @@ interface StDataStore {
 
     suspend fun listPersonas(): List<Persona>
     suspend fun savePersona(persona: Persona)
+    suspend fun deletePersona(id: String)
 
     suspend fun exportBackup(targetZip: Path)
     suspend fun importBackup(sourceZip: Path)

@@ -3,7 +3,6 @@ package app.tellev
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,6 +10,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.lifecycle.lifecycleScope
 import app.tellev.core.model.CharacterSummary
 import app.tellev.core.storage.CharacterImporter
+import app.tellev.util.UriUtils
 import app.tellev.ui.TellevRoot
 import app.tellev.ui.theme.TellevTheme
 import kotlinx.coroutines.Dispatchers
@@ -57,7 +57,7 @@ class MainActivity : ComponentActivity() {
     private suspend fun importCharacterFromUri(uri: Uri): String {
         val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: error("无法读取文件")
-        val fileName = resolveDisplayName(uri)
+        val fileName = UriUtils.resolveDisplayName(this, uri)
             ?: uri.lastPathSegment?.substringAfterLast('/')
             ?: "imported_character"
         val parsed = characterImporter.importFromBytes(bytes, fileName)
@@ -70,13 +70,6 @@ class MainActivity : ComponentActivity() {
         graph.dataStore.importCharacter(imported, bytes, fileName)
         graph.importedCardSignal.value = graph.importedCardSignal.value + 1L
         return imported.name
-    }
-
-    private fun resolveDisplayName(uri: Uri): String? {
-        if (uri.scheme == "file") return uri.lastPathSegment
-        return contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) cursor.getString(0) else null
-        }
     }
 
     private fun Intent.importUri(): Uri? = when (action) {

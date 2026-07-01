@@ -5,6 +5,7 @@ import app.tellev.core.extension.ExtensionHost
 import app.tellev.core.extension.ExtensionPermissionManager
 import app.tellev.core.extension.ExtensionSettingsStore
 import app.tellev.core.extension.VirtualApiRouter
+import app.tellev.core.extension.VariableStore
 import app.tellev.core.extension.WebViewJsExtensionHost
 import app.tellev.core.prompt.DefaultMacroEngine
 import app.tellev.core.prompt.DefaultPromptEngine
@@ -107,6 +108,12 @@ class TellevGraph private constructor(
                 persistenceDir = layout.extensions.resolve("_permissions"),
             )
             val apiRouter = VirtualApiRouter(dataStore, providerRegistry, secretStore)
+            val variableStore = VariableStore(
+                scope = extensionScope,
+                settingsStore = extensionSettingsStore,
+                settingsKey = WebViewJsExtensionHost.TAVERN_HELPER_VARS_KEY,
+            )
+            (macroEngine as? DefaultMacroEngine)?.variableStore = variableStore
             val extensionHost = WebViewJsExtensionHost(
                 context = context,
                 scope = extensionScope,
@@ -114,6 +121,7 @@ class TellevGraph private constructor(
                 settingsStore = extensionSettingsStore,
                 permissionManager = permissionManager,
                 macroEngine = macroEngine,
+                variableStore = variableStore,
             )
             // Load persisted permission grants off the main thread.
             extensionScope.launch { permissionManager.load() }

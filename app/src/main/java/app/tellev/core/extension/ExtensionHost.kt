@@ -25,6 +25,14 @@ interface ExtensionHost {
 
     fun setContextProvider(provider: ExtensionContextProvider?) {}
 
+    /**
+     * Plug in the live LOCAL-scope variable backend (the current chat's
+     * `chat_metadata.variables`).  The host is process-wide while local
+     * variables are per-chat, so the UI layer swaps this in/out as the
+     * active chat changes — same pattern as [setContextProvider].
+     */
+    fun setLocalVariableBackend(backend: LocalVariableBackend?) {}
+
     suspend fun load(manifest: ExtensionManifest, scriptSource: String): ExtensionHandle
     suspend fun unload(extensionId: String)
     suspend fun emit(event: ExtensionEvent)

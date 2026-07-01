@@ -1,7 +1,5 @@
 package app.tellev.core.extension
 
-import java.util.concurrent.ConcurrentHashMap
-
 /**
  * Minimal STScript parser and executor for built-in slash commands.
  *
@@ -18,12 +16,13 @@ import java.util.concurrent.ConcurrentHashMap
  * SillyTavern's 267-command built-in set.  Unknown commands return an
  * error result instead of silently succeeding.
  *
- * Variables are shared with the extension host so that `/setvar` /
- * `/getvar` operate on the same store that `TavernHelper.getVariables`
- * exposes to JS.
+ * Variables are split into LOCAL (chat_metadata) and GLOBAL scopes by
+ * [VariableStore], mirroring SillyTavern's model: unqualified commands
+ * (`/setvar`, `/getvar`, ...) touch the local scope while `*globalvar`
+ * variants touch the global scope.
  */
 class SlashCommandEngine(
-    private val variables: ConcurrentHashMap<String, String> = ConcurrentHashMap(),
+    private val variableStore: VariableStore? = null,
     private val extensionCommands: Map<String, RegisteredCommandRef> = emptyMap(),
     private val maxLoopIterations: Int = 1000,
     /**
@@ -219,71 +218,112 @@ class SlashCommandEngine(
                 Result.ok("")
             }
 
-            "setvar", "setglobalvar" -> {
+            "setvar", "setchatvar" -> {
                 val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.getOrNull(0) ?: ""
                 val value = cmd.namedArgs["value"] ?: cmd.args.getOrNull(1) ?: ""
                 if (name.isBlank()) return Result.error("setvar requires a variable name")
-                variables[name] = value
+                variableStore?.setLocal(name, value)
                 Result.ok(value)
             }
 
-            "getvar", "getglobalvar", "var" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
-                if (name.isBlank()) return Result.error("getvar requires a variable name")
-                Result.ok(variables[name] ?: "")
+            "setglobalvar" -> {
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.getOrNull(0) ?: ""
+                val value = cmd.namedArgs["value"] ?: cmd.args.getOrNull(1) ?: ""
+                if (name.isBlank()) return Result.error("setglobalvar requires a variable name")
+                variableStore?.setGlobal(name, value)
+                Result.ok(value)
             }
 
-            "addvar", "addglobalvar" -> {
+            "getvar", "getchatvar", "var" -> {
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                if (name.isBlank()) return Result.error("getvar requires a variable name")
+                Result.ok(variableStore?.getLocal(name) ?: "")
+            }
+
+            "getglobalvar" -> {
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                if (name.isBlank()) return Result.error("getglobalvar requires a variable name")
+                Result.ok(variableStore?.getGlobal(name) ?: "")
+            }
+
+            "addvar", "addchatvar" -> {
                 val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.getOrNull(0) ?: ""
                 val increment = cmd.namedArgs["value"] ?: cmd.args.getOrNull(1) ?: ""
                 if (name.isBlank()) return Result.error("addvar requires a variable name")
-                val current = variables[name] ?: "0"
-                val result = runCatching {
-                    (current.toLong() + increment.toLong()).toString()
-                }.getOrElse {
-                    current + increment
-                }
-                variables[name] = result
-                Result.ok(result)
+                Result.ok(variableStore?.addLocal(name, increment) ?: "0")
             }
 
-            "incvar", "incglobalvar" -> {
+            "addglobalvar" -> {
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.getOrNull(0) ?: ""
+                val increment = cmd.namedArgs["value"] ?: cmd.args.getOrNull(1) ?: ""
+                if (name.isBlank()) return Result.error("addglobalvar requires a variable name")
+                Result.ok(variableStore?.addGlobal(name, increment) ?: "0")
+            }
+
+            "incvar", "incchatvar" -> {
                 val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
                 if (name.isBlank()) return Result.error("incvar requires a variable name")
-                val current = (variables[name]?.toLongOrNull() ?: 0L) + 1L
-                variables[name] = current.toString()
-                Result.ok(current.toString())
+                Result.ok(variableStore?.incLocal(name) ?: "0")
             }
 
-            "decvar", "decglobalvar" -> {
+            "incglobalvar" -> {
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                if (name.isBlank()) return Result.error("incglobalvar requires a variable name")
+                Result.ok(variableStore?.incGlobal(name) ?: "0")
+            }
+
+            "decvar", "decchatvar" -> {
                 val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
                 if (name.isBlank()) return Result.error("decvar requires a variable name")
-                val current = (variables[name]?.toLongOrNull() ?: 0L) - 1L
-                variables[name] = current.toString()
-                Result.ok(current.toString())
+                Result.ok(variableStore?.decLocal(name) ?: "0")
             }
 
-            "flushvar", "flushglobalvar", "deletevar", "delvar" -> {
+            "decglobalvar" -> {
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                if (name.isBlank()) return Result.error("decglobalvar requires a variable name")
+                Result.ok(variableStore?.decGlobal(name) ?: "0")
+            }
+
+            "flushvar", "flushchatvar", "deletevar", "delvar" -> {
                 val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
                 if (name.isBlank()) return Result.error("flushvar requires a variable name")
-                variables.remove(name)
+                variableStore?.deleteLocal(name)
                 Result.ok("")
             }
 
-            "listvar" -> {
-                Result.ok(variables.keys.sorted().joinToString("\n"))
+            "flushglobalvar" -> {
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                if (name.isBlank()) return Result.error("flushglobalvar requires a variable name")
+                variableStore?.deleteGlobal(name)
+                Result.ok("")
+            }
+
+            "listvar", "listchatvar" -> {
+                val scopeFilter = (cmd.namedArgs["scope"] ?: "all").lowercase()
+                val keys = when (scopeFilter) {
+                    "local" -> variableStore?.listLocal() ?: emptyList()
+                    "global" -> variableStore?.listGlobal() ?: emptyList()
+                    else -> ((variableStore?.listLocal() ?: emptyList()) +
+                        (variableStore?.listGlobal() ?: emptyList())).distinct().sorted()
+                }
+                Result.ok(keys.joinToString("\n"))
             }
 
             "hasvar", "varexists" -> {
                 val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
-                Result.ok(if (variables.containsKey(name)) "true" else "false")
+                Result.ok(if (variableStore?.hasLocal(name) == true) "true" else "false")
+            }
+
+            "hasglobalvar", "globalvarexists" -> {
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                Result.ok(if (variableStore?.hasGlobal(name) == true) "true" else "false")
             }
 
             "let" -> {
                 val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.getOrNull(0) ?: ""
                 val value = cmd.namedArgs["value"] ?: cmd.args.drop(1).joinToString(" ")
                 if (name.isBlank()) return Result.error("let requires a variable name")
-                variables[name] = value
+                variableStore?.setLocal(name, value)
                 Result.ok(value)
             }
 
@@ -718,7 +758,9 @@ class SlashCommandEngine(
     private fun resolveValue(token: String): String {
         if (token.startsWith("{{") && token.endsWith("}}")) {
             val varName = token.removeSurrounding("{{", "}}")
-            return variables[varName] ?: ""
+            return variableStore?.getLocal(varName)
+                ?: variableStore?.getGlobal(varName)
+                ?: ""
         }
         // Strip matching surrounding quotes so quoted literals compare equal to
         // bare/macro-expanded values (STScript compares the unquoted value).

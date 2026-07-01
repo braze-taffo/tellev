@@ -2,7 +2,6 @@ package app.tellev.feature.characters
 
 import android.content.Intent
 import android.net.Uri
-import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
@@ -80,6 +79,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.tellev.core.model.CharacterCard
+import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -107,7 +107,7 @@ fun CharactersListScreen(
                     val bytes = withContext(Dispatchers.IO) {
                         context.contentResolver.openInputStream(it)?.readBytes()
                     }
-                    val fileName = resolveDisplayName(context, it)
+                    val fileName = UriUtils.resolveDisplayName(context, it)
                         ?: it.lastPathSegment
                         ?: "imported_character.json"
                     if (bytes != null) {
@@ -264,22 +264,6 @@ fun CharactersListScreen(
             }
         }
     }
-}
-
-private fun resolveDisplayName(context: android.content.Context, uri: Uri): String? {
-    return runCatching {
-        context.contentResolver.query(
-            uri,
-            arrayOf(OpenableColumns.DISPLAY_NAME),
-            null,
-            null,
-            null,
-        )?.use { cursor ->
-            if (!cursor.moveToFirst()) return@use null
-            val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (index >= 0) cursor.getString(index) else null
-        }
-    }.getOrNull()
 }
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)

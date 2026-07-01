@@ -157,20 +157,7 @@ class CharactersViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
-                // Deletion is implemented by saving a character with empty fields
-                // The FileStDataStore implementation should handle removal
-                val emptyCard = CharacterCard(
-                    id = id,
-                    name = "",
-                    description = "",
-                    personality = "",
-                    scenario = "",
-                    firstMessage = "",
-                    exampleMessages = "",
-                    creatorNotes = "",
-                )
-                // We save with a special marker to indicate deletion
-                dataStore.saveCharacter(emptyCard)
+                dataStore.deleteCharacter(id)
                 _uiState.update {
                     it.copy(
                         selectedCharacter = null,

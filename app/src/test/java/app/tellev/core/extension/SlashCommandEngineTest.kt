@@ -5,17 +5,18 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import java.util.concurrent.ConcurrentHashMap
 
 class SlashCommandEngineTest {
 
-    private lateinit var variables: ConcurrentHashMap<String, String>
+    private lateinit var variableStore: VariableStore
+    private lateinit var local: MutableMap<String, String>
     private lateinit var engine: SlashCommandEngine
 
     @Before
     fun setUp() {
-        variables = ConcurrentHashMap()
-        engine = SlashCommandEngine(variables)
+        local = java.util.concurrent.ConcurrentHashMap()
+        variableStore = VariableStoreTest.storeWith(local)
+        engine = SlashCommandEngine(variableStore = variableStore)
     }
 
     @Test
@@ -346,5 +347,46 @@ class SlashCommandEngineTest {
         engine.execute("/setvar status active")
         val result = engine.execute("/if {{status}}==active")
         assertEquals("true", result.output)
+    }
+
+    // ── per-scope isolation (local vs global) ─────────────────────────────
+
+    @Test
+    fun `setvar writes local and does not leak to global`() {
+        engine.execute("/setvar k local-value")
+        assertEquals("local-value", engine.execute("/getvar k").output)
+        assertEquals("", engine.execute("/getglobalvar k").output)
+    }
+
+    @Test
+    fun `setglobalvar writes global and does not leak to local`() {
+        engine.execute("/setglobalvar k global-value")
+        assertEquals("global-value", engine.execute("/getglobalvar k").output)
+        assertEquals("", engine.execute("/getvar k").output)
+    }
+
+    @Test
+    fun `incvar and incglobalvar are independent`() {
+        engine.execute("/setvar n 1")
+        engine.execute("/setglobalvar n 100")
+        assertEquals("2", engine.execute("/incvar n").output)
+        assertEquals("100", engine.execute("/getglobalvar n").output)
+        assertEquals("2", engine.execute("/getvar n").output)
+    }
+
+    @Test
+    fun `listvar scope filter`() {
+        engine.execute("/setvar onlyLocal a")
+        engine.execute("/setglobalvar onlyGlobal b")
+        assertEquals("onlyLocal", engine.execute("/listvar scope=local").output)
+        assertEquals("onlyGlobal", engine.execute("/listvar scope=global").output)
+        assertEquals("onlyGlobal\nonlyLocal", engine.execute("/listvar scope=all").output)
+    }
+
+    @Test
+    fun `hasglobalvar distinguishes scopes`() {
+        engine.execute("/setglobalvar g present")
+        assertEquals("true", engine.execute("/hasglobalvar g").output)
+        assertEquals("false", engine.execute("/hasvar g").output)
     }
 }

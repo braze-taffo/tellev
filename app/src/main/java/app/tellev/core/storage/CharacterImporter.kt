@@ -234,6 +234,18 @@ class CharacterImporter(
             depth = entryObj.int("depth")
                 ?: extensions?.int("depth")
                 ?: 4,
+            position = entryObj.int("position") ?: 0,
+            probability = entryObj.int("probability") ?: 100,
+            useProbability = entryObj.boolean("useProbability") ?: false,
+            selectiveLogic = entryObj.int("selectiveLogic") ?: 0,
+            role = entryObj.int("role") ?: 0,
+            matchWholeWords = entryObj.boolean("matchWholeWords") ?: false,
+            useRegex = entryObj.boolean("useRegex") ?: false,
+            caseSensitive = entryObj.boolean("caseSensitive") ?: false,
+            comment = entryObj.string("comment").orEmpty(),
+            excludeRecursion = entryObj.boolean("excludeRecursion") ?: false,
+            preventRecursion = entryObj.boolean("preventRecursion") ?: false,
+            delayUntilRecursion = entryObj.boolean("delayUntilRecursion") ?: false,
             raw = entryObj,
         )
     }

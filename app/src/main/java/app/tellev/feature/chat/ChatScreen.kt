@@ -85,10 +85,31 @@ import androidx.compose.ui.text.font.FontWeight.Companion.Bold
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import app.tellev.core.model.Attachment
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.MessageRole
 import app.tellev.core.regex.CharacterRegexApplier
+import app.tellev.util.UriUtils
+import android.util.Base64
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
+import app.tellev.core.model.AttachmentSource
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -237,6 +258,24 @@ private fun ChatContentScreen(
     var showMoreMenu by remember { mutableStateOf(false) }
     var editingMessageIndex by remember { mutableStateOf<Int?>(null) }
     var editTextField by remember { mutableStateOf("") }
+    var pendingAttachments by remember { mutableStateOf(listOf<Attachment>()) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val pickImageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val attachment = withContext(Dispatchers.IO) {
+                    buildAttachmentFromUri(context, uri)
+                }
+                if (attachment != null) {
+                    pendingAttachments = pendingAttachments + attachment
+                }
+            }
+        }
+    }
 
     // 用户是否正停在列表底部（或非常接近底部）。流式输出时只在"停在底部"
     // 的情况下才自动下拉，避免用户上滑阅读历史消息时被每个 token 拽回底部。
@@ -338,6 +377,32 @@ private fun ChatContentScreen(
                                 )
                             }
                         }
+                        if (state.personas.isNotEmpty()) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "切换人设",
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                },
+                                onClick = {},
+                                enabled = false,
+                            )
+                            state.personas.forEach { persona ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = persona.name,
+                                            fontWeight = if (persona.id == state.selectedPersona?.id) Bold else null,
+                                        )
+                                    },
+                                    onClick = {
+                                        viewModel.selectPersona(persona.id)
+                                        showMoreMenu = false
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
             },
@@ -416,11 +481,21 @@ private fun ChatContentScreen(
             text = inputText,
             onTextChange = { inputText = it },
             isGenerating = state.isGenerating,
+            attachments = pendingAttachments,
+            onPickImage = {
+                pickImageLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            },
+            onRemoveAttachment = { id ->
+                pendingAttachments = pendingAttachments.filterNot { it.id == id }
+            },
             onSend = {
                 val text = inputText.trim()
-                if (text.isNotEmpty()) {
-                    if (viewModel.sendMessage(text)) {
+                if (text.isNotEmpty() || pendingAttachments.isNotEmpty()) {
+                    if (viewModel.sendMessage(text, pendingAttachments)) {
                         inputText = ""
+                        pendingAttachments = emptyList()
                         keyboardController?.hide()
                     }
                 }
@@ -546,6 +621,7 @@ private fun ChatBubble(
                 TavernMessageContent(
                     segments = renderSegments,
                     availableMaxHeight = htmlPanelMaxHeight,
+                    isUser = isUser,
                 )
             }
         } else {
@@ -570,6 +646,7 @@ private fun ChatBubble(
                 TavernMessageContent(
                     segments = renderSegments,
                     availableMaxHeight = htmlPanelMaxHeight,
+                    isUser = isUser,
                 )
             }
         }
@@ -587,22 +664,34 @@ private fun ChatBubble(
 private fun TavernMessageContent(
     segments: List<TavernRenderSegment>,
     availableMaxHeight: Dp,
+    isUser: Boolean,
 ) {
     Column {
         segments.forEachIndexed { index, segment ->
             when (segment) {
                 is TavernRenderSegment.Text -> {
-                    SelectionContainer {
-                        Text(
-                            text = segment.text,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.padding(
-                                start = 12.dp,
-                                top = if (index == 0) 12.dp else 8.dp,
-                                end = 12.dp,
-                                bottom = 8.dp,
-                            ),
+                    val text = segment.text
+                    // AI messages with Markdown syntax render via the WebView (commonmark -> HTML),
+                    // reusing TavernHtmlPanel. Plain text (user messages, short replies) stays on
+                    // the cheap native Text() to avoid spinning up a WebView per bubble.
+                    if (!isUser && MarkdownRenderer.looksLikeMarkdown(text)) {
+                        TavernHtmlPanel(
+                            html = MarkdownRenderer.render(text),
+                            availableMaxHeight = availableMaxHeight,
                         )
+                    } else {
+                        SelectionContainer {
+                            Text(
+                                text = text,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(
+                                    start = 12.dp,
+                                    top = if (index == 0) 12.dp else 8.dp,
+                                    end = 12.dp,
+                                    bottom = 8.dp,
+                                ),
+                            )
+                        }
                     }
                 }
                 is TavernRenderSegment.Reasoning -> {
@@ -1003,59 +1092,150 @@ private fun ChatInputBar(
     text: String,
     onTextChange: (String) -> Unit,
     isGenerating: Boolean,
+    attachments: List<Attachment>,
+    onPickImage: () -> Unit,
+    onRemoveAttachment: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
-    Row(
+    val context = LocalContext.current
+    val canSend = text.isNotBlank() || attachments.isNotEmpty()
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        OutlinedTextField(
-            value = text,
-            onValueChange = onTextChange,
-            modifier = Modifier.weight(1f),
-            minLines = 1,
-            maxLines = 6,
-            placeholder = { Text("输入消息") },
-            shape = RoundedCornerShape(24.dp),
-        )
+        if (attachments.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                attachments.forEach { attachment ->
+                    val base64 = attachment.metadata["base64"]
+                        ?.takeIf { it !is kotlinx.serialization.json.JsonNull }
+                        ?.jsonPrimitive?.content
+                    Box(modifier = Modifier.size(72.dp)) {
+                        if (base64 != null) {
+                            AsyncImage(
+                                model = ImageRequest.Builder(context)
+                                    .data("data:${attachment.mimeType};base64,$base64")
+                                    .build(),
+                                contentDescription = attachment.name,
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Crop,
+                            )
+                        }
+                        IconButton(
+                            onClick = { onRemoveAttachment(attachment.id) },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surface),
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "移除附件",
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
-        if (isGenerating) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             IconButton(
-                onClick = onStop,
+                onClick = onPickImage,
+                enabled = !isGenerating,
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.errorContainer),
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
             ) {
                 Icon(
-                    Icons.Default.Stop,
-                    contentDescription = "停止生成",
-                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                    Icons.Default.AddPhotoAlternate,
+                    contentDescription = "添加图片",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        } else {
-            IconButton(
-                onClick = onSend,
-                enabled = text.isNotBlank(),
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (text.isNotBlank()) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surfaceVariant,
-                    ),
-            ) {
-                Icon(
-                    Icons.Default.Send,
-                    contentDescription = "发送消息",
-                    tint = if (text.isNotBlank()) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+
+            OutlinedTextField(
+                value = text,
+                onValueChange = onTextChange,
+                modifier = Modifier.weight(1f),
+                minLines = 1,
+                maxLines = 6,
+                placeholder = { Text("输入消息") },
+                shape = RoundedCornerShape(24.dp),
+            )
+
+            if (isGenerating) {
+                IconButton(
+                    onClick = onStop,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.errorContainer),
+                ) {
+                    Icon(
+                        Icons.Default.Stop,
+                        contentDescription = "停止生成",
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+            } else {
+                IconButton(
+                    onClick = onSend,
+                    enabled = canSend,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (canSend) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.surfaceVariant,
+                        ),
+                ) {
+                    Icon(
+                        Icons.Default.Send,
+                        contentDescription = "发送消息",
+                        tint = if (canSend) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
+}
+
+/** Build a vision attachment from a picked image URI: downsample + base64. */
+private suspend fun buildAttachmentFromUri(
+    context: android.content.Context,
+    uri: Uri,
+): Attachment? {
+    val mimeType = UriUtils.resolveMimeType(context, uri) ?: "image/jpeg"
+    if (!mimeType.startsWith("image/")) return null
+    val name = UriUtils.resolveDisplayName(context, uri) ?: "image.jpg"
+    val bytes = UriUtils.readAndDownsample(context.contentResolver, uri) ?: return null
+    val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+    return Attachment(
+        id = "att-${java.util.UUID.randomUUID()}",
+        name = name,
+        mimeType = mimeType,
+        relativePath = "",
+        source = AttachmentSource.Chat,
+        metadata = buildJsonObject {
+            put("base64", JsonPrimitive(base64))
+            put("detail", JsonPrimitive("auto"))
+        },
+    )
 }

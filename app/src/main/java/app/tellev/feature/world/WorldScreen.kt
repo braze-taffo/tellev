@@ -33,7 +33,10 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -628,6 +631,46 @@ fun WorldBookEntryEditScreen(
     var priority by remember(entry?.id) { mutableStateOf(entry?.priority?.toString() ?: "0") }
     var insertionOrder by remember(entry?.id) { mutableStateOf(entry?.insertionOrder?.toString() ?: "100") }
     var depth by remember(entry?.id) { mutableStateOf(entry?.depth?.toString() ?: "4") }
+    var position by remember(entry?.id) { mutableStateOf(entry?.position ?: 0) }
+    var selectiveLogic by remember(entry?.id) { mutableStateOf(entry?.selectiveLogic ?: 0) }
+    var useProbability by remember(entry?.id) { mutableStateOf(entry?.useProbability ?: false) }
+    var probability by remember(entry?.id) { mutableStateOf(entry?.probability?.toString() ?: "100") }
+    var role by remember(entry?.id) { mutableStateOf(entry?.role ?: 0) }
+    var matchWholeWords by remember(entry?.id) { mutableStateOf(entry?.matchWholeWords ?: false) }
+    var useRegex by remember(entry?.id) { mutableStateOf(entry?.useRegex ?: false) }
+    var caseSensitive by remember(entry?.id) { mutableStateOf(entry?.caseSensitive ?: false) }
+    var excludeRecursion by remember(entry?.id) { mutableStateOf(entry?.excludeRecursion ?: false) }
+    var preventRecursion by remember(entry?.id) { mutableStateOf(entry?.preventRecursion ?: false) }
+    var delayUntilRecursion by remember(entry?.id) { mutableStateOf(entry?.delayUntilRecursion ?: false) }
+    var comment by remember(entry?.id) { mutableStateOf(entry?.comment ?: "") }
+
+    fun buildUpdatedEntry(base: app.tellev.core.model.WorldBookEntry): app.tellev.core.model.WorldBookEntry {
+        val parsedKeys = keys.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        val parsedSecondaryKeys = secondaryKeys.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        return base.copy(
+            keys = parsedKeys,
+            secondaryKeys = parsedSecondaryKeys,
+            content = content,
+            enabled = enabled,
+            selective = selective,
+            constant = constant,
+            priority = priority.toIntOrNull() ?: 0,
+            insertionOrder = insertionOrder.toIntOrNull() ?: 100,
+            depth = depth.toIntOrNull() ?: 4,
+            position = position,
+            selectiveLogic = selectiveLogic,
+            useProbability = useProbability,
+            probability = probability.toIntOrNull()?.coerceIn(0, 100) ?: 100,
+            role = role,
+            matchWholeWords = matchWholeWords,
+            useRegex = useRegex,
+            caseSensitive = caseSensitive,
+            excludeRecursion = excludeRecursion,
+            preventRecursion = preventRecursion,
+            delayUntilRecursion = delayUntilRecursion,
+            comment = comment,
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -642,20 +685,7 @@ fun WorldBookEntryEditScreen(
                     IconButton(
                         onClick = {
                             if (entry != null && bookId != null) {
-                                val parsedKeys = keys.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                                val parsedSecondaryKeys = secondaryKeys.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                                val updatedEntry = entry.copy(
-                                    keys = parsedKeys,
-                                    secondaryKeys = parsedSecondaryKeys,
-                                    content = content,
-                                    enabled = enabled,
-                                    selective = selective,
-                                    constant = constant,
-                                    priority = priority.toIntOrNull() ?: 0,
-                                    insertionOrder = insertionOrder.toIntOrNull() ?: 100,
-                                    depth = depth.toIntOrNull() ?: 4,
-                                )
-                                viewModel.saveEntry(bookId, updatedEntry)
+                                viewModel.saveEntry(bookId, buildUpdatedEntry(entry))
                                 onBack()
                             }
                         },
@@ -774,6 +804,88 @@ fun WorldBookEntryEditScreen(
                     )
                 }
 
+                // 注入位置（ST 8 种 position）
+                DropdownSelector(
+                    label = "注入位置",
+                    selected = position,
+                    options = listOf(
+                        0 to "角色前",
+                        1 to "角色后",
+                        2 to "作者注前",
+                        3 to "作者注后",
+                        4 to "@深度",
+                        5 to "示例对话前",
+                        6 to "示例对话后",
+                        7 to "插槽",
+                    ),
+                    onSelected = { position = it },
+                )
+
+                // 选择性逻辑（仅 selective 时有意义）
+                DropdownSelector(
+                    label = "选择性逻辑",
+                    selected = selectiveLogic,
+                    enabled = selective,
+                    options = listOf(
+                        0 to "AND 任一匹配",
+                        1 to "NOT 任一不匹配",
+                        2 to "NOT 全不匹配",
+                        3 to "AND 全部匹配",
+                    ),
+                    onSelected = { selectiveLogic = it },
+                )
+
+                // 角色（仅 @深度 时有意义）
+                DropdownSelector(
+                    label = "角色",
+                    selected = role,
+                    enabled = position == 4,
+                    options = listOf(
+                        0 to "System",
+                        1 to "User",
+                        2 to "Assistant",
+                    ),
+                    onSelected = { role = it },
+                )
+
+                // 概率触发
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("概率触发", style = MaterialTheme.typography.bodyLarge)
+                    Switch(checked = useProbability, onCheckedChange = { useProbability = it })
+                }
+                if (useProbability) {
+                    OutlinedTextField(
+                        value = probability,
+                        onValueChange = { probability = it.filter { c -> c.isDigit() } },
+                        label = { Text("概率 (0-100)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                }
+
+                // 匹配选项
+                ToggleRow("全词匹配", matchWholeWords) { matchWholeWords = it }
+                ToggleRow("正则匹配", useRegex) { useRegex = it }
+                ToggleRow("区分大小写", caseSensitive) { caseSensitive = it }
+
+                // 递归选项
+                ToggleRow("排除递归（不喂入递归文本）", excludeRecursion) { excludeRecursion = it }
+                ToggleRow("阻止递归（不触发后续激活）", preventRecursion) { preventRecursion = it }
+                ToggleRow("延迟到递归轮", delayUntilRecursion) { delayUntilRecursion = it }
+
+                // 备注
+                OutlinedTextField(
+                    value = comment,
+                    onValueChange = { comment = it },
+                    label = { Text("备注") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+
                 // Save and Cancel buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -787,21 +899,10 @@ fun WorldBookEntryEditScreen(
                     }
                     FilledTonalButton(
                         onClick = {
-                            val parsedKeys = keys.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                            val parsedSecondaryKeys = secondaryKeys.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                            val updatedEntry = entry.copy(
-                                keys = parsedKeys,
-                                secondaryKeys = parsedSecondaryKeys,
-                                content = content,
-                                enabled = enabled,
-                                selective = selective,
-                                constant = constant,
-                                priority = priority.toIntOrNull() ?: 0,
-                                insertionOrder = insertionOrder.toIntOrNull() ?: 100,
-                                depth = depth.toIntOrNull() ?: 4,
-                            )
-                            viewModel.saveEntry(bookId, updatedEntry)
-                            onBack()
+                            if (entry != null && bookId != null) {
+                                viewModel.saveEntry(bookId, buildUpdatedEntry(entry))
+                                onBack()
+                            }
                         },
                         modifier = Modifier.weight(1f),
                     ) {
@@ -812,5 +913,59 @@ fun WorldBookEntryEditScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DropdownSelector(
+    label: String,
+    selected: Int,
+    options: List<Pair<Int, String>>,
+    onSelected: (Int) -> Unit,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedLabel = options.firstOrNull { it.first == selected }?.second ?: options.first().second
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { if (enabled) expanded = it },
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        OutlinedTextField(
+            value = selectedLabel,
+            onValueChange = {},
+            readOnly = true,
+            enabled = enabled,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .menuAnchor()
+                .fillMaxWidth(),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { (value, text) ->
+                DropdownMenuItem(
+                    text = { Text(text) },
+                    onClick = {
+                        onSelected(value)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToggleRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
