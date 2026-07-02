@@ -1,5 +1,7 @@
 package app.tellev.core.prompt
 
+import app.tellev.core.extension.VariableStore
+import app.tellev.core.extension.VariableStoreTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -22,7 +24,19 @@ class MacroEngineTest {
         groupMemberNames = "Charlie, Diana",
         maxPromptTokens = 2048,
         maxContextTokens = 8192,
+        personaDescription = "Bob is a brave traveler.",
+        modelName = "claude-opus-4-8",
+        maxResponseTokens = 1024,
+        inputText = "Tell me a story",
+        lastUserMessage = "What's next?",
+        lastCharMessage = "Bob says goodbye.",
+        lastMessageId = "5",
+        alternateGreetings = listOf("Alt greeting one.", "Alt greeting two."),
     )
+
+    /** A fresh in-memory VariableStore for shorthand-macro tests. */
+    private fun newStore(local: MutableMap<String, String> = mutableMapOf()): VariableStore =
+        VariableStoreTest.storeWith(local)
 
     @Test
     fun `char macro expands to character name`() {
@@ -193,10 +207,12 @@ class MacroEngineTest {
 
     @Test
     fun `recursive expansion resolves nested macros`() {
+        // Use a non-reserved variable name so the standard {{greeting}} macro
+        // (added in step 5) doesn't shadow the custom variable.
         val customContext = context.copy(
-            customVariables = mapOf("greeting" to "{{char}} says hello")
+            customVariables = mapOf("myGreeting" to "{{char}} says hello")
         )
-        val result = engine.expand("{{greeting}}", customContext)
+        val result = engine.expand("{{myGreeting}}", customContext)
         assertEquals("Alice says hello", result)
     }
 
@@ -260,5 +276,234 @@ class MacroEngineTest {
     fun `charDescription macro expands same as description`() {
         val result = engine.expand("{{charDescription}}", context)
         assertEquals("A curious explorer.", result)
+    }
+
+    // ── Step 5 gap-fill: SillyTavern macro parity ─────────────────────────
+
+    @Test
+    fun `newline macro inserts single newline`() {
+        assertEquals("a\nb", engine.expand("a{{newline}}b", context))
+    }
+
+    @Test
+    fun `newline with count inserts multiple newlines`() {
+        assertEquals("a\n\n\nb", engine.expand("a{{newline::3}}b", context))
+    }
+
+    @Test
+    fun `space macro inserts single space`() {
+        assertEquals("a b", engine.expand("a{{space}}b", context))
+    }
+
+    @Test
+    fun `space with count inserts multiple spaces`() {
+        assertEquals("a    b", engine.expand("a{{space::4}}b", context))
+    }
+
+    @Test
+    fun `noop macro expands to empty`() {
+        assertEquals("ab", engine.expand("a{{noop}}b", context))
+    }
+
+    @Test
+    fun `reverse macro reverses literal text`() {
+        assertEquals("olleh", engine.expand("{{reverse::hello}}", context))
+    }
+
+    @Test
+    fun `reverse macro resolves inner macros first`() {
+        assertEquals("ecilA", engine.expand("{{reverse::char}}", context))
+    }
+
+    @Test
+    fun `random list form picks one of the items`() {
+        val items = setOf("a", "b", "c")
+        repeat(20) {
+            assertTrue(items.contains(engine.expand("{{random::a::b::c}}", context)))
+        }
+    }
+
+    @Test
+    fun `roll with bare die produces value in range`() {
+        repeat(20) {
+            val v = engine.expand("{{roll::d6}}", context).toInt()
+            assertTrue("Expected 1-6, got $v", v in 1..6)
+        }
+    }
+
+    @Test
+    fun `roll with count and modifier produces value in range`() {
+        repeat(20) {
+            val v = engine.expand("{{roll::2d6+4}}", context).toInt()
+            assertTrue("Expected 6-16, got $v", v in 6..16)
+        }
+    }
+
+    @Test
+    fun `roll with bare number rolls one die of that size`() {
+        repeat(20) {
+            val v = engine.expand("{{roll::20}}", context).toInt()
+            assertTrue("Expected 1-20, got $v", v in 1..20)
+        }
+    }
+
+    @Test
+    fun `roll with invalid spec returns zero`() {
+        assertEquals("0", engine.expand("{{roll::abc}}", context))
+    }
+
+    @Test
+    fun `maxResponse macro expands to token count`() {
+        assertEquals("1024", engine.expand("{{maxResponse}}", context))
+        assertEquals("1024", engine.expand("{{maxResponseTokens}}", context))
+    }
+
+    @Test
+    fun `model macro expands to model name`() {
+        assertEquals("claude-opus-4-8", engine.expand("{{model}}", context))
+    }
+
+    @Test
+    fun `persona macro expands to persona description`() {
+        assertEquals("Bob is a brave traveler.", engine.expand("{{persona}}", context))
+    }
+
+    @Test
+    fun `input macro expands to input text`() {
+        assertEquals("Tell me a story", engine.expand("{{input}}", context))
+    }
+
+    @Test
+    fun `lastUserMessage and lastCharMessage macros expand`() {
+        assertEquals("What's next?", engine.expand("{{lastUserMessage}}", context))
+        assertEquals("Bob says goodbye.", engine.expand("{{lastCharMessage}}", context))
+    }
+
+    @Test
+    fun `lastMessageId macro expands to index`() {
+        assertEquals("5", engine.expand("{{lastMessageId}}", context))
+    }
+
+    @Test
+    fun `isMobile macro is always true on Android`() {
+        assertEquals("true", engine.expand("{{isMobile}}", context))
+    }
+
+    @Test
+    fun `greeting macro expands to first message`() {
+        assertEquals("Alice greets you warmly.", engine.expand("{{greeting}}", context))
+        assertEquals("Alice greets you warmly.", engine.expand("{{charFirstMessage}}", context))
+    }
+
+    @Test
+    fun `greeting with index picks alternate greeting`() {
+        assertEquals("Alt greeting one.", engine.expand("{{greeting::1}}", context))
+        assertEquals("Alt greeting two.", engine.expand("{{greeting::2}}", context))
+    }
+
+    @Test
+    fun `greeting with out-of-range index returns empty`() {
+        assertEquals("", engine.expand("{{greeting::99}}", context))
+    }
+
+    // ── Variable shorthand ({{.name}} / {{$name}} and operators) ─────────
+
+    @Test
+    fun `shorthand local get returns empty when unset`() {
+        engine.variableStore = newStore()
+        assertEquals("", engine.expand("{{.mood}}", context))
+    }
+
+    @Test
+    fun `shorthand local set and get roundtrip`() {
+        engine.variableStore = newStore()
+        assertEquals("happy", engine.expand("{{.mood=happy}}", context))
+        assertEquals("happy", engine.expand("{{.mood}}", context))
+    }
+
+    @Test
+    fun `shorthand global set and get roundtrip`() {
+        engine.variableStore = newStore()
+        assertEquals("on", engine.expand("{{${'$'}flag=on}}", context))
+        assertEquals("on", engine.expand("{{${'$'}flag}}", context))
+    }
+
+    @Test
+    fun `shorthand increment and decrement`() {
+        engine.variableStore = newStore(mutableMapOf("count" to "5"))
+        assertEquals("6", engine.expand("{{.count++}}", context))
+        assertEquals("5", engine.expand("{{.count--}}", context))
+        assertEquals("5", engine.expand("{{.count}}", context))
+    }
+
+    @Test
+    fun `shorthand add and subtract`() {
+        engine.variableStore = newStore(mutableMapOf("score" to "10"))
+        assertEquals("15", engine.expand("{{.score+=5}}", context))
+        assertEquals("13", engine.expand("{{.score-=2}}", context))
+    }
+
+    @Test
+    fun `shorthand equality comparison`() {
+        engine.variableStore = newStore(mutableMapOf("name" to "Alice"))
+        assertEquals("true", engine.expand("{{.name==Alice}}", context))
+        assertEquals("false", engine.expand("{{.name==Bob}}", context))
+        assertEquals("false", engine.expand("{{.name!=Alice}}", context))
+        assertEquals("true", engine.expand("{{.name!=Bob}}", context))
+    }
+
+    @Test
+    fun `shorthand ordered comparison`() {
+        engine.variableStore = newStore(mutableMapOf("hp" to "50"))
+        assertEquals("true", engine.expand("{{.hp>=50}}", context))
+        assertEquals("false", engine.expand("{{.hp>50}}", context))
+        assertEquals("true", engine.expand("{{.hp<100}}", context))
+        assertEquals("false", engine.expand("{{.hp<=40}}", context))
+    }
+
+    @Test
+    fun `shorthand logical-or default returns value when falsy`() {
+        engine.variableStore = newStore()
+        assertEquals("default", engine.expand("{{.missing||default}}", context))
+    }
+
+    @Test
+    fun `shorthand logical-or returns current when truthy`() {
+        engine.variableStore = newStore(mutableMapOf("name" to "Alice"))
+        assertEquals("Alice", engine.expand("{{.name||default}}", context))
+    }
+
+    @Test
+    fun `shorthand nullish-coalescing returns alt when undefined`() {
+        engine.variableStore = newStore(mutableMapOf("name" to "Alice"))
+        assertEquals("Alice", engine.expand("{{.name??alt}}", context))
+        assertEquals("alt", engine.expand("{{.missing??alt}}", context))
+    }
+
+    @Test
+    fun `shorthand conditional assignment or-equals`() {
+        engine.variableStore = newStore(mutableMapOf("seen" to "0"))
+        assertEquals("yes", engine.expand("{{.seen||=yes}}", context))
+        assertEquals("yes", engine.expand("{{.seen}}", context))
+    }
+
+    @Test
+    fun `shorthand conditional assignment nullish-equals`() {
+        engine.variableStore = newStore()
+        assertEquals("init", engine.expand("{{.cfg??=init}}", context))
+        assertEquals("init", engine.expand("{{.cfg}}", context))
+    }
+
+    @Test
+    fun `shorthand without store degrades to empty string`() {
+        // No variableStore set; getters resolve to "" without crashing.
+        assertEquals("", engine.expand("{{.anything}}", context))
+        assertEquals("", engine.expand("{{${'$'}anything}}", context))
+    }
+
+    @Test
+    fun `shorthand does not interfere with non-shorthand macros`() {
+        // A literal starting with '.' that isn't a valid identifier is left alone.
+        assertEquals("{{.}}", engine.expand("{{.}}", context))
     }
 }

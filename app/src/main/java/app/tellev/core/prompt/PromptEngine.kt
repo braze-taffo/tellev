@@ -225,10 +225,15 @@ class DefaultPromptEngine(
     }
 
     private fun buildMacroContext(request: PromptBuildRequest): MacroContext {
-        val lastMessage = request.messages
-            .filterNot { it.isHidden }
-            .lastOrNull()
-            ?.let { it.swipes.getOrNull(it.swipeIndex) ?: it.content }
+        val visible = request.messages.filterNot { it.isHidden }
+        val lastMessage = visible.lastOrNull()?.let(::messageContent).orEmpty()
+        val lastUserMessage = visible
+            .lastOrNull { it.role == MessageRole.User }
+            ?.let(::messageContent)
+            .orEmpty()
+        val lastCharMessage = visible
+            .lastOrNull { it.role == MessageRole.Character || it.role == MessageRole.Assistant }
+            ?.let(::messageContent)
             .orEmpty()
 
         val groupMemberNames = extractGroupMemberNames(request.metadata)
@@ -245,8 +250,21 @@ class DefaultPromptEngine(
             groupMemberNames = groupMemberNames,
             maxPromptTokens = request.preset.maxTokens ?: 0,
             maxContextTokens = extractMaxContextTokens(request.metadata) ?: 0,
+            // ── Step 5 gap-fill: SillyTavern macro parity ──
+            personaDescription = request.persona?.description.orEmpty(),
+            modelName = extractModelName(request.metadata, request.providerType),
+            maxResponseTokens = extractMaxResponseTokens(request.metadata) ?: request.preset.maxTokens ?: 0,
+            inputText = request.userInput,
+            lastUserMessage = lastUserMessage,
+            lastCharMessage = lastCharMessage,
+            lastMessageId = visible.lastIndex.toString(),
+            alternateGreetings = request.character.alternateGreetings,
         )
     }
+
+    /** Resolves the active content of a message, honoring the current swipe. */
+    private fun messageContent(message: ChatMessage): String =
+        message.swipes.getOrNull(message.swipeIndex) ?: message.content
 
     private fun expandCharacterFields(
         character: CharacterCard,
@@ -395,6 +413,26 @@ class DefaultPromptEngine(
 
     private fun extractMaxContextTokens(metadata: JsonObject): Int? {
         val element = metadata["maxContextTokens"] ?: return null
+        return try {
+            element.jsonPrimitive.intOrNull
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** {{model}} — selected model id, falling back to the provider type. */
+    private fun extractModelName(metadata: JsonObject, providerType: String): String {
+        val element = metadata["modelName"] ?: return providerType
+        return try {
+            element.jsonPrimitive.content
+        } catch (_: Exception) {
+            providerType
+        }
+    }
+
+    /** {{maxResponse}} — max response tokens, falling back to the preset value. */
+    private fun extractMaxResponseTokens(metadata: JsonObject): Int? {
+        val element = metadata["maxResponseTokens"] ?: return null
         return try {
             element.jsonPrimitive.intOrNull
         } catch (_: Exception) {
