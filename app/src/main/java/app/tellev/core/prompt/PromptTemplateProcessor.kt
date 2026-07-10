@@ -1,5 +1,6 @@
 package app.tellev.core.prompt
 
+import app.tellev.core.extension.EjsTemplateSettings
 import app.tellev.core.model.MessageRole
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -34,12 +35,31 @@ data class PromptTemplateResult(
     val warnings: List<String> = emptyList(),
 )
 
-class DefaultPromptTemplateProcessor : PromptTemplateProcessor {
+class DefaultPromptTemplateProcessor(
+    @Volatile var ejsSettings: EjsTemplateSettings = EjsTemplateSettings.DEFAULT,
+) : PromptTemplateProcessor {
 
     override fun process(request: PromptTemplateRequest): PromptTemplateResult {
+        // Master switch: when the EJS template module is disabled,
+        // skip all template processing and return messages unchanged.
+        if (!ejsSettings.enabled) {
+            return PromptTemplateResult(messages = request.messages)
+        }
+
         val entryParses = request.worldEntries.map { parseWorldEntry(it) }
+
+        // When generate_loader_enabled is off, skip [GENERATE:BEFORE] /
+        // @INJECT instruction blocks from world entries.  The entry text
+        // is still included as plain content (normalText) but no
+        // instruction-driven message injection happens.
+        val activeBlocks = if (ejsSettings.generateLoaderEnabled) {
+            entryParses.flatMap { it.blocks }
+        } else {
+            emptyList()
+        }
+
         if (!request.messages.any { it.content.contains("<%") || hasInstructionMarker(it.content) } &&
-            entryParses.none { it.blocks.isNotEmpty() }
+            activeBlocks.isEmpty()
         ) {
             return PromptTemplateResult(messages = request.messages)
         }
@@ -51,12 +71,19 @@ class DefaultPromptTemplateProcessor : PromptTemplateProcessor {
 
         val injectedMessages = applyInstructionBlocks(
             request.messages.map { message -> message.copy(content = stripInstructionBlocks(message.content)) },
-            entryParses.flatMap { it.blocks },
+            activeBlocks,
             state,
         )
 
-        val rendered = injectedMessages.map { message ->
-            message.copy(content = renderTemplate(message.content, state))
+        // When render_enabled is off, skip EJS rendering (<%= ... %>) on
+        // message content.  Instruction blocks are still applied above
+        // because they are part of the generate phase, not the render phase.
+        val rendered = if (ejsSettings.renderEnabled) {
+            injectedMessages.map { message ->
+                message.copy(content = renderTemplate(message.content, state))
+            }
+        } else {
+            injectedMessages
         }
 
         return PromptTemplateResult(
@@ -66,7 +93,13 @@ class DefaultPromptTemplateProcessor : PromptTemplateProcessor {
     }
 
     override fun systemPromptContentFor(entry: PromptTemplateWorldEntry): String =
-        parseWorldEntry(entry).normalText.trim()
+        if (!ejsSettings.enabled || !ejsSettings.generateLoaderEnabled) {
+            // When disabled, return the raw content unchanged so world
+            // book entries are still included as plain text.
+            entry.content
+        } else {
+            parseWorldEntry(entry).normalText.trim()
+        }
 
     private fun renderTemplate(template: String, state: TemplateState): String {
         if (!template.contains("<%")) return template

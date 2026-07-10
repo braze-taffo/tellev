@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -32,13 +33,18 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -120,6 +126,7 @@ fun ExtensionsScreen(
                     ExtensionCard(
                         extension = extension,
                         onToggle = { viewModel.toggleExtension(extension.id) },
+                        onOpenSettings = { viewModel.openSettings(extension.id) },
                     )
                 }
 
@@ -150,6 +157,31 @@ fun ExtensionsScreen(
             }
         }
     }
+
+    // Settings sheets for built-in compat modules
+    state.settingsSheetTarget?.let { target ->
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { viewModel.closeSettings() },
+            sheetState = sheetState,
+        ) {
+            when (target) {
+                "tavern-helper-compat" -> TavernHelperSettingsPanel(
+                    settings = state.tavernHelperSettings,
+                    onUpdate = { viewModel.updateTavernHelperSettings(it) },
+                    onReset = { viewModel.resetTavernHelperSettings() },
+                    onClose = { viewModel.closeSettings() },
+                )
+                "ejs-template-compat" -> EjsTemplateSettingsPanel(
+                    settings = state.ejsTemplateSettings,
+                    onUpdate = { viewModel.updateEjsTemplateSettings(it) },
+                    onReset = { viewModel.resetEjsTemplateSettings() },
+                    onClose = { viewModel.closeSettings() },
+                )
+                else -> {}
+            }
+        }
+    }
 }
 
 @Composable
@@ -176,7 +208,12 @@ private fun SectionHeader(
 private fun ExtensionCard(
     extension: ExtensionInfo,
     onToggle: () -> Unit,
+    onOpenSettings: () -> Unit = {},
 ) {
+    val hasSettings = extension.locked && (
+        extension.id == "tavern-helper-compat" ||
+        extension.id == "ejs-template-compat"
+    )
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -218,6 +255,15 @@ private fun ExtensionCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                if (hasSettings) {
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "设置",
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
                 }
                 Switch(
                     checked = extension.loaded,

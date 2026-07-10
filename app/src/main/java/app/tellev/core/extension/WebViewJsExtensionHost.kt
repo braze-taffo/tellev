@@ -150,6 +150,18 @@ class WebViewJsExtensionHost(
                 val settingsJson = settingsStore.getSettings(manifest.id)
                 settingsCache[manifest.id] = json.encodeToString(JsonObject.serializer(), settingsJson)
 
+                // Read built-in compat-module settings so they can be
+                // injected into the WebView's _ejsFeatures and
+                // _tavernHelperSettings globals.
+                val ejsSettings = settingsStore.readEjsTemplateSettings()
+                val ejsSettingsStr = json.encodeToString(
+                    EjsTemplateSettings.serializer(), ejsSettings,
+                )
+                val tavernHelperSettings = settingsStore.readTavernHelperSettings()
+                val tavernHelperSettingsStr = json.encodeToString(
+                    TavernHelperSettings.serializer(), tavernHelperSettings,
+                )
+
                 if (variableStore != null && !globalVariablesLoaded) {
                     runCatching {
                         variableStore.loadGlobal(settingsStore.getSettings(TAVERN_HELPER_VARS_KEY))
@@ -170,7 +182,13 @@ class WebViewJsExtensionHost(
 
                     loadDataWithBaseURL(
                         "https://extensions.tellev.local/${manifest.id}/",
-                        buildExtensionHtml(manifest.id, token, scriptSource),
+                        buildExtensionHtml(
+                    manifest.id,
+                    token,
+                    scriptSource,
+                    ejsSettingsJson = ejsSettingsStr,
+                    tavernHelperSettingsJson = tavernHelperSettingsStr,
+                ),
                         "text/html",
                         "UTF-8",
                         null,
@@ -403,6 +421,25 @@ class WebViewJsExtensionHost(
                         put("role", prompt.role)
                     },
                 )
+            }
+        }
+    }
+
+    override fun updateCompatModuleSettings(
+        ejsSettings: EjsTemplateSettings,
+        tavernHelperSettings: TavernHelperSettings,
+    ) {
+        val ejsJson = json.encodeToString(EjsTemplateSettings.serializer(), ejsSettings)
+        val thJson = json.encodeToString(TavernHelperSettings.serializer(), tavernHelperSettings)
+        val safeEjs = ejsJson.replace("\\", "\\\\").replace("'", "\'")
+        val safeTh = thJson.replace("\\", "\\\\").replace("'", "\'")
+        val js = "if(typeof _ejsFeatures!=='undefined')" +
+            "_ejsFeatures=Object.assign({},_ejsDefaultFeatures," + safeEjs + ");" +
+            "if(typeof _tavernHelperSettings!=='undefined')" +
+            "_tavernHelperSettings=" + safeTh + ";"
+        scope.launch(Dispatchers.Main) {
+            for ((_, webView) in webViews) {
+                runCatching { webView.evaluateJavascript(js, null) }
             }
         }
     }
@@ -832,14 +869,24 @@ class WebViewJsExtensionHost(
 
     // ── HTML template ──────────────────────────────────────────────────
 
-    private fun buildExtensionHtml(extensionId: String, token: String, scriptSource: String): String {
+    private fun buildExtensionHtml(
+        extensionId: String,
+        token: String,
+        scriptSource: String,
+        ejsSettingsJson: String,
+        tavernHelperSettingsJson: String,
+    ): String {
         val safeId = jsEscape(extensionId)
         val safeToken = jsEscape(token)
         val safeScript = sanitizeScriptSource(scriptSource)
+        val safeEjsJson = ejsSettingsJson.replace("\\", "\\\\").replace("'", "\'")
+        val safeThJson = tavernHelperSettingsJson.replace("\\", "\\\\").replace("'", "\'")
         return HTML_TEMPLATE
             .replace("__EXTENSION_ID__", safeId)
             .replace("__TOKEN__", safeToken)
             .replace("__SHOWDOWN_SOURCE__", MarkdownScripts.showdownSource(context))
+            .replace("__EJS_SETTINGS_JSON__", safeEjsJson)
+            .replace("__TAVERN_HELPER_SETTINGS_JSON__", safeThJson)
             .replace("__SCRIPT_SOURCE__", safeScript)
     }
 
@@ -945,7 +992,8 @@ class WebViewJsExtensionHost(
             "function executeSlashCommandsWithOptions(cs){var raw=typeof cs==='string'?cs:(Array.isArray(cs)?cs.join('\\n'):String(cs||''));_apiReqCounter+=1;var rid='slash_'+_apiReqCounter+'_'+Date.now();return new Promise(function(resolve){_slashCallbacks[rid]=resolve;tellevNative.executeSlashCommands(rid,raw);});}" +
             "function executeSlashCommands(cs){return executeSlashCommandsWithOptions(cs);}" +
             "var _ejsDefaultFeatures={enabled:true,generate_enabled:true,generate_loader_enabled:true,inject_loader_enabled:false,render_enabled:true,render_loader_enabled:true,code_blocks_enabled:false,raw_message_evaluation_enabled:true,filter_message_enabled:true,depth_limit:-1,autosave_enabled:false,preload_worldinfo_enabled:true,with_context_disabled:false,debug_enabled:false,invert_enabled:true,compile_workers:false,sandbox:false,cache_enabled:0,cache_size:64,cache_hasher:'h32ToString',code_editor:false};" +
-            "var _ejsFeatures=Object.assign({},_ejsDefaultFeatures);" +
+            "var _ejsFeatures=Object.assign({},_ejsDefaultFeatures,__EJS_SETTINGS_JSON__);" +
+            "var _tavernHelperSettings=__TAVERN_HELPER_SETTINGS_JSON__;" +
             "function _ejsPathGet(root,path,fb){if(root==null)return fb;var cur=root;var parts=String(path||'').split('.');for(var i=0;i<parts.length;i++){var p=parts[i];if(!p)continue;if(cur==null)return fb;cur=cur[p];}return cur===undefined?fb:cur;}" +
             "function _ejsPathSet(root,path,value){if(!root)return root;var cur=root;var parts=String(path||'').split('.').filter(Boolean);for(var i=0;i<parts.length-1;i++){var p=parts[i];if(typeof cur[p]!=='object'||cur[p]===null)cur[p]={};cur=cur[p];}if(parts.length)cur[parts[parts.length-1]]=value;return root;}" +
             "function _ejsLocalVars(){try{return JSON.parse(tellevNative.stGetLocalVariables())||{};}catch(e){return{};}}" +

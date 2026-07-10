@@ -81,6 +81,17 @@ interface ExtensionHost {
      * engine can splice the entries into the outgoing prompt.
      */
     fun collectInjectedPrompts(): JsonObject = buildJsonObject { }
+
+    /**
+     * Push updated compat-module settings (EJS template + TavernHelper) to
+     * every loaded extension WebView so the change takes effect without
+     * requiring an extension reload.  The caller is responsible for
+     * persisting the settings through [ExtensionSettingsStore] first.
+     */
+    fun updateCompatModuleSettings(
+        ejsSettings: EjsTemplateSettings,
+        tavernHelperSettings: TavernHelperSettings,
+    ) {}
 }
 
 // ── Manifest & permissions ─────────────────────────────────────────────

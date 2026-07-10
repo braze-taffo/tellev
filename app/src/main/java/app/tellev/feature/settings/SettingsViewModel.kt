@@ -14,6 +14,7 @@ import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.provider.ProviderStatus
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.StDataStore
+import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -281,6 +282,37 @@ class SettingsViewModel(
                     it.copy(
                         isLoading = false,
                         error = "删除预设失败：${e.message}",
+                    )
+                }
+            }
+        }
+    }
+
+    fun importPreset(context: Context, uri: Uri, providerCategory: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                val bytes = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: error("无法读取所选文件")
+                }
+                val fileName = UriUtils.resolveDisplayName(context, uri)
+                    ?: uri.lastPathSegment
+                    ?: "preset.json"
+                val imported = dataStore.importPreset(bytes, providerCategory, fileName)
+                val presets = dataStore.listPresets()
+                _uiState.update {
+                    it.copy(
+                        presets = presets,
+                        isLoading = false,
+                        info = "预设「${imported.name}」已导入。",
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        error = "导入预设失败：${e.message}",
                     )
                 }
             }

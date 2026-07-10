@@ -87,6 +87,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import app.tellev.R
 import app.tellev.core.model.GenerationPreset
+import app.tellev.util.UriUtils
 import java.util.UUID
 import kotlin.math.roundToInt
 
@@ -109,6 +110,7 @@ fun SettingsScreen(
     var showExportDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
     var apiKeyVisible by remember { mutableStateOf(false) }
+    var pendingPresetImportUri by remember { mutableStateOf<Uri?>(null) }
 
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -124,6 +126,12 @@ fun SettingsScreen(
         uri?.let {
             viewModel.exportBackup(context, it)
         }
+    }
+
+    val presetImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri: Uri? ->
+        uri?.let { pendingPresetImportUri = it }
     }
 
     LaunchedEffect(state.error) {
@@ -359,6 +367,9 @@ fun SettingsScreen(
                     SectionHeader(
                         icon = Icons.Default.Settings,
                         title = "生成预设",
+                        secondaryAction = {
+                            presetImportLauncher.launch("application/json")
+                        },
                         action = {
                             showPresetDialog = true
                         },
@@ -658,6 +669,22 @@ fun SettingsScreen(
         )
     }
 
+    // Preset import: after a JSON file is picked, ask the user which ST preset
+    // category it belongs to before writing it to the matching directory.
+    pendingPresetImportUri?.let { uri ->
+        val fileName = remember(uri) { UriUtils.resolveDisplayName(context, uri) }
+            ?: uri.lastPathSegment
+            ?: "preset.json"
+        PresetImportCategoryDialog(
+            fileName = fileName,
+            onDismiss = { pendingPresetImportUri = null },
+            onConfirm = { category ->
+                viewModel.importPreset(context, uri, category)
+                pendingPresetImportUri = null
+            },
+        )
+    }
+
     // Add secret dialog
     if (showAddSecretDialog) {
         AddSecretDialog(
@@ -766,6 +793,9 @@ private fun SectionHeader(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     action: (() -> Unit)? = null,
+    secondaryAction: (() -> Unit)? = null,
+    secondaryActionIcon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Default.FileUpload,
+    secondaryActionDescription: String = "导入",
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -783,6 +813,18 @@ private fun SectionHeader(
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.weight(1f),
         )
+        if (secondaryAction != null) {
+            IconButton(
+                onClick = secondaryAction,
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(
+                    secondaryActionIcon,
+                    contentDescription = secondaryActionDescription,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
         if (action != null) {
             IconButton(
                 onClick = action,
@@ -1027,6 +1069,87 @@ private fun PresetCreationDialog(
                 },
             ) {
                 Text("创建")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PresetImportCategoryDialog(
+    fileName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (providerCategory: String) -> Unit,
+) {
+    // The four SillyTavern preset directories. Keys match FileStDataStore's
+    // resolvePresetDirectory() mapping; values are user-facing labels.
+    val categories = remember {
+        listOf(
+            "openai" to "OpenAI 兼容",
+            "textgen" to "TextGen WebUI",
+            "kobold" to "KoboldAI",
+            "novelai" to "NovelAI",
+        )
+    }
+    var selectedCategory by remember { mutableStateOf(categories.first().first) }
+    var expanded by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("导入预设") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "文件：$fileName",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "选择该预设归属的服务商分类，决定它写入的目录与在聊天中可被选用的范围。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                ExposedDropdownMenuBox(
+                    expanded = expanded,
+                    onExpandedChange = { expanded = it },
+                ) {
+                    OutlinedTextField(
+                        value = categories.first { it.first == selectedCategory }.second,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("服务商分类") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                    )
+                    ExposedDropdownMenu(
+                        expanded = expanded,
+                        onDismissRequest = { expanded = false },
+                    ) {
+                        categories.forEach { (id, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    selectedCategory = id
+                                    expanded = false
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(selectedCategory) },
+            ) {
+                Text("导入")
             }
         },
         dismissButton = {

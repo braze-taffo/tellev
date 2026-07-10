@@ -2,10 +2,12 @@ package app.tellev
 
 import android.content.Context
 import app.tellev.core.extension.ExtensionHost
-import app.tellev.core.extension.ExtensionPermissionManager
 import app.tellev.core.extension.ExtensionSettingsStore
+import app.tellev.core.extension.ExtensionPermissionManager
 import app.tellev.core.extension.VirtualApiRouter
 import app.tellev.core.extension.VariableStore
+import app.tellev.core.extension.EjsTemplateSettings
+import app.tellev.core.extension.TavernHelperSettings
 import app.tellev.core.extension.WebViewJsExtensionHost
 import app.tellev.core.prompt.DefaultMacroEngine
 import app.tellev.core.prompt.DefaultPromptEngine
@@ -49,8 +51,34 @@ class TellevGraph private constructor(
     val extensionHost: ExtensionHost,
     val permissionManager: ExtensionPermissionManager,
     val apiRouter: VirtualApiRouter,
+    val extensionSettingsStore: ExtensionSettingsStore,
 ) {
     val importedCardSignal = MutableStateFlow(0L)
+
+    /**
+     * Persist updated compat-module settings and push them to every
+     * loaded extension WebView and to the [PromptEngine] so the change
+     * takes effect immediately without an extension reload.
+     *
+     * Callers should call this from a coroutine scope (the methods are
+     * suspend).
+     */
+    suspend fun applyEjsTemplateSettings(settings: EjsTemplateSettings) {
+        extensionSettingsStore.saveEjsTemplateSettings(settings)
+        (promptEngine as? DefaultPromptEngine)?.updateEjsSettings(settings)
+        extensionHost.updateCompatModuleSettings(
+            ejsSettings = settings,
+            tavernHelperSettings = extensionSettingsStore.readTavernHelperSettings(),
+        )
+    }
+
+    suspend fun applyTavernHelperSettings(settings: TavernHelperSettings) {
+        extensionSettingsStore.saveTavernHelperSettings(settings)
+        extensionHost.updateCompatModuleSettings(
+            ejsSettings = extensionSettingsStore.readEjsTemplateSettings(),
+            tavernHelperSettings = settings,
+        )
+    }
     companion object {
         fun create(context: Context): TellevGraph {
             val root = context.filesDir.toPath().resolve("st-data")
@@ -107,7 +135,7 @@ class TellevGraph private constructor(
             val permissionManager = ExtensionPermissionManager(
                 persistenceDir = layout.extensions.resolve("_permissions"),
             )
-            val apiRouter = VirtualApiRouter(dataStore, providerRegistry, secretStore)
+            val apiRouter = VirtualApiRouter(dataStore, providerRegistry, secretStore, extensionSettingsStore)
             val variableStore = VariableStore(
                 scope = extensionScope,
                 settingsStore = extensionSettingsStore,
@@ -126,6 +154,13 @@ class TellevGraph private constructor(
             // Load persisted permission grants off the main thread.
             extensionScope.launch { permissionManager.load() }
 
+            // Load persisted EJS template settings so the prompt engine
+            // respects the user's configuration from the first build call.
+            extensionScope.launch {
+                val ejsSettings = extensionSettingsStore.readEjsTemplateSettings()
+                (promptEngine as? DefaultPromptEngine)?.updateEjsSettings(ejsSettings)
+            }
+
             return TellevGraph(
                 dataStore = dataStore,
                 providerRegistry = providerRegistry,
@@ -135,6 +170,7 @@ class TellevGraph private constructor(
                 extensionHost = extensionHost,
                 permissionManager = permissionManager,
                 apiRouter = apiRouter,
+                extensionSettingsStore = extensionSettingsStore,
             )
         }
     }

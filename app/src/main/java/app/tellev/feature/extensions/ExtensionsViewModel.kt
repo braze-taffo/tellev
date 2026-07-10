@@ -3,10 +3,14 @@ package app.tellev.feature.extensions
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import app.tellev.core.extension.EjsTemplateSettings
 import app.tellev.core.extension.ExtensionHost
 import app.tellev.core.extension.ExtensionManifest
 import app.tellev.core.extension.ExtensionPermission
 import app.tellev.core.extension.ExtensionPermissionManager
+import app.tellev.core.extension.ExtensionSettingsStore
+import app.tellev.core.extension.TavernHelperSettings
+import app.tellev.core.prompt.DefaultPromptEngine
 import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.storage.StDataStore
 import kotlinx.coroutines.Dispatchers
@@ -52,12 +56,19 @@ data class ExtensionsUiState(
     val disabledRegexScripts: Map<String, Set<String>> = emptyMap(),
     val isLoading: Boolean = false,
     val error: String? = null,
+    // Built-in compat-module settings
+    val ejsTemplateSettings: EjsTemplateSettings = EjsTemplateSettings.DEFAULT,
+    val tavernHelperSettings: TavernHelperSettings = TavernHelperSettings.DEFAULT,
+    // Which settings sheet is currently open (null = none)
+    val settingsSheetTarget: String? = null,
 )
 
 class ExtensionsViewModel(
     private val dataStore: StDataStore,
     private val extensionHost: ExtensionHost,
     private val permissionManager: ExtensionPermissionManager,
+    private val settingsStore: ExtensionSettingsStore,
+    private val promptEngine: app.tellev.core.prompt.PromptEngine? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ExtensionsUiState())
@@ -86,6 +97,15 @@ class ExtensionsViewModel(
     init {
         loadExtensions()
         observePermissionRequests()
+        loadCompatModuleSettings()
+    }
+
+    private fun loadCompatModuleSettings() {
+        viewModelScope.launch {
+            val ejs = settingsStore.readEjsTemplateSettings()
+            val th = settingsStore.readTavernHelperSettings()
+            _uiState.update { it.copy(ejsTemplateSettings = ejs, tavernHelperSettings = th) }
+        }
     }
 
     private fun loadExtensions() {
@@ -232,6 +252,47 @@ class ExtensionsViewModel(
         }
     }
 
+    // ── compat-module settings ────────────────────────────────────────
+
+    fun openSettings(extensionId: String) {
+        _uiState.update { it.copy(settingsSheetTarget = extensionId) }
+    }
+
+    fun closeSettings() {
+        _uiState.update { it.copy(settingsSheetTarget = null) }
+    }
+
+    fun updateEjsTemplateSettings(settings: EjsTemplateSettings) {
+        _uiState.update { it.copy(ejsTemplateSettings = settings) }
+        viewModelScope.launch {
+            settingsStore.saveEjsTemplateSettings(settings)
+            (promptEngine as? DefaultPromptEngine)?.updateEjsSettings(settings)
+            extensionHost.updateCompatModuleSettings(
+                ejsSettings = settings,
+                tavernHelperSettings = _uiState.value.tavernHelperSettings,
+            )
+        }
+    }
+
+    fun updateTavernHelperSettings(settings: TavernHelperSettings) {
+        _uiState.update { it.copy(tavernHelperSettings = settings) }
+        viewModelScope.launch {
+            settingsStore.saveTavernHelperSettings(settings)
+            extensionHost.updateCompatModuleSettings(
+                ejsSettings = _uiState.value.ejsTemplateSettings,
+                tavernHelperSettings = settings,
+            )
+        }
+    }
+
+    fun resetEjsTemplateSettings() {
+        updateEjsTemplateSettings(EjsTemplateSettings.DEFAULT)
+    }
+
+    fun resetTavernHelperSettings() {
+        updateTavernHelperSettings(TavernHelperSettings.DEFAULT)
+    }
+
     // ── built-in compatibility modules ─────────────────────────────────
 
     private fun builtInExtensions(): List<ExtensionInfo> = listOf(
@@ -257,6 +318,14 @@ class ExtensionsViewModel(
             description = "自动导入 character_book 并随角色注入提示词",
             loaded = true,
             permissions = listOf("提示词", "世界书"),
+            locked = true,
+        ),
+        ExtensionInfo(
+            id = "ejs-template-compat",
+            name = "EJS 提示词模板",
+            description = "在提示词和角色卡中使用 EJS 模板语法（<%= ... %>），支持动态生成与注入",
+            loaded = true,
+            permissions = listOf("提示词", "世界书", "变量"),
             locked = true,
         ),
     )
@@ -404,11 +473,13 @@ class ExtensionsViewModelFactory(
     private val dataStore: StDataStore,
     private val extensionHost: ExtensionHost,
     private val permissionManager: ExtensionPermissionManager,
+    private val settingsStore: ExtensionSettingsStore,
+    private val promptEngine: app.tellev.core.prompt.PromptEngine? = null,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(ExtensionsViewModel::class.java)) {
-            return ExtensionsViewModel(dataStore, extensionHost, permissionManager) as T
+            return ExtensionsViewModel(dataStore, extensionHost, permissionManager, settingsStore, promptEngine) as T
         }
         throw IllegalArgumentException("未知 ViewModel 类型：${modelClass.name}")
     }

@@ -33,6 +33,7 @@ import java.nio.file.Path
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
+import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -450,6 +451,38 @@ class FileStDataStore(
         directories
             .map { it.resolve("$id.json") }
             .fold(false) { deletedAny, path -> path.deleteIfExists() || deletedAny }
+    }
+
+    override suspend fun importPreset(
+        jsonBytes: ByteArray,
+        providerCategory: String,
+        sourceFileName: String,
+    ): GenerationPreset = withContext(Dispatchers.IO) {
+        val rawJsonString = jsonBytes.decodeToString()
+        val parsed = runCatching { json.parseToJsonElement(rawJsonString) }.getOrNull()
+        val rawObj = parsed as? JsonObject
+            ?: error("预设 JSON 格式无效：$sourceFileName 不是有效的 JSON 对象")
+
+        val parent = resolvePresetDirectory(providerCategory)
+        parent.createDirectories()
+
+        val id = "preset_${UUID.randomUUID()}"
+        parent.resolve("$id.json").writeText(rawJsonString)
+
+        val displayName = rawObj["name"]?.let { (it as? JsonPrimitive)?.content }
+            ?: sourceFileName.substringBeforeLast('.')
+
+        GenerationPreset(
+            id = id,
+            name = displayName,
+            providerType = parent.name,
+            temperature = rawObj.doubleValue("temperature"),
+            topP = rawObj.doubleValue("top_p") ?: rawObj.doubleValue("topP"),
+            topK = rawObj.intValue("top_k") ?: rawObj.intValue("topK"),
+            maxTokens = rawObj.intValue("max_tokens") ?: rawObj.intValue("maxTokens"),
+            stop = rawObj.stringList("stop"),
+            raw = rawObj,
+        )
     }
 
     override suspend fun listPersonas(): List<Persona> = withContext(Dispatchers.IO) {

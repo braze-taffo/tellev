@@ -1,5 +1,6 @@
 package app.tellev.core.prompt
 
+import app.tellev.core.extension.EjsTemplateSettings
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.GenerationPreset
@@ -56,6 +57,18 @@ class DefaultPromptEngine(
     private val macroEngine: MacroEngine = DefaultMacroEngine(),
     private val promptTemplateProcessor: PromptTemplateProcessor = DefaultPromptTemplateProcessor(),
 ) : PromptEngine {
+
+    /**
+     * Update the EJS template settings used by the internal
+     * [DefaultPromptTemplateProcessor].  Callers (typically the UI layer
+     * after the user changes a setting) should persist the new settings
+     * through [ExtensionSettingsStore] first, then call this method so
+     * subsequent [build] calls respect the updated configuration.
+     */
+    fun updateEjsSettings(settings: EjsTemplateSettings) {
+        (promptTemplateProcessor as? DefaultPromptTemplateProcessor)?.ejsSettings = settings
+    }
+
     override fun build(request: PromptBuildRequest): PromptBuildResult {
         // 1. Build MacroContext from request data
         val macroContext = buildMacroContext(request)

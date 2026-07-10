@@ -526,6 +526,66 @@ class FileStDataStoreTest {
         assertTrue(!layout.openAiSettings.resolve("delete_me.json").exists())
     }
 
+    @Test
+    fun `importPreset writes raw bytes to chosen provider directory and listPresets reads it back`() = runBlocking {
+        val raw = """
+            {"name":"My ST Preset","temperature":0.8,"top_p":0.95,"max_tokens":1024,
+             "stop":["\n\nUser:","\n\nAssistant:"],"prompt_prefix":"extra ST field"}
+        """.trimIndent()
+        val imported = store.importPreset(raw.toByteArray(), "openai", "my-st-preset.json")
+
+        assertTrue(imported.id.startsWith("preset_"))
+        assertEquals("My ST Preset", imported.name)
+        assertEquals(0.8, imported.temperature ?: -1.0, 0.0001)
+        assertEquals(0.95, imported.topP ?: -1.0, 0.0001)
+        assertEquals(1024, imported.maxTokens)
+        assertEquals(listOf("\n\nUser:", "\n\nAssistant:"), imported.stop)
+        // Provider-specific fields survive in raw because bytes are written verbatim.
+        assertEquals("extra ST field", imported.raw["prompt_prefix"]?.jsonPrimitive?.content)
+
+        // listPresets() must surface the same preset (round-trip via the on-disk file).
+        val listed = store.listPresets().first { it.id == imported.id }
+        assertEquals("My ST Preset", listed.name)
+        assertEquals(0.8, listed.temperature ?: -1.0, 0.0001)
+        assertEquals(1024, listed.maxTokens)
+        assertEquals("extra ST field", listed.raw["prompt_prefix"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `importPreset falls back to file stem when name field is missing`() = runBlocking {
+        val raw = """{"temperature":0.7}"""
+        val imported = store.importPreset(raw.toByteArray(), "openai", "anonymous.json")
+
+        assertEquals("anonymous", imported.name)
+    }
+
+    @Test
+    fun `importPreset into textgen category routes to TextGen WebUI Settings directory`() = runBlocking {
+        val raw = """{"name":"Llama Preset","temperature":0.7}"""
+        val imported = store.importPreset(raw.toByteArray(), "textgen", "llama.json")
+
+        assertTrue(layout.textGenSettings.resolve("${imported.id}.json").exists())
+        assertTrue(!layout.openAiSettings.resolve("${imported.id}.json").exists())
+        assertEquals("TextGen Settings", imported.providerType)
+    }
+
+    @Test
+    fun `importPreset with invalid JSON throws`() = runBlocking {
+        val exception = runCatching {
+            store.importPreset("not json at all".toByteArray(), "openai", "bad.json")
+        }
+        assertTrue(exception.isFailure)
+    }
+
+    @Test
+    fun `importPreset with JSON array throws a descriptive error`() = runBlocking {
+        val exception = runCatching {
+            store.importPreset("[1,2,3]".toByteArray(), "openai", "array.json")
+        }
+        assertTrue(exception.isFailure)
+        assertTrue(exception.exceptionOrNull()?.message?.contains("格式无效") == true)
+    }
+
     // ---- Character Tests ----
 
     @Test

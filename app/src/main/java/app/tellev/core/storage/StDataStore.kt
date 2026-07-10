@@ -56,6 +56,17 @@ interface StDataStore {
     suspend fun savePreset(preset: GenerationPreset)
     suspend fun deletePreset(id: String, providerType: String? = null): Boolean
 
+    // Import a SillyTavern-style preset JSON verbatim into the provider-specific
+    // settings directory. Raw bytes are preserved so provider-specific fields are
+    // not lost through round-tripping the internal GenerationPreset serializer.
+    // [providerCategory] is one of the four ST preset directory keys: "openai",
+    // "textgen", "kobold", "novelai". Returns the parsed preset.
+    suspend fun importPreset(
+        jsonBytes: ByteArray,
+        providerCategory: String,
+        sourceFileName: String,
+    ): GenerationPreset
+
     suspend fun listPersonas(): List<Persona>
     suspend fun savePersona(persona: Persona)
     suspend fun deletePersona(id: String)

@@ -113,6 +113,8 @@ fun TellevRoot() {
             dataStore = graph.dataStore,
             extensionHost = graph.extensionHost,
             permissionManager = graph.permissionManager,
+            settingsStore = graph.extensionSettingsStore,
+            promptEngine = graph.promptEngine,
         ),
     )
 

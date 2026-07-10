@@ -22,6 +22,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -46,6 +47,7 @@ class VirtualApiRouter(
     private val dataStore: StDataStore,
     private val providerRegistry: ProviderRegistry,
     private val secretStore: SecretStore,
+    private val settingsStore: ExtensionSettingsStore? = null,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
 ) {
 
@@ -790,6 +792,8 @@ class VirtualApiRouter(
         // lists that extensions query via /api/settings/get.
         val worldNames = dataStore.listWorldBooks().map { it.id }
         val characters = runCatching { dataStore.listCharacters() }.getOrDefault(emptyList())
+        val ejsSettings = settingsStore?.readEjsTemplateSettings()
+        val tavernHelperSettings = settingsStore?.readTavernHelperSettings()
         val body = buildJsonObject {
             putJsonArray("world_names") {
                 for (w in worldNames) add(kotlinx.serialization.json.JsonPrimitive(w))
@@ -800,13 +804,44 @@ class VirtualApiRouter(
             put("display_name", "tellev")
             put("power_user", buildJsonObject { })
             put("oai_settings", buildJsonObject { })
+            // Built-in compat-module settings so extensions that read
+            // extension_settings.EjsTemplate / extension_settings.tavern_helper
+            // via /api/settings/get see the current values.
+            if (ejsSettings != null) {
+                put("EjsTemplate", json.encodeToJsonElement(
+                    EjsTemplateSettings.serializer(), ejsSettings,
+                ))
+            }
+            if (tavernHelperSettings != null) {
+                put("tavern_helper", json.encodeToJsonElement(
+                    TavernHelperSettings.serializer(), tavernHelperSettings,
+                ))
+            }
         }
         return jsonResponse(200, body)
     }
 
     private suspend fun handleStSaveSettings(request: VirtualApiRequest): VirtualApiResponse {
-        // Accept settings save; the virtual API doesn't persist full
-        // settings.json, just acknowledge.
+        // Accept settings save.  Extract and persist the built-in
+        // compat-module settings (EjsTemplate / tavern_helper) if present
+        // in the request body; the rest of settings.json is acknowledged
+        // but not persisted.
+        val bodyObj = parseBodyAsJsonObject(request)
+        val store = settingsStore
+        if (store != null) {
+            bodyObj["EjsTemplate"]?.let { elem ->
+                runCatching {
+                    val s = json.decodeFromJsonElement(EjsTemplateSettings.serializer(), elem)
+                    store.saveEjsTemplateSettings(s)
+                }
+            }
+            bodyObj["tavern_helper"]?.let { elem ->
+                runCatching {
+                    val s = json.decodeFromJsonElement(TavernHelperSettings.serializer(), elem)
+                    store.saveTavernHelperSettings(s)
+                }
+            }
+        }
         return jsonResponse(200, buildJsonObject { put("ok", true) })
     }
 

@@ -25,7 +25,11 @@ import java.util.stream.Collectors
  */
 class ExtensionSettingsStore(
     private val extensionsDir: Path,
-    private val json: Json = Json { prettyPrint = true; ignoreUnknownKeys = true },
+    private val json: Json = Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        },
 ) {
     private val mutex = Mutex()
 
@@ -96,7 +100,73 @@ class ExtensionSettingsStore(
         }
     }
 
-    // ── private helpers ────────────────────────────────────────────────
+
+    // ── typed compat-module settings ──────────────────────────────────
+
+    /**
+     * Extension IDs used to persist the built-in compatibility module
+     * settings.  These match the keys the real SillyTavern extensions
+     * use under `extension_settings` so that data round-trips correctly
+     * through the virtual `/api/settings` endpoints.
+     */
+    private val ejsTemplateExtensionId = "EjsTemplate"
+    private val tavernHelperExtensionId = "tavern_helper"
+
+    suspend fun readEjsTemplateSettings(): EjsTemplateSettings = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val file = settingsFile(ejsTemplateExtensionId)
+            if (!Files.exists(file)) return@withLock EjsTemplateSettings.DEFAULT
+            runCatching {
+                val text = String(Files.readAllBytes(file), Charsets.UTF_8)
+                json.decodeFromString(EjsTemplateSettings.serializer(), text)
+            }.getOrElse { EjsTemplateSettings.DEFAULT }
+        }
+    }
+
+    suspend fun saveEjsTemplateSettings(settings: EjsTemplateSettings): Unit =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val file = settingsFile(ejsTemplateExtensionId)
+                Files.createDirectories(file.parent)
+                val text = json.encodeToString(EjsTemplateSettings.serializer(), settings)
+                Files.write(
+                    file,
+                    text.toByteArray(Charsets.UTF_8),
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING,
+                    StandardOpenOption.WRITE,
+                )
+            }
+        }
+
+    suspend fun readTavernHelperSettings(): TavernHelperSettings = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val file = settingsFile(tavernHelperExtensionId)
+            if (!Files.exists(file)) return@withLock TavernHelperSettings.DEFAULT
+            runCatching {
+                val text = String(Files.readAllBytes(file), Charsets.UTF_8)
+                json.decodeFromString(TavernHelperSettings.serializer(), text)
+            }.getOrElse { TavernHelperSettings.DEFAULT }
+        }
+    }
+
+    suspend fun saveTavernHelperSettings(settings: TavernHelperSettings): Unit =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val file = settingsFile(tavernHelperExtensionId)
+                Files.createDirectories(file.parent)
+                val text = json.encodeToString(TavernHelperSettings.serializer(), settings)
+                Files.write(
+                    file,
+                    text.toByteArray(Charsets.UTF_8),
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING,
+                    StandardOpenOption.WRITE,
+                )
+            }
+        }
+
+        // ── private helpers ────────────────────────────────────────────────
 
     private fun settingsFile(extensionId: String): Path =
         extensionsDir.resolve(sanitize(extensionId)).resolve("settings.json")
