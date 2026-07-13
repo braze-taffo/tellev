@@ -187,6 +187,33 @@ class FileStDataStoreTest {
         assertEquals("fixture", entry["extensions"]!!.jsonObject["source"]!!.jsonPrimitive.content)
     }
 
+    @Test
+    fun `importWorldBook preserves ST data and never overwrites an existing import`() = runBlocking {
+        val worldBookJson = this::class.java.classLoader
+            .getResourceAsStream("fixtures/world_book.json")
+            ?.readBytes()
+            ?: error("world_book.json fixture not found")
+
+        val first = store.importWorldBook(worldBookJson, "my_lore.json")
+        val second = store.importWorldBook(worldBookJson, "my_lore.json")
+
+        assertEquals("my_lore", first.name)
+        assertEquals(4, first.entries.size)
+        assertTrue(first.id != second.id)
+        assertTrue(layout.worlds.resolve("${first.id}.json").exists())
+        assertTrue(layout.worlds.resolve("${second.id}.json").exists())
+    }
+
+    @Test
+    fun `importWorldBook rejects JSON without an entries object`() = runBlocking {
+        val result = runCatching {
+            store.importWorldBook("""{"name":"Broken"}""".toByteArray(), "broken.json")
+        }
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("entries") == true)
+    }
+
     // ---- World Book Activation Tests ----
 
     @Test
@@ -625,6 +652,31 @@ class FileStDataStoreTest {
         assertEquals("chara_card_v2", saved["spec"]!!.jsonPrimitive.content)
         assertEquals("Saved Char", saved["data"]!!.jsonObject["name"]!!.jsonPrimitive.content)
     }
+
+    @Test
+    fun `deleteCharacter removes every card variant assets and embedded world book`() = runBlocking {
+        val id = "delete_me"
+        val embeddedBookId = StDataStore.embeddedCharacterBookId(id)
+        store.saveCharacter(CharacterCard(id = id, name = "Delete Me"))
+        layout.characters.resolve("$id.png").toFile().writeBytes(byteArrayOf(1, 2, 3))
+        layout.characters.resolve("$id.webp").toFile().writeBytes(byteArrayOf(4, 5, 6))
+        val assetDir = layout.extensions.resolve("character-assets").resolve(id)
+        assetDir.createDirectories()
+        assetDir.resolve("asset.json").writeText("{}")
+        store.saveWorldBook(WorldBook(id = embeddedBookId, name = "Embedded", entries = emptyList()))
+        store.saveDisabledWorldIds(setOf(embeddedBookId, "keep_me"))
+
+        store.deleteCharacter(id)
+
+        assertTrue(store.listCharacters().none { it.id == id })
+        assertTrue(!layout.characters.resolve("$id.json").exists())
+        assertTrue(!layout.characters.resolve("$id.png").exists())
+        assertTrue(!layout.characters.resolve("$id.webp").exists())
+        assertTrue(!assetDir.exists())
+        assertTrue(!layout.worlds.resolve("$embeddedBookId.json").exists())
+        assertEquals(setOf("keep_me"), store.readDisabledWorldIds())
+    }
+
 
     @Test
     fun `readCharacter parses V2 JSON character`() = runBlocking {

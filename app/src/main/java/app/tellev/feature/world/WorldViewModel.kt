@@ -165,6 +165,32 @@ class WorldViewModel(
         }
     }
 
+    fun importBook(jsonBytes: ByteArray, sourceFileName: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                val book = dataStore.importWorldBook(jsonBytes, sourceFileName)
+                val books = dataStore.listWorldBooks()
+                val disabledWorldIds = dataStore.readDisabledWorldIds()
+                _uiState.update {
+                    it.copy(
+                        worldBooks = books,
+                        disabledWorldIds = disabledWorldIds,
+                        isLoading = false,
+                        info = "世界书“${book.name}”已导入。",
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        error = "导入世界书失败：${e.message}",
+                    )
+                }
+            }
+        }
+    }
+
     fun deleteBook(id: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }

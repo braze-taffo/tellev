@@ -224,6 +224,14 @@ class ChatViewModel(
     }
 
     fun sendMessage(text: String, attachments: List<Attachment> = emptyList()): Boolean {
+        return sendMessageWithRole(text, attachments, MessageRole.User)
+    }
+
+    private fun sendMessageWithRole(
+        text: String,
+        attachments: List<Attachment>,
+        messageRole: MessageRole,
+    ): Boolean {
         val messageText = text.trim()
         if (messageText.isBlank() && attachments.isEmpty()) return false
 
@@ -256,16 +264,16 @@ class ChatViewModel(
                     )
                 }
 
-                val userMessage = ChatMessage(
+                val inputMessage = ChatMessage(
                     id = generateMessageId(),
-                    role = MessageRole.User,
-                    name = state.selectedPersona?.name ?: "你",
+                    role = messageRole,
+                    name = if (messageRole == MessageRole.System) "System" else state.selectedPersona?.name ?: "你",
                     content = messageText,
                     createdAtMillis = System.currentTimeMillis(),
                     attachments = attachments,
                 )
 
-                val updatedMessages = state.messages + userMessage
+                val updatedMessages = state.messages + inputMessage
                 val updatedSession = session.copy(messages = updatedMessages)
 
                 dataStore.saveChatSession(updatedSession)
@@ -279,9 +287,11 @@ class ChatViewModel(
                         error = null,
                     )
                 }
-                val userMessageIndex = updatedMessages.lastIndex
-                emitStEvent(StEventCatalog.MESSAGE_SENT, userMessageIndex)
-                emitStEvent(StEventCatalog.USER_MESSAGE_RENDERED, userMessageIndex)
+                val inputMessageIndex = updatedMessages.lastIndex
+                emitStEvent(StEventCatalog.MESSAGE_SENT, inputMessageIndex)
+                if (messageRole == MessageRole.User) {
+                    emitStEvent(StEventCatalog.USER_MESSAGE_RENDERED, inputMessageIndex)
+                }
                 emitStEvent(
                     StEventCatalog.GENERATION_STARTED,
                     "normal",
@@ -296,10 +306,14 @@ class ChatViewModel(
                 val promptRequest = PromptBuildRequest(
                     character = character,
                     persona = state.selectedPersona,
-                    messages = promptHistoryBeforeCurrentMessage(updatedMessages, userMessage.id),
+                    messages = if (messageRole == MessageRole.User) {
+                        promptHistoryBeforeCurrentMessage(updatedMessages, inputMessage.id)
+                    } else {
+                        updatedMessages
+                    },
                     worldBooks = worldBooksForCharacter(state, character, dataStore.readDisabledWorldIds()),
                     preset = preset,
-                    userInput = messageText,
+                    userInput = if (messageRole == MessageRole.User) messageText else "",
                     providerType = config.providerType,
                     metadata = buildPromptMetadata(state, config, preset, updatedSession),
                 )
@@ -710,6 +724,124 @@ class ChatViewModel(
 
     fun clearError() {
         _uiState.update { it.copy(error = null) }
+    }
+
+    fun tavernMessageVariablesJson(): String {
+        val snapshot = promptEngine.snapshotPromptTemplateVariables()
+        val local = (_uiState.value.currentSession?.metadata?.get("variables") as? JsonObject)
+            ?: snapshot.local
+        val merged = buildJsonObject {
+            snapshot.global.forEach { (key, value) -> put(key, value) }
+            local.forEach { (key, value) -> put(key, value) }
+        }
+        return decodeEmbeddedJsonValues(merged).toString()
+    }
+
+    fun handleTavernMessageRequest(
+        operation: String,
+        payloadJson: String,
+        onSetInput: (String) -> Unit,
+        callback: (Boolean, String) -> Unit,
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                val payload = (Json.parseToJsonElement(payloadJson) as? JsonObject) ?: buildJsonObject { }
+                when (operation) {
+                    "getLorebooks" -> kotlinx.serialization.json.buildJsonArray {
+                        dataStore.listWorldBooks().forEach { add(JsonPrimitive(it.name)) }
+                    }
+                    "createLorebook" -> {
+                        val name = payload["name"]?.jsonPrimitive?.content?.trim().orEmpty()
+                        require(name.isNotEmpty()) { "世界书名称不能为空" }
+                        val existing = dataStore.listWorldBooks().firstOrNull { it.name == name || it.id == name }
+                        val book = existing ?: WorldBook(
+                            id = "wb_${UUID.randomUUID()}",
+                            name = name,
+                            entries = emptyList(),
+                        ).also { dataStore.saveWorldBook(it) }
+                        buildJsonObject {
+                            put("id", book.id)
+                            put("name", book.name)
+                        }
+                    }
+                    "createLorebookEntry" -> {
+                        val name = payload["name"]?.jsonPrimitive?.content?.trim().orEmpty()
+                        val entryJson = payload["entry"] as? JsonObject
+                            ?: error("世界书条目格式无效")
+                        val book = dataStore.listWorldBooks().firstOrNull { it.name == name || it.id == name }
+                            ?: error("世界书不存在：$name")
+                        val entry = tavernWorldBookEntry(entryJson, book.entries.size.toString())
+                        val updated = book.copy(entries = book.entries + entry)
+                        dataStore.saveWorldBook(updated)
+                        buildJsonObject {
+                            put("id", entry.id)
+                            put("ok", true)
+                        }
+                    }
+                    "triggerSlash" -> {
+                        val script = payload["script"]?.jsonPrimitive?.content.orEmpty()
+                        val action = parseTavernMessageSlashCommand(script)
+                        action.setInputText?.let(onSetInput)
+                        if (action.systemText != null) {
+                            refreshTavernMessageWorldBooks()
+                            action.deleteMessageIndex?.let { index ->
+                                if (removeTavernMessageWithoutSaving(index)) {
+                                    emitStEvent(StEventCatalog.MESSAGE_DELETED, index)
+                                }
+                            }
+                        } else {
+                            action.deleteMessageIndex?.let(::deleteMessage)
+                        }
+                        val handled = when {
+                            action.systemText != null -> sendMessageWithRole(
+                                action.systemText,
+                                emptyList(),
+                                MessageRole.System,
+                            )
+                            action.sendText != null -> sendMessage(action.sendText)
+                            action.setInputText != null -> true
+                            action.deleteMessageIndex != null -> true
+                            else -> false
+                        }
+                        if (action.systemText != null && !handled) {
+                            _uiState.value.currentSession?.let { dataStore.saveChatSession(it) }
+                        }
+                        buildJsonObject {
+                            put("handled", handled)
+                            put("pipe", "")
+                        }
+                    }
+                    else -> error("不支持的消息渲染操作：$operation")
+                }
+            }.onSuccess { result ->
+                callback(true, result.toString())
+            }.onFailure { error ->
+                callback(
+                    false,
+                    buildJsonObject { put("error", error.message ?: "消息渲染操作失败") }.toString(),
+                )
+            }
+        }
+    }
+
+    private fun removeTavernMessageWithoutSaving(messageIndex: Int): Boolean {
+        val state = _uiState.value
+        val session = state.currentSession ?: return false
+        if (messageIndex !in state.messages.indices) return false
+        val messages = state.messages.toMutableList().also { it.removeAt(messageIndex) }
+        val updatedSession = session.copy(messages = messages)
+        _uiState.update {
+            it.copy(
+                messages = messages,
+                currentSession = updatedSession,
+            )
+        }
+        return true
+    }
+
+    private suspend fun refreshTavernMessageWorldBooks() {
+        val worlds = dataStore.listWorldBooks()
+        _uiState.update { it.copy(worldBooks = worlds) }
     }
 
     fun deselectCharacter() {

@@ -442,6 +442,18 @@ private fun ChatContentScreen(
                         character = state.selectedCharacter,
                         disabledRegexScriptIds = state.disabledRegexScriptIds,
                         htmlPanelMaxHeight = htmlPanelMaxHeight,
+                        tavernRuntime = TavernMessageRuntime(
+                            messageIndex = index,
+                            variablesJson = viewModel::tavernMessageVariablesJson,
+                            request = { operation, payload, callback ->
+                                viewModel.handleTavernMessageRequest(
+                                    operation = operation,
+                                    payloadJson = payload,
+                                    onSetInput = { inputText = it },
+                                    callback = callback,
+                                )
+                            },
+                        ),
                         onSwipeLeft = { viewModel.swipeMessage(index, 1) },
                         onSwipeRight = { viewModel.swipeMessage(index, -1) },
                         onEdit = {
@@ -512,6 +524,7 @@ private fun ChatBubble(
     character: CharacterCard?,
     disabledRegexScriptIds: Set<String>,
     htmlPanelMaxHeight: Dp,
+    tavernRuntime: TavernMessageRuntime,
     onSwipeLeft: () -> Unit,
     onSwipeRight: () -> Unit,
     onEdit: () -> Unit,
@@ -622,6 +635,7 @@ private fun ChatBubble(
                     segments = renderSegments,
                     availableMaxHeight = htmlPanelMaxHeight,
                     isUser = isUser,
+                    tavernRuntime = tavernRuntime,
                 )
             }
         } else {
@@ -647,6 +661,7 @@ private fun ChatBubble(
                     segments = renderSegments,
                     availableMaxHeight = htmlPanelMaxHeight,
                     isUser = isUser,
+                    tavernRuntime = tavernRuntime,
                 )
             }
         }
@@ -665,6 +680,7 @@ private fun TavernMessageContent(
     segments: List<TavernRenderSegment>,
     availableMaxHeight: Dp,
     isUser: Boolean,
+    tavernRuntime: TavernMessageRuntime,
 ) {
     Column {
         segments.forEachIndexed { index, segment ->
@@ -678,6 +694,7 @@ private fun TavernMessageContent(
                         TavernHtmlPanel(
                             html = MarkdownRenderer.render(text),
                             availableMaxHeight = availableMaxHeight,
+                            tavernRuntime = tavernRuntime,
                         )
                     } else {
                         SelectionContainer {
@@ -701,6 +718,7 @@ private fun TavernMessageContent(
                     TavernHtmlPanel(
                         html = segment.html,
                         availableMaxHeight = availableMaxHeight,
+                        tavernRuntime = tavernRuntime,
                     )
                 }
             }
@@ -756,23 +774,82 @@ private fun ReasoningBlock(content: String) {
     }
 }
 
-private class TavernHeightBridge(
+private data class TavernMessageRuntime(
+    val messageIndex: Int,
+    val variablesJson: () -> String,
+    val request: (String, String, (Boolean, String) -> Unit) -> Unit,
+)
+
+private class TavernMessageBridge(
     private val onHeightChanged: (Int) -> Unit,
+    runtime: TavernMessageRuntime,
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var webView = java.lang.ref.WeakReference<WebView>(null)
+
+    @Volatile
+    private var runtime: TavernMessageRuntime = runtime
+
+    private val loadTracker = TavernMessageLoadTracker()
+
+    @Volatile
+    private var preferInternalScrolling: Boolean = false
+
+    fun attach(view: WebView) {
+        webView = java.lang.ref.WeakReference(view)
+    }
+
+    fun updateRuntime(value: TavernMessageRuntime) {
+        runtime = value
+    }
+
+    fun shouldLoad(html: String): Boolean = loadTracker.shouldLoad(html)
+
+    fun updatePagePolicy(html: String) {
+        preferInternalScrolling = html.isLargeTavernFrontend()
+    }
+
+    fun prefersInternalScrolling(): Boolean = preferInternalScrolling
 
     @JavascriptInterface
     fun resize(height: Int) {
         if (height <= 0) return
         mainHandler.post { onHeightChanged(height) }
     }
+
+    @JavascriptInterface
+    fun getAllVariables(): String =
+        runCatching { runtime.variablesJson() }.getOrDefault("{}")
+
+    @JavascriptInterface
+    fun getCurrentMessageId(): Int = runtime.messageIndex
+
+    @JavascriptInterface
+    fun request(requestId: String, operation: String, payloadJson: String) {
+        mainHandler.post {
+            runtime.request(operation, payloadJson) { ok, responseJson ->
+                mainHandler.post {
+                    val view = webView.get() ?: return@post
+                    val idLiteral = org.json.JSONObject.quote(requestId)
+                    val payloadLiteral = org.json.JSONObject.quote(responseJson)
+                    view.evaluateJavascript(
+                        "if(window.__tellevMessageResolve){" +
+                            "window.__tellevMessageResolve($idLiteral,${if (ok) "true" else "false"},$payloadLiteral);}",
+                        null,
+                    )
+                }
+            }
+        }
+    }
 }
+
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun TavernHtmlPanel(
     html: String,
     availableMaxHeight: Dp,
+    tavernRuntime: TavernMessageRuntime,
 ) {
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
@@ -797,6 +874,10 @@ private fun TavernHtmlPanel(
             .fillMaxWidth()
             .height(panelHeight),
         factory = { context ->
+            val bridge = TavernMessageBridge(
+                onHeightChanged = { height -> contentHeightPx = height },
+                runtime = tavernRuntime,
+            )
             WebView(context).apply {
                 setBackgroundColor(Color.TRANSPARENT)
                 isVerticalScrollBarEnabled = true
@@ -819,7 +900,13 @@ private fun TavernHtmlPanel(
                                 dy < 0 -> view.canScrollVertically(1)
                                 else -> true
                             }
-                            if (!canScrollInDirection) {
+                            val keepInsideWebView = (view.tag as? TavernMessageBridge)
+                                ?.prefersInternalScrolling() == true
+                            if (shouldReleaseTavernTouchToParent(
+                                    preferInternalScrolling = keepInsideWebView,
+                                    canScrollInDirection = canScrollInDirection,
+                                )
+                            ) {
                                 view.parent?.requestDisallowInterceptTouchEvent(false)
                             }
                         }
@@ -838,22 +925,38 @@ private fun TavernHtmlPanel(
                 settings.loadWithOverviewMode = false
                 settings.useWideViewPort = false
                 settings.textZoom = 100
-                addJavascriptInterface(TavernHeightBridge { height -> contentHeightPx = height }, "TellevBridge")
+                tag = bridge
+                bridge.attach(this)
+                addJavascriptInterface(bridge, "TellevBridge")
+                addJavascriptInterface(bridge, "TellevMessage")
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView, url: String?) {
-                        view.evaluateJavascript(tavernResizeScript(), null)
+                        view.post {
+                            val density = view.resources.displayMetrics.density.coerceAtLeast(1f)
+                            val viewportHeight = (view.height / density).toInt()
+                            view.scrollTo(0, 0)
+                            view.evaluateJavascript(tavernMessageLayoutScript(viewportHeight), null)
+                            view.evaluateJavascript(tavernResizeScript(), null)
+                        }
                     }
                 }
             }
         },
         update = { webView ->
-            webView.loadDataWithBaseURL(
-                "https://message.tellev.local/",
-                wrapTavernHtml(html),
-                "text/html",
-                "UTF-8",
-                null,
-            )
+            val bridge = webView.tag as? TavernMessageBridge
+            bridge?.updateRuntime(tavernRuntime)
+            bridge?.updatePagePolicy(html)
+            if (bridge?.shouldLoad(html) != false) {
+                webView.stopLoading()
+                webView.scrollTo(0, 0)
+                webView.loadDataWithBaseURL(
+                    "https://message.tellev.local/",
+                    wrapTavernHtml(html),
+                    "text/html",
+                    "UTF-8",
+                    null,
+                )
+            }
         },
     )
 }
@@ -875,6 +978,7 @@ private fun String.isLargeTavernFrontend(): Boolean =
 private fun wrapTavernHtml(html: String): String {
     val hostHead = """
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+        ${tavernMessageCompatScript()}
         <style id="tellev-host-style">
             html, body {
                 width: 100%;
@@ -897,16 +1001,16 @@ private fun wrapTavernHtml(html: String): String {
     """.trimIndent()
 
     if (html.contains("<html", ignoreCase = true)) {
-        return if (html.contains("</head>", ignoreCase = true)) {
-            html.replace(Regex("""</head>""", RegexOption.IGNORE_CASE), "$hostHead\n</head>")
+        val head = Regex("""<head(?:\s[^>]*)?>""", RegexOption.IGNORE_CASE).find(html)
+        if (head != null) {
+            return html.replaceRange(head.range, "${head.value}\n$hostHead")
+        }
+        val match = Regex("""<html([^>]*)>""", RegexOption.IGNORE_CASE).find(html)
+        return if (match == null) {
+            "<html><head>$hostHead</head>$html</html>"
         } else {
-            val match = Regex("""<html([^>]*)>""", RegexOption.IGNORE_CASE).find(html)
-            if (match == null) {
-                "<html><head>$hostHead</head>$html</html>"
-            } else {
-                val replacement = "<html${match.groupValues[1]}>\n<head>\n$hostHead\n</head>"
-                html.replaceRange(match.range, replacement)
-            }
+            val replacement = "<html${match.groupValues[1]}>\n<head>\n$hostHead\n</head>"
+            html.replaceRange(match.range, replacement)
         }
     }
 

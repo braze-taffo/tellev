@@ -34,6 +34,9 @@ interface StDataStore {
     suspend fun listWorldBooks(): List<WorldBook>
     suspend fun readWorldBook(id: String): WorldBook
     suspend fun saveWorldBook(book: WorldBook)
+    suspend fun importWorldBook(jsonBytes: ByteArray, sourceFileName: String): WorldBook {
+        error("当前存储实现不支持导入世界书：$sourceFileName")
+    }
 
     // Permanently remove a world book: deletes worlds/<id>.json and drops the id
     // from the disabled-activation set. Replaces the old "write an empty book"

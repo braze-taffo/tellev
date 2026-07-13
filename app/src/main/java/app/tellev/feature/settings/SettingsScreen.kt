@@ -100,6 +100,9 @@ fun SettingsScreen(
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val versionName = remember(context) {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "未知"
+    }
     val uriHandler = LocalUriHandler.current
     val bilibiliProfileUrl = "https://space.bilibili.com/499259948"
 
@@ -256,45 +259,66 @@ fun SettingsScreen(
                 }
 
                 item(key = "provider_model") {
-                    OutlinedTextField(
-                        value = state.model,
-                        onValueChange = { viewModel.updateModel(it) },
-                        label = { Text("模型") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        placeholder = { Text("例如 gpt-4、claude-3-opus") },
-                    )
-                }
+                    var modelMenuExpanded by remember { mutableStateOf(false) }
+                    val availableModels = remember(state.availableModels) {
+                        state.availableModels.distinct()
+                    }
+                    val modelFilter = state.model.takeUnless { current ->
+                        availableModels.any { it == current }
+                    }.orEmpty()
+                    val matchingModels = remember(availableModels, modelFilter) {
+                        if (modelFilter.isBlank()) {
+                            availableModels
+                        } else {
+                            availableModels.filter { it.contains(modelFilter, ignoreCase = true) }
+                        }
+                    }
 
-                if (state.availableModels.isNotEmpty()) {
-                    item(key = "available_models") {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f),
-                            ),
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
+                    ExposedDropdownMenuBox(
+                        expanded = modelMenuExpanded && matchingModels.isNotEmpty(),
+                        onExpandedChange = {
+                            modelMenuExpanded = it && availableModels.isNotEmpty()
+                        },
+                    ) {
+                        OutlinedTextField(
+                            value = state.model,
+                            onValueChange = {
+                                viewModel.updateModel(it)
+                                modelMenuExpanded = availableModels.isNotEmpty()
+                            },
+                            label = { Text("模型") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(MenuAnchorType.PrimaryEditable),
+                            singleLine = true,
+                            placeholder = { Text("可选择或手动填写模型 ID") },
+                            trailingIcon = {
+                                if (availableModels.isNotEmpty()) {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelMenuExpanded)
+                                }
+                            },
+                            supportingText = {
                                 Text(
-                                    text = "可用模型（${state.availableModels.size}）",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    if (availableModels.isEmpty()) {
+                                        "当前服务未返回模型列表，可手动填写"
+                                    } else {
+                                        "可输入筛选，已获取 ${availableModels.size} 个模型"
+                                    },
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                state.availableModels.take(10).forEach { model ->
-                                    Text(
-                                        text = model,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                if (state.availableModels.size > 10) {
-                                    Text(
-                                        text = "... 另有 ${state.availableModels.size - 10} 个",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                    )
-                                }
+                            },
+                        )
+                        ExposedDropdownMenu(
+                            expanded = modelMenuExpanded && matchingModels.isNotEmpty(),
+                            onDismissRequest = { modelMenuExpanded = false },
+                        ) {
+                            matchingModels.take(100).forEach { model ->
+                                DropdownMenuItem(
+                                    text = { Text(model) },
+                                    onClick = {
+                                        viewModel.updateModel(model)
+                                        modelMenuExpanded = false
+                                    },
+                                )
                             }
                         }
                     }
@@ -584,7 +608,7 @@ fun SettingsScreen(
                                 )
                             }
                             Text(
-                                text = "tellev v0.1.0",
+                                text = "tellev v$versionName",
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                             Text(

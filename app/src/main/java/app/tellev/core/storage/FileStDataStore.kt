@@ -353,6 +353,33 @@ class FileStDataStore(
         layout.worlds.resolve("${book.id}.json").writeText(json.encodeToString(JsonObject.serializer(), output))
     }
 
+    override suspend fun importWorldBook(
+        jsonBytes: ByteArray,
+        sourceFileName: String,
+    ): WorldBook = withContext(Dispatchers.IO) {
+        val raw = runCatching {
+            json.parseToJsonElement(jsonBytes.decodeToString()) as? JsonObject
+        }.getOrNull() ?: error("世界书 JSON 格式无效：$sourceFileName 不是有效的 JSON 对象")
+
+        if (raw["entries"] !is JsonObject) {
+            error("世界书 JSON 格式无效：$sourceFileName 缺少 entries 对象")
+        }
+
+        val fallbackName = sourceFileName.substringBeforeLast('.').ifBlank { "导入的世界书" }
+        val name = (raw["name"] as? JsonPrimitive)
+            ?.content
+            ?.takeIf { it.isNotBlank() }
+            ?: fallbackName
+        val book = WorldBook(
+            id = "wb_${UUID.randomUUID()}",
+            name = name,
+            entries = parseWorldBookEntries(raw),
+            raw = raw,
+        )
+        saveWorldBook(book)
+        book
+    }
+
     override suspend fun deleteWorldBook(id: String): Unit = withContext(Dispatchers.IO) {
         layout.worlds.resolve("$id.json").deleteIfExists()
         // Drop the id from the disabled-activation set so it doesn't linger as a

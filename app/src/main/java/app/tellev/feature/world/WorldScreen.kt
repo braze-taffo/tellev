@@ -1,7 +1,17 @@
 package app.tellev.feature.world
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
+import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import app.tellev.util.UriUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -77,6 +87,28 @@ fun WorldBooksListScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var showCreateDialog by remember { mutableStateOf(false) }
     var newBookName by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri: Uri? ->
+        uri?.let { selectedUri ->
+            scope.launch {
+                try {
+                    val bytes = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(selectedUri)?.use { it.readBytes() }
+                    } ?: error("无法读取所选文件")
+                    val fileName = UriUtils.resolveDisplayName(context, selectedUri)
+                        ?: selectedUri.lastPathSegment
+                        ?: "imported_world_book.json"
+                    viewModel.importBook(bytes, fileName)
+                } catch (e: Exception) {
+                    snackbarHostState.showSnackbar("导入世界书失败：${e.message}")
+                }
+            }
+        }
+    }
+
 
     // Re-read the activation file every time this screen enters composition.
     // ChatViewModel.selectCharacter can write a new exclusive world-book
@@ -106,6 +138,11 @@ fun WorldBooksListScreen(
         topBar = {
             TopAppBar(
                 title = { Text("世界书") },
+                actions = {
+                    IconButton(onClick = { importLauncher.launch("application/json") }) {
+                        Icon(Icons.Default.FileUpload, contentDescription = "导入世界书")
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                 ),
