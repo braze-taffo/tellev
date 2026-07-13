@@ -1,5 +1,7 @@
 package app.tellev.core.prompt
 
+import app.tellev.core.extension.LocalVariableBackend
+import app.tellev.core.extension.VariableStoreTest
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.GenerationPreset
@@ -7,6 +9,8 @@ import app.tellev.core.model.MessageRole
 import app.tellev.core.model.Persona
 import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
@@ -140,6 +144,46 @@ class DefaultPromptEngineTest {
         val systemPrompt = result.messages.first().content
         assertTrue(systemPrompt.contains("Mood is calm."))
         assertFalse(systemPrompt.contains("setvar"))
+    }
+
+    @Test
+    fun buildReturnsScopedPromptTemplateVariableUpdates() {
+        val result = DefaultPromptEngine().build(
+            PromptBuildRequest(
+                character = CharacterCard(
+                    id = "alice",
+                    name = "Alice",
+                    description = "<% setvar('mood', 'calm') %><% setglobalvar('chapter', 'two') %>",
+                ),
+                persona = null,
+                messages = emptyList(),
+                worldBooks = emptyList(),
+                preset = GenerationPreset(
+                    id = "default",
+                    name = "Default",
+                    providerType = "openai-compatible",
+                ),
+                userInput = "Hello",
+                providerType = "openai-compatible",
+                metadata = buildJsonObject {
+                    putJsonObject("promptTemplateLocalVariables") {
+                        put("mood", "tense")
+                    }
+                    putJsonObject("promptTemplateGlobalVariables") {
+                        put("chapter", "one")
+                    }
+                },
+            ),
+        )
+
+        assertEquals(
+            "calm",
+            result.promptTemplateVariableUpdates.local?.get("mood")?.jsonPrimitive?.content,
+        )
+        assertEquals(
+            "two",
+            result.promptTemplateVariableUpdates.global?.get("chapter")?.jsonPrimitive?.content,
+        )
     }
 
     @Test
@@ -332,6 +376,15 @@ class DefaultPromptEngineTest {
                             put("depth", 0)
                             put("role", "system")
                         }
+                        putJsonObject("ext-e/filtered") {
+                            put("extensionId", "ext-e")
+                            put("promptId", "filtered")
+                            put("value", "Filtered content must not be sent.")
+                            put("position", 0)
+                            put("depth", 0)
+                            put("role", "system")
+                            put("filter", false)
+                        }
                     })
                 },
             ),
@@ -351,5 +404,94 @@ class DefaultPromptEngineTest {
         assertEquals("Tell me a story.", contents.last())
         // NONE entry must never appear.
         assertFalse(contents.contains("Should be skipped."))
+        assertFalse(contents.contains("Filtered content must not be sent."))
+    }
+
+    @Test
+    fun `should scan injections activate world info even at none position`() {
+        val result = DefaultPromptEngine().build(
+            PromptBuildRequest(
+                character = CharacterCard(id = "alice", name = "Alice"),
+                persona = null,
+                messages = emptyList(),
+                worldBooks = listOf(
+                    WorldBook(
+                        id = "world",
+                        name = "World",
+                        entries = listOf(
+                            WorldBookEntry(
+                                id = "hidden-key",
+                                keys = listOf("moon-key"),
+                                content = "The moon archive is active.",
+                            ),
+                        ),
+                    ),
+                ),
+                preset = GenerationPreset(
+                    id = "default",
+                    name = "Default",
+                    providerType = "openai-compatible",
+                ),
+                userInput = "Hello",
+                providerType = "openai-compatible",
+                metadata = buildJsonObject {
+                    putJsonObject("injectedPrompts") {
+                        putJsonObject("ext/scan-only") {
+                            put("value", "moon-key")
+                            put("position", -1)
+                            put("shouldScan", true)
+                        }
+                    }
+                },
+            ),
+        )
+
+        assertEquals(listOf("hidden-key"), result.diagnostics.activatedWorldEntryIds)
+        assertTrue(result.messages.first().content.contains("moon archive"))
+    }
+
+    @Test
+    fun `EJS sees local variable mutations performed by earlier macros`() {
+        val activeChat = mutableMapOf("x" to "active")
+        val scoped = mutableMapOf("x" to "0")
+        val variableStore = VariableStoreTest.storeWith(activeChat)
+        val macroEngine = DefaultMacroEngine().apply { this.variableStore = variableStore }
+        val engine = DefaultPromptEngine(macroEngine = macroEngine)
+        val backend = object : LocalVariableBackend {
+            override fun snapshot(): Map<String, String> = scoped.toMap()
+            override fun update(transform: (MutableMap<String, String>) -> Unit): Map<String, String> {
+                transform(scoped)
+                return scoped.toMap()
+            }
+        }
+
+        val result = engine.buildWithLocalVariableBackend(
+            PromptBuildRequest(
+                character = CharacterCard(
+                    id = "alice",
+                    name = "Alice",
+                    description = "{{setvar::x::1}}<%= incvar('x') %>",
+                ),
+                persona = null,
+                messages = emptyList(),
+                worldBooks = emptyList(),
+                preset = GenerationPreset(
+                    id = "default",
+                    name = "Default",
+                    providerType = "openai-compatible",
+                ),
+                userInput = "Hello",
+                providerType = "openai-compatible",
+                metadata = buildJsonObject {
+                    put("promptTemplateLocalVariables", buildJsonObject { put("x", "0") })
+                },
+            ),
+            backend,
+        )
+
+        assertTrue(result.messages.first().content.contains("2"))
+        assertEquals("1", scoped["x"])
+        assertEquals(JsonPrimitive(2.0), result.promptTemplateVariableUpdates.local?.get("x"))
+        assertEquals("active", activeChat["x"])
     }
 }

@@ -1,6 +1,7 @@
 package app.tellev.core.prompt
 
 import app.tellev.core.extension.EjsTemplateSettings
+import app.tellev.core.extension.LocalVariableBackend
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.GenerationPreset
@@ -10,12 +11,22 @@ import app.tellev.core.model.WorldBook
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 interface PromptEngine {
     fun build(request: PromptBuildRequest): PromptBuildResult
+
+    fun buildWithLocalVariableBackend(
+        request: PromptBuildRequest,
+        backend: LocalVariableBackend,
+    ): PromptBuildResult = build(request)
+
+    fun snapshotPromptTemplateVariables(): PromptTemplateVariableSnapshot = PromptTemplateVariableSnapshot()
+
+    fun persistGlobalPromptTemplateVariables(variables: JsonObject) {}
 }
 
 @Serializable
@@ -37,6 +48,13 @@ data class PromptBuildResult(
     val maxTokens: Int?,
     val providerType: String,
     val diagnostics: PromptDiagnostics,
+    val promptTemplateVariableUpdates: PromptTemplateVariableUpdates = PromptTemplateVariableUpdates(),
+)
+
+@Serializable
+data class PromptTemplateVariableSnapshot(
+    val local: JsonObject = JsonObject(emptyMap()),
+    val global: JsonObject = JsonObject(emptyMap()),
 )
 
 @Serializable
@@ -69,6 +87,30 @@ class DefaultPromptEngine(
         (promptTemplateProcessor as? DefaultPromptTemplateProcessor)?.ejsSettings = settings
     }
 
+    override fun snapshotPromptTemplateVariables(): PromptTemplateVariableSnapshot {
+        val variableStore = (macroEngine as? DefaultMacroEngine)?.variableStore
+            ?: return PromptTemplateVariableSnapshot()
+        return PromptTemplateVariableSnapshot(
+            local = variableStore.localObject(),
+            global = variableStore.globalObject(),
+        )
+    }
+
+    override fun persistGlobalPromptTemplateVariables(variables: JsonObject) {
+        (macroEngine as? DefaultMacroEngine)?.variableStore?.replaceGlobal(variables)
+    }
+
+    override fun buildWithLocalVariableBackend(
+        request: PromptBuildRequest,
+        backend: LocalVariableBackend,
+    ): PromptBuildResult {
+        val variableStore = (macroEngine as? DefaultMacroEngine)?.variableStore
+            ?: return build(request)
+        return variableStore.withLocalBackend(backend) {
+            build(request)
+        }
+    }
+
     override fun build(request: PromptBuildRequest): PromptBuildResult {
         // 1. Build MacroContext from request data
         val macroContext = buildMacroContext(request)
@@ -82,6 +124,7 @@ class DefaultPromptEngine(
             append(expandedUserInput)
             append('\n')
             request.messages.takeLast(12).forEach { appendLine(it.content) }
+            extensionInjectionScanText(request.metadata).forEach(::appendLine)
         }
 
         // 4. Activate world book entries with depth/position support.
@@ -162,11 +205,27 @@ class DefaultPromptEngine(
         val orderedMessages = applyGroupChatOrdering(rawMessages, request.metadata)
 
         // 8. Apply ST-Prompt-Template compatible EJS processing before token trimming/provider formatting.
+        // Macro expansion above can mutate LOCAL/GLOBAL variables. Feed the
+        // live scoped snapshots into EJS so execution order is preserved:
+        // {{setvar::x::1}} followed by incvar('x') must produce 2, not 1.
+        val variableStore = (macroEngine as? DefaultMacroEngine)?.variableStore
+        val templateMetadata = if (variableStore == null) request.metadata else {
+            val liveLocal = variableStore.localObject()
+            val liveGlobal = variableStore.globalObject()
+            JsonObject(request.metadata.toMutableMap().apply {
+                put("promptTemplateLocalVariables", liveLocal)
+                put("promptTemplateGlobalVariables", liveGlobal)
+                put("promptTemplateVariables", buildJsonObject {
+                    liveGlobal.forEach { (key, value) -> put(key, value) }
+                    liveLocal.forEach { (key, value) -> put(key, value) }
+                })
+            })
+        }
         val promptTemplateResult = promptTemplateProcessor.process(
             PromptTemplateRequest(
                 messages = orderedMessages,
                 context = macroContext,
-                metadata = request.metadata,
+                metadata = templateMetadata,
                 worldEntries = promptTemplateWorldEntries,
             ),
         )
@@ -234,6 +293,7 @@ class DefaultPromptEngine(
                 estimatedTokenCount = estimatedTokens,
                 warnings = compatibilityWarnings(request) + promptTemplateResult.warnings,
             ),
+            promptTemplateVariableUpdates = promptTemplateResult.variableUpdates,
         )
     }
 
@@ -487,6 +547,9 @@ class DefaultPromptEngine(
             val entry = entryElement as? JsonObject ?: continue
             val value = runCatching { entry["value"]?.jsonPrimitive?.content }.getOrNull() ?: continue
             if (value.isBlank()) continue
+            val included = runCatching { entry["filter"]?.jsonPrimitive?.booleanOrNull }
+                .getOrNull() ?: true
+            if (!included) continue
             val position = runCatching { entry["position"]?.jsonPrimitive?.intOrNull }.getOrNull() ?: 0
             val depth = runCatching { entry["depth"]?.jsonPrimitive?.intOrNull }.getOrNull() ?: 4
             val role = resolveExtensionInjectionRole(
@@ -571,5 +634,23 @@ class DefaultPromptEngine(
         if (request.preset.raw.isNotEmpty()) {
             add("Provider-specific preset fields are preserved but adapter-specific mapping is incomplete.")
         }
+    }
+}
+
+/** Prompt injections marked for scanning contribute keys but are not necessarily sent (position NONE). */
+internal fun extensionInjectionScanText(metadata: JsonObject): List<String> {
+    val injected = metadata["injectedPrompts"] as? JsonObject ?: return emptyList()
+    return injected.values.mapNotNull { element ->
+        val entry = element as? JsonObject ?: return@mapNotNull null
+        val included = runCatching { entry["filter"]?.jsonPrimitive?.booleanOrNull }
+            .getOrNull() ?: true
+        if (!included) return@mapNotNull null
+        val shouldScan = runCatching {
+            (entry["shouldScan"] ?: entry["should_scan"])?.jsonPrimitive?.booleanOrNull
+        }.getOrNull() == true
+        if (!shouldScan) return@mapNotNull null
+        runCatching { entry["value"]?.jsonPrimitive?.content }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
     }
 }

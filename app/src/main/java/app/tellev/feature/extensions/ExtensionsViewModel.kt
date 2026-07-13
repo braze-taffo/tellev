@@ -14,6 +14,7 @@ import app.tellev.core.prompt.DefaultPromptEngine
 import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.storage.StDataStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,8 +60,11 @@ data class ExtensionsUiState(
     // Built-in compat-module settings
     val ejsTemplateSettings: EjsTemplateSettings = EjsTemplateSettings.DEFAULT,
     val tavernHelperSettings: TavernHelperSettings = TavernHelperSettings.DEFAULT,
+    val runtime: ExtensionRuntimeOverview = ExtensionRuntimeOverview(),
+    val pendingPermissionRequests: List<PendingExtensionPermission> = emptyList(),
     // Which settings sheet is currently open (null = none)
     val settingsSheetTarget: String? = null,
+    val debugSheetTarget: String? = null,
 )
 
 class ExtensionsViewModel(
@@ -95,8 +99,9 @@ class ExtensionsViewModel(
     private val installedScripts = mutableMapOf<String, String>()
 
     init {
+        observeExtensionEvents()
+        extensionHost.snapshotHostEvents().forEach(::handleExtensionEvent)
         loadExtensions()
-        observePermissionRequests()
         loadCompatModuleSettings()
     }
 
@@ -119,10 +124,20 @@ class ExtensionsViewModel(
                 val disabledRegex = withContext(Dispatchers.IO) {
                     dataStore.readDisabledRegexScriptIds()
                 }
-                val installed = withContext(Dispatchers.IO) { scanInstalledExtensions() }
-                _uiState.update {
-                    it.copy(
-                        extensions = builtInExtensions() + installed,
+                val runtimeSnapshot = _uiState.value.runtime
+                val installed = withContext(Dispatchers.IO) { scanInstalledExtensions(runtimeSnapshot) }
+                _uiState.update { state ->
+                    val currentInstalled = installed.map { extension ->
+                        extension.copy(
+                            loaded = resolveExtensionLoaded(
+                                extensionId = extension.id,
+                                runtime = state.runtime,
+                                hostHasCapability = extensionHost.capabilityToken(extension.id) != null,
+                            ),
+                        )
+                    }
+                    state.copy(
+                        extensions = builtInExtensions() + currentInstalled,
                         characterAssets = assets,
                         disabledRegexScripts = disabledRegex,
                         isLoading = false,
@@ -153,6 +168,7 @@ class ExtensionsViewModel(
             runCatching {
                 if (ext.loaded) {
                     extensionHost.unload(id)
+                    updateRuntimeLoadedState(id, loaded = false)
                     updateExtension(id) { it.copy(loaded = false) }
                 } else {
                     val manifest = installedManifests[id]
@@ -178,9 +194,11 @@ class ExtensionsViewModel(
                     }
                     permissionManager.grantAll(id, safePermissions)
                     extensionHost.load(manifest, script)
+                    updateRuntimeLoadedState(id, loaded = true)
                     updateExtension(id) { it.copy(loaded = true) }
                 }
             }.onFailure { e ->
+                recordLocalFailure(id, "扩展切换失败：${e.message ?: e::class.simpleName}")
                 _uiState.update { it.copy(error = "扩展切换失败：${e.message}") }
             }
         }
@@ -219,43 +237,125 @@ class ExtensionsViewModel(
         _uiState.update { it.copy(error = null) }
     }
 
-    // ── permission request handling ────────────────────────────────────
+    // ── runtime events and permission requests ─────────────────────────
 
     /**
-     * Listen for `permission_requested` events fired by extensions via
-     * `Tellev.requestPermissionAsync`.  If the extension's manifest
-     * declares the requested permission, grant it and resolve the pending
-     * JS Promise with `true`; otherwise resolve with `false`.  This keeps
-     * the async permission flow closed-loop instead of hanging forever.
+     * Consume the host event stream once so load state, logs, prompt
+     * diagnostics and permission requests cannot drift apart. Refresh uses
+     * the runtime loaded-id table instead of recreating every discovered
+     * extension as unloaded.
      */
-    private fun observePermissionRequests() {
-        viewModelScope.launch {
-            extensionHost.events.collect { event ->
-                if (event.name != "permission_requested") return@collect
-                val extensionId = event.extensionId ?: return@collect
-                val requestId = event.payload["requestId"]?.jsonPrimitive?.contentOrNull ?: return@collect
-                val permName = event.payload["permission"]?.jsonPrimitive?.contentOrNull ?: return@collect
-                val perm = runCatching { ExtensionPermission.valueOf(permName) }.getOrNull()
-                val declared = installedManifests[extensionId]
-                    ?.permissions
-                    ?.contains(perm) == true
+    private fun observeExtensionEvents() {
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            extensionHost.events.collect(::handleExtensionEvent)
+        }
+    }
 
-                runCatching {
-                    if (declared && perm != null) {
-                        permissionManager.grantPermission(extensionId, perm)
-                        extensionHost.deliverPermissionResult(requestId, true)
-                    } else {
-                        extensionHost.deliverPermissionResult(requestId, false)
-                    }
-                }
+    private fun handleExtensionEvent(event: app.tellev.core.extension.ExtensionEvent) {
+        val nowMillis = System.currentTimeMillis()
+        _uiState.update { state ->
+            val runtime = reduceExtensionRuntimeEvent(state.runtime, event, nowMillis)
+            val loaded = when (event.name) {
+                "extension_loaded" -> true
+                "extension_unloaded", "extension_load_failed" -> false
+                else -> null
             }
+            state.copy(
+                runtime = runtime,
+                extensions = if (loaded == null || event.extensionId == null) {
+                    state.extensions
+                } else {
+                    state.extensions.map { extension ->
+                        if (extension.id == event.extensionId) extension.copy(loaded = loaded)
+                        else extension
+                    }
+                },
+            )
+        }
+
+        if (event.name == "permission_resolved") {
+            val requestId = event.payload["requestId"]?.jsonPrimitive?.contentOrNull ?: return
+            _uiState.update { state ->
+                state.copy(
+                    pendingPermissionRequests = state.pendingPermissionRequests.filterNot {
+                        it.requestId == requestId
+                    },
+                )
+            }
+            return
+        }
+
+        if (event.name != "permission_requested") return
+        val extensionId = event.extensionId ?: return
+        val requestId = event.payload["requestId"]?.jsonPrimitive?.contentOrNull ?: return
+        val permName = event.payload["permission"]?.jsonPrimitive?.contentOrNull ?: return
+        val permission = runCatching { ExtensionPermission.valueOf(permName) }.getOrNull()
+        if (permission == null) {
+            extensionHost.deliverPermissionResult(requestId, false)
+            return
+        }
+        val request = PendingExtensionPermission(requestId, extensionId, permission)
+        _uiState.update { state ->
+            if (state.pendingPermissionRequests.any { it.requestId == requestId }) state
+            else state.copy(pendingPermissionRequests = state.pendingPermissionRequests + request)
+        }
+    }
+
+    /** Resolve a host-validated request only after an explicit user choice. */
+    fun respondToPermissionRequest(requestId: String, granted: Boolean) {
+        val request = _uiState.value.pendingPermissionRequests
+            .firstOrNull { it.requestId == requestId } ?: return
+        _uiState.update { state ->
+            state.copy(
+                pendingPermissionRequests = state.pendingPermissionRequests.filterNot {
+                    it.requestId == requestId
+                },
+            )
+        }
+        viewModelScope.launch {
+            runCatching {
+                if (granted) {
+                    permissionManager.grantPermission(request.extensionId, request.permission)
+                }
+                extensionHost.deliverPermissionResult(request.requestId, granted)
+            }.onFailure { error ->
+                extensionHost.deliverPermissionResult(request.requestId, false)
+                recordLocalFailure(
+                    request.extensionId,
+                    "权限请求处理失败：${error.message ?: error::class.simpleName}",
+                )
+            }
+        }
+    }
+
+    fun openDebug(extensionId: String) {
+        _uiState.update { it.copy(debugSheetTarget = extensionId, settingsSheetTarget = null) }
+    }
+
+    fun closeDebug() {
+        _uiState.update { it.copy(debugSheetTarget = null) }
+    }
+
+    fun clearRuntimeLogs(extensionId: String?) {
+        extensionHost.clearHostRuntimeLogs(extensionId)
+        _uiState.update { state ->
+            val logs = if (extensionId == null) emptyList()
+            else state.runtime.logs.filterNot { it.extensionId == extensionId }
+            state.copy(runtime = state.runtime.copy(logs = logs))
+        }
+    }
+
+    fun clearPromptDebugSnapshot() {
+        extensionHost.clearHostPromptDiagnostics()
+        _uiState.update { state ->
+            state.copy(runtime = state.runtime.copy(promptDebugSnapshot = null))
         }
     }
 
     // ── compat-module settings ────────────────────────────────────────
 
     fun openSettings(extensionId: String) {
-        _uiState.update { it.copy(settingsSheetTarget = extensionId) }
+        _uiState.update { it.copy(settingsSheetTarget = extensionId, debugSheetTarget = null) }
     }
 
     fun closeSettings() {
@@ -340,7 +440,7 @@ class ExtensionsViewModel(
      * can load it on demand.  Directories starting with `_` are reserved
      * (e.g. `_permissions`) and skipped.
      */
-    private fun scanInstalledExtensions(): List<ExtensionInfo> {
+    private fun scanInstalledExtensions(runtime: ExtensionRuntimeOverview): List<ExtensionInfo> {
         val root = dataStore.layout.extensions
         if (!Files.isDirectory(root)) return emptyList()
         val results = mutableListOf<ExtensionInfo>()
@@ -389,7 +489,11 @@ class ExtensionsViewModel(
                             id = manifest.id,
                             name = manifest.effectiveName,
                             description = manifest.description,
-                            loaded = false,
+                            loaded = resolveExtensionLoaded(
+                                extensionId = manifest.id,
+                                runtime = runtime,
+                                hostHasCapability = extensionHost.capabilityToken(manifest.id) != null,
+                            ),
                             permissions = manifest.permissions.map { it.name },
                             locked = false,
                             installed = true,
@@ -438,6 +542,22 @@ class ExtensionsViewModel(
     private fun updateExtension(id: String, transform: (ExtensionInfo) -> ExtensionInfo) {
         _uiState.update { state ->
             state.copy(extensions = state.extensions.map { if (it.id == id) transform(it) else it })
+        }
+    }
+
+    private fun updateRuntimeLoadedState(id: String, loaded: Boolean) {
+        _uiState.update { state ->
+            state.copy(
+                runtime = state.runtime.withLoadedState(id, loaded, System.currentTimeMillis()),
+            )
+        }
+    }
+
+    private fun recordLocalFailure(id: String, message: String) {
+        _uiState.update { state ->
+            state.copy(
+                runtime = state.runtime.withLocalFailure(id, message, System.currentTimeMillis()),
+            )
         }
     }
 

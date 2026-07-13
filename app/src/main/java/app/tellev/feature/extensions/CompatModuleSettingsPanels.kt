@@ -1,5 +1,6 @@
 package app.tellev.feature.extensions
 
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -22,6 +25,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.tellev.core.extension.EjsTemplateSettings
 import app.tellev.core.extension.TavernHelperSettings
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 // ── EJS Template Settings Panel ───────────────────────────────────────
 
@@ -231,6 +237,142 @@ fun TavernHelperSettingsPanel(
                 Text("完成")
             }
         }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+// ── Runtime and final-prompt diagnostics ─────────────────────────────
+
+@Composable
+fun ExtensionDebugPanel(
+    title: String,
+    loaded: Boolean,
+    status: ExtensionRuntimeStatus?,
+    logs: List<ExtensionRuntimeLog>,
+    promptSnapshot: PromptDebugSnapshot?,
+    showPromptDiagnostics: Boolean,
+    onClearLogs: () -> Unit,
+    onClearPromptSnapshot: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val timeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("$title · 调试", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(
+            if (loaded) "运行状态：已加载" else "运行状态：未加载",
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (loaded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        status?.lastEvent?.let {
+            Text(
+                "最近事件：$it",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        status?.lastError?.let {
+            Text("最近错误：$it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+
+        if (showPromptDiagnostics) {
+            HorizontalDivider()
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("最终提示词", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                if (promptSnapshot != null) {
+                    OutlinedButton(onClick = onClearPromptSnapshot) { Text("清除") }
+                }
+            }
+            if (promptSnapshot == null) {
+                Text(
+                    "尚未收到生成链路上报。完成一次实际生成后，这里才会显示发送给模型的消息与诊断；当前界面不会自行重建或猜测提示词。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(
+                    "消息 ${promptSnapshot.messages.size} · 估算 Token ${promptSnapshot.estimatedTokenCount ?: "未知"} · 激活世界书 ${promptSnapshot.activatedWorldEntryIds.size}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (promptSnapshot.warnings.isNotEmpty()) {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                        ),
+                    ) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("诊断警告", style = MaterialTheme.typography.labelLarge)
+                            promptSnapshot.warnings.forEach { warning ->
+                                Text("• $warning", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+                if (promptSnapshot.activatedWorldEntryIds.isNotEmpty()) {
+                    Text(
+                        "激活条目：${promptSnapshot.activatedWorldEntryIds.joinToString()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                promptSnapshot.messages.forEachIndexed { index, message ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        ),
+                    ) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                "#${index + 1} ${message.role}${message.name?.let { " · $it" }.orEmpty()}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            SelectionContainer {
+                                Text(message.content, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider()
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("运行日志", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            OutlinedButton(onClick = onClearLogs, enabled = logs.isNotEmpty()) { Text("清除") }
+        }
+        if (logs.isEmpty()) {
+            Text(
+                "暂无日志。这里只显示 extension_log 与真实加载/卸载事件。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            logs.takeLast(100).asReversed().forEach { log ->
+                val color = when (log.level) {
+                    ExtensionRuntimeLogLevel.Error -> MaterialTheme.colorScheme.error
+                    ExtensionRuntimeLogLevel.Warning -> MaterialTheme.colorScheme.tertiary
+                    else -> MaterialTheme.colorScheme.onSurface
+                }
+                SelectionContainer {
+                    Text(
+                        "${timeFormatter.format(Date(log.timestampMillis))}  ${log.level.name.uppercase()}  ${log.extensionId ?: "host"}\n${log.message}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = color,
+                    )
+                }
+                HorizontalDivider()
+            }
+        }
+
+        Button(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("完成") }
         Spacer(Modifier.height(24.dp))
     }
 }

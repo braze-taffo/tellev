@@ -21,7 +21,9 @@ import app.tellev.core.model.MessageRole
 import app.tellev.core.model.Persona
 import app.tellev.core.model.WorldBook
 import app.tellev.core.prompt.PromptBuildRequest
+import app.tellev.core.prompt.PromptBuildResult
 import app.tellev.core.prompt.PromptEngine
+import app.tellev.core.prompt.PromptTemplateVariableUpdates
 import app.tellev.core.provider.GenerateChunk
 import app.tellev.core.provider.GenerateRequest
 import app.tellev.core.provider.ProviderConfig
@@ -294,7 +296,7 @@ class ChatViewModel(
                 val promptRequest = PromptBuildRequest(
                     character = character,
                     persona = state.selectedPersona,
-                    messages = updatedMessages,
+                    messages = promptHistoryBeforeCurrentMessage(updatedMessages, userMessage.id),
                     worldBooks = worldBooksForCharacter(state, character, dataStore.readDisabledWorldIds()),
                     preset = preset,
                     userInput = messageText,
@@ -302,7 +304,12 @@ class ChatViewModel(
                     metadata = buildPromptMetadata(state, config, preset, updatedSession),
                 )
 
-                val promptResult = promptEngine.build(promptRequest)
+                val promptResult = buildPromptWithSessionScope(promptRequest, updatedSession)
+                persistPromptTemplateVariableUpdates(
+                    promptResult.promptTemplateVariableUpdates,
+                    targetSessionId = updatedSession.id,
+                )
+                emitPromptDiagnostics(promptResult)
 
                 emitStEvent(
                     StEventCatalog.GENERATION_AFTER_COMMANDS,
@@ -515,31 +522,34 @@ class ChatViewModel(
         messages[messageIndex] = updatedMessage
 
         val session = state.currentSession ?: return
-        val updatedSession = session.copy(messages = messages)
 
-        _uiState.update {
-            it.copy(
-                messages = messages,
-                currentSession = updatedSession,
-            )
+        if (message.role == MessageRole.User) {
+            // sendMessage owns the new user-input slot. Keep only the history
+            // before the edited user message so the replacement is appended
+            // exactly once and all later replies are discarded.
+            val trimmedMessages = messages.take(messageIndex)
+            _uiState.update {
+                it.copy(
+                    messages = trimmedMessages,
+                    currentSession = session.copy(messages = trimmedMessages),
+                )
+            }
+            viewModelScope.launch {
+                emitStEvent(StEventCatalog.MESSAGE_EDITED, messageIndex)
+                emitStEvent(StEventCatalog.MESSAGE_UPDATED, messageIndex)
+                emitRenderedEventForMessage(messageIndex, updatedMessage, "edit")
+            }
+            sendMessage(newContent, message.attachments)
+            return
         }
 
+        val updatedSession = session.copy(messages = messages)
+        _uiState.update { it.copy(messages = messages, currentSession = updatedSession) }
         viewModelScope.launch {
             dataStore.saveChatSession(updatedSession)
             emitStEvent(StEventCatalog.MESSAGE_EDITED, messageIndex)
             emitStEvent(StEventCatalog.MESSAGE_UPDATED, messageIndex)
             emitRenderedEventForMessage(messageIndex, updatedMessage, "edit")
-        }
-
-        if (message.role == MessageRole.User) {
-            val trimmedMessages = messages.subList(0, messageIndex + 1).toList()
-            _uiState.update {
-                it.copy(
-                    messages = trimmedMessages,
-                    currentSession = updatedSession.copy(messages = trimmedMessages),
-                )
-            }
-            sendMessage(newContent, message.attachments)
         }
     }
 
@@ -837,7 +847,12 @@ class ChatViewModel(
                 providerType = config.providerType,
                 metadata = buildPromptMetadata(state, config, preset, state.currentSession),
             )
-            val promptResult = promptEngine.build(promptRequest)
+            val promptResult = buildPromptWithSessionScope(promptRequest, state.currentSession)
+            persistPromptTemplateVariableUpdates(
+                promptResult.promptTemplateVariableUpdates,
+                targetSessionId = state.currentSession?.id,
+            )
+            emitPromptDiagnostics(promptResult)
             val adapter = providerRegistry.require(config.providerType)
 
             var accumulatedText = ""
@@ -974,7 +989,14 @@ class ChatViewModel(
         config: ProviderConfig,
         preset: GenerationPreset,
         session: ChatSession?,
-    ): JsonObject = buildJsonObject {
+    ): JsonObject {
+        val variableSnapshot = promptEngine.snapshotPromptTemplateVariables()
+        val localVariables = (session?.metadata?.get("variables") as? JsonObject)
+            ?: variableSnapshot.local
+        val globalVariables = variableSnapshot.global
+        val mergedVariables = mergePromptTemplateVariables(globalVariables, localVariables)
+
+        return buildJsonObject {
         put("providerType", config.providerType)
         preset.maxTokens?.let { put("maxContextTokens", JsonPrimitive(it)) }
         val groupId = session?.groupId
@@ -989,6 +1011,12 @@ class ChatViewModel(
             }
         }
         put("injectedPrompts", extensionHost.collectInjectedPrompts())
+        put("promptTemplateLocalVariables", localVariables)
+        put("promptTemplateGlobalVariables", globalVariables)
+        // Keep the legacy merged key for processors/extensions that still
+        // consume the pre-v1.2 metadata shape. LOCAL wins over GLOBAL.
+        put("promptTemplateVariables", mergedVariables)
+        }
     }
 
     // ── Local-scope variables (chat_metadata.variables) ─────────────────
@@ -1037,6 +1065,137 @@ class ChatViewModel(
             delay(400L)
             _uiState.value.currentSession?.let { dataStore.saveChatSession(it) }
         }
+    }
+
+    private fun buildPromptWithSessionScope(
+        request: PromptBuildRequest,
+        session: ChatSession?,
+    ): PromptBuildResult {
+        val initialLocal = (session?.metadata?.get("variables") as? JsonObject)
+            ?: JsonObject(emptyMap())
+        val backend = TrackingPromptLocalBackend(parseVariableMap(initialLocal))
+        val result = promptEngine.buildWithLocalVariableBackend(request, backend)
+        val templateLocal = result.promptTemplateVariableUpdates.local
+        val combinedLocal = when {
+            templateLocal != null -> applyTopLevelVariableDiff(
+                base = backend.applyChanges(initialLocal),
+                before = initialLocal,
+                after = templateLocal,
+            )
+            backend.hasChanges() -> backend.applyChanges(initialLocal)
+            else -> null
+        }
+        return result.copy(
+            promptTemplateVariableUpdates = result.promptTemplateVariableUpdates.copy(
+                local = combinedLocal,
+            ),
+        )
+    }
+
+    private fun applyTopLevelVariableDiff(
+        base: JsonObject,
+        before: JsonObject,
+        after: JsonObject,
+    ): JsonObject = JsonObject(base.toMutableMap().apply {
+        (before.keys + after.keys).forEach { key ->
+            if (before[key] != after[key]) {
+                if (key in after) put(key, after.getValue(key)) else remove(key)
+            }
+        }
+    })
+
+    private class TrackingPromptLocalBackend(initial: Map<String, String>) : LocalVariableBackend {
+        private val initialValues = LinkedHashMap(initial)
+        private val values = LinkedHashMap(initial)
+
+        override fun snapshot(): Map<String, String> = values.toMap()
+
+        override fun update(transform: (MutableMap<String, String>) -> Unit): Map<String, String> {
+            transform(values)
+            return snapshot()
+        }
+
+        fun hasChanges(): Boolean = values != initialValues
+
+        fun applyChanges(base: JsonObject): JsonObject = JsonObject(base.toMutableMap().apply {
+            val currentValues = this@TrackingPromptLocalBackend.values
+            (initialValues.keys + currentValues.keys).forEach { key ->
+                if (initialValues[key] != currentValues[key]) {
+                    currentValues[key]?.let { put(key, JsonPrimitive(it)) } ?: remove(key)
+                }
+            }
+        })
+    }
+
+    private suspend fun persistPromptTemplateVariableUpdates(
+        updates: PromptTemplateVariableUpdates,
+        targetSessionId: String?,
+    ) {
+        updates.local?.let { localVariables ->
+            if (targetSessionId != null) {
+                var activeSessionUpdate: ChatSession? = null
+                _uiState.update { state ->
+                    val current = state.currentSession
+                    if (current?.id != targetSessionId) state
+                    else {
+                        val updated = current.withPromptTemplateVariables(localVariables)
+                        activeSessionUpdate = updated
+                        state.copy(currentSession = updated)
+                    }
+                }
+                // Persist the exact originating session even if a chat switch
+                // races with the state update above.
+                val source = activeSessionUpdate
+                    ?: runCatching { dataStore.readChatSession(targetSessionId) }.getOrNull()
+                source?.let {
+                    dataStore.saveChatSession(it.withPromptTemplateVariables(localVariables))
+                }
+            }
+        }
+        updates.global?.let(promptEngine::persistGlobalPromptTemplateVariables)
+    }
+
+    private fun mergePromptTemplateVariables(global: JsonObject, local: JsonObject): JsonObject =
+        buildJsonObject {
+            global.forEach { (key, value) -> put(key, value) }
+            local.forEach { (key, value) -> put(key, value) }
+        }
+
+    private suspend fun emitPromptDiagnostics(result: PromptBuildResult) {
+        extensionHost.reportHostEvent(
+            ExtensionEvent(
+                name = "prompt_diagnostics",
+                payload = buildJsonObject {
+                    val estimated = result.diagnostics.estimatedTokenCount
+                    if (estimated == null) {
+                        put("estimatedTokenCount", JsonNull)
+                    } else {
+                        put("estimatedTokenCount", estimated)
+                    }
+                    putJsonArray("activatedWorldEntryIds") {
+                        result.diagnostics.activatedWorldEntryIds.forEach { add(JsonPrimitive(it)) }
+                    }
+                    putJsonArray("warnings") {
+                        result.diagnostics.warnings.forEach { add(JsonPrimitive(it)) }
+                    }
+                    putJsonArray("messages") {
+                        result.messages.forEach { message ->
+                            add(
+                                buildJsonObject {
+                                    put("role", message.role.name.lowercase())
+                                    if (message.name == null) {
+                                        put("name", JsonNull)
+                                    } else {
+                                        put("name", message.name)
+                                    }
+                                    put("content", message.content)
+                                },
+                            )
+                        }
+                    }
+                },
+            ),
+        )
     }
 
     private fun parseVariableMap(obj: JsonObject?): Map<String, String> {
@@ -1281,6 +1440,22 @@ class ChatViewModel(
     private fun generateMessageId(): String = "msg-${UUID.randomUUID()}"
     private fun generateSessionId(): String = "sess-${UUID.randomUUID()}"
 }
+
+/**
+ * The prompt engine owns the current user-input slot. Once the message has
+ * been saved to the chat, remove that exact message from the history handed
+ * to the engine so it is not sent twice. Matching by id avoids dropping a
+ * legitimate earlier user message that happens to have identical text.
+ */
+internal fun promptHistoryBeforeCurrentMessage(messages: List<ChatMessage>, currentMessageId: String): List<ChatMessage> =
+    if (messages.lastOrNull()?.id == currentMessageId) messages.dropLast(1) else messages
+
+internal fun ChatSession.withPromptTemplateVariables(variables: JsonObject): ChatSession =
+    copy(
+        metadata = JsonObject(metadata.toMutableMap().apply {
+            put("variables", variables)
+        }),
+    )
 
 class ChatViewModelFactory(
     private val dataStore: StDataStore,

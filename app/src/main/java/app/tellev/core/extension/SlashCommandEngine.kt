@@ -54,6 +54,12 @@ class SlashCommandEngine(
             fun ok(output: String = "") = Result(handled = true, output = output)
             fun error(message: String) = Result(handled = true, isError = true, errorMessage = message, output = "")
             fun unknown(name: String) = Result(handled = false, output = "Unknown command: $name")
+            fun unsupported(name: String) = Result(
+                handled = true,
+                isError = true,
+                errorMessage = "Unsupported command in Tellev: /$name",
+                output = "",
+            )
             fun abort() = Result(handled = true, isAborted = true)
         }
     }
@@ -207,6 +213,10 @@ class SlashCommandEngine(
     // ── Built-in command executors ──────────────────────────────────────
 
     private fun executeCommand(cmd: Command): Result {
+        if (cmd.name in UNSUPPORTED_COMMANDS) {
+            return Result.unsupported(cmd.name)
+        }
+
         return when (cmd.name) {
             "echo" -> Result.ok(cmd.args.joinToString(" "))
 
@@ -569,7 +579,7 @@ class SlashCommandEngine(
 
             "getpromptentry", "setpromptentry" -> Result.ok("")
 
-            "is-mobile" -> Result.ok("false")
+            "is-mobile" -> Result.ok("true")
 
             "chat-render", "chat-reload" -> Result.ok("")
 
@@ -768,6 +778,60 @@ class SlashCommandEngine(
     }
 
     companion object {
+        /**
+         * Commands advertised by SillyTavern but not implemented by the
+         * native engine. Keep them distinguishable from unknown extension
+         * commands: callers get an explicit error and never a fake success.
+         */
+        private val UNSUPPORTED_COMMANDS: Set<String> = setOf(
+            "trimtokens", "trimstart", "trimend",
+            "input", "prompt", "popup", "buttons",
+            "send", "sys", "sysname", "gen", "genraw",
+            "continue", "regenerate", "swipe", "newchat", "del", "cut",
+            "model", "clipboard-get", "clipboard-set", "beep",
+            "inject", "listinjects", "flushinject", "getpromptentry", "setpromptentry",
+            "chat-render", "chat-reload", "reroll-pick",
+            "profile", "profile-list", "tempchat", "closechat",
+            "getchatname", "renamechat", "delchat", "forcesave",
+            "instruct", "instruct-on", "instruct-off", "instruct-state",
+            "context", "panels", "bg",
+            "char-find", "char-create", "char-update", "char-duplicate", "char-get", "char-delete",
+            "sendas", "single", "bubble", "flat", "go", "rename-char", "sysgen",
+            "ask", "delname", "trigger", "hide", "unhide",
+            "member-get", "member-disable", "member-enable", "member-add", "member-remove",
+            "member-up", "member-down", "member-peek", "member-count",
+            "delswipe", "addswipe", "messages", "setinput", "pick-icon",
+            "api", "api-url", "chat-jump", "prompt-post-processing", "vn", "resetpanels",
+            "bgcol", "theme", "css-var", "movingui", "stop-strings", "start-reply-with",
+            "persona-create", "persona-update", "persona-get", "persona-delete", "persona-duplicate",
+            "persona-lock", "persona-set", "persona-sync",
+            "reasoning-get", "reasoning-set", "reasoning-parse", "reasoning-format",
+            "reasoning-template", "reasoning-collapse", "reasoning-expand", "reasoning-toggle",
+            "secret-id", "secret-delete", "secret-write", "secret-rename", "secret-read",
+            "sysprompt", "sysprompt-on", "sysprompt-off", "sysprompt-state",
+            "extension-enable", "extension-disable", "extension-toggle", "extension-state",
+            "extension-exists", "reload-page",
+            "note", "note-depth", "note-frequency", "note-position", "note-role",
+            "lockbg", "unlockbg", "autobg",
+            "branch-create", "checkpoint-create", "checkpoint-go", "checkpoint-exit",
+            "checkpoint-parent", "checkpoint-get", "checkpoint-list",
+            "tag-add", "tag-remove", "tag-exists", "tag-list", "tag-import",
+            "tools-list", "tools-invoke", "tools-register", "tools-unregister",
+            "preset", "proxy", "loader-wrap", "loader-show", "loader-hide", "loader-stop",
+            "db", "db-list", "db-get", "db-add", "db-update", "db-disable", "db-enable", "db-delete",
+            "db-ingest", "db-purge", "db-search", "vector-threshold", "vector-query",
+            "vector-max-entries", "vector-chats-state", "vector-files-state", "vector-worldinfo-state",
+            "imagine", "imagine-source", "imagine-style", "imagine-comfy-workflow",
+            "expression-set", "expression-fallback", "expression-folder-override", "expression-last",
+            "expression-list", "expression-classify", "expression-upload",
+            "profile-create", "profile-update", "profile-get", "profile-genstream",
+            "regex-preset", "regex", "regex-state", "regex-toggle",
+            "show-gallery", "list-gallery", "summarize", "caption", "translate", "speak", "count",
+            "world", "getchatbook", "getglobalbooks", "getpersonabook", "getcharbook",
+            "findentry", "getentryfield", "createentry", "setentryfield",
+            "wi-set-timed-effect", "wi-get-timed-effect", "yt-script",
+        )
+
         val BUILTIN_COMMANDS: Set<String> = setOf(
             "echo", "noop", "pass", "return", "delay", "wait", "sleep",
             "setvar", "setglobalvar", "getvar", "getglobalvar", "var",
@@ -786,7 +850,7 @@ class SlashCommandEngine(
             "continue", "regenerate", "swipe", "newchat", "del", "cut",
             "model", "tokenizer", "clipboard-get", "clipboard-set", "beep",
             "help", "?", "event-emit", "inject", "listinjects", "flushinject",
-            "getpromptentry", "setpromptentry", "is-mobile",
+            "getpromptentry", "setpromptentry",
             "chat-render", "chat-reload", "reroll-pick",
             "profile", "profile-list", "tempchat", "closechat",
             "getchatname", "renamechat", "delchat", "forcesave",

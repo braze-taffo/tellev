@@ -69,9 +69,9 @@ class CharacterTavernHelperScriptsTest {
             "TavernHelper_scripts": [
                 {
                     "type": "folder",
-                    "enabled": true,
-                    "scripts": [
-                        { "type": "script", "id": "legacy", "enabled": true, "value": { "content": "console.log('legacy');" } }
+                    "id": "legacy-folder",
+                    "value": [
+                        { "enabled": true, "id": "legacy", "name": "Legacy", "content": "console.log('legacy');" }
                     ]
                 }
             ]
@@ -82,6 +82,56 @@ class CharacterTavernHelperScriptsTest {
 
         assertEquals(listOf("legacy"), scripts.map { it.id })
         assertEquals("console.log('legacy');", scripts.single().content)
+    }
+
+    @Test
+    fun `legacy ScriptItem reads enabled and identity from nested value`() {
+        val card = importCard(
+            """
+            "TavernHelper_scripts": [
+                {
+                    "type": "script",
+                    "enabled": false,
+                    "id": "outer-id-is-not-script-data",
+                    "value": {
+                        "enabled": true,
+                        "id": "inner-id",
+                        "name": "Inner name",
+                        "content": "legacyItem();"
+                    }
+                }
+            ]
+            """.trimIndent(),
+        )
+
+        val scripts = CharacterTavernHelperScripts.extract(card)
+
+        assertEquals(1, scripts.size)
+        assertEquals("inner-id", scripts.single().id)
+        assertEquals("Inner name", scripts.single().name)
+        assertEquals("legacyItem();", scripts.single().content)
+    }
+
+    @Test
+    fun `legacy folder is enabled by migration while nested ScriptData still gates execution`() {
+        val card = importCard(
+            """
+            "TavernHelper_scripts": [
+                {
+                    "type": "folder",
+                    "enabled": false,
+                    "value": [
+                        { "enabled": false, "id": "off", "content": "off();" },
+                        { "enabled": true, "id": "on", "content": "on();" }
+                    ]
+                }
+            ]
+            """.trimIndent(),
+        )
+
+        val scripts = CharacterTavernHelperScripts.extract(card)
+
+        assertEquals(listOf("on"), scripts.map { it.id })
     }
 
     @Test

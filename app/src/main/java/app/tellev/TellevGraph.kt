@@ -151,8 +151,16 @@ class TellevGraph private constructor(
                 macroEngine = macroEngine,
                 variableStore = variableStore,
             )
-            // Load persisted permission grants off the main thread.
-            extensionScope.launch { permissionManager.load() }
+            // Load persisted extension runtime state even when the user only
+            // uses native prompt templates and never loads a JavaScript module.
+            // Previously global variables were loaded lazily by the WebView
+            // host, so {{getglobalvar::...}} started empty in that scenario.
+            extensionScope.launch {
+                variableStore.loadGlobal(
+                    extensionSettingsStore.getSettings(WebViewJsExtensionHost.TAVERN_HELPER_VARS_KEY),
+                )
+                permissionManager.load()
+            }
 
             // Load persisted EJS template settings so the prompt engine
             // respects the user's configuration from the first build call.

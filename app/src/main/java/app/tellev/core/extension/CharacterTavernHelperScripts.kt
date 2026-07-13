@@ -28,7 +28,9 @@ import kotlinx.serialization.json.jsonPrimitive
  * - Content field is **only** `content` (not `value`/`source`/`code`).
  * - `type` must be `'script'` to be executable (`'javascript'`/`'js'` are rejected).
  * - Folder children live under `scripts` (not `children`/`items`).
- * - A disabled folder gates its entire subtree (no per-child override).
+ * - A disabled current-format folder gates its entire subtree (no per-child override).
+ * - Legacy wrappers take `enabled` from their nested ScriptData; legacy folders
+ *   are enabled by migration and do not have an outer `enabled` field.
  */
 object CharacterTavernHelperScripts {
     data class Script(
@@ -95,9 +97,25 @@ object CharacterTavernHelperScripts {
         val obj = element.asObjectOrNull() ?: return
         val type = obj.stringField("type")
 
-        // Folder: gate the entire subtree by its own enabled flag
+        // Backward ScriptItem: { type: "script", value: ScriptData }. The
+        // executable fields (including enabled/id/name) belong to ScriptData,
+        // not to the wrapper. Checking obj.isEnabled() here used to disable
+        // every real legacy item because the wrapper has no enabled field.
+        if (type == "script") {
+            val legacyScriptData = obj["value"]?.asObjectOrNull()
+            if (legacyScriptData != null) {
+                collect(legacyScriptData, out, "$path.value", inheritedEnabled)
+                return
+            }
+        }
+
+        // A legacy folder is { type: "folder", value: ScriptData[] }. JSR's
+        // backward migration explicitly converts it to enabled=true. A
+        // current folder uses `scripts` and retains the normal enabled=false
+        // default.
         if (type == "folder") {
-            val folderEnabled = inheritedEnabled && obj.isEnabled()
+            val isLegacyFolder = obj["scripts"] == null && obj["value"]?.asArrayOrNull() != null
+            val folderEnabled = inheritedEnabled && (isLegacyFolder || obj.isEnabled())
             if (!folderEnabled) return
             val children = obj["scripts"] ?: obj["value"]
             if (children != null) {

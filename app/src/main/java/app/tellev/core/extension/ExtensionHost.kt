@@ -37,6 +37,21 @@ interface ExtensionHost {
     suspend fun unload(extensionId: String)
     suspend fun emit(event: ExtensionEvent)
 
+    /**
+     * Publish a host/UI diagnostic without forwarding its potentially
+     * sensitive payload into extension JavaScript runtimes.
+     */
+    suspend fun reportHostEvent(event: ExtensionEvent) {
+        emit(event)
+    }
+
+    /** Recent host-only runtime state used when the module screen opens later. */
+    fun snapshotHostEvents(): List<ExtensionEvent> = emptyList()
+
+    fun clearHostRuntimeLogs(extensionId: String?) {}
+
+    fun clearHostPromptDiagnostics() {}
+
     fun registerSlashCommand(extensionId: String, command: SlashCommand)
     suspend fun executeSlashCommand(input: SlashCommandInput): SlashCommandResult
 

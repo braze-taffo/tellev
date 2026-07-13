@@ -942,7 +942,22 @@ class VirtualApiRouter(
                 put("name", name)
                 put("version", "tellev-compat")
                 put("installed", true)
-                put("compatible", true)
+                put("compatible", false)
+                put("compatibilityLevel", "partial")
+                putJsonArray("limitations") {
+                    add(kotlinx.serialization.json.JsonPrimitive(
+                        "Tellev provides a built-in compatibility shim; the upstream extension package is not installed or executed.",
+                    ))
+                    add(kotlinx.serialization.json.JsonPrimitive(
+                        "Only a supported subset of ST-Prompt-Template and TavernHelper APIs is implemented.",
+                    ))
+                    add(kotlinx.serialization.json.JsonPrimitive(
+                        "Unsupported APIs, scopes, and browser-runtime behavior may differ from the upstream extensions.",
+                    ))
+                    add(kotlinx.serialization.json.JsonPrimitive(
+                        "Dynamic function filters in TavernHelper.injectPrompts are skipped and reported in module logs.",
+                    ))
+                }
             })
         }
         return jsonResponse(200, buildJsonObject {

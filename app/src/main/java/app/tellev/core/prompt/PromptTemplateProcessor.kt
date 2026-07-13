@@ -2,6 +2,7 @@ package app.tellev.core.prompt
 
 import app.tellev.core.extension.EjsTemplateSettings
 import app.tellev.core.model.MessageRole
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -33,6 +34,20 @@ data class PromptTemplateWorldEntry(
 data class PromptTemplateResult(
     val messages: List<PromptMessage>,
     val warnings: List<String> = emptyList(),
+    val variableUpdates: PromptTemplateVariableUpdates = PromptTemplateVariableUpdates(),
+ )
+
+/**
+ * Scope-aware variable snapshots produced by a template evaluation.
+ *
+ * A null scope means that evaluation did not mutate it. An empty object is
+ * deliberately distinct: it means the template cleared that scope and the
+ * caller must persist the empty object.
+ */
+@Serializable
+data class PromptTemplateVariableUpdates(
+    val local: JsonObject? = null,
+    val global: JsonObject? = null,
 )
 
 class DefaultPromptTemplateProcessor(
@@ -64,10 +79,14 @@ class DefaultPromptTemplateProcessor(
             return PromptTemplateResult(messages = request.messages)
         }
 
+        val scopes = extractVariableScopes(request.metadata)
         val state = TemplateState(
             context = request.context,
-            variables = extractVariables(request.metadata).toMutableMap(),
-        )
+            localVariables = deepCopyMap(scopes.local),
+            globalVariables = deepCopyMap(scopes.global),
+            initialLocalVariables = deepCopyMap(scopes.local),
+            initialGlobalVariables = deepCopyMap(scopes.global),
+        ).also(::refreshMergedVariables)
 
         val injectedMessages = applyInstructionBlocks(
             request.messages.map { message -> message.copy(content = stripInstructionBlocks(message.content)) },
@@ -89,6 +108,14 @@ class DefaultPromptTemplateProcessor(
         return PromptTemplateResult(
             messages = rendered,
             warnings = state.warnings.toList(),
+            variableUpdates = PromptTemplateVariableUpdates(
+                local = state.localVariables
+                    .takeIf { it != state.initialLocalVariables }
+                    ?.let(::toJsonObject),
+                global = state.globalVariables
+                    .takeIf { it != state.initialGlobalVariables }
+                    ?.let(::toJsonObject),
+            ),
         )
     }
 
@@ -535,26 +562,48 @@ class DefaultPromptTemplateProcessor(
 
     private fun callFunction(name: String, args: List<Any?>, state: TemplateState): Any? {
         return when (name) {
-            "getvar", "getchatvar", "getglobalvar" -> {
+            "getvar", "getchatvar" -> {
                 val key = stringify(args.getOrNull(0))
                 val fallback = args.getOrNull(1)
-                getPath(state.variables, key) ?: fallback ?: ""
+                getPath(state.localVariables, key) ?: fallback ?: ""
             }
-            "setvar", "setchatvar", "setglobalvar" -> {
+            "getglobalvar" -> {
                 val key = stringify(args.getOrNull(0))
-                setPath(state.variables, key, args.getOrNull(1))
+                val fallback = args.getOrNull(1)
+                getPath(state.globalVariables, key) ?: fallback ?: ""
+            }
+            "setvar", "setchatvar" -> {
+                val key = stringify(args.getOrNull(0))
+                setLocalVariable(state, key, args.getOrNull(1))
+                ""
+            }
+            "setglobalvar" -> {
+                val key = stringify(args.getOrNull(0))
+                setGlobalVariable(state, key, args.getOrNull(1))
                 ""
             }
             "incvar" -> {
                 val key = stringify(args.getOrNull(0))
-                val next = numeric(getPath(state.variables, key)) + 1.0
-                setPath(state.variables, key, next)
+                val next = numeric(getPath(state.localVariables, key)) + 1.0
+                setLocalVariable(state, key, next)
                 formatNumber(next)
             }
             "decvar" -> {
                 val key = stringify(args.getOrNull(0))
-                val next = numeric(getPath(state.variables, key)) - 1.0
-                setPath(state.variables, key, next)
+                val next = numeric(getPath(state.localVariables, key)) - 1.0
+                setLocalVariable(state, key, next)
+                formatNumber(next)
+            }
+            "incglobalvar" -> {
+                val key = stringify(args.getOrNull(0))
+                val next = numeric(getPath(state.globalVariables, key)) + 1.0
+                setGlobalVariable(state, key, next)
+                formatNumber(next)
+            }
+            "decglobalvar" -> {
+                val key = stringify(args.getOrNull(0))
+                val next = numeric(getPath(state.globalVariables, key)) - 1.0
+                setGlobalVariable(state, key, next)
                 formatNumber(next)
             }
             "String" -> stringify(args.getOrNull(0))
@@ -570,7 +619,9 @@ class DefaultPromptTemplateProcessor(
             "_.set" -> {
                 val root = args.getOrNull(0)
                 val path = stringify(args.getOrNull(1))
-                if (root is MutableMap<*, *>) {
+                if (root === state.variables) {
+                    setLocalVariable(state, path, args.getOrNull(2))
+                } else if (root is MutableMap<*, *>) {
                     @Suppress("UNCHECKED_CAST")
                     setPath(root as MutableMap<String, Any?>, path, args.getOrNull(2))
                 }
@@ -617,8 +668,10 @@ class DefaultPromptTemplateProcessor(
     private fun assign(target: String, value: Any?, state: TemplateState) {
         val trimmed = target.trim()
         when {
-            trimmed.startsWith("variables.") -> setPath(state.variables, trimmed.removePrefix("variables."), value)
-            trimmed.startsWith("vars.") -> setPath(state.variables, trimmed.removePrefix("vars."), value)
+            trimmed.startsWith("variables.") ->
+                setLocalVariable(state, trimmed.removePrefix("variables."), value)
+            trimmed.startsWith("vars.") ->
+                setLocalVariable(state, trimmed.removePrefix("vars."), value)
             trimmed.contains('.') -> {
                 val rootName = trimmed.substringBefore('.')
                 val root = resolveReference(rootName, state)
@@ -631,15 +684,72 @@ class DefaultPromptTemplateProcessor(
         }
     }
 
-    private fun extractVariables(metadata: JsonObject): Map<String, Any?> {
-        val element = metadata["promptTemplateVariables"]
+    private fun extractVariableScopes(metadata: JsonObject): VariableScopes {
+        // Legacy callers supplied one merged object. Treat it as LOCAL so
+        // getvar/setvar retain their historical behavior. New callers provide
+        // the two explicit keys and receive correct getglobalvar semantics.
+        val localElement = metadata["promptTemplateLocalVariables"]
+            ?: metadata["promptTemplateVariables"]
             ?: metadata["variables"]
             ?: metadata["tavernVariables"]
-            ?: return emptyMap()
-        return (toKotlinValue(element) as? Map<*, *>)
+        val globalElement = metadata["promptTemplateGlobalVariables"]
+
+        return VariableScopes(
+            local = variableMap(localElement),
+            global = variableMap(globalElement),
+        )
+    }
+
+    private fun variableMap(element: JsonElement?): Map<String, Any?> {
+        return (element?.let(::toKotlinValue) as? Map<*, *>)
             ?.mapNotNull { (key, value) -> (key as? String)?.let { it to value } }
             ?.toMap()
             ?: emptyMap()
+    }
+
+    private fun refreshMergedVariables(state: TemplateState) {
+        state.variables.clear()
+        state.variables.putAll(deepCopyMap(state.globalVariables))
+        state.variables.putAll(deepCopyMap(state.localVariables))
+    }
+
+    private fun setLocalVariable(state: TemplateState, path: String, value: Any?) {
+        setPath(state.localVariables, path, value)
+        refreshMergedVariables(state)
+    }
+
+    private fun setGlobalVariable(state: TemplateState, path: String, value: Any?) {
+        setPath(state.globalVariables, path, value)
+        refreshMergedVariables(state)
+    }
+
+    private fun deepCopyMap(source: Map<String, Any?>): MutableMap<String, Any?> =
+        source.mapValuesTo(linkedMapOf()) { (_, value) -> deepCopyValue(value) }
+
+    private fun deepCopyValue(value: Any?): Any? = when (value) {
+        is Map<*, *> -> value.entries.mapNotNull { (key, nested) ->
+            (key as? String)?.let { it to deepCopyValue(nested) }
+        }.toMap(linkedMapOf())
+        is List<*> -> value.map(::deepCopyValue)
+        else -> value
+    }
+
+    private fun toJsonObject(values: Map<String, Any?>): JsonObject =
+        JsonObject(values.mapValues { (_, value) -> toJsonElement(value) })
+
+    private fun toJsonElement(value: Any?): JsonElement = when (value) {
+        null -> JsonNull
+        is JsonElement -> value
+        is Boolean -> JsonPrimitive(value)
+        is Number -> JsonPrimitive(value)
+        is String -> JsonPrimitive(value)
+        is Map<*, *> -> JsonObject(
+            value.entries.mapNotNull { (key, nested) ->
+                (key as? String)?.let { it to toJsonElement(nested) }
+            }.toMap(),
+        )
+        is Iterable<*> -> JsonArray(value.map(::toJsonElement))
+        else -> JsonPrimitive(value.toString())
     }
 
     private fun toKotlinValue(element: JsonElement): Any? {
@@ -924,7 +1034,11 @@ class DefaultPromptTemplateProcessor(
 
     private data class TemplateState(
         val context: MacroContext,
-        val variables: MutableMap<String, Any?>,
+        val localVariables: MutableMap<String, Any?>,
+        val globalVariables: MutableMap<String, Any?>,
+        val initialLocalVariables: Map<String, Any?>,
+        val initialGlobalVariables: Map<String, Any?>,
+        val variables: MutableMap<String, Any?> = linkedMapOf(),
         val locals: MutableMap<String, Any?> = mutableMapOf(),
         val warnings: LinkedHashSet<String> = linkedSetOf(),
     ) {
@@ -960,6 +1074,11 @@ class DefaultPromptTemplateProcessor(
     )
 
     private object UnsupportedExpression
+
+    private data class VariableScopes(
+        val local: Map<String, Any?>,
+        val global: Map<String, Any?>,
+    )
 
     private companion object {
         private val tagPattern = Regex("""<%([=-]?)([\s\S]*?)%>""")

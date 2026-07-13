@@ -270,19 +270,23 @@ class VirtualApiRouterTest {
     }
 
     @Test
-    fun `POST _api_extensions_version reports prompt template compatibility`() = runBlocking {
-        val response = router.route(
-            VirtualApiRequest(
-                "POST",
-                "/api/extensions/version",
-                body = """{"name":"ST-Prompt-Template"}""",
-            ),
-        )
+    fun `POST _api_extensions_version reports built-in compatibility shims as partial`() = runBlocking {
+        for (extensionName in listOf("ST-Prompt-Template", "酒馆助手")) {
+            val response = router.route(
+                VirtualApiRequest(
+                    "POST",
+                    "/api/extensions/version",
+                    body = """{"name":"$extensionName"}""",
+                ),
+            )
 
-        assertEquals(200, response.status)
-        val body = json.parseToJsonElement(response.body).jsonObject
-        assertEquals("true", body["installed"]?.jsonPrimitive?.content)
-        assertEquals("true", body["compatible"]?.jsonPrimitive?.content)
+            assertEquals(200, response.status)
+            val body = json.parseToJsonElement(response.body).jsonObject
+            assertEquals("true", body["installed"]?.jsonPrimitive?.content)
+            assertEquals("false", body["compatible"]?.jsonPrimitive?.content)
+            assertEquals("partial", body["compatibilityLevel"]?.jsonPrimitive?.content)
+            assertTrue(body["limitations"]?.jsonArray?.isNotEmpty() == true)
+        }
     }
 
     private class InMemorySecretStore : SecretStore {

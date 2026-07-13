@@ -3,7 +3,9 @@ package app.tellev.core.prompt
 import app.tellev.core.extension.EjsTemplateSettings
 import app.tellev.core.model.MessageRole
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlinx.serialization.json.buildJsonObject
@@ -99,6 +101,78 @@ class PromptTemplateProcessorTest {
         assertEquals("", processor.systemPromptContentFor(entry))
         assertEquals("Comment body.", result.messages[1].content)
         assertEquals(MessageRole.System, result.messages[1].role)
+    }
+
+    @Test
+    fun `process keeps local and global variables in separate scopes`() {
+        val processor = DefaultPromptTemplateProcessor()
+        val result = processor.process(
+            PromptTemplateRequest(
+                messages = listOf(
+                    PromptMessage(
+                        role = MessageRole.System,
+                        content = "<%= getvar('shared') %>|<%= getglobalvar('shared') %>|<%= variables.shared %>",
+                    ),
+                ),
+                context = MacroContext(),
+                metadata = buildJsonObject {
+                    put("promptTemplateLocalVariables", buildJsonObject {
+                        put("shared", "local")
+                    })
+                    put("promptTemplateGlobalVariables", buildJsonObject {
+                        put("shared", "global")
+                    })
+                },
+            ),
+        )
+
+        assertEquals("local|global|local", result.messages.single().content)
+        assertNull(result.variableUpdates.local)
+        assertNull(result.variableUpdates.global)
+    }
+
+    @Test
+    fun `process reports scoped setvar updates for persistence`() {
+        val processor = DefaultPromptTemplateProcessor()
+        val result = processor.process(
+            PromptTemplateRequest(
+                messages = listOf(
+                    PromptMessage(
+                        role = MessageRole.System,
+                        content = "<% setvar('mood', 'calm') %><% setglobalvar('chapter', 'two') %>",
+                    ),
+                ),
+                context = MacroContext(),
+                metadata = buildJsonObject {
+                    put("promptTemplateLocalVariables", buildJsonObject {
+                        put("mood", "tense")
+                    })
+                    put("promptTemplateGlobalVariables", buildJsonObject {
+                        put("chapter", "one")
+                    })
+                },
+            ),
+        )
+
+        assertEquals("", result.messages.single().content)
+        assertEquals("calm", result.variableUpdates.local?.get("mood")?.jsonPrimitive?.content)
+        assertEquals("two", result.variableUpdates.global?.get("chapter")?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `legacy merged variables remain local for getvar compatibility`() {
+        val processor = DefaultPromptTemplateProcessor()
+        val result = processor.process(
+            PromptTemplateRequest(
+                messages = listOf(PromptMessage(MessageRole.System, content = "<%= getvar('mode') %>")),
+                context = MacroContext(),
+                metadata = buildJsonObject {
+                    put("promptTemplateVariables", buildJsonObject { put("mode", "story") })
+                },
+            ),
+        )
+
+        assertEquals("story", result.messages.single().content)
     }
 
     // ── Settings-controlled behavior ──────────────────────────────────

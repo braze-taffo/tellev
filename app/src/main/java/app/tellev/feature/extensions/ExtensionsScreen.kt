@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -125,8 +126,10 @@ fun ExtensionsScreen(
                 items(state.extensions, key = { it.id }) { extension ->
                     ExtensionCard(
                         extension = extension,
+                        runtimeStatus = state.runtime.statusByExtensionId[extension.id],
                         onToggle = { viewModel.toggleExtension(extension.id) },
                         onOpenSettings = { viewModel.openSettings(extension.id) },
+                        onOpenDebug = { viewModel.openDebug(extension.id) },
                     )
                 }
 
@@ -182,6 +185,57 @@ fun ExtensionsScreen(
             }
         }
     }
+
+    state.debugSheetTarget?.let { target ->
+        val extension = state.extensions.firstOrNull { it.id == target }
+        val showAllRuntimeLogs = target == "tavern-helper-compat"
+        val logs = if (showAllRuntimeLogs) {
+            state.runtime.logs
+        } else {
+            state.runtime.logs.filter { it.extensionId == target }
+        }
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { viewModel.closeDebug() },
+            sheetState = sheetState,
+        ) {
+            ExtensionDebugPanel(
+                title = extension?.name ?: target,
+                loaded = extension?.loaded ?: state.runtime.statusByExtensionId[target]?.loaded == true,
+                status = state.runtime.statusByExtensionId[target],
+                logs = logs,
+                promptSnapshot = state.runtime.promptDebugSnapshot,
+                showPromptDiagnostics = target == "ejs-template-compat",
+                onClearLogs = {
+                    viewModel.clearRuntimeLogs(if (showAllRuntimeLogs) null else target)
+                },
+                onClearPromptSnapshot = { viewModel.clearPromptDebugSnapshot() },
+                onClose = { viewModel.closeDebug() },
+            )
+        }
+    }
+
+    state.pendingPermissionRequests.firstOrNull()?.let { request ->
+        AlertDialog(
+            onDismissRequest = {
+                viewModel.respondToPermissionRequest(request.requestId, granted = false)
+            },
+            title = { Text("扩展权限请求") },
+            text = {
+                Text("扩展 ${request.extensionId} 请求 ${request.permission.name} 权限。仅在你信任该脚本时允许。")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.respondToPermissionRequest(request.requestId, granted = true)
+                }) { Text("允许") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    viewModel.respondToPermissionRequest(request.requestId, granted = false)
+                }) { Text("拒绝") }
+            },
+        )
+    }
 }
 
 @Composable
@@ -207,13 +261,16 @@ private fun SectionHeader(
 @Composable
 private fun ExtensionCard(
     extension: ExtensionInfo,
+    runtimeStatus: ExtensionRuntimeStatus?,
     onToggle: () -> Unit,
     onOpenSettings: () -> Unit = {},
+    onOpenDebug: () -> Unit = {},
 ) {
     val hasSettings = extension.locked && (
         extension.id == "tavern-helper-compat" ||
         extension.id == "ejs-template-compat"
     )
+    val hasDebug = extension.installed || hasSettings
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -265,10 +322,24 @@ private fun ExtensionCard(
                         )
                     }
                 }
+                if (hasDebug) {
+                    TextButton(onClick = onOpenDebug) {
+                        Text("调试")
+                    }
+                }
                 Switch(
                     checked = extension.loaded,
                     enabled = !extension.locked,
                     onCheckedChange = { onToggle() },
+                )
+            }
+
+            runtimeStatus?.lastError?.let { lastError ->
+                Text(
+                    text = "最近错误：$lastError",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = 3,
                 )
             }
 

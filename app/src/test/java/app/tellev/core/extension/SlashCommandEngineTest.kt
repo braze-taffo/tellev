@@ -310,6 +310,36 @@ class SlashCommandEngineTest {
     }
 
     @Test
+    fun `known but unimplemented commands return explicit unsupported errors`() {
+        listOf("send", "gen", "continue", "inject", "char-delete", "count").forEach { name ->
+            val result = engine.execute("/$name test")
+
+            assertTrue("/$name must be recognized", result.handled)
+            assertTrue("/$name must not report fake success", result.isError)
+            assertTrue(result.errorMessage.contains("Unsupported command"))
+            assertTrue(result.errorMessage.contains("/$name"))
+            assertEquals("", result.output)
+        }
+    }
+
+    @Test
+    fun `implemented commands remain successful`() {
+        val result = engine.execute("/echo still works")
+        assertTrue(result.handled)
+        assertFalse(result.isError)
+        assertEquals("still works", result.output)
+    }
+
+    @Test
+    fun `is-mobile reports the Android runtime truthfully`() {
+        val result = engine.execute("/is-mobile")
+
+        assertTrue(result.handled)
+        assertFalse(result.isError)
+        assertEquals("true", result.output)
+    }
+
+    @Test
     fun `BUILTIN_COMMANDS contains expected entries`() {
         assertTrue(SlashCommandEngine.BUILTIN_COMMANDS.contains("echo"))
         assertTrue(SlashCommandEngine.BUILTIN_COMMANDS.contains("setvar"))

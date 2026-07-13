@@ -51,10 +51,25 @@ class VariableStore(
 ) {
     @Volatile
     private var localBackend: LocalVariableBackend? = null
+    private val scopedLocalBackend = ThreadLocal<LocalVariableBackend?>()
 
     fun setLocalBackend(backend: LocalVariableBackend?) {
         localBackend = backend
     }
+
+    /** Use a generation/session-bound LOCAL backend on this thread only. */
+    fun <T> withLocalBackend(backend: LocalVariableBackend, block: () -> T): T {
+        val previous = scopedLocalBackend.get()
+        scopedLocalBackend.set(backend)
+        return try {
+            block()
+        } finally {
+            if (previous == null) scopedLocalBackend.remove()
+            else scopedLocalBackend.set(previous)
+        }
+    }
+
+    private fun activeLocalBackend(): LocalVariableBackend? = scopedLocalBackend.get() ?: localBackend
 
     // GLOBAL in-memory mirror. Values are JsonElement so TavernHelper.getVariables
     // can hand back the raw object shape extensions expect.
@@ -69,15 +84,15 @@ class VariableStore(
 
     // ── LOCAL (String API) ───────────────────────────────────────────────
 
-    fun getLocal(name: String): String? = localBackend?.snapshot()?.get(name)
+    fun getLocal(name: String): String? = activeLocalBackend()?.snapshot()?.get(name)
 
     fun setLocal(name: String, value: String) {
         if (name.isBlank()) return
-        localBackend?.update { it[name] = value }
+        activeLocalBackend()?.update { it[name] = value }
     }
 
     fun addLocal(name: String, increment: String): String {
-        val b = localBackend ?: return "0"
+        val b = activeLocalBackend() ?: return "0"
         val snap = b.update { m ->
             val current = m[name] ?: "0"
             m[name] = addStrings(current, increment)
@@ -89,12 +104,12 @@ class VariableStore(
     fun decLocal(name: String): String = addLocal(name, "-1")
 
     fun deleteLocal(name: String) {
-        localBackend?.update { it.remove(name) }
+        activeLocalBackend()?.update { it.remove(name) }
     }
 
-    fun hasLocal(name: String): Boolean = localBackend?.snapshot()?.containsKey(name) == true
+    fun hasLocal(name: String): Boolean = activeLocalBackend()?.snapshot()?.containsKey(name) == true
 
-    fun listLocal(): List<String> = localBackend?.snapshot()?.keys?.sorted() ?: emptyList()
+    fun listLocal(): List<String> = activeLocalBackend()?.snapshot()?.keys?.sorted() ?: emptyList()
 
     // ── GLOBAL (String API) ──────────────────────────────────────────────
 
@@ -142,7 +157,7 @@ class VariableStore(
 
     /** Snapshot of the current local variables as a JsonObject. */
     fun localObject(): JsonObject {
-        val snap = localBackend?.snapshot() ?: emptyMap()
+        val snap = activeLocalBackend()?.snapshot() ?: emptyMap()
         return buildJsonObject {
             snap.forEach { (k, v) -> put(k, JsonPrimitive(v)) }
         }
@@ -150,7 +165,7 @@ class VariableStore(
 
     /** Overwrite the entire local store through the backend. */
     fun replaceLocal(obj: JsonObject) {
-        localBackend?.update { m ->
+        activeLocalBackend()?.update { m ->
             m.clear()
             obj.forEach { (k, v) -> m[k] = elementToString(v) }
         }
@@ -163,7 +178,7 @@ class VariableStore(
      */
     fun mergedObject(): JsonObject = buildJsonObject {
         global.forEach { (k, v) -> put(k, v) }
-        localBackend?.snapshot()?.forEach { (k, v) -> put(k, JsonPrimitive(v)) }
+        activeLocalBackend()?.snapshot()?.forEach { (k, v) -> put(k, JsonPrimitive(v)) }
     }
 
     private fun persistGlobal() {

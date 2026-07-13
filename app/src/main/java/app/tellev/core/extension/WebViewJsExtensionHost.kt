@@ -2,8 +2,12 @@
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import app.tellev.core.prompt.DefaultMacroEngine
 import app.tellev.core.prompt.MacroContext
 import app.tellev.core.prompt.MacroEngine
@@ -26,6 +30,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import java.util.ArrayDeque
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -66,6 +71,7 @@ class WebViewJsExtensionHost(
 
     private val webViews = ConcurrentHashMap<String, WebView>()
     private val capabilityTokens = ConcurrentHashMap<String, String>()
+    private val declaredPermissions = ConcurrentHashMap<String, Set<ExtensionPermission>>()
     private val slashCommands = ConcurrentHashMap<String, RegisteredCommand>()
     private val virtualRoutes = ConcurrentHashMap<String, RegisteredRoute>()
 
@@ -75,7 +81,13 @@ class WebViewJsExtensionHost(
     private val pendingVirtualApiOwners = ConcurrentHashMap<String, String>()
     private val pendingPermissions = ConcurrentHashMap<String, String>()
     private val pendingPermissionOwners = ConcurrentHashMap<String, String>()
+    private val pendingPermissionEvents = ConcurrentHashMap<String, ExtensionEvent>()
     private val pendingLoads = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+    private val pendingLoadFailures = ConcurrentHashMap<String, String>()
+    private val recentRuntimeEvents = ArrayDeque<ExtensionEvent>()
+    private val recentRuntimeEventsLock = Any()
+    @Volatile
+    private var latestPromptDiagnostics: ExtensionEvent? = null
 
     private val settingsCache = ConcurrentHashMap<String, String>()
     private val settingsWriteMutex = Mutex()
@@ -94,10 +106,6 @@ class WebViewJsExtensionHost(
         // friends resolve through the same per-scope store as slash commands.
         (macroEngine as? DefaultMacroEngine)?.variableStore = variableStore
     }
-
-    /** Guards against re-loading the global variable store from disk on every extension load. */
-    @Volatile
-    private var globalVariablesLoaded = false
 
     /** Built-in STScript command engine; handles /echo, /setvar, /getvar, etc. */
     private val slashCommandEngine = SlashCommandEngine(
@@ -142,9 +150,11 @@ class WebViewJsExtensionHost(
             withContext(Dispatchers.Main) {
                 webViews.remove(manifest.id)?.destroy()
                 pendingLoads.remove(manifest.id)?.cancel()
+                pendingLoadFailures.remove(manifest.id)
 
                 val token = UUID.randomUUID().toString()
                 capabilityTokens[manifest.id] = token
+                declaredPermissions[manifest.id] = manifest.permissions
                 pendingLoads[manifest.id] = readySignal
 
                 val settingsJson = settingsStore.getSettings(manifest.id)
@@ -162,13 +172,6 @@ class WebViewJsExtensionHost(
                     TavernHelperSettings.serializer(), tavernHelperSettings,
                 )
 
-                if (variableStore != null && !globalVariablesLoaded) {
-                    runCatching {
-                        variableStore.loadGlobal(settingsStore.getSettings(TAVERN_HELPER_VARS_KEY))
-                    }
-                    globalVariablesLoaded = true
-                }
-
                 val webView = WebView(context.applicationContext).apply {
                     settings.javaScriptEnabled = true
                     settings.allowFileAccess = false
@@ -177,6 +180,43 @@ class WebViewJsExtensionHost(
                     settings.allowUniversalAccessFromFileURLs = false
                     settings.domStorageEnabled = false
                     settings.databaseEnabled = false
+                    settings.javaScriptCanOpenWindowsAutomatically = false
+                    settings.setSupportMultipleWindows(false)
+
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(
+                            view: WebView,
+                            request: WebResourceRequest,
+                        ): Boolean {
+                            if (!request.isForMainFrame) return false
+                            val blocked = !isAllowedExtensionNavigation(manifest.id, request.url.toString())
+                            if (blocked) reportExtensionLog(
+                                manifest.id,
+                                "warning",
+                                "Blocked module navigation to ${request.url}",
+                            )
+                            return blocked
+                        }
+
+                        @Suppress("DEPRECATION")
+                        override fun shouldOverrideUrlLoading(view: WebView, url: String?): Boolean {
+                            val target = url ?: return true
+                            val blocked = !isAllowedExtensionNavigation(manifest.id, target)
+                            if (blocked) reportExtensionLog(
+                                manifest.id,
+                                "warning",
+                                "Blocked module navigation to $target",
+                            )
+                            return blocked
+                        }
+                    }
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                            val level = if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) "error" else "debug"
+                            reportExtensionLog(manifest.id, level, "${message.message()} (${message.sourceId()}:${message.lineNumber()})")
+                            return true
+                        }
+                    }
 
                     addJavascriptInterface(Bridge(manifest.id, token), "tellevNative")
 
@@ -208,11 +248,38 @@ class WebViewJsExtensionHost(
             }
         } catch (e: Throwable) {
             pendingLoads.remove(manifest.id, readySignal)
+            pendingLoadFailures.remove(manifest.id)
+            capabilityTokens.remove(manifest.id)
+            declaredPermissions.remove(manifest.id)
+            settingsCache.remove(manifest.id)
+            withContext(Dispatchers.Main) { webViews.remove(manifest.id)?.destroy() }
             throw e
         }
 
-        withTimeoutOrNull(scriptReadyTimeoutMs) { readySignal.await() }
+        val becameReady = withTimeoutOrNull(scriptReadyTimeoutMs) {
+            readySignal.await()
+            true
+        } ?: false
         pendingLoads.remove(manifest.id, readySignal)
+        val scriptFailure = pendingLoadFailures.remove(manifest.id)
+        if (!becameReady || scriptFailure != null) {
+            withContext(Dispatchers.Main) { webViews.remove(manifest.id)?.destroy() }
+            capabilityTokens.remove(manifest.id)
+            declaredPermissions.remove(manifest.id)
+            settingsCache.remove(manifest.id)
+            slashCommands.entries.removeIf { it.value.extensionId == manifest.id }
+            virtualRoutes.entries.removeIf { it.value.extensionId == manifest.id }
+            injectedPrompts.remove(manifest.id)
+            val message = scriptFailure ?: "Module did not report ready within ${scriptReadyTimeoutMs} ms"
+            publishLocalEvent(
+                ExtensionEvent(
+                    name = "extension_load_failed",
+                    extensionId = manifest.id,
+                    payload = buildJsonObject { put("message", message) },
+                ),
+            )
+            throw IllegalStateException(message)
+        }
         emit(ExtensionEvent(name = "extension_loaded", extensionId = manifest.id))
         return handle
     }
@@ -222,6 +289,7 @@ class WebViewJsExtensionHost(
             webViews.remove(extensionId)?.destroy()
         }
         capabilityTokens.remove(extensionId)
+        declaredPermissions.remove(extensionId)
         settingsCache.remove(extensionId)
         slashCommands.entries.removeIf { it.value.extensionId == extensionId }
         virtualRoutes.entries.removeIf { it.value.extensionId == extensionId }
@@ -229,7 +297,9 @@ class WebViewJsExtensionHost(
         cancelPending(pendingVirtualApiOwners, pendingVirtualApi, extensionId)
         pendingPermissions.entries.removeIf { (_, owner) -> owner == extensionId }
         pendingPermissionOwners.entries.removeIf { (_, owner) -> owner == extensionId }
+        pendingPermissionEvents.entries.removeIf { (_, event) -> event.extensionId == extensionId }
         pendingLoads.remove(extensionId)?.cancel()
+        pendingLoadFailures.remove(extensionId)
         injectedPrompts.remove(extensionId)
         permissionManager.clearExtension(extensionId)
         emit(ExtensionEvent(name = "extension_unloaded", extensionId = extensionId))
@@ -248,7 +318,14 @@ class WebViewJsExtensionHost(
     }
 
     override suspend fun emit(event: ExtensionEvent) {
-        mutableEvents.emit(event)
+        publishExtensionEvent(event, excludeExtensionId = null)
+    }
+
+    private suspend fun publishExtensionEvent(
+        event: ExtensionEvent,
+        excludeExtensionId: String?,
+    ) {
+        publishLocalEvent(event)
         withContext(Dispatchers.Main) {
             val payloadStr = json.encodeToString(JsonObject.serializer(), event.payload)
             val escapedName = jsEscape(event.name)
@@ -257,8 +334,54 @@ class WebViewJsExtensionHost(
                 "window.Tellev.onEvent('" + escapedName + "','" + escapedPayload + "');" +
                 "}else if(window.eventSource&&window.eventSource._fireNative){" +
                 "window.eventSource._fireNative('" + escapedName + "','" + escapedPayload + "');}"
-            for ((_, webView) in webViews) {
+            for ((id, webView) in webViews) {
+                if (id == excludeExtensionId) continue
                 runCatching { webView.evaluateJavascript(js, null) }
+            }
+        }
+    }
+
+    override suspend fun reportHostEvent(event: ExtensionEvent) {
+        publishLocalEvent(event)
+    }
+
+    override fun snapshotHostEvents(): List<ExtensionEvent> {
+        val runtime = synchronized(recentRuntimeEventsLock) { recentRuntimeEvents.toList() }
+        return buildList {
+            addAll(runtime)
+            latestPromptDiagnostics?.let(::add)
+            addAll(pendingPermissionEvents.values)
+        }
+    }
+
+    override fun clearHostRuntimeLogs(extensionId: String?) {
+        synchronized(recentRuntimeEventsLock) {
+            recentRuntimeEvents.removeIf { event ->
+                event.name == "extension_log" &&
+                    (extensionId == null || event.extensionId == extensionId)
+            }
+        }
+    }
+
+    override fun clearHostPromptDiagnostics() {
+        latestPromptDiagnostics = null
+    }
+
+    private suspend fun publishLocalEvent(event: ExtensionEvent) {
+        rememberHostEvent(event)
+        mutableEvents.emit(event)
+    }
+
+    private fun rememberHostEvent(event: ExtensionEvent) {
+        if (event.name == "prompt_diagnostics") {
+            latestPromptDiagnostics = event
+            return
+        }
+        if (event.name !in RUNTIME_HISTORY_EVENTS) return
+        synchronized(recentRuntimeEventsLock) {
+            recentRuntimeEvents.addLast(event)
+            while (recentRuntimeEvents.size > MAX_RUNTIME_EVENT_HISTORY) {
+                recentRuntimeEvents.removeFirst()
             }
         }
     }
@@ -388,6 +511,7 @@ class WebViewJsExtensionHost(
 
     override fun deliverPermissionResult(requestId: String, granted: Boolean) {
         pendingPermissions.remove(requestId)
+        pendingPermissionEvents.remove(requestId)
         val owner = pendingPermissionOwners.remove(requestId)
         scope.launch(Dispatchers.Main) {
             val webView = owner?.let { webViews[it] }
@@ -396,6 +520,18 @@ class WebViewJsExtensionHost(
                     "window.Tellev.onPermissionResult('" + jsEscape(requestId) + "'," + granted + ");}"
                 runCatching { webView.evaluateJavascript(js, null) }
             }
+        }
+        scope.launch {
+            mutableEvents.emit(
+                ExtensionEvent(
+                    name = "permission_resolved",
+                    extensionId = owner,
+                    payload = buildJsonObject {
+                        put("requestId", requestId)
+                        put("granted", granted)
+                    },
+                ),
+            )
         }
     }
 
@@ -419,6 +555,7 @@ class WebViewJsExtensionHost(
                         put("position", prompt.position)
                         put("depth", prompt.depth)
                         put("role", prompt.role)
+                        put("shouldScan", prompt.shouldScan)
                     },
                 )
             }
@@ -450,6 +587,7 @@ class WebViewJsExtensionHost(
         val position: Int,
         val depth: Int,
         val role: String,
+        val shouldScan: Boolean = false,
     )
 
     // ── Bridge (called from JS via @JavascriptInterface) ───────────────
@@ -462,15 +600,27 @@ class WebViewJsExtensionHost(
         fun emit(name: String, payloadJson: String) {
             val payload = runCatching { json.parseToJsonElement(payloadJson).jsonObject }
                 .getOrElse { buildJsonObject { } }
-            scope.launch {
-                mutableEvents.emit(ExtensionEvent(name = name, extensionId = extensionId, payload = payload))
-            }
+            scope.launch { publishExtensionEvent(
+                ExtensionEvent(name = name, extensionId = extensionId, payload = payload),
+                excludeExtensionId = null,
+            ) }
+        }
+
+        /** eventSource.emit already fired handlers synchronously in its source WebView. */
+        @JavascriptInterface
+        fun emitFromEventSource(name: String, payloadJson: String) {
+            val payload = runCatching { json.parseToJsonElement(payloadJson).jsonObject }
+                .getOrElse { buildJsonObject { } }
+            scope.launch { publishExtensionEvent(
+                ExtensionEvent(name = name, extensionId = extensionId, payload = payload),
+                excludeExtensionId = extensionId,
+            ) }
         }
 
         @JavascriptInterface
         fun log(level: String, message: String) {
             scope.launch {
-                mutableEvents.emit(
+                publishLocalEvent(
                     ExtensionEvent(
                         name = "extension_log",
                         extensionId = extensionId,
@@ -578,27 +728,22 @@ class WebViewJsExtensionHost(
         }
 
         private suspend fun checkApiPermissions(path: String, requestId: String): Boolean {
-            val needsStorage = path.startsWith("/api/characters") ||
-                path.startsWith("/api/chats") ||
-                path.startsWith("/api/worlds") ||
-                path.startsWith("/api/settings") ||
-                path.startsWith("/api/groups") ||
-                path.startsWith("/api/personas")
-            val needsProvider = path.startsWith("/api/providers")
-            val needsSecrets = path.startsWith("/api/secrets")
-            if (needsStorage && !permissionManager.hasPermission(extensionId, ExtensionPermission.Storage)) {
-                deliverApiResponseToJs(requestId, VirtualApiResponse(403, body = "{\"error\":\"Storage permission not granted\"}"))
+            val required = requiredExtensionPermissionForPath(path) ?: return true
+            if (required !in declaredPermissions[extensionId].orEmpty()) {
+                deliverApiResponseToJs(
+                    requestId,
+                    VirtualApiResponse(403, body = "{\"error\":\"${required.name} permission is not declared by this module\"}"),
+                )
+                reportExtensionLog(extensionId, "warning", "Denied $path: ${required.name} is not declared")
                 return false
             }
-            if (needsProvider && !permissionManager.hasPermission(extensionId, ExtensionPermission.ProviderRequest)) {
-                deliverApiResponseToJs(requestId, VirtualApiResponse(403, body = "{\"error\":\"ProviderRequest permission not granted\"}"))
-                return false
-            }
-            if (needsSecrets && !permissionManager.hasPermission(extensionId, ExtensionPermission.Secrets)) {
-                deliverApiResponseToJs(requestId, VirtualApiResponse(403, body = "{\"error\":\"Secrets permission not granted\"}"))
-                return false
-            }
-            return true
+            if (permissionManager.hasPermission(extensionId, required)) return true
+            deliverApiResponseToJs(
+                requestId,
+                VirtualApiResponse(403, body = "{\"error\":\"${required.name} permission not granted\"}"),
+            )
+            reportExtensionLog(extensionId, "warning", "Denied $path: ${required.name} permission not granted")
+            return false
         }
 
         @JavascriptInterface
@@ -623,6 +768,7 @@ class WebViewJsExtensionHost(
         @JavascriptInterface
         fun hasPermission(permission: String): Boolean {
             val perm = runCatching { ExtensionPermission.valueOf(permission) }.getOrNull() ?: return false
+            if (perm !in declaredPermissions[extensionId].orEmpty()) return false
             return runBlocking { permissionManager.hasPermission(extensionId, perm) }
         }
 
@@ -641,6 +787,15 @@ class WebViewJsExtensionHost(
                 scope.launch(Dispatchers.Main) { deliverPermissionResultJs(requestId, false) }
                 return
             }
+            if (perm !in declaredPermissions[extensionId].orEmpty()) {
+                reportExtensionLog(
+                    extensionId,
+                    "warning",
+                    "Denied undeclared permission request: ${perm.name}",
+                )
+                scope.launch(Dispatchers.Main) { deliverPermissionResultJs(requestId, false) }
+                return
+            }
             pendingPermissions[requestId] = extensionId
             pendingPermissionOwners[requestId] = extensionId
             scope.launch {
@@ -650,7 +805,7 @@ class WebViewJsExtensionHost(
                     pendingPermissionOwners.remove(requestId)
                     withContext(Dispatchers.Main) { deliverPermissionResultJs(requestId, true) }
                 } else {
-                    mutableEvents.emit(
+                    val event =
                         ExtensionEvent(
                             name = "permission_requested",
                             extensionId = extensionId,
@@ -658,8 +813,9 @@ class WebViewJsExtensionHost(
                                 put("permission", perm.name)
                                 put("requestId", requestId)
                             },
-                        ),
-                    )
+                        )
+                    pendingPermissionEvents[requestId] = event
+                    mutableEvents.emit(event)
                 }
             }
         }
@@ -672,16 +828,36 @@ class WebViewJsExtensionHost(
             pendingLoads.remove(extensionId)?.complete(Unit)
         }
 
+        @JavascriptInterface
+        fun extensionFailed(message: String) {
+            val detail = message.trim().ifBlank { "Unknown JavaScript error" }
+            if (pendingLoads.containsKey(extensionId)) {
+                pendingLoadFailures[extensionId] = detail
+                pendingLoads[extensionId]?.complete(Unit)
+            }
+            reportExtensionLog(extensionId, "error", detail)
+        }
+
         // ── SillyTavern / 酒馆助手 shim bridge methods ──────────────────
+
+        private fun hasStorageBridgeAccess(operation: String): Boolean {
+            val allowed = hasPermission(ExtensionPermission.Storage.name)
+            if (!allowed) {
+                reportExtensionLog(extensionId, "warning", "Denied $operation: Storage permission not declared or granted")
+            }
+            return allowed
+        }
 
         @JavascriptInterface
         fun stGetContext(): String {
+            if (!hasStorageBridgeAccess("stGetContext")) return "{}"
             val snapshot = _contextProvider?.snapshot() ?: buildJsonObject { }
             return json.encodeToString(JsonObject.serializer(), snapshot)
         }
 
         @JavascriptInterface
         fun stReplaceVariables(input: String): String {
+            if (!hasStorageBridgeAccess("stReplaceVariables")) return input
             val engine = macroEngine ?: return input
             return runCatching {
                 val snap = _contextProvider?.snapshot()
@@ -699,25 +875,59 @@ class WebViewJsExtensionHost(
 
         @JavascriptInterface
         fun stGetVariables(): String {
+            if (!hasStorageBridgeAccess("stGetVariables")) return "{}"
             val vars = variableStore?.globalObject() ?: buildJsonObject { }
             return json.encodeToString(JsonObject.serializer(), vars)
         }
 
         @JavascriptInterface
         fun stSetVariables(varsJson: String) {
+            if (!hasStorageBridgeAccess("stSetVariables")) return
             val obj = runCatching { json.parseToJsonElement(varsJson).jsonObject }
                 .getOrElse { buildJsonObject { } }
             variableStore?.replaceGlobal(obj)
         }
 
         @JavascriptInterface
+        fun stGetVariablesForScope(scopeName: String): String {
+            if (!hasStorageBridgeAccess("stGetVariablesForScope")) return "{}"
+            val vars = when (scopeName.trim().lowercase()) {
+                "chat", "local" -> variableStore?.localObject()
+                "global" -> variableStore?.globalObject()
+                else -> throw IllegalArgumentException("Unsupported variable scope: $scopeName")
+            } ?: buildJsonObject { }
+            return json.encodeToString(JsonObject.serializer(), vars)
+        }
+
+        @JavascriptInterface
+        fun stSetVariablesForScope(scopeName: String, varsJson: String) {
+            if (!hasStorageBridgeAccess("stSetVariablesForScope")) return
+            val obj = runCatching { json.parseToJsonElement(varsJson).jsonObject }
+                .getOrElse { throw IllegalArgumentException("Variables must be a JSON object") }
+            when (scopeName.trim().lowercase()) {
+                "chat", "local" -> variableStore?.replaceLocal(obj)
+                "global" -> variableStore?.replaceGlobal(obj)
+                else -> throw IllegalArgumentException("Unsupported variable scope: $scopeName")
+            }
+        }
+
+        @JavascriptInterface
+        fun stGetAllVariables(): String {
+            if (!hasStorageBridgeAccess("stGetAllVariables")) return "{}"
+            val vars = variableStore?.mergedObject() ?: buildJsonObject { }
+            return json.encodeToString(JsonObject.serializer(), vars)
+        }
+
+        @JavascriptInterface
         fun stGetLocalVariables(): String {
+            if (!hasStorageBridgeAccess("stGetLocalVariables")) return "{}"
             val vars = variableStore?.localObject() ?: buildJsonObject { }
             return json.encodeToString(JsonObject.serializer(), vars)
         }
 
         @JavascriptInterface
         fun stSetLocalVariables(varsJson: String) {
+            if (!hasStorageBridgeAccess("stSetLocalVariables")) return
             val obj = runCatching { json.parseToJsonElement(varsJson).jsonObject }
                 .getOrElse { buildJsonObject { } }
             variableStore?.replaceLocal(obj)
@@ -731,6 +941,29 @@ class WebViewJsExtensionHost(
             depth: Int,
             role: String,
         ) {
+            storeInjectedPrompt(id, content, position, depth, role, shouldScan = false)
+        }
+
+        @JavascriptInterface
+        fun stInjectPromptWithOptions(
+            id: String,
+            content: String,
+            position: Int,
+            depth: Int,
+            role: String,
+            shouldScan: Boolean,
+        ) {
+            storeInjectedPrompt(id, content, position, depth, role, shouldScan)
+        }
+
+        private fun storeInjectedPrompt(
+            id: String,
+            content: String,
+            position: Int,
+            depth: Int,
+            role: String,
+            shouldScan: Boolean,
+        ) {
             if (id.isBlank()) return
             val roleNorm = role.trim().ifBlank { "system" }.lowercase()
             val map = injectedPrompts.computeIfAbsent(extensionId) { ConcurrentHashMap() }
@@ -739,6 +972,7 @@ class WebViewJsExtensionHost(
                 position = position,
                 depth = if (depth >= 0) depth else 0,
                 role = roleNorm,
+                shouldScan = shouldScan,
             )
         }
 
@@ -757,6 +991,7 @@ class WebViewJsExtensionHost(
                         put("position", prompt.position)
                         put("depth", prompt.depth)
                         put("role", prompt.role)
+                        put("shouldScan", prompt.shouldScan)
                     })
                 }
             }
@@ -765,6 +1000,7 @@ class WebViewJsExtensionHost(
 
         @JavascriptInterface
         fun stSetChatMessage(index: String, field: String, value: String) {
+            if (!hasStorageBridgeAccess("stSetChatMessage")) return
             scope.launch {
                 val messageIndex = index.toIntOrNull()
                 if (messageIndex != null && _contextProvider?.setChatMessage(messageIndex, field, value) == true) {
@@ -867,6 +1103,21 @@ class WebViewJsExtensionHost(
         }
     }
 
+    private fun reportExtensionLog(extensionId: String, level: String, message: String) {
+        scope.launch {
+            publishLocalEvent(
+                ExtensionEvent(
+                    name = "extension_log",
+                    extensionId = extensionId,
+                    payload = buildJsonObject {
+                        put("level", level)
+                        put("message", message)
+                    },
+                ),
+            )
+        }
+    }
+
     // ── HTML template ──────────────────────────────────────────────────
 
     private fun buildExtensionHtml(
@@ -947,6 +1198,43 @@ class WebViewJsExtensionHost(
 
     companion object {
         const val TAVERN_HELPER_VARS_KEY = "_tavern_helper_global_variables"
+        private const val MAX_RUNTIME_EVENT_HISTORY = 200
+        private val RUNTIME_HISTORY_EVENTS =
+            setOf("extension_loaded", "extension_unloaded", "extension_load_failed", "extension_log")
+
+        internal const val TAVERN_HELPER_CONTRACT_OVERRIDES: String =
+            "var _thScopedVariables={script:{},character:{},preset:{},message:{},extension:{}};" +
+            "function _thVariableScope(opt){" +
+                "var type=(opt===undefined||opt===null)?'chat':(typeof opt==='string'?opt:opt.type);" +
+                "type=String(type||'').toLowerCase();" +
+                "if(type==='chat'||type==='local')return'local';if(type==='global')return'global';" +
+                "if(Object.prototype.hasOwnProperty.call(_thScopedVariables,type))return type;" +
+                "throw new Error('Unsupported TavernHelper variable scope: '+type);}" +
+            "TavernHelper.getVariables=function(opt){var s=_thVariableScope(opt);if(_thScopedVariables[s])return _thScopedVariables[s];return JSON.parse(tellevNative.stGetVariablesForScope(s)||'{}');};" +
+            "TavernHelper.getAllVariables=function(opt){if(opt!==undefined&&opt!==null)return TavernHelper.getVariables(opt);return JSON.parse(tellevNative.stGetAllVariables()||'{}');};" +
+            "TavernHelper.replaceVariables=function(vars,opt){var s=_thVariableScope(opt);if(_thScopedVariables[s]){_thScopedVariables[s]=vars||{};return;}tellevNative.stSetVariablesForScope(s,JSON.stringify(vars||{}));};" +
+            "TavernHelper.setVariables=function(vars,opt){return TavernHelper.replaceVariables(vars,opt);};" +
+            "TavernHelper.injectPrompts=function(promptsOrId,contentOrOptions,legacyOptions){" +
+                "var prompts,options,isLegacy=!Array.isArray(promptsOrId);" +
+                "if(isLegacy){options=legacyOptions||{};prompts=[{id:promptsOrId,content:contentOrOptions,position:options.position,depth:options.depth,role:options.role}];}" +
+                "else{prompts=promptsOrId;options=contentOrOptions||{};}" +
+                "var ids=[];prompts.forEach(function(p){if(!p||typeof p!=='object')throw new Error('injectPrompts expects prompt objects');" +
+                    "var id=(p.id===undefined||p.id===null||String(p.id)==='')?TavernHelper.builtin.uuidv4():String(p.id);" +
+                    "var position=isLegacy?(p.position===undefined?0:Number(p.position)):(p.position==='none'?-1:(p.position==='in_chat'||p.position===undefined?1:Number(p.position)));" +
+                    "var depth=p.depth===undefined?(isLegacy?4:0):Number(p.depth);var role=String(p.role||'system').toLowerCase();" +
+                    "if(typeof p.filter==='function'){tellevNative.log('warning','Dynamic injectPrompts filter is not supported; skipped '+id);return;}" +
+                    "var allowed=p.filter===undefined?true:Boolean(p.filter);if(!allowed)return;" +
+                    "var shouldScan=Boolean(p.should_scan!==undefined?p.should_scan:p.shouldScan);" +
+                    "tellevNative.stInjectPromptWithOptions(id,String(p.content||''),position,depth,role,shouldScan);ids.push(id);});" +
+                "var deleted=false;var uninject=function(){if(deleted)return;TavernHelper.uninjectPrompts(ids);deleted=true;};" +
+                "if(options.once){eventSource.once(event_types.GENERATION_ENDED,uninject);eventSource.once(event_types.GENERATION_STOPPED,uninject);}" +
+                "return{uninject:uninject};};" +
+            "TavernHelper.uninjectPrompts=function(ids){if(!Array.isArray(ids))ids=[ids];ids.forEach(function(id){if(id!==undefined&&id!==null)tellevNative.stUninjectPrompt(String(id));});};" +
+            "eventSource.emit=function(t){var args=[].slice.call(arguments,1);var n=_normEvent(t);tellevNative.emitFromEventSource(String(n),JSON.stringify({args:args}));return _fireLocal(n,args);};"
+
+        internal const val EXTENSION_LOAD_GUARDS: String =
+            "window.addEventListener('error',function(e){if(!e||!e.message)return;try{tellevNative.extensionFailed(String(e.message));}catch(_e){}},true);" +
+                "window.addEventListener('unhandledrejection',function(e){try{var r=e&&e.reason;tellevNative.extensionFailed(String((r&&r.message)||r||'Unhandled promise rejection'));}catch(_e){}},true);"
 
         // The HTML is stored as a plain string (not a raw """...""") so
         // that the JS /* ... */ comments inside cannot be mistaken for
@@ -989,6 +1277,7 @@ class WebViewJsExtensionHost(
             "var SillyTavern={getContext:_getContext};" +
             "var getContext=_getContext;" +
             "var TavernHelper={tavern_events:event_types,iframe_events:{MESSAGE_IFRAME_RENDER_STARTED:'message_iframe_render_started',MESSAGE_IFRAME_RENDER_ENDED:'message_iframe_render_ended',GENERATION_STARTED:'js_generation_started',STREAM_TOKEN_RECEIVED_FULLY:'js_stream_token_received_fully',STREAM_TOKEN_RECEIVED_INCREMENTALLY:'js_stream_token_received_incrementally',GENERATION_ENDED:'js_generation_ended'},getChatMessages:function(range,opts){opts=opts||{};var c=_getContext();var m=c.chat||[];function _mapMsg(msg,i){return{message_id:msg.index!==undefined?msg.index:i,name:msg.name,role:msg.is_user?'user':(msg.is_system?'system':'assistant'),is_hidden:msg.is_system||false,message:msg.mes,data:msg.variables||{},extra:msg.extra||{},swipe_id:msg.swipe_id||0,swipes:msg.swipes||[],swipes_data:[]};}if(range===undefined||range===null||range==='')return m.map(_mapMsg);var r;if(typeof range==='number'){r=range>=0&&range<m.length?{start:range,end:range}:null;}else{var s=String(range);var mt=s.match(/^(-?\\d+)(?:-(-?\\d+))?$/);if(!mt)r=null;else{var a=parseInt(mt[1],10);var b=mt[2]!==undefined?parseInt(mt[2],10):a;if(a<0)a=m.length+a;if(b<0)b=m.length+b;if(isNaN(a)||isNaN(b))r=null;else{a=Math.max(0,Math.min(a,m.length-1));b=Math.max(0,Math.min(b,m.length-1));r={start:Math.min(a,b),end:Math.max(a,b)};}}}if(!r)return[];return m.slice(r.start,r.end+1).map(function(msg,i){return _mapMsg(msg,r.start+i);});},setChatMessage:function(fv,mid,opts){fv=typeof fv==='string'?{message:fv}:fv;if(!fv)return;if(fv.message!==undefined)tellevNative.stSetChatMessage(String(mid),'message',String(fv.message));if(fv.data!==undefined)tellevNative.stSetChatMessage(String(mid),'data',JSON.stringify(fv.data));},setChatMessages:function(cms,opts){if(!Array.isArray(cms))return;cms.forEach(function(cm){var mid=cm.message_id;if(mid===undefined)return;if(cm.message!==undefined)tellevNative.stSetChatMessage(String(mid),'message',String(cm.message));if(cm.name!==undefined)tellevNative.stSetChatMessage(String(mid),'name',String(cm.name));if(cm.role!==undefined)tellevNative.stSetChatMessage(String(mid),'role',String(cm.role));if(cm.is_hidden!==undefined)tellevNative.stSetChatMessage(String(mid),'is_hidden',String(cm.is_hidden));if(cm.extra!==undefined)tellevNative.stSetChatMessage(String(mid),'extra',JSON.stringify(cm.extra));if(cm.swipe_id!==undefined)tellevNative.stSetChatMessage(String(mid),'swipe_id',String(cm.swipe_id));if(cm.swipes!==undefined)tellevNative.stSetChatMessage(String(mid),'swipes',JSON.stringify(cm.swipes));});},getVariables:function(opt){var r;try{r=tellevNative.stGetVariables();}catch(e){r='{}';}try{return JSON.parse(r);}catch(e){return{};}},getAllVariables:function(opt){return TavernHelper.getVariables(opt);},replaceVariables:function(vars,opt){tellevNative.stSetVariables(JSON.stringify(vars||{}));},updateVariablesWith:function(updater,opt){var v=TavernHelper.getVariables(opt);var r=updater(v);TavernHelper.replaceVariables(r||v,opt);},insertOrAssignVariables:function(nv,opt){var v=TavernHelper.getVariables(opt);var merged={};for(var k in v)merged[k]=v[k];for(var k in nv)merged[k]=nv[k];TavernHelper.replaceVariables(merged,opt);},insertVariables:function(nv,opt){var v=TavernHelper.getVariables(opt);var merged={};for(var k in nv)merged[k]=nv[k];for(var k in v)if(!(k in merged))merged[k]=v[k];TavernHelper.replaceVariables(merged,opt);},deleteVariable:function(path,opt){var v=TavernHelper.getVariables(opt);var parts=String(path).split('.');var obj=v;for(var i=0;i<parts.length-1;i++){if(!obj[parts[i]])return;obj=obj[parts[i]];}delete obj[parts[parts.length-1]];TavernHelper.replaceVariables(v,opt);},substitudeMacros:function(text){if(text==null)return text;try{text=tellevNative.stReplaceVariables(String(text));}catch(e){}if(window._thMacroLikes&&text){for(var name in window._thMacroLikes){var ml=window._thMacroLikes[name];try{text=text.replace(new RegExp(ml.pattern,'g'),ml.replacement);}catch(e){}}}return text;},eventOn:function(t,c){return eventSource.on(t,c);},eventMakeLast:function(t,c){return eventSource.makeLast(t,c);},eventMakeFirst:function(t,c){return eventSource.makeFirst(t,c);},eventOnce:function(t,c){return eventSource.once(t,c);},eventEmit:function(t){return eventSource.emit.apply(eventSource,arguments);},eventEmitAndWait:function(t){return eventSource.emitAndWait.apply(eventSource,arguments);},eventRemoveListener:function(t,c){return eventSource.removeListener(t,c);},eventClearEvent:function(t){var n=_normEvent(t);_stHandlers[n]=[];},eventClearAll:function(){_stHandlers={};},triggerSlash:function(text){return executeSlashCommandsWithOptions(text);},addSlashCommand:function(n,c,o){o=o||{};_commandHandlers[n]=c;tellevNative.registerCommand(String(n),String(o.help||o.description||''),JSON.stringify(o.args||{}));},registerEvent:function(t,c){return eventSource.on(t,c);},setVariables:function(v){tellevNative.stSetVariables(JSON.stringify(v||{}));},getLastMessageId:function(){var c=_getContext();return c.chat?c.chat.length-1:-1;},getMessageId:function(){return TavernHelper.getLastMessageId();},getTavernHelperVersion:function(){return'4.8.11';},getFrontendVersion:function(){return TavernHelper.getTavernHelperVersion();},getTavernVersion:function(){return'1.18.0';},errorCatched:function(fn){return function(){try{return fn.apply(this,arguments);}catch(e){tellevNative.log('error',String(e));}};},getExtensionPrompt:function(){try{return JSON.parse(tellevNative.stGetInjectedPrompts()||'{}');}catch(e){return{};}},firstUserMessageIndex:function(){var c=_getContext();for(var i=0;i<c.chat.length;i++){if(c.chat[i]&&c.chat[i].is_user)return i;}return-1;},firstBotMessageIndex:function(){var c=_getContext();for(var i=0;i<c.chat.length;i++){if(c.chat[i]&&!c.chat[i].is_user)return i;}return-1;},generate:function(opts){opts=opts||{};return window.Tellev.apiCall('POST','/api/backends/chat-completions/generate',opts).then(function(r){return r.body&&r.body.text?r.body.text:'';});},generateRaw:function(opts){opts=opts||{};return window.Tellev.apiCall('POST','/api/backends/chat-completions/generate',opts).then(function(r){return r.body||{};});},stopAllGeneration:function(){return Promise.resolve();},stopGenerationById:function(){return Promise.resolve();},getModelList:function(opts){opts=opts||{};var url=opts.api_url||opts.apiUrl||'';return window.Tellev.apiCall('POST','/api/backends/chat-completions/status',{api_url:url}).then(function(r){return r.body&&r.body.data?r.body.data:[];});},getCharacter:function(id){return window.Tellev.apiCall('GET','/api/characters/'+encodeURIComponent(id)).then(function(r){return r.body||{};});},getCurrentCharacterName:function(){var c=_getContext();return c.name2||'';},getCurrentCharacterId:function(){var c=_getContext();return c.characterId||'';},getCharacterNames:function(){return window.Tellev.apiCall('GET','/api/characters').then(function(r){var arr=r.body&&r.body.characters?r.body.characters:[];return arr.map(function(c){return c.name;});});},getCharacterIds:function(){return window.Tellev.apiCall('GET','/api/characters').then(function(r){var arr=r.body&&r.body.characters?r.body.characters:[];return arr.map(function(c){return c.id;});});},replaceCharacter:function(id,data){return window.Tellev.apiCall('POST','/api/characters',data).then(function(r){return r.body||{};});},updateCharacterWith:function(id,fn){return TavernHelper.getCharacter(id).then(function(c){var updated=fn(c);return TavernHelper.replaceCharacter(id,updated);});},createCharacter:function(data){return window.Tellev.apiCall('POST','/api/characters',data).then(function(r){return r.body||{};});},deleteCharacter:function(id){return window.Tellev.apiCall('DELETE','/api/characters/'+encodeURIComponent(id)).then(function(r){return r.body||{};});},getLorebooks:function(){return window.Tellev.apiCall('GET','/api/worlds').then(function(r){return r.body&&r.body.worlds?r.body.worlds:[];});},getWorldbook:function(id){return window.Tellev.apiCall('GET','/api/worlds/'+encodeURIComponent(id)).then(function(r){return r.body||{};});},getWorldbookNames:function(){return TavernHelper.getLorebooks().then(function(books){return books.map(function(b){return b.id||b.name;});});},createWorldbook:function(data){return window.Tellev.apiCall('POST','/api/worlds',data).then(function(r){return r.body||{};});},replaceWorldbook:function(id,data){return window.Tellev.apiCall('POST','/api/worlds',data).then(function(r){return r.body||{};});},getLorebookEntries:function(bookId){return TavernHelper.getWorldbook(bookId).then(function(b){return b&&b.entries?b.entries:[];});},setLorebookEntries:function(bookId,entries){return TavernHelper.getWorldbook(bookId).then(function(b){b.entries=entries;return TavernHelper.replaceWorldbook(bookId,b);});},createLorebookEntry:function(bookId,entry){return TavernHelper.getLorebookEntries(bookId).then(function(entries){entries.push(entry);return TavernHelper.setLorebookEntries(bookId,entries);});},deleteLorebookEntries:function(bookId,ids){return TavernHelper.getLorebookEntries(bookId).then(function(entries){return entries.filter(function(e){return ids.indexOf(e.uid)<0;});}).then(function(kept){return TavernHelper.setLorebookEntries(bookId,kept);});},getLorebookSettings:function(){return Promise.resolve({});},setLorebookSettings:function(){return Promise.resolve();},getCharLorebooks:function(){return Promise.resolve([]);},setCurrentCharLorebooks:function(){return Promise.resolve();},getChatLorebook:function(){return Promise.resolve(null);},setChatLorebook:function(){return Promise.resolve();},getOrCreateChatLorebook:function(){return Promise.resolve(null);},getPreset:function(name){return window.Tellev.apiCall('GET','/api/settings').then(function(r){var arr=r.body&&r.body.presets?r.body.presets:[];return arr.find(function(p){return p.name===name;})||null;});},getPresetNames:function(){return window.Tellev.apiCall('GET','/api/settings').then(function(r){var arr=r.body&&r.body.presets?r.body.presets:[];return arr.map(function(p){return p.name;});});},loadPreset:function(){return Promise.resolve();},setPreset:function(){return Promise.resolve();},createPreset:function(){return Promise.resolve();},deletePreset:function(){return Promise.resolve();},renamePreset:function(){return Promise.resolve();},isPresetNormalPrompt:function(){return false;},isPresetSystemPrompt:function(){return false;},isPresetPlaceholderPrompt:function(){return false;},getPersona:function(id){return window.Tellev.apiCall('GET','/api/personas').then(function(r){var arr=r.body&&r.body.personas?r.body.personas:[];return arr.find(function(p){return p.id===id;})||null;});},getPersonaNames:function(){return window.Tellev.apiCall('GET','/api/personas').then(function(r){var arr=r.body&&r.body.personas?r.body.personas:[];return arr.map(function(p){return p.name;});});},getPersonaIds:function(){return window.Tellev.apiCall('GET','/api/personas').then(function(r){var arr=r.body&&r.body.personas?r.body.personas:[];return arr.map(function(p){return p.id;});});},getCurrentPersonaName:function(){var c=_getContext();return c.name1||'User';},getCurrentPersonaId:function(){return Promise.resolve('');},getPersonaAvatarPath:function(){return Promise.resolve('');},createPersona:function(data){return window.Tellev.apiCall('POST','/api/personas',data).then(function(r){return r.body||{};});},replacePersona:function(data){return window.Tellev.apiCall('POST','/api/personas',data).then(function(r){return r.body||{};});},updatePersonaWith:function(id,fn){return TavernHelper.getPersona(id).then(function(p){var u=fn(p);return TavernHelper.replacePersona(u);});},deletePersona:function(id){return window.Tellev.apiCall('DELETE','/api/personas/'+encodeURIComponent(id)).then(function(r){return r.body||{};});},injectPrompts:function(id,content,opts){opts=opts||{};try{tellevNative.stInjectPrompt(String(id||''),String(content||''),Number(opts.position||0),Number(opts.depth||4),String(opts.role||'system'));}catch(e){tellevNative.log('error','injectPrompts failed: '+e);}return Promise.resolve();},uninjectPrompts:function(id){try{tellevNative.stUninjectPrompt(String(id||''));}catch(e){tellevNative.log('error','uninjectPrompts failed: '+e);}return Promise.resolve();},getTavernRegexes:function(charId){return window.Tellev.apiCall('GET','/api/characters/'+encodeURIComponent(charId)+'/regex').then(function(r){return r.body&&r.body.regex_scripts?r.body.regex_scripts:[];});},replaceTavernRegexes:function(charId,regexes){return TavernHelper.getCharacter(charId).then(function(c){var data=c.data||{};var ext=data.extensions||{};ext.regex_scripts=regexes;data.extensions=ext;c.data=data;return TavernHelper.replaceCharacter(charId,c);});},formatAsTavernRegexedString:function(){return Promise.resolve('');},isCharacterTavernRegexesEnabled:function(){return Promise.resolve(false);},getScriptTrees:function(){return Promise.resolve([]);},replaceScriptTrees:function(){return Promise.resolve();},updateScriptTreesWith:function(){return Promise.resolve();},getAllEnabledScriptButtons:function(){return Promise.resolve([]);},getScriptButtons:function(){return Promise.resolve([]);},replaceScriptButtons:function(){return Promise.resolve();},importRawCharacter:function(data){return window.Tellev.apiCall('POST','/api/characters/import',data).then(function(r){return r.body||{};});},importRawPreset:function(){return Promise.resolve();},importRawChat:function(data){return window.Tellev.apiCall('POST','/api/chats/import',data).then(function(r){return r.body||{};});},importRawWorldbook:function(data){return window.Tellev.apiCall('POST','/api/worlds',data).then(function(r){return r.body||{};});},importRawTavernRegex:function(){return Promise.resolve();},playAudio:function(){return Promise.resolve();},pauseAudio:function(){return Promise.resolve();},getAudioList:function(){return Promise.resolve([]);},replaceAudioList:function(){return Promise.resolve();},appendAudioList:function(){return Promise.resolve();},getAudioSettings:function(){return Promise.resolve({});},setAudioSettings:function(){return Promise.resolve();},getCurrentAudio:function(){return Promise.resolve(null);},registerMacroLike:function(name,pattern,replacement,opts){if(!window._thMacroLikes)window._thMacroLikes={};window._thMacroLikes[name]={pattern:pattern,replacement:replacement,opts:opts||{}};return Promise.resolve();},unregisterMacroLike:function(name){if(window._thMacroLikes)delete window._thMacroLikes[name];return Promise.resolve();},getChatHistoryBrief:function(charId){return window.Tellev.apiCall('GET','/api/chats?characterId='+encodeURIComponent(charId)).then(function(r){return r.body&&r.body.chats?r.body.chats:[];});},getChatHistoryDetail:function(charId,chatId){return window.Tellev.apiCall('GET','/api/chats/'+encodeURIComponent(chatId)).then(function(r){return r.body||{};});},getCharData:function(charId,field){return TavernHelper.getCharacter(charId).then(function(c){return c[field];});},getCharAvatarPath:function(charId){return TavernHelper.getCharacter(charId).then(function(c){return c.avatar||'';});},getExtensionType:function(){return Promise.resolve('');},getExtensionStatus:function(name){return window.Tellev.apiCall('POST','/api/extensions/version',{name:name}).then(function(r){return r.body||{installed:false};});},isInstalledExtension:function(name){return TavernHelper.getExtensionStatus(name).then(function(info){return info.installed===true;});},installExtension:function(){return Promise.resolve();},uninstallExtension:function(){return Promise.resolve();},reinstallExtension:function(){return Promise.resolve();},updateExtension:function(){return Promise.resolve();},isAdmin:function(){return false;},getTavernHelperExtensionId:function(){return'tavern-helper-compat';},_th_impl:{_init:function(){},_log:function(){},_clearLog:function(){},writeExtensionField:function(){return Promise.resolve();}},_bind:{},getScriptId:function(){return '';},getCurrentMessageId:function(){var c=_getContext();return (c.chat&&c.chat.length)?c.chat.length-1:0;},getScriptName:function(){return '';},getScriptInfo:function(){return {};},replaceScriptInfo:function(){return Promise.resolve();},getScriptButtons:function(){return [];},replaceScriptButtons:function(){return Promise.resolve();},updateScriptButtonsWith:function(){return Promise.resolve([]);},getAllEnabledScriptButtons:function(){return {};},getButtonEvent:function(n){return 'button_'+String(n);},eventClearListener:function(){},initializeGlobal:function(n,v){window[n]=v;},waitGlobalInitialized:function(n){return new Promise(function(r){if(window[n]!==undefined)r(window[n]);});},registerVariableSchema:function(){},updateTavernHelper:function(){return Promise.resolve(false);},updateFrontendVersion:function(){return Promise.resolve(false);},builtin:{addOneMessage:function(){},copyText:function(){},duringGenerating:function(){},getImageTokenCost:function(){return 0;},getVideoTokenCost:function(){return 0;},parseRegexFromString:function(s){try{return new RegExp(s);}catch(e){return new RegExp('');}},promptManager:null,reloadAndRenderChatWithoutEvents:function(){},reloadChatWithoutEvents:function(){},reloadEditor:function(){},reloadEditorDebounced:function(){},renderMarkdown:function(s){try{if(!window._sd)window._sd=new showdown.Converter({simplifiedAutoLink:true,tables:true});return window._sd.makeHtml(s||'');}catch(e){return String(s||'');}},renderPromptManager:function(){},renderPromptManagerDebounced:function(){},saveSettings:function(){return Promise.resolve();},uuidv4:function(){return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0;var v=c==='x'?r:(r&0x3|0x8);return v.toString(16);});},getLoadedPresetName:function(){return '';},createOrReplacePreset:function(){return Promise.resolve(false);},replacePreset:function(){return Promise.resolve();},updatePresetWith:function(){return Promise.resolve({});},deleteWorldbook:function(){return Promise.resolve(false);},updateWorldbookWith:function(){return Promise.resolve([]);},createWorldbookEntries:function(){return Promise.resolve({worldbook:[],new_entries:[]});},deleteWorldbookEntries:function(){return Promise.resolve({worldbook:[],deleted_entries:[]});},getGlobalWorldbookNames:function(){return [];},rebindGlobalWorldbooks:function(){return Promise.resolve();},getCharWorldbookNames:function(){return {};},rebindCharWorldbooks:function(){return Promise.resolve();},getChatWorldbookName:function(){return null;},rebindChatWorldbook:function(){return Promise.resolve();},getOrCreateChatWorldbook:function(){return Promise.resolve('');},createChatMessages:function(){return Promise.resolve();},deleteChatMessages:function(){return Promise.resolve();},rotateChatMessages:function(){return Promise.resolve();},formatAsDisplayedMessage:function(t){return String(t||'');},retrieveDisplayedMessage:function(){return null;},refreshOneMessage:function(){return Promise.resolve();}};" +
+            TAVERN_HELPER_CONTRACT_OVERRIDES +
             "function executeSlashCommandsWithOptions(cs){var raw=typeof cs==='string'?cs:(Array.isArray(cs)?cs.join('\\n'):String(cs||''));_apiReqCounter+=1;var rid='slash_'+_apiReqCounter+'_'+Date.now();return new Promise(function(resolve){_slashCallbacks[rid]=resolve;tellevNative.executeSlashCommands(rid,raw);});}" +
             "function executeSlashCommands(cs){return executeSlashCommandsWithOptions(cs);}" +
             "var _ejsDefaultFeatures={enabled:true,generate_enabled:true,generate_loader_enabled:true,inject_loader_enabled:false,render_enabled:true,render_loader_enabled:true,code_blocks_enabled:false,raw_message_evaluation_enabled:true,filter_message_enabled:true,depth_limit:-1,autosave_enabled:false,preload_worldinfo_enabled:true,with_context_disabled:false,debug_enabled:false,invert_enabled:true,compile_workers:false,sandbox:false,cache_enabled:0,cache_size:64,cache_hasher:'h32ToString',code_editor:false};" +
@@ -998,8 +1287,8 @@ class WebViewJsExtensionHost(
             "function _ejsPathSet(root,path,value){if(!root)return root;var cur=root;var parts=String(path||'').split('.').filter(Boolean);for(var i=0;i<parts.length-1;i++){var p=parts[i];if(typeof cur[p]!=='object'||cur[p]===null)cur[p]={};cur=cur[p];}if(parts.length)cur[parts[parts.length-1]]=value;return root;}" +
             "function _ejsLocalVars(){try{return JSON.parse(tellevNative.stGetLocalVariables())||{};}catch(e){return{};}}" +
             "function _ejsSaveLocalVars(v){try{tellevNative.stSetLocalVariables(JSON.stringify(v||{}));}catch(e){}}" +
-            "function _ejsGlobalVars(){try{return TavernHelper.getVariables()||{};}catch(e){return{};}}" +
-            "function _ejsSaveGlobalVars(v){try{TavernHelper.replaceVariables(v||{});}catch(e){}}" +
+            "function _ejsGlobalVars(){try{return TavernHelper.getVariables({type:'global'})||{};}catch(e){return{};}}" +
+            "function _ejsSaveGlobalVars(v){try{TavernHelper.replaceVariables(v||{},{type:'global'});}catch(e){}}" +
             "function _ejsVars(){var g=_ejsGlobalVars();var l=_ejsLocalVars();var m={};for(var k in g)m[k]=g[k];for(var k in l)m[k]=l[k];return m;}" +
             "function _ejsLodash(){return{get:_ejsPathGet,set:function(o,p,v){return _ejsPathSet(o,p,v);},has:function(o,p){return _ejsPathGet(o,p,undefined)!==undefined;},unset:function(o,p){var parts=String(p||'').split('.').filter(Boolean);var cur=o;for(var i=0;i<parts.length-1;i++){if(cur==null)return o;cur=cur[parts[i]];}if(cur!=null)delete cur[parts[parts.length-1]];return o;},merge:function(target){target=target||{};for(var i=1;i<arguments.length;i++){var src=arguments[i]||{};for(var k in src){if(src[k]&&typeof src[k]==='object'&&!Array.isArray(src[k]))target[k]=this.merge(target[k]||{},src[k]);else target[k]=src[k];}}return target;},mergeWith:function(target){var args=[].slice.call(arguments);var customizer=args[args.length-1];target=target||{};for(var i=1;i<args.length-1;i++){var src=args[i]||{};for(var k in src){var cv=customizer?customizer(target[k],src[k],k,target,src):undefined;if(cv!==undefined)target[k]=cv;else if(src[k]&&typeof src[k]==='object'&&!Array.isArray(src[k]))target[k]=this.merge(target[k]||{},src[k]);else target[k]=src[k];}}return target;},cloneDeep:function(v){if(Array.isArray(v))return v.map(this.cloneDeep);if(v&&typeof v==='object'){var o={};for(var k in v)o[k]=this.cloneDeep(v[k]);return o;}return v;},find:function(arr,fn){if(!Array.isArray(arr))return undefined;for(var i=0;i<arr.length;i++){if(fn(arr[i],i,arr))return arr[i];}return undefined;},findLastIndex:function(arr,fn){if(!Array.isArray(arr))return -1;for(var i=arr.length-1;i>=0;i--){if(fn(arr[i],i,arr))return i;}return -1;},groupBy:function(arr,fn){var r={};if(!Array.isArray(arr))return r;arr.forEach(function(v,i){var k=fn(v,i,arr);(r[k]=r[k]||[]).push(v);});return r;},castArray:function(v){return Array.isArray(v)?v:[v];},compact:function(arr){return Array.isArray(arr)?arr.filter(Boolean):[];},clamp:function(n,lo,hi){return Math.max(lo,Math.min(hi,n));},escapeRegExp:function(s){return String(s||'').replace(/[.*+?^\${}()|[\\]\\\\]/g,'\\\\\$&');},defaults:function(o){for(var i=1;i<arguments.length;i++){var s=arguments[i]||{};for(var k in s){if(o[k]===undefined)o[k]=s[k];}}return o;},isEqual:function(a,b){return JSON.stringify(a)===JSON.stringify(b);},isPlainObject:function(v){return v!==null&&typeof v==='object'&&!Array.isArray(v);},isArray:function(v){return Array.isArray(v);},isObject:function(v){return v!==null&&typeof v==='object';},isString:function(v){return typeof v==='string';},isFunction:function(v){return typeof v==='function';},random:function(n){return Math.floor(Math.random()*(n||1));},sum:function(arr){return Array.isArray(arr)?arr.reduce(function(a,b){return a+(+b||0);},0):0;},entries:function(o){var r=[];if(o&&typeof o==='object'){for(var k in o)r.push([k,o[k]]);}return r;}};}" +
             "function _ejsHelpers(ctx){var vars=_ejsVars();var helpers={SillyTavern:SillyTavern,TavernHelper:TavernHelper,getContext:_getContext,variables:vars,_:_ejsLodash(),getvar:function(k,d){var v=_ejsPathGet(_ejsLocalVars(),k,d);return v===undefined?'':v;},getchatvar:function(k,d){var v=_ejsPathGet(_ejsLocalVars(),k,d);return v===undefined?'':v;},getglobalvar:function(k,d){var v=_ejsPathGet(_ejsGlobalVars(),k,d);return v===undefined?'':v;},setvar:function(k,v){var lv=_ejsLocalVars();_ejsPathSet(lv,k,v);_ejsSaveLocalVars(lv);return'';},setchatvar:function(k,v){var lv=_ejsLocalVars();_ejsPathSet(lv,k,v);_ejsSaveLocalVars(lv);return'';},setglobalvar:function(k,v){var gv=_ejsGlobalVars();_ejsPathSet(gv,k,v);_ejsSaveGlobalVars(gv);return'';},incvar:function(k){var lv=_ejsLocalVars();var v=Number(_ejsPathGet(lv,k,0)||0)+1;_ejsPathSet(lv,k,v);_ejsSaveLocalVars(lv);return v;},decvar:function(k){var lv=_ejsLocalVars();var v=Number(_ejsPathGet(lv,k,0)||0)-1;_ejsPathSet(lv,k,v);_ejsSaveLocalVars(lv);return v;},print:function(){return Array.prototype.join.call(arguments,'');}};return helpers;}" +
@@ -1009,6 +1298,7 @@ class WebViewJsExtensionHost(
             "function _isApiPath(u){var p=u.split('?')[0];if(p.indexOf('/api/')===0)return true;if(p.indexOf('extensions.tellev.local')>=0&&p.indexOf('/api/')>=0)return true;return false;}" +
             "window.fetch=function(input,init){try{var u=typeof input==='string'?input:((input&&input.url)||'');if(_isApiPath(u)){var p=u.split('extensions.tellev.local')[1]||u;var m=(init&&init.method)||'GET';var b=init&&init.body;var bo=null;if(b!==undefined&&b!==null){if(typeof b==='string'){try{bo=JSON.parse(b);}catch(e){bo=b;}}else{bo=b;}}return window.Tellev.apiCall(m,p,bo).then(function(r){var bt=(r.body!==undefined&&r.body!==null)?(typeof r.body==='string'?r.body:JSON.stringify(r.body)):'';return new Response(bt,{status:r.status,headers:{'Content-Type':'application/json'}});});}}catch(e){return Promise.reject(e);}return Promise.reject(new Error('Network access is not permitted for extensions'));};" +
             "window.SillyTavern=SillyTavern;window.getContext=getContext;window.eventSource=eventSource;window.event_types=event_types;window.eventTypes=event_types;window.TavernHelper=TavernHelper;window.EjsTemplate=EjsTemplate;window.tavern_events=event_types;window.executeSlashCommandsWithOptions=executeSlashCommandsWithOptions;window.executeSlashCommands=executeSlashCommands;window.eventOn=TavernHelper.eventOn;window.eventMakeLast=TavernHelper.eventMakeLast;window.eventMakeFirst=TavernHelper.eventMakeFirst;window.eventOnce=TavernHelper.eventOnce;window.eventEmit=TavernHelper.eventEmit;window.eventEmitAndWait=TavernHelper.eventEmitAndWait;window.eventRemoveListener=TavernHelper.eventRemoveListener;window.getVariables=TavernHelper.getVariables;window.replaceVariables=TavernHelper.replaceVariables;window.updateVariablesWith=TavernHelper.updateVariablesWith;window.insertOrAssignVariables=TavernHelper.insertOrAssignVariables;window.insertVariables=TavernHelper.insertVariables;window.deleteVariable=TavernHelper.deleteVariable;window.substitudeMacros=TavernHelper.substitudeMacros;window.triggerSlash=TavernHelper.triggerSlash;window.getLastMessageId=TavernHelper.getLastMessageId;window.getChatMessages=TavernHelper.getChatMessages;window.setChatMessages=TavernHelper.setChatMessages;window.generate=TavernHelper.generate;window.generateRaw=TavernHelper.generateRaw;window.stopAllGeneration=TavernHelper.stopAllGeneration;window.getCharacter=TavernHelper.getCharacter;window.replaceCharacter=TavernHelper.replaceCharacter;window.updateCharacterWith=TavernHelper.updateCharacterWith;window.getLorebooks=TavernHelper.getLorebooks;window.getWorldbook=TavernHelper.getWorldbook;window.getWorldbookNames=TavernHelper.getWorldbookNames;window.getLorebookEntries=TavernHelper.getLorebookEntries;window.setLorebookEntries=TavernHelper.setLorebookEntries;window.getPreset=TavernHelper.getPreset;window.getPresetNames=TavernHelper.getPresetNames;window.getPersona=TavernHelper.getPersona;window.injectPrompts=TavernHelper.injectPrompts;window.uninjectPrompts=TavernHelper.uninjectPrompts;window.getTavernRegexes=TavernHelper.getTavernRegexes;window.substitudeMacros=TavernHelper.substitudeMacros;window.getModelList=TavernHelper.getModelList;window.getAllVariables=TavernHelper.getAllVariables;window.getChatHistoryBrief=TavernHelper.getChatHistoryBrief;window.getChatHistoryDetail=TavernHelper.getChatHistoryDetail;window.getRawCharacter=TavernHelper.getCharacter;window.getCharData=TavernHelper.getCharData;" +
+            EXTENSION_LOAD_GUARDS +
             "})();" +
             "\n</script>\n<script>\n__SCRIPT_SOURCE__\n</script><script>try{tellevNative.extensionReady();}catch(e){}</script></body></html>"
     }

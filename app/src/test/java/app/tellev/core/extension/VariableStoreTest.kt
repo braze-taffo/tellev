@@ -72,6 +72,28 @@ class VariableStoreTest {
     }
 
     @Test
+    fun `scoped backend isolates prompt mutations from active chat`() {
+        val active = mutableMapOf("name" to "active")
+        val scoped = mutableMapOf("name" to "origin")
+        val store = storeWith(active)
+        val scopedBackend = object : LocalVariableBackend {
+            override fun snapshot(): Map<String, String> = scoped.toMap()
+            override fun update(transform: (MutableMap<String, String>) -> Unit): Map<String, String> {
+                transform(scoped)
+                return scoped.toMap()
+            }
+        }
+
+        store.withLocalBackend(scopedBackend) {
+            assertEquals("origin", store.getLocal("name"))
+            store.setLocal("name", "changed")
+        }
+
+        assertEquals("changed", scoped["name"])
+        assertEquals("active", store.getLocal("name"))
+    }
+
+    @Test
     fun `deleteLocal only removes local`() {
         val s = newStore()
         s.setLocal("k", "L")
