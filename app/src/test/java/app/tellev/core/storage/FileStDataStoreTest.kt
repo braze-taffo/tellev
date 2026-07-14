@@ -6,8 +6,10 @@ import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.GroupChat
 import app.tellev.core.model.MessageRole
+import app.tellev.core.model.PresetCategory
 import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
+import app.tellev.core.regex.CharacterRegexApplier
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
@@ -506,11 +508,69 @@ class FileStDataStoreTest {
 
         assertNotNull(defaultPreset)
         val preset = requireNotNull(defaultPreset)
-        assertEquals("默认聊天", preset.name)
+        assertEquals("default", preset.name)
         assertEquals(0.7, preset.temperature ?: -1.0, 0.0001)
         assertEquals(1.0, preset.topP ?: -1.0, 0.0001)
         assertEquals(null as Int?, preset.maxTokens)
     }
+
+    @Test
+    fun `bootstrap creates an independent default for every preset category`() = runBlocking {
+        val defaultCategories = store.listPresets()
+            .filter { it.id == "default" }
+            .map { it.category }
+            .toSet()
+
+        assertEquals(PresetCategory.entries.toSet(), defaultCategories)
+    }
+
+    @Test
+    fun `openai prompt_order and in_use working copy round trip without losing unknown fields`() = runBlocking {
+        val raw = """
+            {
+              "temperature": 0.9,
+              "unknown_vendor": {"keep": true},
+              "prompts": [
+                {"identifier":"main","name":"Main","role":"system","content":"main text"},
+                {"identifier":"unused","name":"Unused","role":"system","content":"unused text"},
+                {"identifier":"chatHistory","name":"History","marker":true}
+              ],
+              "prompt_order": [
+                {"character_id":100001,"order":[
+                  {"identifier":"main","enabled":false},
+                  {"identifier":"chatHistory","enabled":true}
+                ]}
+              ]
+            }
+        """.trimIndent()
+        val imported = store.importPreset(raw.toByteArray(), "openai", "ordered.json")
+
+        assertEquals(listOf("main", "chatHistory"), imported.prompts.map { it.identifier })
+        assertEquals(listOf(false, true), imported.prompts.map { it.enabled })
+        assertEquals(listOf("unused"), imported.promptsUnused.map { it.identifier })
+
+        store.selectPreset(PresetCategory.OpenAi, imported.id)
+        store.saveWorkingPreset(
+            PresetCategory.OpenAi,
+            imported.copy(temperature = 0.2),
+        )
+
+        val named = requireNotNull(store.readPreset(PresetCategory.OpenAi, imported.id))
+        val working = requireNotNull(store.readPreset(PresetCategory.OpenAi, "in_use"))
+        assertEquals(0.9, named.temperature ?: -1.0, 0.0001)
+        assertEquals(0.2, working.temperature ?: -1.0, 0.0001)
+        assertEquals("true", working.raw["unknown_vendor"]!!.jsonObject["keep"]!!.jsonPrimitive.content)
+
+        store.savePreset(imported.copy(temperature = 0.6))
+        val savedRaw = requireNotNull(store.readPreset(PresetCategory.OpenAi, imported.id)).raw
+        val order = savedRaw["prompt_order"]!!.jsonArray
+            .first().jsonObject["order"]!!.jsonArray
+        assertEquals(listOf("main", "chatHistory"), order.map {
+            it.jsonObject["identifier"]!!.jsonPrimitive.content
+        })
+        assertEquals("true", savedRaw["unknown_vendor"]!!.jsonObject["keep"]!!.jsonPrimitive.content)
+    }
+
 
     @Test
     fun `savePreset routes to correct directory based on providerType`() = runBlocking {
@@ -561,8 +621,8 @@ class FileStDataStoreTest {
         """.trimIndent()
         val imported = store.importPreset(raw.toByteArray(), "openai", "my-st-preset.json")
 
-        assertTrue(imported.id.startsWith("preset_"))
-        assertEquals("My ST Preset", imported.name)
+        assertEquals("my-st-preset", imported.id)
+        assertEquals("my-st-preset", imported.name)
         assertEquals(0.8, imported.temperature ?: -1.0, 0.0001)
         assertEquals(0.95, imported.topP ?: -1.0, 0.0001)
         assertEquals(1024, imported.maxTokens)
@@ -572,7 +632,7 @@ class FileStDataStoreTest {
 
         // listPresets() must surface the same preset (round-trip via the on-disk file).
         val listed = store.listPresets().first { it.id == imported.id }
-        assertEquals("My ST Preset", listed.name)
+        assertEquals("my-st-preset", listed.name)
         assertEquals(0.8, listed.temperature ?: -1.0, 0.0001)
         assertEquals(1024, listed.maxTokens)
         assertEquals("extra ST field", listed.raw["prompt_prefix"]?.jsonPrimitive?.content)
@@ -726,6 +786,44 @@ class FileStDataStoreTest {
         assertEquals("Imported PNG", reloaded.name)
         assertEquals("Kept as PNG", reloaded.description)
     }
+
+    @Test
+    fun `regex switch is written back into imported PNG metadata`() = runBlocking {
+        val cardJson = """
+            {
+              "spec":"chara_card_v3",
+              "spec_version":"3.0",
+              "data":{
+                "name":"PNG Regex",
+                "extensions":{"regex_scripts":[{
+                  "id":"xml-status",
+                  "scriptName":"XML状态栏",
+                  "findRegex":"/x/g",
+                  "replaceString":"y",
+                  "placement":[2],
+                  "disabled":true
+                }]}
+              }
+            }
+        """.trimIndent()
+        val embedded = PngCardParser.embedCardJson(PngCardParser.createMinimalPng(), cardJson)
+        val imported = CharacterImporter().importFromBytes(embedded, "png-regex.png")
+        store.importCharacter(imported, embedded, "png-regex.png")
+
+        val enabled = CharacterRegexApplier.withScriptEnabled(
+            store.readCharacter(imported.id),
+            "xml-status",
+            enabled = true,
+        )
+        store.saveCharacter(enabled)
+
+        val reloaded = store.readCharacter(imported.id)
+        val script = reloaded.raw["data"]!!.jsonObject["extensions"]!!.jsonObject["regex_scripts"]!!
+            .jsonArray.single().jsonObject
+        assertEquals("false", script["disabled"]!!.jsonPrimitive.content)
+        assertTrue(layout.characters.resolve("${imported.id}.png").exists())
+    }
+
 
     @Test
     fun `importCharacter extracts embedded world book regex and tavern helper assets`() = runBlocking {

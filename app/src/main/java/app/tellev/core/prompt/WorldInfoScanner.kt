@@ -45,11 +45,14 @@ enum class WorldInfoLogic(val value: Int) {
  * @param random injectable source of randomness in [0.0, 1.0) for probability
  *   rolls; defaults to [Math.random]. Tests pass a deterministic function.
  * @param maxRecursionSteps hard cap on recursive scan passes (0 = no recursion,
- *   ST default semantics apply a global cap).
+ *   matching SillyTavern's default).
+ * @param maxContentTokens world-info token budget. Entries marked
+ *   [WorldBookEntry.ignoreBudget] may exceed it.
  */
 class WorldInfoScanner(
     private val random: () -> Double = { Math.random() },
-    private val maxRecursionSteps: Int = 5,
+    private val maxRecursionSteps: Int = 0,
+    private val maxContentTokens: Int? = null,
 ) {
 
     /** An activated entry together with its macro-expanded content. */
@@ -78,7 +81,9 @@ class WorldInfoScanner(
         searchText: String,
         expand: (WorldBookEntry) -> String,
     ): ScanResult {
-        val candidates = entries.filter { it.enabled || it.constant }
+        // SillyTavern always rejects disabled entries before considering the
+        // constant flag. A disabled constant is still disabled.
+        val candidates = entries.filter { it.enabled }
         val activated = LinkedHashMap<WorldBookEntry, String>()
         val failedProbability = mutableSetOf<WorldBookEntry>()
 
@@ -104,7 +109,7 @@ class WorldInfoScanner(
                 // recursion (but were still activated themselves).
                 val recursionText = buildString {
                     newlyActivated
-                        .filter { !it.preventRecursion && !it.excludeRecursion }
+                        .filter { !it.preventRecursion }
                         .forEach { append(activated[it]); append('\n') }
                 }
                 if (recursionText.isBlank()) break
@@ -117,7 +122,9 @@ class WorldInfoScanner(
                 // entries were skipped in the initial pass and get their
                 // first chance here.
                 val recursionCandidates = candidates.filter {
-                    !activated.containsKey(it) && !failedProbability.contains(it)
+                    !activated.containsKey(it) &&
+                        !failedProbability.contains(it) &&
+                        !it.excludeRecursion
                 }
 
                 val matchedThisRound = recursionCandidates
@@ -141,10 +148,11 @@ class WorldInfoScanner(
         // ── Sort + bucket by position ────────────────────────────────────
         val sorted = activated.entries.toList().sortedWith(
             compareByDescending<Map.Entry<WorldBookEntry, String>> { it.key.priority }
-                .thenBy { it.key.insertionOrder },
+                .thenByDescending { it.key.insertionOrder },
         )
 
-        val all = sorted.map { ActivatedEntry(it.key, it.value) }
+        val budgeted = applyTokenBudget(sorted)
+        val all = budgeted.map { ActivatedEntry(it.key, it.value) }
         return ScanResult(
             before = all.bucket(WorldInfoPosition.BEFORE),
             after = all.bucket(WorldInfoPosition.AFTER),
@@ -160,6 +168,23 @@ class WorldInfoScanner(
 
     private fun List<ActivatedEntry>.bucket(pos: WorldInfoPosition): List<ActivatedEntry> =
         filter { WorldInfoPosition.of(it.entry.position) == pos }
+
+    private fun applyTokenBudget(
+        entries: List<Map.Entry<WorldBookEntry, String>>,
+    ): List<Map.Entry<WorldBookEntry, String>> {
+        val budget = maxContentTokens?.takeIf { it > 0 } ?: return entries
+        val included = mutableListOf<Map.Entry<WorldBookEntry, String>>()
+        var usedTokens = 0
+
+        for (entry in entries) {
+            val contentTokens = TokenBudget.estimateTokens(entry.value)
+            if (entry.key.ignoreBudget || usedTokens + contentTokens < budget) {
+                included += entry
+                usedTokens += contentTokens
+            }
+        }
+        return included
+    }
 
     private fun passesProbability(entry: WorldBookEntry): Boolean {
         if (!entry.useProbability || entry.probability >= 100) return true

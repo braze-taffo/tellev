@@ -13,6 +13,7 @@ import app.tellev.core.model.Persona
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,6 +65,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -79,6 +81,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
@@ -87,8 +90,11 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import app.tellev.R
 import app.tellev.core.model.GenerationPreset
+import app.tellev.core.model.PresetCategory
+import app.tellev.core.provider.ProviderConfigPersistence
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import app.tellev.util.UriUtils
-import java.util.UUID
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -103,6 +109,8 @@ fun SettingsScreen(
     val versionName = remember(context) {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "未知"
     }
+    var editingPreset by remember { mutableStateOf<GenerationPreset?>(null) }
+    var selectedPresetCategory by remember { mutableStateOf(PresetCategory.OpenAi) }
     val uriHandler = LocalUriHandler.current
     val bilibiliProfileUrl = "https://space.bilibili.com/499259948"
 
@@ -114,6 +122,7 @@ fun SettingsScreen(
     var showImportDialog by remember { mutableStateOf(false) }
     var apiKeyVisible by remember { mutableStateOf(false) }
     var pendingPresetImportUri by remember { mutableStateOf<Uri?>(null) }
+    var pendingPresetExport by remember { mutableStateOf<GenerationPreset?>(null) }
 
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -135,6 +144,23 @@ fun SettingsScreen(
         contract = ActivityResultContracts.GetContent(),
     ) { uri: Uri? ->
         uri?.let { pendingPresetImportUri = it }
+    }
+
+    val presetExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri: Uri? ->
+        val preset = pendingPresetExport
+        pendingPresetExport = null
+        if (uri != null && preset != null) viewModel.exportPreset(context, uri, preset)
+    }
+
+    LaunchedEffect(state.selectedProviderId) {
+        selectedPresetCategory = when (state.selectedProviderId) {
+            "textgen-webui", "ollama", "llama-cpp" -> PresetCategory.TextGen
+            "kobold", "koboldcpp", "horde" -> PresetCategory.Kobold
+            "novelai" -> PresetCategory.NovelAi
+            else -> PresetCategory.OpenAi
+        }
     }
 
     LaunchedEffect(state.error) {
@@ -324,6 +350,118 @@ fun SettingsScreen(
                     }
                 }
 
+                if (ProviderConfigPersistence.hasCustomOpenAiSettings(state.selectedProviderId)) {
+                    item(key = "provider_compatibility") {
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Text("OpenAI 兼容高级设置", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    "Base URL 与路径分开配置；默认只发送兼容性较高的字段。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                if (
+                                    state.selectedProviderId == "deepseek" &&
+                                    state.model in setOf("deepseek-chat", "deepseek-reasoner")
+                                ) {
+                                    Text(
+                                        "该旧模型将于 2026-07-24 停用，请迁移到 deepseek-v4-flash 或 deepseek-v4-pro。",
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                OutlinedTextField(
+                                    value = state.compatibility.modelsPath,
+                                    onValueChange = viewModel::updateModelsPath,
+                                    label = { Text("模型列表路径") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                )
+                                OutlinedTextField(
+                                    value = state.compatibility.chatCompletionsPath,
+                                    onValueChange = viewModel::updateChatCompletionsPath,
+                                    label = { Text("Chat Completions 路径") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = state.compatibility.authHeader,
+                                        onValueChange = viewModel::updateAuthHeader,
+                                        label = { Text("鉴权 Header") },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true,
+                                    )
+                                    OutlinedTextField(
+                                        value = state.compatibility.authScheme,
+                                        onValueChange = viewModel::updateAuthScheme,
+                                        label = { Text("鉴权前缀") },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true,
+                                        placeholder = { Text("Bearer；可留空") },
+                                    )
+                                }
+                                OutlinedTextField(
+                                    value = state.compatibility.maxTokensField,
+                                    onValueChange = viewModel::updateMaxTokensField,
+                                    label = { Text("输出长度字段") },
+                                    supportingText = { Text("max_tokens 或 max_completion_tokens") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                )
+                                CompatibilitySwitch(
+                                    label = "发送 stream_options.include_usage",
+                                    checked = state.compatibility.includeUsage,
+                                    onCheckedChange = viewModel::updateIncludeUsage,
+                                )
+                                CompatibilitySwitch(
+                                    label = "启用模型列表接口",
+                                    checked = state.compatibility.supportsModelListing,
+                                    onCheckedChange = viewModel::updateSupportsModelListing,
+                                )
+                                CompatibilitySwitch(
+                                    label = "发送 top_k",
+                                    checked = state.compatibility.supportsTopK,
+                                    onCheckedChange = viewModel::updateSupportsTopK,
+                                )
+                                CompatibilitySwitch(
+                                    label = "启用 tools 字段",
+                                    checked = state.compatibility.supportsTools,
+                                    onCheckedChange = viewModel::updateSupportsTools,
+                                )
+                                CompatibilitySwitch(
+                                    label = "启用 reasoning 字段",
+                                    checked = state.compatibility.supportsReasoning,
+                                    onCheckedChange = viewModel::updateSupportsReasoning,
+                                )
+                                CompatibilitySwitch(
+                                    label = "启用图片消息",
+                                    checked = state.compatibility.supportsVision,
+                                    onCheckedChange = viewModel::updateSupportsVision,
+                                )
+                                OutlinedTextField(
+                                    value = state.extraHeadersJson,
+                                    onValueChange = viewModel::updateExtraHeadersJson,
+                                    label = { Text("附加 Headers（JSON）") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    minLines = 3,
+                                )
+                                OutlinedTextField(
+                                    value = state.extraBodyJson,
+                                    onValueChange = viewModel::updateExtraBodyJson,
+                                    label = { Text("附加请求体（JSON）") },
+                                    supportingText = { Text("messages/model/stream 等核心字段不会被覆盖") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    minLines = 3,
+                                )
+                            }
+                        }
+                    }
+                }
+
                 item(key = "provider_actions") {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -399,8 +537,39 @@ fun SettingsScreen(
                         },
                     )
                 }
+                item(key = "preset_categories") {
+                    val categories = listOf(
+                        PresetCategory.OpenAi to "OpenAI",
+                        PresetCategory.TextGen to "TextGen",
+                        PresetCategory.Kobold to "Kobold",
+                        PresetCategory.NovelAi to "NovelAI",
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        categories.chunked(2).forEach { rowCategories ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                rowCategories.forEach { (category, label) ->
+                                    if (category == selectedPresetCategory) {
+                                        FilledTonalButton(
+                                            onClick = { selectedPresetCategory = category },
+                                            modifier = Modifier.weight(1f),
+                                        ) { Text(label) }
+                                    } else {
+                                        OutlinedButton(
+                                            onClick = { selectedPresetCategory = category },
+                                            modifier = Modifier.weight(1f),
+                                        ) { Text(label) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
-                if (state.presets.isEmpty()) {
+                val visiblePresets = state.presets.filter { it.category == selectedPresetCategory }
+
+
+
+                if (visiblePresets.isEmpty()) {
                     item(key = "preset_empty") {
                         Text(
                             text = "暂无预设。新建一个预设来配置生成参数。",
@@ -409,10 +578,17 @@ fun SettingsScreen(
                         )
                     }
                 } else {
-                    items(state.presets, key = { "preset_${it.id}" }) { preset ->
+                    items(visiblePresets, key = { "preset_${it.category.name}_${it.id}" }) { preset ->
                         PresetCard(
                             preset = preset,
+                            selected = state.selectedPresetNames[preset.category] == preset.id,
+                            onSelect = { viewModel.selectPreset(preset) },
+                            onExport = {
+                                pendingPresetExport = preset
+                                presetExportLauncher.launch("${preset.id}.json")
+                            },
                             onDelete = { viewModel.deletePreset(preset.id, preset.providerType) },
+                            onEdit = { editingPreset = preset },
                         )
                     }
                 }
@@ -693,6 +869,25 @@ fun SettingsScreen(
         )
     }
 
+    editingPreset?.let { preset ->
+        PresetEditDialog(
+            preset = preset,
+            onDismiss = { editingPreset = null },
+            onSave = {
+                viewModel.savePreset(it)
+                editingPreset = null
+            },
+            onSaveAs = { changed, name ->
+                viewModel.copyPreset(changed, name)
+                editingPreset = null
+            },
+            onRename = { changed, name ->
+                viewModel.renamePreset(changed, name)
+                editingPreset = null
+            },
+        )
+    }
+
     // Preset import: after a JSON file is picked, ask the user which ST preset
     // category it belongs to before writing it to the matching directory.
     pendingPresetImportUri?.let { uri ->
@@ -789,6 +984,22 @@ fun SettingsScreen(
         )
     }
 }
+
+@Composable
+private fun CompatibilitySwitch(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
 
 @Composable
 private fun DonationQrImage(
@@ -908,7 +1119,11 @@ private fun ThemeOption(
 @Composable
 private fun PresetCard(
     preset: GenerationPreset,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onExport: () -> Unit,
     onDelete: () -> Unit,
+    onEdit: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -937,6 +1152,16 @@ private fun PresetCard(
                     )
                 }
                 IconButton(
+                    onClick = onEdit,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = "查看或编辑",
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                IconButton(
                     onClick = onDelete,
                     modifier = Modifier.size(32.dp),
                 ) {
@@ -950,6 +1175,25 @@ private fun PresetCard(
             }
 
             Spacer(modifier = Modifier.height(4.dp))
+
+            TextButton(onClick = onExport, modifier = Modifier.align(Alignment.End)) {
+                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("导出")
+            }
+
+            if (selected) {
+                FilledTonalButton(
+                    onClick = {},
+                    enabled = false,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("当前使用") }
+            } else {
+                OutlinedButton(
+                    onClick = onSelect,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("设为当前") }
+            }
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -982,6 +1226,264 @@ private fun PresetCard(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private fun PresetEditDialog(
+    preset: GenerationPreset,
+    onDismiss: () -> Unit,
+    onSave: (GenerationPreset) -> Unit,
+    onSaveAs: (GenerationPreset, String) -> Unit,
+    onRename: (GenerationPreset, String) -> Unit,
+) {
+    var temperature by remember(preset) { mutableStateOf(preset.temperature?.toString().orEmpty()) }
+    var topP by remember(preset) { mutableStateOf(preset.topP?.toString().orEmpty()) }
+    var topK by remember(preset) { mutableStateOf(preset.topK?.toString().orEmpty()) }
+    var maxContext by remember(preset) { mutableStateOf(preset.maxContextTokens?.toString().orEmpty()) }
+    var maxCompletion by remember(preset) {
+        mutableStateOf((preset.maxCompletionTokens ?: preset.maxTokens)?.toString().orEmpty())
+    }
+    var rawText by remember(preset) { mutableStateOf(preset.raw.toString()) }
+    var validationError by remember(preset) { mutableStateOf<String?>(null) }
+    var targetName by remember(preset) { mutableStateOf("") }
+    var prompts by remember(preset) { mutableStateOf(preset.prompts.sortedBy { it.order }) }
+
+    fun editedPreset(): GenerationPreset? {
+        val raw = runCatching { Json.parseToJsonElement(rawText) as? JsonObject }.getOrNull()
+        if (raw == null) {
+            validationError = "原始字段必须是有效的 JSON 对象"
+            return null
+        }
+        return preset.copy(
+            temperature = temperature.toDoubleOrNull(),
+            topP = topP.toDoubleOrNull(),
+            topK = topK.toIntOrNull(),
+            maxContextTokens = maxContext.toIntOrNull(),
+            maxCompletionTokens = maxCompletion.toIntOrNull(),
+            maxTokens = maxCompletion.toIntOrNull(),
+            prompts = prompts.mapIndexed { index, prompt -> prompt.copy(order = index) },
+            raw = raw,
+        )
+    }
+
+    fun updatePrompt(index: Int, transform: (app.tellev.core.model.PresetPrompt) -> app.tellev.core.model.PresetPrompt) {
+        prompts = prompts.toMutableList().also { it[index] = transform(it[index]) }
+    }
+
+    fun movePrompt(from: Int, to: Int) {
+        if (to !in prompts.indices) return
+        prompts = prompts.toMutableList().also { list ->
+            val item = list.removeAt(from)
+            list.add(to, item)
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("查看与编辑预设：${preset.name}") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "分类：${preset.category.name.lowercase()} · 文件：${preset.id}.json",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = targetName,
+                    onValueChange = { targetName = it },
+                    label = { Text("另存为 / 重命名后的名称") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = temperature,
+                    onValueChange = { temperature = it },
+                    label = { Text("Temperature") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = topP,
+                    onValueChange = { topP = it },
+                    label = { Text("Top-P") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = topK,
+                    onValueChange = { topK = it },
+                    label = { Text("Top-K") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = maxContext,
+                    onValueChange = { maxContext = it.filter(Char::isDigit) },
+                    label = { Text("最大上下文 Token") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = maxCompletion,
+                    onValueChange = { maxCompletion = it.filter(Char::isDigit) },
+                    label = { Text("最大回复 Token") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = rawText,
+                    onValueChange = {
+                        rawText = it
+                        validationError = null
+                    },
+                    label = { Text("高级原始 JSON（未知字段会保留）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 6,
+                    maxLines = 12,
+                    supportingText = {
+                        Text(validationError ?: "可直接查看或编辑供应商专有字段；保存前会校验 JSON 对象。")
+                    },
+                    isError = validationError != null,
+                )
+                if (prompts.isNotEmpty()) {
+                    Text("提示词顺序", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "长按提示词卡片并上下拖动，也可使用上移/下移按钮。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    prompts.forEachIndexed { index, prompt ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .pointerInput(prompt.identifier, index, prompts.size) {
+                                    var accumulatedY = 0f
+                                    val threshold = 72.dp.toPx()
+                                    detectDragGesturesAfterLongPress(
+                                        onDragEnd = { accumulatedY = 0f },
+                                        onDragCancel = { accumulatedY = 0f },
+                                        onDrag = { change, amount ->
+                                            change.consume()
+                                            accumulatedY += amount.y
+                                            when {
+                                                accumulatedY <= -threshold && index > 0 -> {
+                                                    movePrompt(index, index - 1)
+                                                    accumulatedY = 0f
+                                                }
+                                                accumulatedY >= threshold && index < prompts.lastIndex -> {
+                                                    movePrompt(index, index + 1)
+                                                    accumulatedY = 0f
+                                                }
+                                            }
+                                        },
+                                    )
+                                },
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(prompt.name.ifBlank { prompt.identifier }, modifier = Modifier.weight(1f))
+                                    Switch(
+                                        checked = prompt.enabled,
+                                        onCheckedChange = { enabled ->
+                                            updatePrompt(index) { it.copy(enabled = enabled) }
+                                        },
+                                    )
+                                }
+                                OutlinedTextField(
+                                    value = prompt.role,
+                                    onValueChange = { role -> updatePrompt(index) { it.copy(role = role) } },
+                                    label = { Text("Role") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                )
+                                if (prompt.content.isNotEmpty() || prompt.identifier !in setOf(
+                                        "main", "worldInfoBefore", "worldInfoAfter", "charDescription",
+                                        "charPersonality", "scenario", "personaDescription", "dialogueExamples", "chatHistory",
+                                    )
+                                ) {
+                                    OutlinedTextField(
+                                        value = prompt.content,
+                                        onValueChange = { content -> updatePrompt(index) { it.copy(content = content) } },
+                                        label = { Text("Content") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        minLines = 2,
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text("In-chat", modifier = Modifier.weight(1f))
+                                    Switch(
+                                        checked = prompt.relative,
+                                        onCheckedChange = { relative ->
+                                            updatePrompt(index) { it.copy(relative = relative) }
+                                        },
+                                    )
+                                    OutlinedTextField(
+                                        value = prompt.depth.toString(),
+                                        onValueChange = { value ->
+                                            value.filter(Char::isDigit).toIntOrNull()?.let { depth ->
+                                                updatePrompt(index) { it.copy(depth = depth) }
+                                            }
+                                        },
+                                        label = { Text("Depth") },
+                                        modifier = Modifier.width(96.dp),
+                                        singleLine = true,
+                                    )
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    TextButton(onClick = { movePrompt(index, index - 1) }, enabled = index > 0) {
+                                        Text("上移")
+                                    }
+                                    TextButton(
+                                        onClick = { movePrompt(index, index + 1) },
+                                        enabled = index < prompts.lastIndex,
+                                    ) { Text("下移") }
+                                }
+                            }
+                        }
+                    }
+                    if (preset.promptsUnused.isNotEmpty()) {
+                        Text(
+                            "未使用提示词：${preset.promptsUnused.joinToString { it.name.ifBlank { it.identifier } }}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                editedPreset()?.let(onSave)
+            }) { Text("保存") }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onDismiss) { Text("取消") }
+                TextButton(
+                    onClick = { editedPreset()?.let { onSaveAs(it, targetName) } },
+                    enabled = targetName.isNotBlank(),
+                ) { Text("另存为") }
+                TextButton(
+                    onClick = { editedPreset()?.let { onRename(it, targetName) } },
+                    enabled = targetName.isNotBlank(),
+                ) { Text("重命名") }
+            }
+        },
+    )
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun PresetCreationDialog(
     providers: List<Pair<String, String>>,
     onDismiss: () -> Unit,
@@ -1081,12 +1583,21 @@ private fun PresetCreationDialog(
                     if (name.isNotBlank()) {
                         onSave(
                             GenerationPreset(
-                                id = "preset_${UUID.randomUUID()}",
+                                id = name.trim()
+                                    .replace(Regex("""[\\/:*?"<>|]"""), "_")
+                                    .ifBlank { "preset" },
                                 name = name.trim(),
                                 providerType = selectedProvider,
+                                category = when (selectedProvider) {
+                                    "textgen-webui", "ollama", "llama-cpp" -> PresetCategory.TextGen
+                                    "kobold", "koboldcpp", "horde" -> PresetCategory.Kobold
+                                    "novelai" -> PresetCategory.NovelAi
+                                    else -> PresetCategory.OpenAi
+                                },
                                 temperature = temperature.toDouble(),
                                 topP = topP.toDouble(),
                                 maxTokens = maxTokensText.toIntOrNull()?.takeIf { it > 0 },
+                                maxCompletionTokens = maxTokensText.toIntOrNull()?.takeIf { it > 0 },
                             ),
                         )
                     }

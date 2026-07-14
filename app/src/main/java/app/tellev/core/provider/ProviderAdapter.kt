@@ -78,9 +78,10 @@ sealed interface GenerateChunk {
         // Provider usage/token accounting (e.g. the OpenAI stream
         // include_usage final chunk). Null when the provider did not report it.
         val usage: JsonObject? = null,
+        // Normalized provider tool/function calls, when the model requests one.
+        val toolCalls: kotlinx.serialization.json.JsonArray? = null,
     ) : GenerateChunk
 
     @Serializable
     data class Failed(val error: TellevError) : GenerateChunk
 }
-

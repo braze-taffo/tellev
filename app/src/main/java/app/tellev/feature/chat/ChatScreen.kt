@@ -12,6 +12,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -45,6 +46,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
@@ -440,7 +442,8 @@ private fun ChatContentScreen(
                     ChatBubble(
                         message = message,
                         character = state.selectedCharacter,
-                        disabledRegexScriptIds = state.disabledRegexScriptIds,
+                        userName = state.selectedPersona?.name ?: "User",
+                        depth = state.messages.lastIndex - index,
                         htmlPanelMaxHeight = htmlPanelMaxHeight,
                         tavernRuntime = TavernMessageRuntime(
                             messageIndex = index,
@@ -454,8 +457,13 @@ private fun ChatContentScreen(
                                 )
                             },
                         ),
+                        onHtmlBoundaryDrag = { chatScrollDelta ->
+                            scope.launch { listState.scrollBy(chatScrollDelta) }
+                        },
                         onSwipeLeft = { viewModel.swipeMessage(index, 1) },
                         onSwipeRight = { viewModel.swipeMessage(index, -1) },
+                        canRegenerate = !state.isGenerating && canRegenerateResponse(state.messages, index),
+                        onRegenerate = { viewModel.regenerateResponse(message.id) },
                         onEdit = {
                             editingMessageIndex = index
                             editTextField = message.content
@@ -522,11 +530,15 @@ private fun ChatContentScreen(
 private fun ChatBubble(
     message: ChatMessage,
     character: CharacterCard?,
-    disabledRegexScriptIds: Set<String>,
+    userName: String,
+    depth: Int,
     htmlPanelMaxHeight: Dp,
     tavernRuntime: TavernMessageRuntime,
+    onHtmlBoundaryDrag: (Float) -> Unit,
     onSwipeLeft: () -> Unit,
     onSwipeRight: () -> Unit,
+    canRegenerate: Boolean,
+    onRegenerate: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -565,6 +577,16 @@ private fun ChatBubble(
                     expanded = showActions,
                     onDismissRequest = { showActions = false },
                 ) {
+                    if (canRegenerate) {
+                        DropdownMenuItem(
+                            text = { Text("重新生成") },
+                            leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                            onClick = {
+                                onRegenerate()
+                                showActions = false
+                            },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("编辑") },
                         leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
@@ -590,7 +612,8 @@ private fun ChatBubble(
             rawText,
             message.role,
             character,
-            disabledRegexScriptIds,
+            userName = userName,
+            depth = depth,
         )
         val renderSegments = TavernRenderParser.parse(displayText)
         val hasFrontend = renderSegments.any { it is TavernRenderSegment.Frontend }
@@ -636,6 +659,7 @@ private fun ChatBubble(
                     availableMaxHeight = htmlPanelMaxHeight,
                     isUser = isUser,
                     tavernRuntime = tavernRuntime,
+                    onHtmlBoundaryDrag = onHtmlBoundaryDrag,
                 )
             }
         } else {
@@ -662,6 +686,7 @@ private fun ChatBubble(
                     availableMaxHeight = htmlPanelMaxHeight,
                     isUser = isUser,
                     tavernRuntime = tavernRuntime,
+                    onHtmlBoundaryDrag = onHtmlBoundaryDrag,
                 )
             }
         }
@@ -681,6 +706,7 @@ private fun TavernMessageContent(
     availableMaxHeight: Dp,
     isUser: Boolean,
     tavernRuntime: TavernMessageRuntime,
+    onHtmlBoundaryDrag: (Float) -> Unit,
 ) {
     Column {
         segments.forEachIndexed { index, segment ->
@@ -695,6 +721,7 @@ private fun TavernMessageContent(
                             html = MarkdownRenderer.render(text),
                             availableMaxHeight = availableMaxHeight,
                             tavernRuntime = tavernRuntime,
+                            onBoundaryDrag = onHtmlBoundaryDrag,
                         )
                     } else {
                         SelectionContainer {
@@ -719,6 +746,7 @@ private fun TavernMessageContent(
                         html = segment.html,
                         availableMaxHeight = availableMaxHeight,
                         tavernRuntime = tavernRuntime,
+                        onBoundaryDrag = onHtmlBoundaryDrag,
                     )
                 }
             }
@@ -782,6 +810,7 @@ private data class TavernMessageRuntime(
 
 private class TavernMessageBridge(
     private val onHeightChanged: (Int) -> Unit,
+    private val onBoundaryDrag: (Float) -> Unit,
     runtime: TavernMessageRuntime,
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -793,7 +822,7 @@ private class TavernMessageBridge(
     private val loadTracker = TavernMessageLoadTracker()
 
     @Volatile
-    private var preferInternalScrolling: Boolean = false
+    private var nestedScrollGesture: Boolean = false
 
     fun attach(view: WebView) {
         webView = java.lang.ref.WeakReference(view)
@@ -805,11 +834,26 @@ private class TavernMessageBridge(
 
     fun shouldLoad(html: String): Boolean = loadTracker.shouldLoad(html)
 
-    fun updatePagePolicy(html: String) {
-        preferInternalScrolling = html.isLargeTavernFrontend()
+    fun beginNativeTouchGesture() {
+        nestedScrollGesture = false
     }
 
-    fun prefersInternalScrolling(): Boolean = preferInternalScrolling
+    fun hasNestedScrollGesture(): Boolean = nestedScrollGesture
+
+    @JavascriptInterface
+    fun setNestedScrollGesture(active: Boolean) {
+        nestedScrollGesture = active
+    }
+
+    @JavascriptInterface
+    fun forwardBoundaryDrag(chatScrollDelta: Double) {
+        if (!chatScrollDelta.isFinite() || chatScrollDelta == 0.0) return
+        mainHandler.post { onBoundaryDrag(chatScrollDelta.toFloat()) }
+    }
+
+    fun dispatchDocumentBoundaryDrag(chatScrollDelta: Float) {
+        if (chatScrollDelta != 0f) onBoundaryDrag(chatScrollDelta)
+    }
 
     @JavascriptInterface
     fun resize(height: Int) {
@@ -850,6 +894,7 @@ private fun TavernHtmlPanel(
     html: String,
     availableMaxHeight: Dp,
     tavernRuntime: TavernMessageRuntime,
+    onBoundaryDrag: (Float) -> Unit,
 ) {
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
@@ -876,6 +921,7 @@ private fun TavernHtmlPanel(
         factory = { context ->
             val bridge = TavernMessageBridge(
                 onHeightChanged = { height -> contentHeightPx = height },
+                onBoundaryDrag = onBoundaryDrag,
                 runtime = tavernRuntime,
             )
             WebView(context).apply {
@@ -888,6 +934,7 @@ private fun TavernHtmlPanel(
                     when (event.actionMasked) {
                         MotionEvent.ACTION_DOWN -> {
                             lastTouchY = event.y
+                            (view.tag as? TavernMessageBridge)?.beginNativeTouchGesture()
                             // 先假定由 WebView 接管手势；MOVE 时若 WebView 在该方向上
                             // 没有可滚动内容，再把拦截权交还给外层聊天列表。
                             view.parent?.requestDisallowInterceptTouchEvent(true)
@@ -895,19 +942,33 @@ private fun TavernHtmlPanel(
                         MotionEvent.ACTION_MOVE -> {
                             val dy = event.y - lastTouchY
                             lastTouchY = event.y
+                            val bridge = view.tag as? TavernMessageBridge
+                            // Element-level scrollers (for example a card's
+                            // `.screen.active`) are invisible to
+                            // WebView.canScrollVertically(). JavaScript owns
+                            // those gestures and forwards only edge deltas.
+                            if (bridge?.hasNestedScrollGesture() == true) {
+                                return@setOnTouchListener false
+                            }
                             val canScrollInDirection = when {
                                 dy > 0 -> view.canScrollVertically(-1)
                                 dy < 0 -> view.canScrollVertically(1)
                                 else -> true
                             }
-                            val keepInsideWebView = (view.tag as? TavernMessageBridge)
-                                ?.prefersInternalScrolling() == true
-                            if (shouldReleaseTavernTouchToParent(
-                                    preferInternalScrolling = keepInsideWebView,
+                            if (shouldForwardWebViewDragToChat(
                                     canScrollInDirection = canScrollInDirection,
                                 )
                             ) {
-                                view.parent?.requestDisallowInterceptTouchEvent(false)
+                                // Compose LazyColumn cannot reliably take over a
+                                // gesture after an Android WebView has started it.
+                                // Keep receiving MOVE events and forward every
+                                // boundary delta explicitly; release on UP/CANCEL.
+                                view.parent?.requestDisallowInterceptTouchEvent(true)
+                                val chatScrollDelta = chatScrollDeltaAtWebViewEdge(
+                                    canScrollInDirection = canScrollInDirection,
+                                    fingerDeltaY = dy,
+                                )
+                                bridge?.dispatchDocumentBoundaryDrag(chatScrollDelta)
                             }
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -945,7 +1006,6 @@ private fun TavernHtmlPanel(
         update = { webView ->
             val bridge = webView.tag as? TavernMessageBridge
             bridge?.updateRuntime(tavernRuntime)
-            bridge?.updatePagePolicy(html)
             if (bridge?.shouldLoad(html) != false) {
                 webView.stopLoading()
                 webView.scrollTo(0, 0)

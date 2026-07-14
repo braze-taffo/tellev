@@ -20,10 +20,14 @@ internal class TavernMessageLoadTracker {
     }
 }
 
-internal fun shouldReleaseTavernTouchToParent(
-    preferInternalScrolling: Boolean,
+internal fun shouldForwardWebViewDragToChat(
     canScrollInDirection: Boolean,
-): Boolean = !preferInternalScrolling && !canScrollInDirection
+): Boolean = !canScrollInDirection
+
+internal fun chatScrollDeltaAtWebViewEdge(
+    canScrollInDirection: Boolean,
+    fingerDeltaY: Float,
+): Float = if (canScrollInDirection) 0f else -fingerDeltaY
 
 internal data class TavernMessageSlashAction(
     val sendText: String? = null,
@@ -127,6 +131,7 @@ internal fun tavernWorldBookEntry(
         excludeRecursion = raw.boolean("exclude_recursion") ?: raw.boolean("excludeRecursion") ?: false,
         preventRecursion = raw.boolean("prevent_recursion") ?: raw.boolean("preventRecursion") ?: false,
         delayUntilRecursion = raw.boolean("delay_until_recursion") ?: raw.boolean("delayUntilRecursion") ?: false,
+        ignoreBudget = raw.boolean("ignore_budget") ?: raw.boolean("ignoreBudget") ?: false,
         raw = raw,
     )
 }
@@ -210,6 +215,60 @@ internal fun tavernMessageCompatScript(): String = """
 internal fun tavernMessageLayoutScript(nativeViewportHeight: Int = 0): String = """
     (function() {
       var nativeViewportHeight = ${nativeViewportHeight.coerceAtLeast(0)};
+      var activeScreenOwner = null;
+
+      function findNestedScrollOwner(target) {
+        var body = document.body;
+        var doc = document.documentElement;
+        var node = target && target.nodeType === 1 ? target : target && target.parentElement;
+        while (node && node !== body && node !== doc) {
+          var style = window.getComputedStyle(node);
+          var overflowY = style.overflowY;
+          if ((overflowY === 'auto' || overflowY === 'scroll') &&
+              node.scrollHeight > node.clientHeight + 1) {
+            return node;
+          }
+          node = node.parentElement;
+        }
+        return null;
+      }
+
+      function installNestedScrollBridge() {
+        if (window.__tellevNestedScrollBridgeInstalled) return;
+        window.__tellevNestedScrollBridgeInstalled = true;
+        var owner = null;
+        var lastTouchY = 0;
+
+        document.addEventListener('touchstart', function(event) {
+          var touch = event.touches && event.touches[0];
+          lastTouchY = touch ? touch.clientY : 0;
+          owner = findNestedScrollOwner(event.target);
+          try { TellevBridge.setNestedScrollGesture(!!owner); } catch (_) {}
+        }, { capture: true, passive: true });
+
+        document.addEventListener('touchmove', function(event) {
+          var touch = event.touches && event.touches[0];
+          if (!touch) return;
+          var fingerDeltaY = touch.clientY - lastTouchY;
+          lastTouchY = touch.clientY;
+          if (!owner || fingerDeltaY === 0) return;
+
+          var canScrollUp = owner.scrollTop > 1;
+          var canScrollDown = owner.scrollTop + owner.clientHeight < owner.scrollHeight - 1;
+          var canScrollInDirection = fingerDeltaY > 0 ? canScrollUp : canScrollDown;
+          if (!canScrollInDirection) {
+            try { TellevBridge.forwardBoundaryDrag(-fingerDeltaY); } catch (_) {}
+          }
+        }, { capture: true, passive: true });
+
+        function finishTouch() {
+          owner = null;
+          try { TellevBridge.setNestedScrollGesture(false); } catch (_) {}
+        }
+        document.addEventListener('touchend', finishTouch, { capture: true, passive: true });
+        document.addEventListener('touchcancel', finishTouch, { capture: true, passive: true });
+      }
+
       function resetMessageViewport() {
         var body = document.body;
         var doc = document.documentElement;
@@ -219,7 +278,13 @@ internal fun tavernMessageLayoutScript(nativeViewportHeight: Int = 0): String = 
           ? nativeViewportHeight
           : Math.max(window.innerHeight || 0, doc.clientHeight || 0);
         var activeScreen = body.querySelector('.screen.active');
+        var activeScreenChanged = activeScreen !== activeScreenOwner;
+        activeScreenOwner = activeScreen;
         if (activeScreen && viewportHeight > 0) {
+          // Preserve the card's own page layout and make the active page the
+          // bounded scroll container it was authored to be. Native WebView
+          // cannot see this element's scroll edges, so the touch bridge above
+          // reports only its boundary deltas to the outer chat list.
           doc.style.setProperty('height', viewportHeight + 'px', 'important');
           body.style.setProperty('height', viewportHeight + 'px', 'important');
           body.style.setProperty('min-height', viewportHeight + 'px', 'important');
@@ -241,12 +306,19 @@ internal fun tavernMessageLayoutScript(nativeViewportHeight: Int = 0): String = 
           body.style.setProperty('overflow-y', 'auto', 'important');
         }
 
-        window.scrollTo(0, 0);
-        body.scrollTop = 0;
-        doc.scrollTop = 0;
+        // Reset only when the card actually switches pages. Observing every
+        // class mutation without this guard makes ordinary form selections
+        // unexpectedly jump back to the beginning of a long page.
+        if (activeScreenChanged) {
+          window.scrollTo(0, 0);
+          body.scrollTop = 0;
+          doc.scrollTop = 0;
+          if (activeScreen) activeScreen.scrollTop = 0;
+        }
       }
 
       window.__tellevResetMessageViewport = resetMessageViewport;
+      installNestedScrollBridge();
       resetMessageViewport();
       window.requestAnimationFrame(resetMessageViewport);
       setTimeout(resetMessageViewport, 50);

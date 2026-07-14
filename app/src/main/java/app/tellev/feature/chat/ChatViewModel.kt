@@ -19,6 +19,7 @@ import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.Persona
+import app.tellev.core.model.PresetCategory
 import app.tellev.core.model.WorldBook
 import app.tellev.core.prompt.PromptBuildRequest
 import app.tellev.core.prompt.PromptBuildResult
@@ -27,6 +28,7 @@ import app.tellev.core.prompt.PromptTemplateVariableUpdates
 import app.tellev.core.provider.GenerateChunk
 import app.tellev.core.provider.GenerateRequest
 import app.tellev.core.provider.ProviderConfig
+import app.tellev.core.provider.ProviderConfigPersistence
 import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.ProviderDefaults
 import app.tellev.core.provider.ProviderRegistry
@@ -38,6 +40,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
@@ -67,15 +70,15 @@ data class ChatUiState(
     val selectedPersona: Persona? = null,
     val worldBooks: List<WorldBook> = emptyList(),
     val disabledWorldIds: Set<String> = emptySet(),
-    // Disabled regex script ids for the selected character (app-level toggle,
-    // persisted separately from the card's own `disabled` flag). Applied at
-    // display time via CharacterRegexApplier.applyForDisplay.
-    val disabledRegexScriptIds: Set<String> = emptySet(),
     val presets: List<GenerationPreset> = emptyList(),
     val selectedPreset: GenerationPreset? = null,
     val sessions: List<ChatSession> = emptyList(),
     val error: String? = null,
     val isLoading: Boolean = false,
+)
+
+private data class ActiveRegeneration(
+    val messageId: String,
 )
 
 class ChatViewModel(
@@ -91,6 +94,7 @@ class ChatViewModel(
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
     private var generationJob: Job? = null
+    private var activeRegeneration: ActiveRegeneration? = null
     @Volatile
     private var loadedCharacterScriptExtensionId: String? = null
     @Volatile
@@ -112,8 +116,51 @@ class ChatViewModel(
             override fun update(transform: (MutableMap<String, String>) -> Unit): Map<String, String> =
                 updateChatVariables(transform)
         })
+        observeCharacterChanges()
+        observePresetChanges()
         loadInitialData()
     }
+    private fun observeCharacterChanges() {
+        viewModelScope.launch {
+            dataStore.characterChanges.collect { characterId ->
+                val selected = _uiState.value.selectedCharacter
+                if (selected?.id != characterId) return@collect
+                runCatching { dataStore.readCharacter(characterId) }
+                    .onSuccess { refreshed ->
+                        _uiState.update {
+                            it.copy(
+                                selectedCharacter = refreshed,
+                            )
+                        }
+                        reloadCharacterTavernHelperScripts(refreshed)
+                    }
+                    .onFailure { error ->
+                        _uiState.update { it.copy(error = "重新读取角色卡失败：${error.message}") }
+                    }
+            }
+        }
+    }
+
+    private fun observePresetChanges() {
+        viewModelScope.launch {
+            dataStore.presetChanges.collect { category ->
+                val state = _uiState.value
+                if (presetCategoryForProvider(state.selectedProvider) != category) return@collect
+                runCatching {
+                    val presets = dataStore.listPresets().filter { it.category == category }
+                    val selectedName = dataStore.readSelectedPresetName(category)
+                    val selectedNamed = presets.firstOrNull { it.id == selectedName } ?: presets.firstOrNull()
+                    val working = selectedNamed?.let { dataStore.readPreset(category, "in_use") }
+                    presets to (working?.copy(id = selectedNamed!!.id, name = selectedNamed.name) ?: selectedNamed)
+                }.onSuccess { (presets, selected) ->
+                    _uiState.update { it.copy(presets = presets, selectedPreset = selected) }
+                }.onFailure { error ->
+                    _uiState.update { it.copy(error = "重新读取预设失败：${error.message}") }
+                }
+            }
+        }
+    }
+
 
     private fun loadInitialData() {
         viewModelScope.launch {
@@ -125,13 +172,24 @@ class ChatViewModel(
                 val personas = dataStore.listPersonas()
                 val worldBooks = dataStore.listWorldBooks()
                 val disabledWorldIds = dataStore.readDisabledWorldIds()
-                val presets = dataStore.listPresets()
-
-                val defaultPreset = presets.firstOrNull()
+                val allPresets = dataStore.listPresets()
                 val defaultPersona = personas.firstOrNull()
 
                 val selectedProvider = secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
                     ?: ProviderCatalog.OPENAI_COMPATIBLE
+                val presetCategory = presetCategoryForProvider(selectedProvider)
+                val presets = allPresets.filter { it.category == presetCategory }
+                val selectedPresetName = dataStore.readSelectedPresetName(presetCategory)
+                val selectedNamedPreset = presets.firstOrNull { it.id == selectedPresetName } ?: presets.firstOrNull()
+                val workingPreset = if (selectedNamedPreset?.id == selectedPresetName) {
+                    dataStore.readPreset(presetCategory, "in_use")
+                } else {
+                    null
+                }
+                val defaultPreset = workingPreset?.copy(
+                    id = selectedNamedPreset!!.id,
+                    name = selectedNamedPreset.name,
+                ) ?: selectedNamedPreset
                 val providerConfig = loadProviderConfig(selectedProvider)
 
                 _uiState.update {
@@ -182,9 +240,8 @@ class ChatViewModel(
                 // deactivates the rest, persisted to the activation file so the
                 // world-book screen reflects the same selection.
                 //
-                // Regex scripts are NOT subject to exclusive activation — their
-                // per-character disable set is left untouched, so manual per-script
-                // toggles in the extensions screen survive switching characters.
+                // Regex switches live only in the character card's
+                // extensions.regex_scripts[].disabled fields.
                 val ownWorldBookId = StDataStore.embeddedCharacterBookId(characterId)
                 // Read the full world-book list from the store directly rather
                 // than relying on uiState.worldBooks being loaded yet, so the
@@ -194,9 +251,6 @@ class ChatViewModel(
                 val disabledWorldIds = allWorldBookIds - ownWorldBookId
                 dataStore.saveDisabledWorldIds(disabledWorldIds)
 
-                val disabledRegexScriptIds = dataStore.readDisabledRegexScriptIds()[characterId]
-                    ?: emptySet()
-
                 _uiState.update {
                     it.copy(
                         selectedCharacter = character,
@@ -204,7 +258,6 @@ class ChatViewModel(
                         messages = session.messages,
                         sessions = allSessions,
                         disabledWorldIds = disabledWorldIds,
-                        disabledRegexScriptIds = disabledRegexScriptIds,
                         isLoading = false,
                     )
                 }
@@ -231,11 +284,13 @@ class ChatViewModel(
         text: String,
         attachments: List<Attachment>,
         messageRole: MessageRole,
+        regenerationMessageId: String? = null,
     ): Boolean {
         val messageText = text.trim()
-        if (messageText.isBlank() && attachments.isEmpty()) return false
+        if (regenerationMessageId == null && messageText.isBlank() && attachments.isEmpty()) return false
 
         val state = _uiState.value
+        if (state.isGenerating || generationJob?.isActive == true) return false
         val character = state.selectedCharacter
         if (character == null) {
             _uiState.update { it.copy(error = "请先选择角色") }
@@ -252,6 +307,27 @@ class ChatViewModel(
             return false
         }
 
+        val regenerationIndex = regenerationMessageId?.let { messageId ->
+            state.messages.indexOfFirst { it.id == messageId }
+        }
+        if (regenerationMessageId != null &&
+            (regenerationIndex == null || !canRegenerateResponse(state.messages, regenerationIndex))
+        ) {
+            _uiState.update { it.copy(error = "只能重新生成当前最后一条角色回复") }
+            return false
+        }
+
+        val regenerationInputIndex = regenerationIndex?.let { targetIndex ->
+            state.messages.take(targetIndex).indexOfLast { it.role == MessageRole.User }
+        }
+        val regenerationInput = regenerationInputIndex
+            ?.takeIf { it >= 0 }
+            ?.let(state.messages::get)
+        if (regenerationMessageId != null && regenerationInput == null) {
+            _uiState.update { it.copy(error = "找不到这条回复对应的用户消息") }
+            return false
+        }
+
         viewModelScope.launch {
             try {
                 val selectedProvider = secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
@@ -264,7 +340,7 @@ class ChatViewModel(
                     )
                 }
 
-                val inputMessage = ChatMessage(
+                val inputMessage = regenerationInput ?: ChatMessage(
                     id = generateMessageId(),
                     role = messageRole,
                     name = if (messageRole == MessageRole.System) "System" else state.selectedPersona?.name ?: "你",
@@ -273,10 +349,14 @@ class ChatViewModel(
                     attachments = attachments,
                 )
 
-                val updatedMessages = state.messages + inputMessage
+                val isRegeneration = regenerationMessageId != null
+                val updatedMessages = if (isRegeneration) state.messages else state.messages + inputMessage
                 val updatedSession = session.copy(messages = updatedMessages)
 
-                dataStore.saveChatSession(updatedSession)
+                if (!isRegeneration) {
+                    dataStore.saveChatSession(updatedSession)
+                }
+                activeRegeneration = regenerationMessageId?.let(::ActiveRegeneration)
 
                 _uiState.update {
                     it.copy(
@@ -287,14 +367,16 @@ class ChatViewModel(
                         error = null,
                     )
                 }
-                val inputMessageIndex = updatedMessages.lastIndex
-                emitStEvent(StEventCatalog.MESSAGE_SENT, inputMessageIndex)
-                if (messageRole == MessageRole.User) {
-                    emitStEvent(StEventCatalog.USER_MESSAGE_RENDERED, inputMessageIndex)
+                if (!isRegeneration) {
+                    val inputMessageIndex = updatedMessages.lastIndex
+                    emitStEvent(StEventCatalog.MESSAGE_SENT, inputMessageIndex)
+                    if (messageRole == MessageRole.User) {
+                        emitStEvent(StEventCatalog.USER_MESSAGE_RENDERED, inputMessageIndex)
+                    }
                 }
                 emitStEvent(
                     StEventCatalog.GENERATION_STARTED,
-                    "normal",
+                    if (isRegeneration) "swipe" else "normal",
                     buildJsonObject {
                         put("chatId", updatedSession.id)
                         put("characterId", character.id)
@@ -306,14 +388,20 @@ class ChatViewModel(
                 val promptRequest = PromptBuildRequest(
                     character = character,
                     persona = state.selectedPersona,
-                    messages = if (messageRole == MessageRole.User) {
+                    messages = if (isRegeneration) {
+                        updatedMessages.take(regenerationInputIndex!!)
+                    } else if (messageRole == MessageRole.User) {
                         promptHistoryBeforeCurrentMessage(updatedMessages, inputMessage.id)
                     } else {
                         updatedMessages
                     },
                     worldBooks = worldBooksForCharacter(state, character, dataStore.readDisabledWorldIds()),
                     preset = preset,
-                    userInput = if (messageRole == MessageRole.User) messageText else "",
+                    userInput = when {
+                        isRegeneration -> inputMessage.content
+                        messageRole == MessageRole.User -> messageText
+                        else -> ""
+                    },
                     providerType = config.providerType,
                     metadata = buildPromptMetadata(state, config, preset, updatedSession),
                 )
@@ -356,7 +444,7 @@ class ChatViewModel(
                 val generateRequest = GenerateRequest(
                     prompt = promptResult,
                     preset = preset,
-                    attachments = attachments,
+                    attachments = if (isRegeneration) inputMessage.attachments else attachments,
                     stream = true,
                 )
 
@@ -373,15 +461,6 @@ class ChatViewModel(
                         }
                         is GenerateChunk.Completed -> {
                             val finalText = chunk.text.ifBlank { accumulatedText }
-                            val assistantMessage = ChatMessage(
-                                id = generateMessageId(),
-                                role = MessageRole.Character,
-                                name = character.name,
-                                content = finalText,
-                                createdAtMillis = System.currentTimeMillis(),
-                                swipes = listOf(finalText),
-                                swipeIndex = 0,
-                            )
                             val latestState = _uiState.value
                             val latestSession = latestState.currentSession
                             val baseMessages = if (latestSession?.id == updatedSession.id) {
@@ -389,11 +468,31 @@ class ChatViewModel(
                             } else {
                                 updatedMessages
                             }
-                            val finalMessages = baseMessages + assistantMessage
+                            val regeneration = activeRegeneration
+                            val regeneratedIndex = regeneration?.let { active ->
+                                baseMessages.indexOfFirst { it.id == active.messageId }
+                            } ?: -1
+                            val finalMessages = if (regeneration != null && regeneratedIndex >= 0) {
+                                baseMessages.toMutableList().also { messages ->
+                                    messages[regeneratedIndex] = messages[regeneratedIndex]
+                                        .withRegeneratedSwipe(finalText)
+                                }
+                            } else {
+                                baseMessages + ChatMessage(
+                                    id = generateMessageId(),
+                                    role = MessageRole.Character,
+                                    name = character.name,
+                                    content = finalText,
+                                    createdAtMillis = System.currentTimeMillis(),
+                                    swipes = listOf(finalText),
+                                    swipeIndex = 0,
+                                )
+                            }
                             val finalSession = (latestSession?.takeIf { it.id == updatedSession.id } ?: updatedSession)
                                 .copy(messages = finalMessages)
 
                             dataStore.saveChatSession(finalSession)
+                            activeRegeneration = null
 
                             _uiState.update {
                                 it.copy(
@@ -403,13 +502,18 @@ class ChatViewModel(
                                     streamingText = "",
                                 )
                             }
-                            val assistantMessageIndex = finalMessages.lastIndex
-                            emitStEvent(StEventCatalog.MESSAGE_RECEIVED, assistantMessageIndex, "normal")
-                            emitStEvent(StEventCatalog.CHARACTER_MESSAGE_RENDERED, assistantMessageIndex, "normal")
+                            val assistantMessageIndex = if (regeneratedIndex >= 0) regeneratedIndex else finalMessages.lastIndex
+                            val eventType = if (regeneratedIndex >= 0) "swipe" else "normal"
+                            emitStEvent(StEventCatalog.MESSAGE_RECEIVED, assistantMessageIndex, eventType)
+                            if (regeneratedIndex >= 0) {
+                                emitStEvent(StEventCatalog.MESSAGE_SWIPED, assistantMessageIndex)
+                            }
+                            emitStEvent(StEventCatalog.CHARACTER_MESSAGE_RENDERED, assistantMessageIndex, eventType)
                             emitStEvent(StEventCatalog.GENERATION_ENDED, finalMessages.size)
                             emitStEvent(StEventCatalog.GENERATE_AFTER_DATA, finalMessages.size)
                         }
                         is GenerateChunk.Failed -> {
+                            activeRegeneration = null
                             _uiState.update {
                                 it.copy(
                                     isGenerating = false,
@@ -424,6 +528,7 @@ class ChatViewModel(
             } catch (_: CancellationException) {
                 // stopGeneration owns the interrupted-message state update.
             } catch (e: Exception) {
+                activeRegeneration = null
                 _uiState.update {
                     it.copy(
                         isGenerating = false,
@@ -437,34 +542,24 @@ class ChatViewModel(
         return true
     }
 
-    fun regenerateLastMessage() {
+    fun regenerateResponse(messageId: String): Boolean {
         val state = _uiState.value
-        val session = state.currentSession ?: return
-        val messages = state.messages
-
-        val lastAssistantIndex = messages.indexOfLast { it.role == MessageRole.Character || it.role == MessageRole.Assistant }
-        if (lastAssistantIndex < 0) return
-
-        val lastUserIndex = messages.subList(0, lastAssistantIndex).indexOfLast { it.role == MessageRole.User }
-        if (lastUserIndex < 0) return
-
-        val lastUserMessage = messages[lastUserIndex]
-        val trimmedMessages = messages.subList(0, lastUserIndex)
-
-        val updatedSession = session.copy(messages = trimmedMessages)
-
-        _uiState.update {
-            it.copy(
-                messages = trimmedMessages,
-                currentSession = updatedSession,
-            )
+        val targetIndex = state.messages.indexOfFirst { it.id == messageId }
+        if (!canRegenerateResponse(state.messages, targetIndex)) {
+            _uiState.update { it.copy(error = "只能重新生成当前最后一条角色回复") }
+            return false
         }
+        return sendMessageWithRole(
+            text = "",
+            attachments = emptyList(),
+            messageRole = MessageRole.User,
+            regenerationMessageId = messageId,
+        )
+    }
 
-        viewModelScope.launch {
-            dataStore.saveChatSession(updatedSession)
-        }
-
-        sendMessage(lastUserMessage.content, lastUserMessage.attachments)
+    fun regenerateLastMessage(): Boolean {
+        val lastResponse = _uiState.value.messages.lastOrNull() ?: return false
+        return regenerateResponse(lastResponse.id)
     }
 
     fun swipeMessage(messageIndex: Int, direction: Int) {
@@ -595,7 +690,38 @@ class ChatViewModel(
         generationJob = null
 
         val state = _uiState.value
+        val regeneration = activeRegeneration
+        activeRegeneration = null
         if (state.streamingText.isNotEmpty()) {
+            if (regeneration != null) {
+                val targetIndex = state.messages.indexOfFirst { it.id == regeneration.messageId }
+                if (targetIndex >= 0) {
+                    val updatedMessages = state.messages.toMutableList().also { messages ->
+                        messages[targetIndex] = messages[targetIndex]
+                            .withRegeneratedSwipe(state.streamingText)
+                    }
+                    val session = state.currentSession
+                    if (session != null) {
+                        val updatedSession = session.copy(messages = updatedMessages)
+                        _uiState.update {
+                            it.copy(
+                                messages = updatedMessages,
+                                currentSession = updatedSession,
+                                isGenerating = false,
+                                streamingText = "",
+                            )
+                        }
+                        viewModelScope.launch {
+                            dataStore.saveChatSession(updatedSession)
+                            emitStEvent(StEventCatalog.MESSAGE_RECEIVED, targetIndex, "interrupted")
+                            emitStEvent(StEventCatalog.MESSAGE_SWIPED, targetIndex)
+                            emitStEvent(StEventCatalog.CHARACTER_MESSAGE_RENDERED, targetIndex, "interrupted")
+                            emitStEvent(StEventCatalog.GENERATION_STOPPED)
+                        }
+                        return
+                    }
+                }
+            }
             val character = state.selectedCharacter
             val partialMessage = ChatMessage(
                 id = generateMessageId(),
@@ -708,9 +834,14 @@ class ChatViewModel(
 
     fun selectPreset(presetId: String) {
         val preset = _uiState.value.presets.firstOrNull { it.id == presetId } ?: return
-        _uiState.update { it.copy(selectedPreset = preset) }
         viewModelScope.launch {
-            emitStEvent(StEventCatalog.SETTINGS_UPDATED, "preset")
+            runCatching {
+                dataStore.selectPreset(preset.category, preset.id)
+                _uiState.update { it.copy(selectedPreset = preset) }
+                emitStEvent(StEventCatalog.SETTINGS_UPDATED, "preset")
+            }.onFailure { error ->
+                _uiState.update { it.copy(error = "加载预设失败：${error.message}") }
+            }
         }
     }
 
@@ -851,7 +982,6 @@ class ChatViewModel(
                 currentSession = null,
                 messages = emptyList(),
                 sessions = emptyList(),
-                disabledRegexScriptIds = emptySet(),
             )
         }
         viewModelScope.launch {
@@ -1130,7 +1260,13 @@ class ChatViewModel(
 
         return buildJsonObject {
         put("providerType", config.providerType)
-        preset.maxTokens?.let { put("maxContextTokens", JsonPrimitive(it)) }
+        put("maxContextTokens", JsonPrimitive(
+            preset.maxContextTokens ?: defaultContextTokens(config.providerType, config.model),
+        ))
+        config.model?.takeIf { it.isNotBlank() }?.let { put("modelName", JsonPrimitive(it)) }
+        (preset.maxCompletionTokens ?: preset.maxTokens)?.let {
+            put("maxResponseTokens", JsonPrimitive(it))
+        }
         val groupId = session?.groupId
         if (!groupId.isNullOrBlank()) {
             val group = dataStore.listGroups().firstOrNull { it.id == groupId }
@@ -1360,7 +1496,11 @@ class ChatViewModel(
             put("mainApi", state.providerConfig?.providerType ?: state.selectedProvider)
             put("main_api", state.providerConfig?.providerType ?: state.selectedProvider)
             put("onlineStatus", "connected")
-            put("maxContext", state.selectedPreset?.maxTokens ?: 8192)
+            put(
+                "maxContext",
+                state.selectedPreset?.maxContextTokens
+                    ?: defaultContextTokens(state.providerConfig?.providerType ?: state.selectedProvider, state.providerConfig?.model),
+            )
             put("lastMessageId", state.messages.lastIndex)
             put("chatMetadata", session?.metadata ?: buildJsonObject { })
             put("chat_metadata", session?.metadata ?: buildJsonObject { })
@@ -1543,19 +1683,24 @@ class ChatViewModel(
         return copy(messages = listOf(upgradedFirst) + messages.drop(1))
     }
 
+    private fun presetCategoryForProvider(providerType: String): PresetCategory = when (providerType) {
+        ProviderCatalog.TEXTGEN_WEBUI, ProviderCatalog.OLLAMA, ProviderCatalog.LLAMA_CPP ->
+            PresetCategory.TextGen
+        ProviderCatalog.KOBOLD, ProviderCatalog.KOBOLDCPP, ProviderCatalog.HORDE ->
+            PresetCategory.Kobold
+        ProviderCatalog.NOVELAI -> PresetCategory.NovelAi
+        else -> PresetCategory.OpenAi
+    }
+
+    private fun defaultContextTokens(providerType: String, model: String?): Int = when {
+        providerType == ProviderCatalog.DEEPSEEK &&
+            model.orEmpty().startsWith("deepseek-v4", ignoreCase = true) -> 1_000_000
+        providerType == ProviderCatalog.DEEPSEEK -> 65_536
+        else -> 8_192
+    }
+
     private suspend fun loadProviderConfig(providerType: String): ProviderConfig {
-        val apiKey = secretStore.readSecret("provider-$providerType-apikey")
-        val baseUrl = secretStore.readSecret("provider-$providerType-baseurl")
-
-        val defaultModel = ProviderDefaults.model(providerType).takeIf { it.isNotBlank() }
-        val model = secretStore.readSecret("provider-$providerType-model") ?: defaultModel
-
-        return ProviderConfig(
-            providerType = providerType,
-            baseUrl = baseUrl ?: ProviderDefaults.baseUrl(providerType),
-            apiKey = apiKey,
-            model = model,
-        )
+        return ProviderConfigPersistence.loadProviderConfig(secretStore, providerType)
     }
 
     private fun worldBooksForCharacter(
@@ -1581,6 +1726,22 @@ class ChatViewModel(
  */
 internal fun promptHistoryBeforeCurrentMessage(messages: List<ChatMessage>, currentMessageId: String): List<ChatMessage> =
     if (messages.lastOrNull()?.id == currentMessageId) messages.dropLast(1) else messages
+
+internal fun canRegenerateResponse(messages: List<ChatMessage>, messageIndex: Int): Boolean {
+    if (messageIndex !in messages.indices || messageIndex != messages.lastIndex) return false
+    val message = messages[messageIndex]
+    if (message.role != MessageRole.Character && message.role != MessageRole.Assistant) return false
+    return messages.take(messageIndex).any { it.role == MessageRole.User }
+}
+
+internal fun ChatMessage.withRegeneratedSwipe(newContent: String): ChatMessage {
+    val previousSwipes = swipes.ifEmpty { listOf(content) }
+    return copy(
+        content = newContent,
+        swipes = previousSwipes + newContent,
+        swipeIndex = previousSwipes.size,
+    )
+}
 
 internal fun ChatSession.withPromptTemplateVariables(variables: JsonObject): ChatSession =
     copy(

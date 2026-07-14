@@ -122,6 +122,7 @@ class CharacterExporter(
                         put("excludeRecursion", entry.excludeRecursion)
                         put("preventRecursion", entry.preventRecursion)
                         put("delayUntilRecursion", entry.delayUntilRecursion)
+                        put("ignoreBudget", entry.ignoreBudget)
                         put("priority", entry.priority)
                         put("group", "")
                         put("groupOverride", false)

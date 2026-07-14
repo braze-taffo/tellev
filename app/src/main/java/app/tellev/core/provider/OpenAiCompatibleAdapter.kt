@@ -34,6 +34,9 @@ class OpenAiCompatibleAdapter(
     private val modelsPath: String = "/v1/models",
     private val chatCompletionsPath: String = "/v1/chat/completions",
     private val supportsModelListing: Boolean = true,
+    private val includeUsageByDefault: Boolean = false,
+    private val supportsTopKByDefault: Boolean = false,
+    private val maxTokensField: String = "max_tokens",
 ) : ProviderAdapter {
     override val id: String = providerId
     override val displayName: String = providerDisplayName
@@ -48,11 +51,18 @@ class OpenAiCompatibleAdapter(
             return ProviderStatus(available = false, message = "Base URL is required")
         }
 
-        if (supportsModelListing) {
+        if (supportsModelListing(config)) {
             val modelProbe = probeModelsEndpoint(config)
             if (modelProbe != null) {
                 if (modelProbe.status.available || modelProbe.httpCode in setOf(401, 403)) {
-                    return modelProbe.status
+                    // A successful model list does not prove that generation
+                    // works. DeepSeek's connection test must exercise the same
+                    // authenticated chat endpoint used by real conversations.
+                    return if (providerId == ProviderCatalog.DEEPSEEK && modelProbe.status.available) {
+                        probeChatCompletionsEndpoint(config)
+                    } else {
+                        modelProbe.status
+                    }
                 }
             }
         }
@@ -62,7 +72,7 @@ class OpenAiCompatibleAdapter(
 
     private fun probeModelsEndpoint(config: ProviderConfig): StatusProbe? {
         val request = Request.Builder()
-            .url(config.endpoint(modelsPath))
+            .url(config.endpoint(effectiveModelsPath(config)))
             .applyHeaders(config)
             .get()
             .build()
@@ -94,7 +104,7 @@ class OpenAiCompatibleAdapter(
             )
 
         val request = Request.Builder()
-            .url(config.endpoint(chatCompletionsPath))
+            .url(config.endpoint(effectiveChatCompletionsPath(config)))
             .applyHeaders(config)
             .post(buildStatusPayload(model).toString().toRequestBody(JSON))
             .build()
@@ -117,10 +127,10 @@ class OpenAiCompatibleAdapter(
 
     override suspend fun listModels(config: ProviderConfig): List<ProviderModel> {
         val fallbackModels = fallbackModels(config)
-        if (!supportsModelListing) return fallbackModels
+        if (!supportsModelListing(config)) return fallbackModels
 
         val request = Request.Builder()
-            .url(config.endpoint(modelsPath))
+            .url(config.endpoint(effectiveModelsPath(config)))
             .applyHeaders(config)
             .get()
             .build()
@@ -145,7 +155,7 @@ class OpenAiCompatibleAdapter(
     override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> = flow {
         val payload = buildPayload(config, request)
         val httpRequest = Request.Builder()
-            .url(config.endpoint(chatCompletionsPath))
+            .url(config.endpoint(effectiveChatCompletionsPath(config)))
             .applyHeaders(config)
             .post(payload.toString().toRequestBody(JSON))
             .build()
@@ -225,11 +235,25 @@ class OpenAiCompatibleAdapter(
                         fullText
                     }
 
-                    emit(GenerateChunk.Completed(completedText, finishReason, usage = lastUsage))
+                    emit(
+                        GenerateChunk.Completed(
+                            completedText,
+                            finishReason,
+                            usage = lastUsage,
+                            toolCalls = serializeToolCalls(toolCallAccumulator),
+                        ),
+                    )
                 } else {
                     val body = response.body?.string().orEmpty()
                     val parsed = parseNonStreamResponse(body)
-                    emit(GenerateChunk.Completed(parsed.text, parsed.finishReason, usage = parsed.usage))
+                    emit(
+                        GenerateChunk.Completed(
+                            parsed.text,
+                            parsed.finishReason,
+                            usage = parsed.usage,
+                            toolCalls = parsed.toolCalls,
+                        ),
+                    )
                 }
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -252,44 +276,99 @@ class OpenAiCompatibleAdapter(
     // -- Payload construction --
 
     protected fun buildPayload(config: ProviderConfig, request: GenerateRequest): JsonObject =
-        buildJsonObject {
+        if (providerId == ProviderCatalog.DEEPSEEK) {
+            buildDeepSeekPayload(config, request)
+        } else buildJsonObject {
             put("model", JsonPrimitive(config.model ?: defaultModel ?: request.preset.id))
             put("stream", JsonPrimitive(request.stream))
-            if (request.stream) {
+            val includeUsage = config.optionBoolean("includeUsage") ?: includeUsageByDefault
+            if (request.stream && includeUsage) {
                 put("stream_options", buildJsonObject {
                     put("include_usage", JsonPrimitive(true))
                 })
             }
             request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
             request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
-            request.preset.topK?.let { put("top_k", JsonPrimitive(it)) }
-            val maxTokens = request.prompt.maxTokens ?: request.preset.maxTokens
-            maxTokens?.let { put("max_tokens", JsonPrimitive(it)) }
+            if (config.optionBoolean("supportsTopK") ?: supportsTopKByDefault) {
+                request.preset.topK?.let { put("top_k", JsonPrimitive(it)) }
+            }
+            request.preset.presencePenalty?.let { put("presence_penalty", JsonPrimitive(it)) }
+            request.preset.frequencyPenalty?.let { put("frequency_penalty", JsonPrimitive(it)) }
+            request.preset.seed?.let { put("seed", JsonPrimitive(it)) }
+            val maxTokens = request.prompt.maxTokens
+                ?: request.preset.maxCompletionTokens
+                ?: request.preset.maxTokens
+            val outputLengthField = config.optionString("maxTokensField") ?: maxTokensField
+            maxTokens?.let { put(outputLengthField, JsonPrimitive(it)) }
             val stopSeqs = request.preset.stop + request.prompt.stop
             if (stopSeqs.isNotEmpty()) {
                 put("stop", buildJsonArray { stopSeqs.distinct().forEach { add(JsonPrimitive(it)) } })
             }
 
-            // Messages with vision support
-            put("messages", buildMessagesArray(request))
+            put("messages", buildMessagesArray(config, request))
 
-            // Tool calling: add tools from metadata
-            val tools = request.metadata["tools"]
-            if (tools is JsonArray && tools.isNotEmpty()) {
-                put("tools", tools)
-                request.metadata["tool_choice"]?.let { put("tool_choice", it) }
+            if (config.optionBoolean("supportsTools") != false) {
+                val tools = request.metadata["tools"]
+                if (tools is JsonArray && tools.isNotEmpty()) {
+                    put("tools", tools)
+                    request.metadata["tool_choice"]?.let { put("tool_choice", it) }
+                }
             }
 
-            // Logprobs support
+            if (providerId == ProviderCatalog.DEEPSEEK || config.optionBoolean("supportsReasoning") == true) {
+                request.preset.raw["thinking"]?.let { put("thinking", it) }
+                request.preset.raw["reasoning_effort"]?.let { put("reasoning_effort", it) }
+            }
+            request.preset.raw["response_format"]?.let { put("response_format", it) }
+
             val wantLogprobs = request.metadata["logprobs"]
             if (wantLogprobs is JsonPrimitive && wantLogprobs.content.toBooleanStrictOrNull() == true) {
                 put("logprobs", JsonPrimitive(true))
                 request.metadata["top_logprobs"]?.let { put("top_logprobs", it) }
             }
+
+            val reserved = setOf("messages", "model", "stream", "stream_options")
+            (config.options["extraBody"] as? JsonObject)?.forEach { (key, value) ->
+                if (key !in reserved) put(key, value)
+            }
         }
 
-    protected fun buildMessagesArray(request: GenerateRequest): JsonArray {
-        val imageAttachments = request.attachments.filter { it.mimeType.startsWith("image/") }
+    /**
+     * DeepSeek deliberately has a small, fixed request contract. Arbitrary
+     * OpenAI-compatible options must never leak into this payload.
+     */
+    private fun buildDeepSeekPayload(config: ProviderConfig, request: GenerateRequest): JsonObject =
+        buildJsonObject {
+            put("model", JsonPrimitive(config.model ?: defaultModel ?: "deepseek-v4-flash"))
+            put("stream", JsonPrimitive(request.stream))
+            request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
+            request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
+            val maxTokens = request.prompt.maxTokens
+                ?: request.preset.maxCompletionTokens
+                ?: request.preset.maxTokens
+            maxTokens?.let { put("max_tokens", JsonPrimitive(it)) }
+            val stopSeqs = request.preset.stop + request.prompt.stop
+            if (stopSeqs.isNotEmpty()) {
+                put("stop", buildJsonArray { stopSeqs.distinct().forEach { add(JsonPrimitive(it)) } })
+            }
+            put("messages", buildMessagesArray(config.copy(headers = emptyMap(), options = JsonObject(emptyMap())), request))
+
+            val tools = request.metadata["tools"]
+            if (tools is JsonArray && tools.isNotEmpty()) {
+                put("tools", tools)
+                request.metadata["tool_choice"]?.let { put("tool_choice", it) }
+            }
+            request.preset.raw["thinking"]?.let { put("thinking", it) }
+            request.preset.raw["reasoning_effort"]?.let { put("reasoning_effort", it) }
+            request.preset.raw["response_format"]?.let { put("response_format", it) }
+        }
+
+    protected fun buildMessagesArray(config: ProviderConfig, request: GenerateRequest): JsonArray {
+        val imageAttachments = if (config.optionBoolean("supportsVision") == true) {
+            request.attachments.filter { it.mimeType.startsWith("image/") }
+        } else {
+            emptyList()
+        }
 
         return buildJsonArray {
             request.prompt.messages.forEach { promptMessage ->
@@ -395,8 +474,29 @@ class OpenAiCompatibleAdapter(
                 text
             }
 
-            NonStreamParsed(text = fullText, finishReason = finishReason, usage = obj["usage"] as? JsonObject)
+            NonStreamParsed(
+                text = fullText,
+                finishReason = finishReason,
+                usage = obj["usage"] as? JsonObject,
+                toolCalls = message?.get("tool_calls") as? JsonArray,
+            )
         }.getOrDefault(NonStreamParsed(text = "", finishReason = null))
+    }
+
+    private fun serializeToolCalls(accumulator: Map<Int, ToolCallAccumulator>): JsonArray? {
+        if (accumulator.isEmpty()) return null
+        return buildJsonArray {
+            accumulator.toSortedMap().values.forEach { call ->
+                add(buildJsonObject {
+                    if (call.id.isNotBlank()) put("id", JsonPrimitive(call.id))
+                    put("type", JsonPrimitive("function"))
+                    put("function", buildJsonObject {
+                        put("name", JsonPrimitive(call.name))
+                        put("arguments", JsonPrimitive(call.arguments))
+                    })
+                })
+            }
+        }
     }
 
     // -- Utilities --
@@ -408,8 +508,21 @@ class OpenAiCompatibleAdapter(
         MessageRole.Tool -> "tool"
     }
 
-    protected fun ProviderConfig.endpoint(path: String): String =
-        baseUrl.trimEnd('/') + path
+    protected fun ProviderConfig.endpoint(path: String): String {
+        if (path.startsWith("http://") || path.startsWith("https://")) return path
+        val base = baseUrl.trimEnd('/')
+        var suffix = if (path.startsWith('/')) path else "/$path"
+        if (base.endsWith("/v1", ignoreCase = true) && suffix.startsWith("/v1/", ignoreCase = true)) {
+            suffix = suffix.removePrefix("/v1")
+        }
+        return base + suffix
+    }
+
+    private fun ProviderConfig.optionString(key: String): String? =
+        (options[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+
+    private fun ProviderConfig.optionBoolean(key: String): Boolean? =
+        (options[key] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
 
     private fun buildStatusPayload(model: String): JsonObject =
         buildJsonObject {
@@ -434,10 +547,35 @@ class OpenAiCompatibleAdapter(
     }
 
     protected fun Request.Builder.applyHeaders(config: ProviderConfig): Request.Builder = apply {
-        config.apiKey?.takeIf { it.isNotBlank() }?.let { header("Authorization", "Bearer $it") }
-        header("Content-Type", "application/json")
-        config.headers.forEach { (name, value) -> header(name, value) }
+        if (providerId == ProviderCatalog.DEEPSEEK) {
+            // DeepSeek always uses the official bearer contract. Ignore any
+            // stale custom headers or auth settings saved by older builds.
+            config.apiKey?.takeIf { it.isNotBlank() }
+                ?.let { apiKey -> header("Authorization", "Bearer $apiKey") }
+            header("Content-Type", "application/json")
+        } else {
+            config.apiKey?.takeIf { it.isNotBlank() }?.let { apiKey ->
+                val headerName = config.optionString("authHeader") ?: "Authorization"
+                // An explicitly empty scheme means a raw-key custom auth header.
+                val scheme = (config.options["authScheme"] as? JsonPrimitive)?.contentOrNull ?: "Bearer"
+                header(headerName, if (scheme.isBlank()) apiKey else "$scheme $apiKey")
+            }
+            header("Content-Type", "application/json")
+            config.headers.forEach { (name, value) -> header(name, value) }
+        }
     }
+
+    private fun supportsModelListing(config: ProviderConfig): Boolean =
+        if (providerId == ProviderCatalog.DEEPSEEK) supportsModelListing
+        else config.optionBoolean("supportsModelListing") ?: supportsModelListing
+
+    private fun effectiveModelsPath(config: ProviderConfig): String =
+        if (providerId == ProviderCatalog.DEEPSEEK) modelsPath
+        else config.optionString("modelsPath") ?: modelsPath
+
+    private fun effectiveChatCompletionsPath(config: ProviderConfig): String =
+        if (providerId == ProviderCatalog.DEEPSEEK) chatCompletionsPath
+        else config.optionString("chatCompletionsPath") ?: chatCompletionsPath
 
     // -- Data classes for internal parsing --
 
@@ -466,6 +604,7 @@ class OpenAiCompatibleAdapter(
         val text: String,
         val finishReason: String?,
         val usage: JsonObject? = null,
+        val toolCalls: JsonArray? = null,
     )
 
     private data class StatusProbe(

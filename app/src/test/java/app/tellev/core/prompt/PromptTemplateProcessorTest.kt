@@ -329,4 +329,74 @@ class PromptTemplateProcessorTest {
         // leaving only the normal text portion.
         assertEquals("Normal text.", processor.systemPromptContentFor(entry))
     }
+    @Test
+    fun `getwi resolves current character book recursively with EJS trim markers`() {
+        val result = DefaultPromptTemplateProcessor().process(
+            PromptTemplateRequest(
+                messages = listOf(
+                    PromptMessage(
+                        role = MessageRole.System,
+                        content = "before\n<%- await getwi(null, '仙界介绍') -%>\nafter",
+                    ),
+                ),
+                context = MacroContext(),
+                metadata = buildJsonObject { },
+                currentWorldBookId = "character-card",
+                worldCatalog = listOf(
+                    PromptTemplateWorldEntry(
+                        id = "1",
+                        bookId = "character-card",
+                        bookName = "道渊",
+                        comment = "仙界介绍",
+                        content = "仙界：<%- await getwi(null, '仙界核心区域') -%>",
+                    ),
+                    PromptTemplateWorldEntry(
+                        id = "2",
+                        bookId = "character-card",
+                        comment = "仙界核心区域",
+                        content = "核心区域已载入",
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals("before\n仙界：核心区域已载入after", result.messages.single().content)
+        assertTrue(result.warnings.isEmpty())
+    }
+
+    @Test
+    fun `getwi returns empty and warns for missing and cyclic entries`() {
+        val result = DefaultPromptTemplateProcessor().process(
+            PromptTemplateRequest(
+                messages = listOf(
+                    PromptMessage(
+                        role = MessageRole.System,
+                        content = "<%- await getwi(null, 'missing') -%>|<%- await getwi(null, 'loop-a') -%>",
+                    ),
+                ),
+                context = MacroContext(),
+                metadata = buildJsonObject { },
+                currentWorldBookId = "character-card",
+                worldCatalog = listOf(
+                    PromptTemplateWorldEntry(
+                        id = "a",
+                        bookId = "character-card",
+                        comment = "loop-a",
+                        content = "<%- await getwi(null, 'loop-b') -%>",
+                    ),
+                    PromptTemplateWorldEntry(
+                        id = "b",
+                        bookId = "character-card",
+                        comment = "loop-b",
+                        content = "<%- await getwi(null, 'loop-a') -%>",
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals("|", result.messages.single().content)
+        assertTrue(result.warnings.any { it.contains("entry not found") })
+        assertTrue(result.warnings.any { it.contains("recursion stopped") })
+    }
+
 }

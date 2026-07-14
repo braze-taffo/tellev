@@ -5,6 +5,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,10 +21,12 @@ class TavernMessageCompatTest {
     }
 
     @Test
-    fun `large frontend keeps the whole drag gesture inside webview`() {
-        assertTrue(!shouldReleaseTavernTouchToParent(true, false))
-        assertTrue(!shouldReleaseTavernTouchToParent(true, true))
-        assertTrue(shouldReleaseTavernTouchToParent(false, false))
+    fun `webview hands drag to chat list only at its scroll edge`() {
+        assertTrue(!shouldForwardWebViewDragToChat(canScrollInDirection = true))
+        assertTrue(shouldForwardWebViewDragToChat(canScrollInDirection = false))
+        assertEquals(0f, chatScrollDeltaAtWebViewEdge(true, 25f))
+        assertEquals(-25f, chatScrollDeltaAtWebViewEdge(false, 25f))
+        assertEquals(25f, chatScrollDeltaAtWebViewEdge(false, -25f))
     }
 
     @Test
@@ -126,16 +129,26 @@ class TavernMessageCompatTest {
     }
 
     @Test
-    fun `layout script resets reused webview and normalizes oversized flex pages`() {
+    fun `layout script preserves nested card scroll and bridges only its edges`() {
         val script = tavernMessageLayoutScript(462)
 
         assertTrue(script.contains("window.scrollTo(0, 0)"))
         assertTrue(script.contains("hasOversizedFlowChild"))
         assertTrue(script.contains("justify-content', 'flex-start"))
+        assertTrue(script.contains("findNestedScrollOwner"))
+        assertTrue(script.contains("overflowY === 'auto' || overflowY === 'scroll'"))
+        assertTrue(script.contains("TellevBridge.setNestedScrollGesture(!!owner)"))
+        assertTrue(script.contains("if (!canScrollInDirection)"))
+        assertTrue(script.contains("TellevBridge.forwardBoundaryDrag(-fingerDeltaY)"))
+        assertTrue(script.contains("activeScreen.style.setProperty('overflow-y', 'auto'"))
+        assertTrue(script.contains("activeScreen.scrollTop = 0"))
+        assertTrue(script.contains("activeScreenChanged"))
+        assertTrue(script.contains("if (activeScreenChanged)"))
+        assertFalse(script.contains("position: relative !important"))
+        assertFalse(script.contains("overflow-y: visible !important"))
         assertTrue(script.contains("document.fonts.ready"))
         assertTrue(script.contains("nativeViewportHeight = 462"))
         assertTrue(script.contains("nativeViewportHeight > 0"))
-        assertTrue(script.contains("activeScreen.style.setProperty('max-height'"))
         assertTrue(script.contains("new MutationObserver(resetMessageViewport)"))
         assertTrue(script.contains("setTimeout(resetMessageViewport, 1000)"))
     }

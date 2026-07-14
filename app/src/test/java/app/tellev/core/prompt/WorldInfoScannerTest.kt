@@ -27,6 +27,7 @@ class WorldInfoScannerTest {
         excludeRecursion: Boolean = false,
         preventRecursion: Boolean = false,
         delayUntilRecursion: Boolean = false,
+        ignoreBudget: Boolean = false,
         priority: Int = 0,
         insertionOrder: Int = 100,
         enabled: Boolean = true,
@@ -49,6 +50,7 @@ class WorldInfoScannerTest {
         excludeRecursion = excludeRecursion,
         preventRecursion = preventRecursion,
         delayUntilRecursion = delayUntilRecursion,
+        ignoreBudget = ignoreBudget,
         priority = priority,
         insertionOrder = insertionOrder,
         enabled = enabled,
@@ -156,9 +158,9 @@ class WorldInfoScannerTest {
     }
 
     @Test
-    fun `excludeRecursion keeps entry content out of recursion text`() {
-        val a = entry("a", keys = listOf("start"), content = "this mentions dragon", excludeRecursion = true)
-        val b = entry("b", keys = listOf("dragon"), content = "dragon lore")
+    fun `excludeRecursion prevents entry from activating during recursion`() {
+        val a = entry("a", keys = listOf("start"), content = "this mentions dragon")
+        val b = entry("b", keys = listOf("dragon"), content = "dragon lore", excludeRecursion = true)
         val result = scan(listOf(a, b), "start here")
         assertEquals(setOf("a"), ids(result.allActivated))
     }
@@ -171,6 +173,16 @@ class WorldInfoScannerTest {
         val c = entry("c", keys = listOf("k3"), content = "k4")
         val result = scan(listOf(a, b, c), "k1", maxRecursion = 0)
         // No recursion allowed → only a activates.
+        assertEquals(setOf("a"), ids(result.allActivated))
+    }
+
+    @Test
+    fun `recursion is disabled by default like SillyTavern`() {
+        val a = entry("a", keys = listOf("start"), content = "dragon")
+        val b = entry("b", keys = listOf("dragon"), content = "dragon lore")
+        val result = WorldInfoScanner(random = { 0.0 })
+            .scan(listOf(a, b), "start") { it.content }
+
         assertEquals(setOf("a"), ids(result.allActivated))
     }
 
@@ -227,17 +239,39 @@ class WorldInfoScannerTest {
     // ── sorting ──────────────────────────────────────────────────────────
 
     @Test
-    fun `entries sort by priority desc then insertionOrder asc`() {
+    fun `entries sort by priority desc then insertionOrder desc`() {
         val a = entry("a", keys = listOf("k"), priority = 10, insertionOrder = 5)
         val b = entry("b", keys = listOf("k"), priority = 10, insertionOrder = 1)
         val c = entry("c", keys = listOf("k"), priority = 100, insertionOrder = 9)
         val result = scan(listOf(a, b, c), "k")
-        assertEquals(listOf("c", "b", "a"), result.before.map { it.entry.id })
+        assertEquals(listOf("c", "a", "b"), result.before.map { it.entry.id })
     }
 
     @Test
     fun `disabled entries are skipped`() {
         val e = entry("e", keys = listOf("k"), enabled = false)
         assertTrue(scan(listOf(e), "k").allActivated.isEmpty())
+    }
+
+    @Test
+    fun `disabled constant entries are skipped`() {
+        val e = entry("e", keys = emptyList(), constant = true, enabled = false)
+        assertTrue(scan(listOf(e), "").allActivated.isEmpty())
+    }
+
+    @Test
+    fun `world info budget is enforced and ignoreBudget can exceed it`() {
+        val regular = entry("regular", keys = emptyList(), content = "long regular lore", constant = true)
+        val forced = entry(
+            "forced",
+            keys = emptyList(),
+            content = "long forced lore",
+            constant = true,
+            ignoreBudget = true,
+        )
+        val result = WorldInfoScanner(random = { 0.0 }, maxContentTokens = 1)
+            .scan(listOf(regular, forced), "") { it.content }
+
+        assertEquals(setOf("forced"), ids(result.allActivated))
     }
 }

@@ -6,12 +6,20 @@ import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.GroupChat
+import app.tellev.core.model.PresetCategory
 import app.tellev.core.model.Persona
 import app.tellev.core.model.WorldBook
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import java.nio.file.Path
 
 interface StDataStore {
     val layout: StDirectoryLayout
+    val characterChanges: Flow<String>
+        get() = emptyFlow()
+    val presetChanges: Flow<PresetCategory>
+        get() = emptyFlow()
+
 
     suspend fun bootstrap()
 
@@ -49,14 +57,18 @@ interface StDataStore {
     suspend fun readDisabledWorldIds(): Set<String>
     suspend fun saveDisabledWorldIds(ids: Set<String>)
 
-    // Per-character regex script activation, keyed by character id. Scripts
-    // whose id is in a character's set are skipped at display time. Absent
-    // (or a missing character entry) = all scripts active (default on).
+    // Legacy v1.2.2 sidecar access retained only for one-time migration into
+    // character-card extensions.regex_scripts[].disabled.
     suspend fun readDisabledRegexScriptIds(): Map<String, Set<String>>
     suspend fun saveDisabledRegexScriptIds(map: Map<String, Set<String>>)
 
     suspend fun listPresets(): List<GenerationPreset>
+    suspend fun readPreset(category: PresetCategory, name: String): GenerationPreset? =
+        listPresets().firstOrNull { it.category == category && it.id == name }
+    suspend fun readSelectedPresetName(category: PresetCategory): String?
+    suspend fun selectPreset(category: PresetCategory, name: String)
     suspend fun savePreset(preset: GenerationPreset)
+    suspend fun saveWorkingPreset(category: PresetCategory, preset: GenerationPreset) = savePreset(preset)
     suspend fun deletePreset(id: String, providerType: String? = null): Boolean
 
     // Import a SillyTavern-style preset JSON verbatim into the provider-specific

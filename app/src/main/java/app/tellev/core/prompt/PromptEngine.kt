@@ -7,6 +7,8 @@ import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.Persona
+import app.tellev.core.regex.CharacterRegexApplier
+import app.tellev.core.storage.StDataStore
 import app.tellev.core.model.WorldBook
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
@@ -15,6 +17,8 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
+
+private const val DEFAULT_MAX_CONTEXT_TOKENS = 8192
 
 interface PromptEngine {
     fun build(request: PromptBuildRequest): PromptBuildResult
@@ -127,6 +131,13 @@ class DefaultPromptEngine(
             extensionInjectionScanText(request.metadata).forEach(::appendLine)
         }
 
+        val maxContextTokens = request.preset.maxContextTokens
+            ?: extractMaxContextTokens(request.metadata)
+            ?: DEFAULT_MAX_CONTEXT_TOKENS
+        val worldInfoTokenBudget = maxContextTokens
+            ?.let { ((it.toLong() * 25L) / 100L).toInt() }
+            ?.coerceAtLeast(1)
+
         // 4. Activate world book entries with depth/position support.
         // The expand callback runs each entry's content through macro
         // expansion AND the prompt-template processor so that [GENERATE]/@INJECT
@@ -134,7 +145,7 @@ class DefaultPromptEngine(
         // later via promptTemplateProcessor.process) and EJS is resolved. This
         // mirrors the previous single-scope path that filtered world content
         // through systemPromptContentFor before splicing into the system prompt.
-        val worldScanner = WorldInfoScanner()
+        val worldScanner = WorldInfoScanner(maxContentTokens = worldInfoTokenBudget)
         val worldScan = worldScanner.scan(
             entries = request.worldBooks.flatMap { it.entries },
             searchText = searchText,
@@ -142,7 +153,11 @@ class DefaultPromptEngine(
                 promptTemplateProcessor.systemPromptContentFor(
                     PromptTemplateWorldEntry(
                         id = it.id,
-                        content = macroEngine.expand(it.content, macroContext),
+                        content = CharacterRegexApplier.applyWorldInfoForPrompt(
+                            text = macroEngine.expand(it.content, macroContext),
+                            character = request.character,
+                            userName = request.persona?.name ?: "User",
+                        ),
                         raw = it.raw,
                     ),
                 )
@@ -154,12 +169,26 @@ class DefaultPromptEngine(
         val contextPresetObj = request.metadata["contextPreset"] as? JsonObject
         val contextPreset = contextPresetObj?.let { ContextTemplate.loadPreset(it) }
 
-        val promptTemplateWorldEntries = activatedEntries.map {
+        fun templateWorldEntry(book: WorldBook, entry: app.tellev.core.model.WorldBookEntry) =
             PromptTemplateWorldEntry(
-                id = it.id,
-                content = macroEngine.expand(it.content, macroContext),
-                raw = it.raw,
+                id = entry.id,
+                content = CharacterRegexApplier.applyWorldInfoForPrompt(
+                    text = macroEngine.expand(entry.content, macroContext),
+                    character = request.character,
+                    userName = request.persona?.name ?: "User",
+                ),
+                raw = entry.raw,
+                bookId = book.id,
+                bookName = book.name,
+                comment = entry.comment,
             )
+        val promptTemplateWorldCatalog = request.worldBooks.flatMap { book ->
+            book.entries.map { entry -> templateWorldEntry(book, entry) }
+        }
+        val promptTemplateWorldEntries = request.worldBooks.flatMap { book ->
+            book.entries
+                .filter { it in activatedEntries }
+                .map { entry -> templateWorldEntry(book, entry) }
         }
         val systemPrompt = if (contextPreset != null) {
             buildSystemPromptWithContextTemplate(
@@ -173,25 +202,31 @@ class DefaultPromptEngine(
         }
 
         // 6. Build prompt messages
+        val visibleHistory = request.messages.filterNot { it.isHidden }
         val rawMessages = buildList {
             add(PromptMessage(role = MessageRole.System, content = systemPrompt))
-            request.messages
-                .filterNot { it.isHidden }
-                .forEach { message ->
-                    add(
-                        PromptMessage(
-                            role = when (message.role) {
-                                MessageRole.Character -> MessageRole.Assistant
-                                else -> message.role
-                            },
-                            name = message.name,
-                            content = macroEngine.expand(
-                                message.swipes.getOrNull(message.swipeIndex) ?: message.content,
-                                macroContext,
-                            ),
+            visibleHistory.forEachIndexed { index, message ->
+                val expandedContent = macroEngine.expand(
+                    message.swipes.getOrNull(message.swipeIndex) ?: message.content,
+                    macroContext,
+                )
+                add(
+                    PromptMessage(
+                        role = when (message.role) {
+                            MessageRole.Character -> MessageRole.Assistant
+                            else -> message.role
+                        },
+                        name = message.name,
+                        content = CharacterRegexApplier.applyForPrompt(
+                            text = expandedContent,
+                            role = message.role,
+                            character = request.character,
+                            userName = request.persona?.name ?: "User",
+                            depth = visibleHistory.lastIndex - index,
                         ),
-                    )
-                }
+                    ),
+                )
+            }
             add(
                 PromptMessage(
                     role = MessageRole.User,
@@ -202,7 +237,15 @@ class DefaultPromptEngine(
         }
 
         // 7. Handle group chat ordering
-        val orderedMessages = applyGroupChatOrdering(rawMessages, request.metadata)
+        val presetOrderedMessages = applyPresetPromptOrder(
+            messages = rawMessages,
+            preset = request.preset,
+            context = macroContext,
+            character = expandedCharacter,
+            personaDescription = request.persona?.description.orEmpty(),
+            worldScan = worldScan,
+        )
+        val orderedMessages = applyGroupChatOrdering(presetOrderedMessages, request.metadata)
 
         // 8. Apply ST-Prompt-Template compatible EJS processing before token trimming/provider formatting.
         // Macro expansion above can mutate LOCAL/GLOBAL variables. Feed the
@@ -227,30 +270,27 @@ class DefaultPromptEngine(
                 context = macroContext,
                 metadata = templateMetadata,
                 worldEntries = promptTemplateWorldEntries,
+                worldCatalog = promptTemplateWorldCatalog,
+                currentWorldBookId = StDataStore.embeddedCharacterBookId(request.character.id),
             ),
         )
         val templatedMessages = promptTemplateResult.messages
         val templatedSystemPrompt = templatedMessages.firstOrNull()?.content ?: systemPrompt
 
         // 9. Apply token budget
-        val maxContextTokens = extractMaxContextTokens(request.metadata)
-        val budgetedMessages = if (maxContextTokens != null) {
-            // templatedSystemPrompt already contains the world info + character
-            // description text (both buildSystemPrompt and the context-template
-            // path insert them into the system prompt). Passing them again as
-            // separate worldInfo/characterDescription would double-count their
-            // tokens against the budget and trim legitimate chat messages too
-            // eagerly. Pass empties so each token is reserved only once.
-            TokenBudget.fitToBudget(
-                systemPrompt = templatedSystemPrompt,
-                worldInfo = emptyList(),
-                characterDescription = "",
-                messages = templatedMessages.drop(1), // Drop system message, fitToBudget adds its own
-                budget = maxContextTokens - request.preset.maxTokens.orElse(0),
-            )
-        } else {
-            templatedMessages
-        }
+        // templatedSystemPrompt already contains the world info + character
+        // description text (both buildSystemPrompt and the context-template
+        // path insert them into the system prompt). Passing them again as
+        // separate worldInfo/characterDescription would double-count their
+        // tokens against the budget and trim legitimate chat messages too
+        // eagerly. Pass empties so each token is reserved only once.
+        val budgetedMessages = TokenBudget.fitToBudget(
+            systemPrompt = templatedSystemPrompt,
+            worldInfo = emptyList(),
+            characterDescription = "",
+            messages = templatedMessages.drop(1), // Drop system message, fitToBudget adds its own
+            budget = maxContextTokens - (request.preset.maxCompletionTokens ?: request.preset.maxTokens).orElse(0),
+        )
 
         // 9.5. Splice in extension-injected prompts (authored by loaded
         // extensions via the ST-compatible `injectPrompts` JS API). Applied
@@ -286,7 +326,7 @@ class DefaultPromptEngine(
         return PromptBuildResult(
             messages = finalMessages,
             stop = stopSequences,
-            maxTokens = request.preset.maxTokens,
+            maxTokens = request.preset.maxCompletionTokens ?: request.preset.maxTokens,
             providerType = request.providerType,
             diagnostics = PromptDiagnostics(
                 activatedWorldEntryIds = activatedEntries.map { it.id },
@@ -321,12 +361,14 @@ class DefaultPromptEngine(
             firstMessage = request.character.firstMessage,
             lastMessage = lastMessage,
             groupMemberNames = groupMemberNames,
-            maxPromptTokens = request.preset.maxTokens ?: 0,
-            maxContextTokens = extractMaxContextTokens(request.metadata) ?: 0,
+            maxPromptTokens = request.preset.maxCompletionTokens ?: request.preset.maxTokens ?: 0,
+            maxContextTokens = request.preset.maxContextTokens
+                ?: extractMaxContextTokens(request.metadata)
+                ?: DEFAULT_MAX_CONTEXT_TOKENS,
             // ── Step 5 gap-fill: SillyTavern macro parity ──
             personaDescription = request.persona?.description.orEmpty(),
             modelName = extractModelName(request.metadata, request.providerType),
-            maxResponseTokens = extractMaxResponseTokens(request.metadata) ?: request.preset.maxTokens ?: 0,
+            maxResponseTokens = extractMaxResponseTokens(request.metadata) ?: request.preset.maxCompletionTokens ?: request.preset.maxTokens ?: 0,
             inputText = request.userInput,
             lastUserMessage = lastUserMessage,
             lastCharMessage = lastCharMessage,
@@ -442,6 +484,68 @@ class DefaultPromptEngine(
         }
         return stops
     }
+    private fun applyPresetPromptOrder(
+        messages: List<PromptMessage>,
+        preset: GenerationPreset,
+        context: MacroContext,
+        character: CharacterCard,
+        personaDescription: String,
+        worldScan: WorldInfoScanner.ScanResult,
+    ): List<PromptMessage> {
+        if (preset.prompts.isEmpty() || messages.isEmpty()) return messages
+        val unused = preset.promptsUnused.map { it.identifier }.toSet()
+        val enabled = preset.prompts
+            .filter { it.enabled && it.identifier !in unused }
+            .sortedWith(compareBy({ it.order }, { it.identifier }))
+        val system = messages.firstOrNull { it.role == MessageRole.System }
+        val history = messages.filterNot { it === system }
+        val worldBefore = (worldScan.before + worldScan.outlet + worldScan.anTop + worldScan.emTop)
+            .joinToString("\n") { it.content.trim() }
+        val worldAfter = (worldScan.after + worldScan.anBottom + worldScan.emBottom)
+            .joinToString("\n") { it.content.trim() }
+        val relativeMessages = mutableListOf<Pair<Int, PromptMessage>>()
+        val ordered = mutableListOf<PromptMessage>()
+
+        fun roleFor(value: String): MessageRole = when (value.lowercase()) {
+            "user" -> MessageRole.User
+            "assistant", "character" -> MessageRole.Assistant
+            else -> MessageRole.System
+        }
+
+        enabled.forEach { prompt ->
+            val identifier = prompt.identifier.lowercase().replace("_", "").replace("-", "")
+            if (identifier in setOf("chathistory", "history")) {
+                ordered += history
+                return@forEach
+            }
+            val component = when (identifier) {
+                "main", "system", "systemprompt" ->
+                    prompt.content.takeIf { it.isNotBlank() } ?: "You are ${character.name}."
+                "worldinfobefore" -> worldBefore
+                "worldinfoafter" -> worldAfter
+                "chardescription", "characterdescription" -> character.description
+                "charpersonality", "characterpersonality" -> character.personality
+                "scenario" -> character.scenario
+                "personadescription", "persona" -> macroEngine.expand(personaDescription, context)
+                "dialogueexamples", "examplemessages", "examples" -> character.exampleMessages
+                else -> prompt.content
+            }
+            if (component.isBlank()) return@forEach
+            val message = PromptMessage(
+                role = roleFor(prompt.role),
+                content = macroEngine.expand(component, context),
+            )
+            if (prompt.relative) relativeMessages += prompt.depth.coerceAtLeast(0) to message
+            else ordered += message
+        }
+
+        relativeMessages.forEach { (depth, message) ->
+            val index = (ordered.size - depth).coerceIn(0, ordered.size)
+            ordered.add(index, message)
+        }
+        return ordered
+    }
+
 
     private fun applyGroupChatOrdering(
         messages: List<PromptMessage>,

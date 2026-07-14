@@ -111,16 +111,52 @@ data class Persona(
     val avatarRelativePath: String? = null,
     val metadata: JsonObject = buildJsonObject { },
 )
+@Serializable
+enum class PresetCategory {
+    @SerialName("openai") OpenAi,
+    @SerialName("textgen") TextGen,
+    @SerialName("kobold") Kobold,
+    @SerialName("novelai") NovelAi,
+}
+
+@Serializable
+data class PresetKey(
+    val category: PresetCategory,
+    val fileStem: String,
+)
+
+@Serializable
+data class PresetPrompt(
+    val identifier: String,
+    val name: String = identifier,
+    val role: String = "system",
+    val content: String = "",
+    val enabled: Boolean = true,
+    val relative: Boolean = false,
+    val depth: Int = 0,
+    val order: Int = 0,
+    val raw: JsonObject = buildJsonObject { },
+)
+
 
 @Serializable
 data class GenerationPreset(
     val id: String,
     val name: String,
     val providerType: String,
+    val category: PresetCategory = PresetCategory.OpenAi,
     val temperature: Double? = null,
     val topP: Double? = null,
     val topK: Int? = null,
     val maxTokens: Int? = null,
+    val maxContextTokens: Int? = null,
+    val maxCompletionTokens: Int? = null,
+    val presencePenalty: Double? = null,
+    val frequencyPenalty: Double? = null,
+    val seed: Long? = null,
+    val prompts: List<PresetPrompt> = emptyList(),
+    val promptsUnused: List<PresetPrompt> = emptyList(),
+    val extensions: JsonObject = buildJsonObject { },
     val stop: List<String> = emptyList(),
     val raw: JsonObject = buildJsonObject { },
 )
@@ -162,6 +198,8 @@ data class WorldBookEntry(
     val excludeRecursion: Boolean = false,
     val preventRecursion: Boolean = false,
     val delayUntilRecursion: Boolean = false,
+    /** Include this entry even after the world-info token budget is exhausted. */
+    val ignoreBudget: Boolean = false,
     val raw: JsonObject = buildJsonObject { },
 )
 

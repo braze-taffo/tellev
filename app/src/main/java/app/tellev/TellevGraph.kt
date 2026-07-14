@@ -41,6 +41,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 
 class TellevGraph private constructor(
     val dataStore: StDataStore,
@@ -86,11 +88,18 @@ class TellevGraph private constructor(
 
             val macroEngine = DefaultMacroEngine()
             val promptEngine = DefaultPromptEngine(macroEngine)
+            val deepSeekClient = OkHttpClient.Builder()
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(2, TimeUnit.MINUTES)
+                .readTimeout(5, TimeUnit.MINUTES)
+                .callTimeout(0, TimeUnit.MILLISECONDS)
+                .build()
 
             val providerRegistry = ProviderRegistry(
                 adapters = listOf(
                     OpenAiCompatibleAdapter(),
                     OpenAiCompatibleAdapter(
+                        client = deepSeekClient,
                         providerId = ProviderCatalog.DEEPSEEK,
                         providerDisplayName = "DeepSeek",
                         defaultModel = "deepseek-v4-flash",

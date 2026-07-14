@@ -7,6 +7,7 @@ import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.Persona
+import app.tellev.core.model.PresetPrompt
 import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
 import kotlinx.serialization.json.JsonPrimitive
@@ -494,4 +495,100 @@ class DefaultPromptEngineTest {
         assertEquals(JsonPrimitive(2.0), result.promptTemplateVariableUpdates.local?.get("x"))
         assertEquals("active", activeChat["x"])
     }
+    @Test
+    fun `openai preset prompt order controls components and disabled markers`() {
+        val preset = GenerationPreset(
+            id = "ordered",
+            name = "Ordered",
+            providerType = "openai-compatible",
+            prompts = listOf(
+                PresetPrompt(
+                    identifier = "main",
+                    name = "Main",
+                    content = "MAIN INSTRUCTION",
+                    enabled = true,
+                    order = 0,
+                ),
+                PresetPrompt(
+                    identifier = "charDescription",
+                    name = "Description",
+                    enabled = false,
+                    order = 1,
+                ),
+                PresetPrompt(
+                    identifier = "scenario",
+                    name = "Scenario",
+                    enabled = true,
+                    order = 2,
+                ),
+                PresetPrompt(
+                    identifier = "chatHistory",
+                    name = "History",
+                    enabled = false,
+                    order = 3,
+                ),
+            ),
+        )
+        val result = DefaultPromptEngine().build(
+            PromptBuildRequest(
+                character = CharacterCard(
+                    id = "alice",
+                    name = "Alice",
+                    description = "DESCRIPTION MUST BE OMITTED",
+                    scenario = "SCENARIO INCLUDED",
+                ),
+                persona = null,
+                messages = listOf(
+                    ChatMessage(
+                        id = "old",
+                        role = MessageRole.User,
+                        name = "User",
+                        content = "HISTORY MUST BE OMITTED",
+                        createdAtMillis = 1,
+                    ),
+                ),
+                worldBooks = emptyList(),
+                preset = preset,
+                userInput = "CURRENT INPUT MUST BE OMITTED",
+                providerType = "openai-compatible",
+            ),
+        )
+        val combined = result.messages.joinToString("\n") { it.content }
+
+        assertTrue(combined.contains("MAIN INSTRUCTION"))
+        assertTrue(combined.contains("SCENARIO INCLUDED"))
+        assertFalse(combined.contains("DESCRIPTION MUST BE OMITTED"))
+        assertFalse(combined.contains("HISTORY MUST BE OMITTED"))
+        assertFalse(combined.contains("CURRENT INPUT MUST BE OMITTED"))
+    }
+
+    @Test
+    fun `missing context setting uses safe default for world info budget`() {
+        val oversizedLore = WorldBookEntry(
+            id = "oversized",
+            keys = emptyList(),
+            content = "界".repeat(2_000),
+            constant = true,
+        )
+        val result = DefaultPromptEngine().build(
+            PromptBuildRequest(
+                character = CharacterCard(id = "alice", name = "Alice"),
+                persona = null,
+                messages = emptyList(),
+                worldBooks = listOf(WorldBook("world", "World", listOf(oversizedLore))),
+                preset = GenerationPreset(
+                    id = "default",
+                    name = "Default",
+                    providerType = "openai-compatible",
+                ),
+                userInput = "Hello",
+                providerType = "openai-compatible",
+            ),
+        )
+
+        assertTrue(result.diagnostics.activatedWorldEntryIds.isEmpty())
+        assertTrue((result.diagnostics.estimatedTokenCount ?: Int.MAX_VALUE) < 8192)
+    }
+
+
 }

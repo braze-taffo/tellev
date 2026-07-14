@@ -419,4 +419,63 @@ class CharacterImporterTest {
         assertTrue(card.exampleMessages.contains("{{user}}: Hi"))
         assertTrue(card.exampleMessages.contains("{{char}}: Welcome"))
     }
+
+    @Test
+    fun `character book v3 fields are read from spec and extensions`() {
+        val json = """
+            {
+              "spec": "chara_card_v3",
+              "spec_version": "3.0",
+              "data": {
+                "name": "V3 Lorekeeper",
+                "character_book": {
+                  "name": "Embedded book",
+                  "entries": [
+                    {
+                      "id": 17,
+                      "keys": ["dragon.*gate"],
+                      "secondary_keys": ["silver"],
+                      "content": "Lore",
+                      "enabled": true,
+                      "insertion_order": 73,
+                      "position": "after_char",
+                      "use_regex": true,
+                      "extensions": {
+                        "position": 4,
+                        "depth": 7,
+                        "probability": 42,
+                        "useProbability": true,
+                        "selectiveLogic": 3,
+                        "role": 2,
+                        "match_whole_words": true,
+                        "case_sensitive": true,
+                        "exclude_recursion": true,
+                        "prevent_recursion": true,
+                        "delay_until_recursion": true,
+                        "ignore_budget": true
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+        """.trimIndent()
+
+        val entry = importer.importFromJson(json).characterBook!!.entries.single()
+
+        assertEquals("17", entry.id)
+        assertEquals(4, entry.position)
+        assertEquals(7, entry.depth)
+        assertEquals(42, entry.probability)
+        assertTrue(entry.useProbability)
+        assertEquals(3, entry.selectiveLogic)
+        assertEquals(2, entry.role)
+        assertTrue(entry.matchWholeWords)
+        assertTrue(entry.useRegex)
+        assertTrue(entry.caseSensitive)
+        assertTrue(entry.excludeRecursion)
+        assertTrue(entry.preventRecursion)
+        assertTrue(entry.delayUntilRecursion)
+        assertTrue(entry.ignoreBudget)
+    }
 }

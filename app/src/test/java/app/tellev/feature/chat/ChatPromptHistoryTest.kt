@@ -8,6 +8,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatPromptHistoryTest {
@@ -56,6 +58,66 @@ class ChatPromptHistoryTest {
             messages,
             promptHistoryBeforeCurrentMessage(messages, earlier.id),
         )
+    }
+
+    @Test
+    fun `only final character response can be regenerated`() {
+        val user = ChatMessage(
+            id = "user",
+            role = MessageRole.User,
+            name = "User",
+            content = "Hello",
+            createdAtMillis = 1L,
+        )
+        val response = ChatMessage(
+            id = "response",
+            role = MessageRole.Character,
+            name = "Alice",
+            content = "Hi",
+            createdAtMillis = 2L,
+        )
+
+        assertTrue(canRegenerateResponse(listOf(user, response), 1))
+        assertFalse(canRegenerateResponse(listOf(user, response), 0))
+        assertFalse(canRegenerateResponse(listOf(response), 0))
+        assertFalse(canRegenerateResponse(listOf(user, response, user.copy(id = "later")), 1))
+    }
+
+    @Test
+    fun `regenerated response becomes a new selected swipe`() {
+        val response = ChatMessage(
+            id = "response",
+            role = MessageRole.Character,
+            name = "Alice",
+            content = "First",
+            createdAtMillis = 2L,
+        )
+
+        val regenerated = response.withRegeneratedSwipe("Second")
+
+        assertEquals("response", regenerated.id)
+        assertEquals(listOf("First", "Second"), regenerated.swipes)
+        assertEquals(1, regenerated.swipeIndex)
+        assertEquals("Second", regenerated.content)
+    }
+
+    @Test
+    fun `regeneration preserves existing swipe alternatives`() {
+        val response = ChatMessage(
+            id = "response",
+            role = MessageRole.Character,
+            name = "Alice",
+            content = "Second",
+            createdAtMillis = 2L,
+            swipes = listOf("First", "Second"),
+            swipeIndex = 1,
+        )
+
+        val regenerated = response.withRegeneratedSwipe("Third")
+
+        assertEquals(listOf("First", "Second", "Third"), regenerated.swipes)
+        assertEquals(2, regenerated.swipeIndex)
+        assertEquals("Third", regenerated.content)
     }
 
     @Test

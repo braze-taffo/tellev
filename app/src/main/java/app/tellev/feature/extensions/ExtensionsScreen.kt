@@ -450,7 +450,7 @@ private fun CharacterAssetCard(
                                 maxLines = 1,
                             )
                             Switch(
-                                checked = script.id !in disabledScriptIds,
+                                checked = script.enabled,
                                 onCheckedChange = { onToggleScript(script.id) },
                                 modifier = Modifier.height(24.dp),
                             )

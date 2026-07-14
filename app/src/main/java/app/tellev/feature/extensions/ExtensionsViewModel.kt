@@ -208,25 +208,24 @@ class ExtensionsViewModel(
         loadExtensions()
     }
 
-    /**
-     * Toggle a single character-card regex script on/off. The disabled set is
-     * keyed per character (script ids are only unique within a card) and
-     * persisted via [StDataStore.saveDisabledRegexScriptIds]; absent scripts
-     * are active by default. Mirrors the world-book activation toggle.
-     */
+    /** Toggle the card's own regex_scripts[].disabled field and save it losslessly. */
     fun toggleRegexScript(characterId: String, scriptId: String) {
         viewModelScope.launch {
             runCatching {
-                val current = _uiState.value.disabledRegexScripts
-                val charSet = current[characterId] ?: emptySet()
-                val updatedSet = if (scriptId in charSet) charSet - scriptId else charSet + scriptId
-                val updatedMap = if (updatedSet.isEmpty()) {
-                    current - characterId
-                } else {
-                    current + (characterId to updatedSet)
-                }
-                dataStore.saveDisabledRegexScriptIds(updatedMap)
-                _uiState.update { it.copy(disabledRegexScripts = updatedMap) }
+                val currentSummary = _uiState.value.characterAssets
+                    .firstOrNull { it.characterId == characterId }
+                    ?.regexScriptSummaries
+                    ?.firstOrNull { it.id == scriptId }
+                    ?: error("未找到正则脚本：$scriptId")
+                val card = dataStore.readCharacter(characterId)
+                val patched = CharacterRegexApplier.withScriptEnabled(
+                    card = card,
+                    scriptId = scriptId,
+                    enabled = !currentSummary.enabled,
+                )
+                dataStore.saveCharacter(patched)
+                val assets = withContext(Dispatchers.IO) { readCharacterAssets() }
+                _uiState.update { it.copy(characterAssets = assets, disabledRegexScripts = emptyMap()) }
             }.onFailure { e ->
                 _uiState.update { it.copy(error = "更新正则开关失败：${e.message}") }
             }

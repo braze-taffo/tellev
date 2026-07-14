@@ -218,6 +218,13 @@ class CharacterImporter(
         val extensions = entryObj["extensions"]?.asObjectOrNull()
         val disabled = entryObj.boolean("disable") ?: false
         val enabled = entryObj.boolean("enabled") ?: !disabled
+        val position = extensions?.int("position")
+            ?: entryObj.int("position")
+            ?: when (entryObj.string("position")) {
+                "after_char" -> 1
+                "before_char" -> 0
+                else -> 0
+            }
 
         return WorldBookEntry(
             id = entryObj.string("uid") ?: entryObj.string("id") ?: key,
@@ -231,21 +238,50 @@ class CharacterImporter(
             insertionOrder = entryObj.int("order")
                 ?: entryObj.int("insertion_order")
                 ?: 100,
-            depth = entryObj.int("depth")
-                ?: extensions?.int("depth")
+            depth = extensions?.int("depth")
+                ?: entryObj.int("depth")
                 ?: 4,
-            position = entryObj.int("position") ?: 0,
-            probability = entryObj.int("probability") ?: 100,
-            useProbability = entryObj.boolean("useProbability") ?: false,
-            selectiveLogic = entryObj.int("selectiveLogic") ?: 0,
-            role = entryObj.int("role") ?: 0,
-            matchWholeWords = entryObj.boolean("matchWholeWords") ?: false,
-            useRegex = entryObj.boolean("useRegex") ?: false,
-            caseSensitive = entryObj.boolean("caseSensitive") ?: false,
+            position = position,
+            probability = extensions?.int("probability")
+                ?: entryObj.int("probability")
+                ?: 100,
+            useProbability = extensions?.boolean("useProbability")
+                ?: entryObj.boolean("useProbability")
+                ?: (extensions != null),
+            selectiveLogic = extensions?.int("selectiveLogic")
+                ?: entryObj.int("selectiveLogic")
+                ?: 0,
+            role = extensions?.int("role")
+                ?: entryObj.int("role")
+                ?: 0,
+            matchWholeWords = extensions?.boolean("match_whole_words")
+                ?: entryObj.boolean("matchWholeWords")
+                ?: entryObj.boolean("match_whole_words")
+                ?: false,
+            useRegex = entryObj.boolean("use_regex")
+                ?: entryObj.boolean("useRegex")
+                ?: false,
+            caseSensitive = extensions?.boolean("case_sensitive")
+                ?: entryObj.boolean("caseSensitive")
+                ?: entryObj.boolean("case_sensitive")
+                ?: false,
             comment = entryObj.string("comment").orEmpty(),
-            excludeRecursion = entryObj.boolean("excludeRecursion") ?: false,
-            preventRecursion = entryObj.boolean("preventRecursion") ?: false,
-            delayUntilRecursion = entryObj.boolean("delayUntilRecursion") ?: false,
+            excludeRecursion = extensions?.boolean("exclude_recursion")
+                ?: entryObj.boolean("excludeRecursion")
+                ?: entryObj.boolean("exclude_recursion")
+                ?: false,
+            preventRecursion = extensions?.boolean("prevent_recursion")
+                ?: entryObj.boolean("preventRecursion")
+                ?: entryObj.boolean("prevent_recursion")
+                ?: false,
+            delayUntilRecursion = extensions?.boolean("delay_until_recursion")
+                ?: entryObj.boolean("delayUntilRecursion")
+                ?: entryObj.boolean("delay_until_recursion")
+                ?: false,
+            ignoreBudget = extensions?.boolean("ignore_budget")
+                ?: entryObj.boolean("ignoreBudget")
+                ?: entryObj.boolean("ignore_budget")
+                ?: false,
             raw = entryObj,
         )
     }
@@ -336,10 +372,10 @@ class CharacterImporter(
 
     private fun applyByafMacroReplacements(text: String): String {
         return text
-            .replace(Regex("""#\{user}:?""", RegexOption.IGNORE_CASE)) { if (it.value.endsWith(":")) "{{user}}:" else "{{user}}" }
-            .replace(Regex("""#\{character}:?""", RegexOption.IGNORE_CASE)) { if (it.value.endsWith(":")) "{{char}}:" else "{{char}}" }
-            .replace(Regex("""\{user}(?!})""", RegexOption.IGNORE_CASE), "{{user}}")
-            .replace(Regex("""\{character}(?!})""", RegexOption.IGNORE_CASE), "{{char}}")
+            .replace(Regex("""#\{user\}:?""", RegexOption.IGNORE_CASE)) { if (it.value.endsWith(":")) "{{user}}:" else "{{user}}" }
+            .replace(Regex("""#\{character\}:?""", RegexOption.IGNORE_CASE)) { if (it.value.endsWith(":")) "{{char}}:" else "{{char}}" }
+            .replace(Regex("""\{user\}(?!\})""", RegexOption.IGNORE_CASE), "{{user}}")
+            .replace(Regex("""\{character\}(?!\})""", RegexOption.IGNORE_CASE), "{{char}}")
     }
 
     private fun extractTags(obj: JsonObject): List<String> {

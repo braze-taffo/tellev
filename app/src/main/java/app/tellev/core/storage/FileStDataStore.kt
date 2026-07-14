@@ -6,12 +6,17 @@ import app.tellev.core.model.Attachment
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
+import app.tellev.core.model.PresetCategory
+import app.tellev.core.model.PresetPrompt
 import app.tellev.core.model.GroupChat
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.Persona
 import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
 import app.tellev.core.security.SensitiveFieldScanner
+import app.tellev.core.regex.CharacterRegexApplier
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -35,6 +40,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import java.util.UUID
 import java.util.zip.ZipEntry
+import kotlin.io.path.copyTo
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import kotlin.io.path.createDirectories
@@ -58,9 +64,15 @@ class FileStDataStore(
 ) : StDataStore {
 
     private val characterImporter = CharacterImporter(json)
+    private val mutableCharacterChanges = MutableSharedFlow<String>(extraBufferCapacity = 32)
+    override val characterChanges = mutableCharacterChanges.asSharedFlow()
+    private val mutablePresetChanges = MutableSharedFlow<PresetCategory>(extraBufferCapacity = 32)
+    override val presetChanges = mutablePresetChanges.asSharedFlow()
+
 
     override suspend fun bootstrap(): Unit = withContext(Dispatchers.IO) {
         layout.allDirectories.forEach { it.createDirectories() }
+        migrateLegacyRegexActivation()
         ensureDefaultPreset()
         ensureDefaultPersona()
         rebuildEmbeddedCharacterAssets()
@@ -106,6 +118,7 @@ class FileStDataStore(
             val pngBytes = PngCardParser.embedCardJson(existingPng.readBytes(), jsonStr)
             existingPng.outputStream().use { it.write(pngBytes) }
             saveEmbeddedCharacterAssets(card)
+            mutableCharacterChanges.tryEmit(card.id)
             return@withContext
         }
 
@@ -117,6 +130,7 @@ class FileStDataStore(
             val webpBytes = WebpCardParser.embedCardJson(existingWebp.readBytes(), jsonStr)
             existingWebp.outputStream().use { it.write(webpBytes) }
             saveEmbeddedCharacterAssets(card)
+            mutableCharacterChanges.tryEmit(card.id)
             return@withContext
         }
 
@@ -124,6 +138,7 @@ class FileStDataStore(
         val exporter = CharacterExporter(json)
         layout.characters.resolve("${card.id}.json").writeText(exporter.exportToJson(card))
         saveEmbeddedCharacterAssets(card)
+            mutableCharacterChanges.tryEmit(card.id)
     }
 
     override suspend fun importCharacter(
@@ -152,6 +167,7 @@ class FileStDataStore(
             }
             else -> saveCharacter(card)
         }
+        mutableCharacterChanges.tryEmit(card.id)
     }
 
     override suspend fun deleteCharacter(id: String): Unit = withContext(Dispatchers.IO) {
@@ -164,6 +180,7 @@ class FileStDataStore(
         // disabled-activation set. Replaces the prior "save an empty card"
         // soft-delete that left files on disk and a stub reappearing in listCharacters().
         runCatching { deleteWorldBook(StDataStore.embeddedCharacterBookId(id)) }
+        mutableCharacterChanges.tryEmit(id)
     }
 
     override suspend fun listChatSessions(characterId: String?, groupId: String?): List<ChatSession> = withContext(Dispatchers.IO) {
@@ -340,6 +357,7 @@ class FileStDataStore(
                     merged["excludeRecursion"] = JsonPrimitive(entry.excludeRecursion)
                     merged["preventRecursion"] = JsonPrimitive(entry.preventRecursion)
                     merged["delayUntilRecursion"] = JsonPrimitive(entry.delayUntilRecursion)
+                    merged["ignoreBudget"] = JsonPrimitive(entry.ignoreBudget)
                     if (entry.priority != 0 || entry.raw.containsKey("priority")) {
                         merged["priority"] = JsonPrimitive(entry.priority)
                     }
@@ -410,6 +428,29 @@ class FileStDataStore(
         layout.worldInfoActivation.writeText(json.encodeToString(JsonObject.serializer(), output))
     }
 
+    /**
+     * v1.2.2 kept regex switches in an app-only sidecar. SillyTavern defines
+     * extensions.regex_scripts[].disabled as the source of truth, so migrate
+     * once and remove the sidecar only after every writable card was saved.
+     */
+    private suspend fun migrateLegacyRegexActivation() {
+        if (!layout.regexActivation.exists()) return
+        val legacy = readDisabledRegexScriptIds()
+        var allWritesSucceeded = true
+        for ((characterId, disabledIds) in legacy) {
+            val card = runCatching { readCharacter(characterId) }.getOrNull() ?: continue
+            var patched = card
+            disabledIds.forEach { scriptId ->
+                patched = CharacterRegexApplier.withScriptEnabled(patched, scriptId, enabled = false)
+            }
+            if (patched != card) {
+                runCatching { saveCharacter(patched) }
+                    .onFailure { allWritesSucceeded = false }
+            }
+        }
+        if (allWritesSucceeded) layout.regexActivation.deleteIfExists()
+    }
+
     override suspend fun readDisabledRegexScriptIds(): Map<String, Set<String>> = withContext(Dispatchers.IO) {
         val path = layout.regexActivation
         if (!path.exists()) return@withContext emptyMap()
@@ -443,41 +484,111 @@ class FileStDataStore(
         (this as? JsonPrimitive)?.takeIf { it.isString }?.content
 
     override suspend fun listPresets(): List<GenerationPreset> = withContext(Dispatchers.IO) {
-        val roots = listOf(layout.openAiSettings, layout.textGenSettings, layout.koboldAiSettings, layout.novelAiSettings)
-        roots.flatMap { root ->
-            readJsonFiles(root).map { (path, raw) ->
-                val parsedMaxTokens = raw.intValue("max_tokens") ?: raw.intValue("maxTokens")
-                GenerationPreset(
-                    id = path.nameWithoutExtension,
-                    name = raw["name"]?.jsonPrimitive?.content ?: path.nameWithoutExtension,
-                    providerType = root.name,
-                    temperature = raw.doubleValue("temperature"),
-                    topP = raw.doubleValue("top_p") ?: raw.doubleValue("topP"),
-                    topK = raw.intValue("top_k") ?: raw.intValue("topK"),
-                    maxTokens = parsedMaxTokens?.takeUnless { path.nameWithoutExtension == "default" && it == 512 },
-                    stop = raw.stringList("stop"),
-                    raw = raw,
-                )
-            }
+        presetDirectoriesWithCategories().flatMap { (category, root) ->
+            readJsonFiles(root).filterNot { (path, _) -> path.nameWithoutExtension == "in_use" }
+                .map { (path, raw) -> parsePreset(path, raw, category) }
         }
     }
+    override suspend fun readPreset(category: PresetCategory, name: String): GenerationPreset? =
+        withContext(Dispatchers.IO) {
+            val path = resolvePresetDirectory(category).resolve("$name.json")
+            if (!path.exists()) return@withContext null
+            val raw = runCatching { json.parseToJsonElement(path.readText()) as? JsonObject }.getOrNull()
+                ?: return@withContext null
+            parsePreset(path, raw, category)
+        }
+
+
+    override suspend fun readSelectedPresetName(category: PresetCategory): String? =
+        withContext(Dispatchers.IO) {
+            val statePath = layout.root.resolve("preset-selection.json")
+            if (!statePath.exists()) return@withContext null
+            val raw = runCatching { json.parseToJsonElement(statePath.readText()) as? JsonObject }.getOrNull()
+                ?: return@withContext null
+            raw[category.name.lowercase()]?.jsonPrimitive?.content
+        }
+
+    override suspend fun selectPreset(category: PresetCategory, name: String): Unit =
+        withContext(Dispatchers.IO) {
+            val directory = resolvePresetDirectory(category)
+            val source = directory.resolve("$name.json")
+            if (!source.exists()) error("Preset not found: ${category.name.lowercase()}/$name")
+            source.copyTo(directory.resolve("in_use.json"), overwrite = true)
+
+            val statePath = layout.root.resolve("preset-selection.json")
+            val current = if (statePath.exists()) {
+                runCatching { json.parseToJsonElement(statePath.readText()) as? JsonObject }.getOrNull()
+            } else null
+            val merged = current.orEmpty().toMutableMap()
+            merged[category.name.lowercase()] = JsonPrimitive(name)
+            statePath.writeText(json.encodeToString(JsonObject.serializer(), JsonObject(merged)))
+            mutablePresetChanges.tryEmit(category)
+        }
+
 
     override suspend fun savePreset(preset: GenerationPreset): Unit = withContext(Dispatchers.IO) {
-        val parent = resolvePresetDirectory(preset.providerType)
+        val parent = resolvePresetDirectory(if (preset.category == PresetCategory.OpenAi) presetCategory(preset.providerType) else preset.category)
         parent.createDirectories()
-        parent.resolve("${preset.id}.json").writeText(json.encodeToString(preset))
+        val merged = preset.raw.toMutableMap()
+        preset.temperature?.let { merged["temperature"] = JsonPrimitive(it) }
+        preset.topP?.let { merged["top_p"] = JsonPrimitive(it) }
+        preset.topK?.let { merged["top_k"] = JsonPrimitive(it) }
+        preset.presencePenalty?.let { merged["presence_penalty"] = JsonPrimitive(it) }
+        preset.frequencyPenalty?.let { merged["frequency_penalty"] = JsonPrimitive(it) }
+        preset.seed?.let { merged["seed"] = JsonPrimitive(it) }
+        preset.maxContextTokens?.let { merged["openai_max_context"] = JsonPrimitive(it) }
+        (preset.maxCompletionTokens ?: preset.maxTokens)?.let {
+            merged["openai_max_tokens"] = JsonPrimitive(it)
+            merged["max_tokens"] = JsonPrimitive(it)
+        }
+        if (preset.stop.isNotEmpty()) merged["stop"] = stringArray(preset.stop)
+        if (preset.prompts.isNotEmpty() || preset.promptsUnused.isNotEmpty() || "prompts" in merged) {
+            val definitions = (preset.prompts + preset.promptsUnused).distinctBy { it.identifier }
+            merged["prompts"] = JsonArray(definitions.map(::serializePresetPrompt))
+            merged["prompts_unused"] = JsonArray(preset.promptsUnused.map(::serializePresetPrompt))
+            merged["prompt_order"] = serializePromptOrder(merged["prompt_order"], preset.prompts)
+        }
+        if (preset.extensions.isNotEmpty()) merged["extensions"] = preset.extensions
+        parent.resolve("${preset.id}.json").writeText(
+            json.encodeToString(JsonObject.serializer(), JsonObject(merged)),
+        )
+        mutablePresetChanges.tryEmit(preset.category)
+    }
+    override suspend fun saveWorkingPreset(
+        category: PresetCategory,
+        preset: GenerationPreset,
+    ) {
+        savePreset(
+            preset.copy(
+                id = "in_use",
+                category = category,
+                providerType = resolvePresetDirectory(category).name,
+            ),
+        )
     }
 
-    override suspend fun deletePreset(id: String, providerType: String?): Boolean = withContext(Dispatchers.IO) {
-        val directories = if (providerType.isNullOrBlank()) {
-            presetDirectories()
-        } else {
-            listOf(resolvePresetDirectory(providerType))
-        }
 
-        directories
-            .map { it.resolve("$id.json") }
-            .fold(false) { deletedAny, path -> path.deleteIfExists() || deletedAny }
+
+    override suspend fun deletePreset(id: String, providerType: String?): Boolean = withContext(Dispatchers.IO) {
+        val targets = if (providerType.isNullOrBlank()) {
+            presetDirectoriesWithCategories()
+        } else {
+            val category = presetCategory(providerType)
+            listOf(category to resolvePresetDirectory(category))
+        }
+        var deletedAny = false
+        targets.forEach { (category, directory) ->
+            if (directory.resolve("$id.json").deleteIfExists()) {
+                deletedAny = true
+                ensureDefaultPreset(category)
+                if (readSelectedPresetName(category) == id) {
+                    selectPreset(category, "default")
+                } else {
+                    mutablePresetChanges.tryEmit(category)
+                }
+            }
+        }
+        deletedAny
     }
 
     override suspend fun importPreset(
@@ -490,26 +601,20 @@ class FileStDataStore(
         val rawObj = parsed as? JsonObject
             ?: error("预设 JSON 格式无效：$sourceFileName 不是有效的 JSON 对象")
 
-        val parent = resolvePresetDirectory(providerCategory)
+        val category = presetCategory(providerCategory)
+        val parent = resolvePresetDirectory(category)
         parent.createDirectories()
 
-        val id = "preset_${UUID.randomUUID()}"
-        parent.resolve("$id.json").writeText(rawJsonString)
-
-        val displayName = rawObj["name"]?.let { (it as? JsonPrimitive)?.content }
-            ?: sourceFileName.substringBeforeLast('.')
-
-        GenerationPreset(
-            id = id,
-            name = displayName,
-            providerType = parent.name,
-            temperature = rawObj.doubleValue("temperature"),
-            topP = rawObj.doubleValue("top_p") ?: rawObj.doubleValue("topP"),
-            topK = rawObj.intValue("top_k") ?: rawObj.intValue("topK"),
-            maxTokens = rawObj.intValue("max_tokens") ?: rawObj.intValue("maxTokens"),
-            stop = rawObj.stringList("stop"),
-            raw = rawObj,
-        )
+        val baseStem = sourceFileName.substringBeforeLast('.')
+            .replace(Regex("""[\\/:*?"<>|]"""), "_")
+            .trim()
+            .ifBlank { "preset" }
+        var id = baseStem
+        var suffix = 2
+        while (parent.resolve("$id.json").exists()) id = "$baseStem-${suffix++}"
+        val destination = parent.resolve("$id.json")
+        destination.outputStream().use { it.write(jsonBytes) }
+        parsePreset(destination, rawObj, category).also { mutablePresetChanges.tryEmit(category) }
     }
 
     override suspend fun listPersonas(): List<Persona> = withContext(Dispatchers.IO) {
@@ -725,14 +830,21 @@ class FileStDataStore(
         }
 
     private fun ensureDefaultPreset() {
-        val hasPreset = presetDirectories().any { directory ->
-            directory.exists() && directory.listDirectoryEntries("*.json").isNotEmpty()
+        presetDirectoriesWithCategories().forEach { (category, directory) ->
+            directory.createDirectories()
+            val hasNamedPreset = directory.listDirectoryEntries("*.json")
+                .any { it.nameWithoutExtension != "in_use" }
+            if (!hasNamedPreset) ensureDefaultPreset(category)
         }
-        if (hasPreset) return
+    }
 
-        layout.openAiSettings.resolve("default.json").writeText(
-            json.encodeToString(JsonObject.serializer(), defaultPresetRaw()),
-        )
+    private fun ensureDefaultPreset(category: PresetCategory) {
+        val directory = resolvePresetDirectory(category)
+        directory.createDirectories()
+        val path = directory.resolve("default.json")
+        if (!path.exists()) {
+            path.writeText(json.encodeToString(JsonObject.serializer(), defaultPresetRaw()))
+        }
     }
 
     private fun defaultPresetRaw(): JsonObject = buildJsonObject {
@@ -740,6 +852,146 @@ class FileStDataStore(
         put("temperature", 0.7)
         put("top_p", 1.0)
     }
+
+    private fun presetCategory(value: String): PresetCategory = when (value.lowercase()) {
+        "textgen", "textgen-webui", "textgen settings" -> PresetCategory.TextGen
+        "kobold", "koboldai", "koboldcpp", "koboldai settings" -> PresetCategory.Kobold
+        "novelai", "novelai settings" -> PresetCategory.NovelAi
+        else -> PresetCategory.OpenAi
+    }
+
+    private fun resolvePresetDirectory(category: PresetCategory): Path = when (category) {
+        PresetCategory.OpenAi -> layout.openAiSettings
+        PresetCategory.TextGen -> layout.textGenSettings
+        PresetCategory.Kobold -> layout.koboldAiSettings
+        PresetCategory.NovelAi -> layout.novelAiSettings
+    }
+
+    private fun presetDirectoriesWithCategories(): List<Pair<PresetCategory, Path>> = listOf(
+        PresetCategory.OpenAi to layout.openAiSettings,
+        PresetCategory.TextGen to layout.textGenSettings,
+        PresetCategory.Kobold to layout.koboldAiSettings,
+        PresetCategory.NovelAi to layout.novelAiSettings,
+    )
+
+    private fun parsePreset(path: Path, raw: JsonObject, category: PresetCategory): GenerationPreset {
+        val completionTokens = raw.intValue("openai_max_tokens")
+            ?: raw.intValue("max_tokens")
+            ?: raw.intValue("maxTokens")
+            ?: raw.intValue("max_new_tokens")
+        val definitions = parsePresetPrompts(raw["prompts"])
+        val (orderedPrompts, inferredUnused) = applyPromptOrder(definitions, raw["prompt_order"])
+        val explicitUnused = parsePresetPrompts(raw["prompts_unused"] ?: raw["promptsUnused"])
+        return GenerationPreset(
+            id = path.nameWithoutExtension,
+            name = path.nameWithoutExtension,
+            providerType = resolvePresetDirectory(category).name,
+            category = category,
+            temperature = raw.doubleValue("temperature") ?: raw.doubleValue("temp_openai"),
+            topP = raw.doubleValue("top_p") ?: raw.doubleValue("topP"),
+            topK = raw.intValue("top_k") ?: raw.intValue("topK"),
+            maxTokens = completionTokens,
+            maxContextTokens = raw.intValue("openai_max_context")
+                ?: raw.intValue("max_context")
+                ?: raw.intValue("context_length"),
+            maxCompletionTokens = completionTokens,
+            presencePenalty = raw.doubleValue("presence_penalty"),
+            frequencyPenalty = raw.doubleValue("frequency_penalty"),
+            seed = raw["seed"]?.jsonPrimitive?.content?.toLongOrNull(),
+            stop = raw.stringList("stop"),
+            prompts = orderedPrompts,
+            promptsUnused = (inferredUnused + explicitUnused).distinctBy { it.identifier },
+            extensions = raw["extensions"] as? JsonObject ?: buildJsonObject { },
+            raw = raw,
+        )
+    }
+
+    private fun parsePresetPrompts(element: JsonElement?): List<PresetPrompt> =
+        (element as? JsonArray)?.mapIndexedNotNull { index, item ->
+            val obj = item as? JsonObject ?: return@mapIndexedNotNull null
+            val identifier = obj.stringField("identifier")
+                ?: obj.stringField("id")
+                ?: obj.stringField("name")
+                ?: "prompt-$index"
+            PresetPrompt(
+                identifier = identifier,
+                name = obj.stringField("name") ?: identifier,
+                role = obj.stringField("role") ?: "system",
+                content = obj.stringField("content") ?: obj.stringField("prompt") ?: "",
+                enabled = obj["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true,
+                relative = obj["relative"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                    ?: (obj.intValue("injection_position") == 1),
+                depth = obj.intValue("depth") ?: obj.intValue("injection_depth") ?: 0,
+                order = obj.intValue("order") ?: index,
+                raw = obj,
+            )
+        } ?: emptyList()
+
+    private fun applyPromptOrder(
+        definitions: List<PresetPrompt>,
+        element: JsonElement?,
+    ): Pair<List<PresetPrompt>, List<PresetPrompt>> {
+        val groups = element as? JsonArray ?: return definitions to emptyList()
+        val selectedGroup = groups.mapNotNull { it as? JsonObject }
+            .firstOrNull { it.intValue("character_id") == 100001 }
+            ?: groups.mapNotNull { it as? JsonObject }.lastOrNull()
+            ?: return definitions to emptyList()
+        val order = selectedGroup["order"] as? JsonArray ?: return definitions to emptyList()
+        val byId = definitions.associateBy { it.identifier }
+        val ordered = order.mapIndexedNotNull { index, item ->
+            val orderItem = item as? JsonObject ?: return@mapIndexedNotNull null
+            val identifier = orderItem.stringField("identifier") ?: return@mapIndexedNotNull null
+            val definition = byId[identifier] ?: PresetPrompt(
+                identifier = identifier,
+                name = identifier,
+                order = index,
+                raw = orderItem,
+            )
+            definition.copy(
+                enabled = orderItem["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                    ?: definition.enabled,
+                order = index,
+            )
+        }
+        val orderedIds = ordered.mapTo(mutableSetOf()) { it.identifier }
+        return ordered to definitions.filterNot { it.identifier in orderedIds }
+    }
+
+
+    private fun serializePresetPrompt(prompt: PresetPrompt): JsonObject {
+        val merged = prompt.raw.toMutableMap()
+        merged["identifier"] = JsonPrimitive(prompt.identifier)
+        merged["name"] = JsonPrimitive(prompt.name)
+        merged["role"] = JsonPrimitive(prompt.role)
+        merged["content"] = JsonPrimitive(prompt.content)
+        merged["enabled"] = JsonPrimitive(prompt.enabled)
+        merged["relative"] = JsonPrimitive(prompt.relative)
+        merged["depth"] = JsonPrimitive(prompt.depth)
+        merged["order"] = JsonPrimitive(prompt.order)
+        return JsonObject(merged)
+    }
+
+    private fun serializePromptOrder(existing: JsonElement?, prompts: List<PresetPrompt>): JsonArray {
+        val replacement = buildJsonObject {
+            put("character_id", JsonPrimitive(100001))
+            put("order", JsonArray(prompts.sortedBy { it.order }.map { prompt ->
+                buildJsonObject {
+                    put("identifier", JsonPrimitive(prompt.identifier))
+                    put("enabled", JsonPrimitive(prompt.enabled))
+                }
+            }))
+        }
+        val groups = (existing as? JsonArray)?.toMutableList() ?: mutableListOf()
+        val targetIndex = groups.indexOfFirst {
+            (it as? JsonObject)?.intValue("character_id") == 100001
+        }
+        if (targetIndex >= 0) groups[targetIndex] = replacement else groups += replacement
+        return JsonArray(groups)
+    }
+
+
+    private fun JsonObject.stringField(key: String): String? =
+        (this[key] as? JsonPrimitive)?.content
 
     private fun resolvePresetDirectory(providerType: String): Path {
         return when (providerType.lowercase()) {
@@ -1016,6 +1268,7 @@ class FileStDataStore(
         return entriesObj.mapNotNull { (key, value) ->
             runCatching {
                 val entryObj = value.jsonObject
+                val extensions = entryObj["extensions"] as? JsonObject
                 WorldBookEntry(
                     id = entryObj["uid"]?.jsonPrimitive?.content ?: key,
                     keys = extractStringList(entryObj, "key"),
@@ -1039,6 +1292,10 @@ class FileStDataStore(
                     excludeRecursion = entryObj["excludeRecursion"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
                     preventRecursion = entryObj["preventRecursion"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
                     delayUntilRecursion = entryObj["delayUntilRecursion"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+                    ignoreBudget = extensions?.get("ignore_budget")?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                        ?: entryObj["ignoreBudget"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                        ?: entryObj["ignore_budget"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                        ?: false,
                     raw = entryObj,
                 )
             }.getOrNull()

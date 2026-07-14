@@ -23,12 +23,18 @@ data class PromptTemplateRequest(
     val context: MacroContext,
     val metadata: JsonObject,
     val worldEntries: List<PromptTemplateWorldEntry> = emptyList(),
+    val worldCatalog: List<PromptTemplateWorldEntry> = emptyList(),
+    val currentWorldBookId: String? = null,
 )
 
 data class PromptTemplateWorldEntry(
     val id: String,
     val content: String,
     val raw: JsonObject = JsonObject(emptyMap()),
+    val bookId: String? = null,
+    val bookName: String? = null,
+    val comment: String = "",
+    val title: String = "",
 )
 
 data class PromptTemplateResult(
@@ -86,6 +92,8 @@ class DefaultPromptTemplateProcessor(
             globalVariables = deepCopyMap(scopes.global),
             initialLocalVariables = deepCopyMap(scopes.local),
             initialGlobalVariables = deepCopyMap(scopes.global),
+            worldCatalog = request.worldCatalog.ifEmpty { request.worldEntries },
+            currentWorldBookId = request.currentWorldBookId,
         ).also(::refreshMergedVariables)
 
         val injectedMessages = applyInstructionBlocks(
@@ -419,21 +427,28 @@ class DefaultPromptTemplateProcessor(
         val tokens = mutableListOf<TemplateToken>()
         var cursor = 0
         for (match in tagPattern.findAll(template)) {
-            if (match.range.first > cursor) {
-                tokens += TemplateToken.Text(template.substring(cursor, match.range.first))
-            }
-            val marker = match.groupValues[1]
-            val body = stripTrimMarkers(match.groupValues[2])
-            tokens += if (marker == "=" || marker == "-") {
+            val openingMarker = match.groupValues[1]
+            var preceding = template.substring(cursor, match.range.first)
+            if (openingMarker == "_") preceding = preceding.trimEnd()
+            if (preceding.isNotEmpty()) tokens += TemplateToken.Text(preceding)
+
+            val body = match.groupValues[2].trim()
+            tokens += if (openingMarker == "=" || openingMarker == "-") {
                 TemplateToken.Output(body)
             } else {
                 TemplateToken.Code(body)
             }
+
             cursor = match.range.last + 1
+            when (match.groupValues[3]) {
+                "-" -> {
+                    if (template.startsWith("\r\n", cursor)) cursor += 2
+                    else if (template.getOrNull(cursor) == '\n') cursor++
+                }
+                "_" -> while (template.getOrNull(cursor)?.isWhitespace() == true) cursor++
+            }
         }
-        if (cursor < template.length) {
-            tokens += TemplateToken.Text(template.substring(cursor))
-        }
+        if (cursor < template.length) tokens += TemplateToken.Text(template.substring(cursor))
         return tokens
     }
 
@@ -562,6 +577,7 @@ class DefaultPromptTemplateProcessor(
 
     private fun callFunction(name: String, args: List<Any?>, state: TemplateState): Any? {
         return when (name) {
+            "getwi", "getWorldInfo" -> resolveWorldInfo(args, state)
             "getvar", "getchatvar" -> {
                 val key = stringify(args.getOrNull(0))
                 val fallback = args.getOrNull(1)
@@ -634,6 +650,49 @@ class DefaultPromptTemplateProcessor(
             }
         }
     }
+
+    private fun resolveWorldInfo(args: List<Any?>, state: TemplateState): String {
+        val requestedBook = args.getOrNull(0)?.let(::stringify)?.takeIf { it.isNotBlank() }
+        val query = args.getOrNull(1)?.let(::stringify)?.trim().orEmpty()
+        if (query.isEmpty()) {
+            state.warn("getwi requires an entry uid/id/comment/title")
+            return ""
+        }
+
+        val bookId = requestedBook ?: state.currentWorldBookId
+        val candidates = state.worldCatalog.filter { entry ->
+            if (bookId == null) true
+            else entry.bookId == bookId || entry.bookName == bookId
+        }
+        val entry = candidates.firstOrNull { candidate ->
+            candidate.id == query ||
+                candidate.comment == query ||
+                candidate.title == query ||
+                candidate.raw.stringContent("uid") == query ||
+                candidate.raw.stringContent("id") == query ||
+                candidate.raw.stringContent("comment") == query ||
+                candidate.raw.stringContent("title") == query
+        }
+        if (entry == null) {
+            state.warn("getwi entry not found: book=${bookId ?: "<current>"}, entry=$query")
+            return ""
+        }
+
+        val recursionKey = "${entry.bookId.orEmpty()}:${entry.id}"
+        if (state.worldInfoStack.size >= 16 || recursionKey in state.worldInfoStack) {
+            state.warn("getwi recursion stopped: $recursionKey")
+            return ""
+        }
+        state.worldInfoStack += recursionKey
+        return try {
+            renderTemplate(entry.content, state)
+        } finally {
+            state.worldInfoStack.removeAt(state.worldInfoStack.lastIndex)
+        }
+    }
+
+    private fun JsonObject.stringContent(key: String): String? =
+        (this[key] as? JsonPrimitive)?.content
 
     private fun resolveReference(expression: String, state: TemplateState): Any? {
         state.locals[expression]?.let { return it }
@@ -897,7 +956,7 @@ class DefaultPromptTemplateProcessor(
         stripTrimMarkers(code).trim()
 
     private fun stripTrimMarkers(code: String): String =
-        code.trim().removePrefix("_").removeSuffix("_").trim()
+        code.trim().removePrefix("_").removeSuffix("_").removeSuffix("-").trim()
 
     private fun isBlockEnd(code: String): Boolean =
         code == "}" || code == "};"
@@ -1038,6 +1097,9 @@ class DefaultPromptTemplateProcessor(
         val globalVariables: MutableMap<String, Any?>,
         val initialLocalVariables: Map<String, Any?>,
         val initialGlobalVariables: Map<String, Any?>,
+        val worldCatalog: List<PromptTemplateWorldEntry>,
+        val currentWorldBookId: String?,
+        val worldInfoStack: MutableList<String> = mutableListOf(),
         val variables: MutableMap<String, Any?> = linkedMapOf(),
         val locals: MutableMap<String, Any?> = mutableMapOf(),
         val warnings: LinkedHashSet<String> = linkedSetOf(),
@@ -1081,7 +1143,7 @@ class DefaultPromptTemplateProcessor(
     )
 
     private companion object {
-        private val tagPattern = Regex("""<%([=-]?)([\s\S]*?)%>""")
+        private val tagPattern = Regex("""<%([_=-]?)([\s\S]*?)([-_]?)%>""")
         private val generateHeader = Regex("""\[GENERATE(?::([^\]]+))?]""", RegexOption.IGNORE_CASE)
         private val injectArgPattern = Regex("""([A-Za-z_][\w-]*)=(?:"([^"]*)"|'([^']*)'|([^"\s]+))""")
         private val ifStart = Regex("""if\s*\((.*)\)\s*\{\s*""")

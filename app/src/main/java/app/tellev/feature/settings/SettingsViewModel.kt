@@ -7,11 +7,14 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.Persona
+import app.tellev.core.model.PresetCategory
 import app.tellev.core.provider.ProviderAdapter
 import app.tellev.core.provider.ProviderConfig
+import app.tellev.core.provider.ProviderConfigPersistence
 import app.tellev.core.provider.ProviderDefaults
 import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.provider.ProviderStatus
+import app.tellev.core.provider.OpenAiCompatibilitySettings
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.StDataStore
 import app.tellev.util.UriUtils
@@ -22,6 +25,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
 import java.util.UUID
 
 enum class ThemeMode {
@@ -34,9 +42,13 @@ data class SettingsUiState(
     val baseUrl: String = "",
     val apiKey: String = "",
     val model: String = "",
+    val compatibility: OpenAiCompatibilitySettings = OpenAiCompatibilitySettings(),
+    val extraHeadersJson: String = "{}",
+    val extraBodyJson: String = "{}",
     val providerStatus: ProviderStatus? = null,
     val isTesting: Boolean = false,
     val presets: List<GenerationPreset> = emptyList(),
+    val selectedPresetNames: Map<PresetCategory, String> = emptyMap(),
     val personas: List<Persona> = emptyList(),
     val secretIds: List<String> = emptyList(),
     val themeMode: ThemeMode = ThemeMode.System,
@@ -52,11 +64,30 @@ class SettingsViewModel(
     private val secretStore: SecretStore,
 ) : ViewModel() {
 
+    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
+
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
     init {
+        observePresetChanges()
         loadInitialData()
+    }
+
+    private fun observePresetChanges() {
+        viewModelScope.launch {
+            dataStore.presetChanges.collect {
+                runCatching {
+                    val presets = dataStore.listPresets()
+                    val selected = PresetCategory.entries.mapNotNull { category ->
+                        dataStore.readSelectedPresetName(category)?.let { category to it }
+                    }.toMap()
+                    presets to selected
+                }.onSuccess { (presets, selected) ->
+                    _uiState.update { it.copy(presets = presets, selectedPresetNames = selected) }
+                }
+            }
+        }
     }
 
     private fun loadInitialData() {
@@ -65,6 +96,9 @@ class SettingsViewModel(
             try {
                 val providers = providerRegistry.all()
                 val presets = dataStore.listPresets()
+                val selectedPresetNames = PresetCategory.entries.mapNotNull { category ->
+                    dataStore.readSelectedPresetName(category)?.let { category to it }
+                }.toMap()
                 val personas = dataStore.listPersonas()
                 val secretIds = secretStore.listSecretIds()
                 val selectedId = secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
@@ -75,17 +109,22 @@ class SettingsViewModel(
                 val apiKey = secretStore.readSecret("provider-$selectedId-apikey") ?: ""
                 val model = secretStore.readSecret("provider-$selectedId-model")
                     ?: ProviderDefaults.model(selectedId)
+                val advanced = ProviderConfigPersistence.loadAdvanced(secretStore, selectedId)
 
                 _uiState.update {
                     it.copy(
                         providers = providers,
                         selectedProviderId = selectedId,
                         presets = presets,
+                        selectedPresetNames = selectedPresetNames,
                         personas = personas,
                         secretIds = secretIds,
                         baseUrl = baseUrl,
                         apiKey = apiKey,
                         model = model,
+                        compatibility = advanced,
+                        extraHeadersJson = json.encodeToString(advanced.headers),
+                        extraBodyJson = json.encodeToString(JsonObject.serializer(), advanced.extraBody),
                         isLoading = false,
                     )
                 }
@@ -109,12 +148,16 @@ class SettingsViewModel(
                 val apiKey = secretStore.readSecret("provider-$id-apikey") ?: ""
                 val model = secretStore.readSecret("provider-$id-model")
                     ?: ProviderDefaults.model(id)
+                val advanced = ProviderConfigPersistence.loadAdvanced(secretStore, id)
 
                 _uiState.update {
                     it.copy(
                         baseUrl = baseUrl,
                         apiKey = apiKey,
                         model = model,
+                        compatibility = advanced,
+                        extraHeadersJson = json.encodeToString(advanced.headers),
+                        extraBodyJson = json.encodeToString(JsonObject.serializer(), advanced.extraBody),
                         isLoading = false,
                         availableModels = emptyList(),
                     )
@@ -142,14 +185,30 @@ class SettingsViewModel(
         _uiState.update { it.copy(model = model) }
     }
 
+    fun updateModelsPath(value: String) = updateCompatibility { copy(modelsPath = value) }
+    fun updateChatCompletionsPath(value: String) = updateCompatibility { copy(chatCompletionsPath = value) }
+    fun updateAuthHeader(value: String) = updateCompatibility { copy(authHeader = value) }
+    fun updateAuthScheme(value: String) = updateCompatibility { copy(authScheme = value) }
+    fun updateIncludeUsage(value: Boolean) = updateCompatibility { copy(includeUsage = value) }
+    fun updateSupportsModelListing(value: Boolean) = updateCompatibility { copy(supportsModelListing = value) }
+    fun updateSupportsTopK(value: Boolean) = updateCompatibility { copy(supportsTopK = value) }
+    fun updateSupportsTools(value: Boolean) = updateCompatibility { copy(supportsTools = value) }
+    fun updateSupportsReasoning(value: Boolean) = updateCompatibility { copy(supportsReasoning = value) }
+    fun updateSupportsVision(value: Boolean) = updateCompatibility { copy(supportsVision = value) }
+    fun updateMaxTokensField(value: String) = updateCompatibility { copy(maxTokensField = value) }
+    fun updateExtraHeadersJson(value: String) = _uiState.update { it.copy(extraHeadersJson = value) }
+    fun updateExtraBodyJson(value: String) = _uiState.update { it.copy(extraBodyJson = value) }
+
+    private fun updateCompatibility(transform: OpenAiCompatibilitySettings.() -> OpenAiCompatibilitySettings) {
+        _uiState.update { it.copy(compatibility = it.compatibility.transform()) }
+    }
+
     fun testConnection() {
         val state = _uiState.value
-        val config = ProviderConfig(
-            providerType = state.selectedProviderId,
-            baseUrl = state.baseUrl,
-            apiKey = state.apiKey.ifBlank { null },
-            model = state.model.ifBlank { null },
-        )
+        val config = runCatching { providerConfigFromState(state) }.getOrElse { error ->
+            _uiState.update { it.copy(error = error.message ?: "高级配置格式错误") }
+            return
+        }
 
         viewModelScope.launch {
             _uiState.update { it.copy(isTesting = true, providerStatus = null, error = null) }
@@ -209,6 +268,13 @@ class SettingsViewModel(
                 } else {
                     secretStore.deleteSecret("provider-$providerId-model")
                 }
+                if (ProviderConfigPersistence.hasCustomOpenAiSettings(providerId)) {
+                    ProviderConfigPersistence.saveAdvanced(
+                        secretStore,
+                        providerId,
+                        compatibilitySettingsFromState(state),
+                    )
+                }
 
                 _uiState.update {
                     it.copy(
@@ -245,6 +311,9 @@ class SettingsViewModel(
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
                 dataStore.savePreset(preset)
+                if (dataStore.readSelectedPresetName(preset.category) == preset.id) {
+                    dataStore.selectPreset(preset.category, preset.id)
+                }
                 val presets = dataStore.listPresets()
                 _uiState.update {
                     it.copy(
@@ -264,15 +333,114 @@ class SettingsViewModel(
         }
     }
 
-    fun deletePreset(id: String, providerType: String? = null) {
+    fun selectPreset(preset: GenerationPreset) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
-                dataStore.deletePreset(id, providerType)
+                dataStore.selectPreset(preset.category, preset.id)
+                _uiState.update {
+                    it.copy(
+                        selectedPresetNames = it.selectedPresetNames + (preset.category to preset.id),
+                        isLoading = false,
+                        info = "已切换到预设“${preset.name}”。",
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isLoading = false, error = "切换预设失败：${e.message}")
+                }
+            }
+        }
+    }
+
+    fun copyPreset(preset: GenerationPreset, requestedName: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                val id = presetId(requestedName)
+                require(_uiState.value.presets.none { it.category == preset.category && it.id == id }) {
+                    "同分类已存在预设“$id”"
+                }
+                dataStore.savePreset(preset.copy(id = id, name = requestedName.trim()))
                 val presets = dataStore.listPresets()
                 _uiState.update {
                     it.copy(
                         presets = presets,
+                        isLoading = false,
+                        info = "预设已另存为“${requestedName.trim()}”。",
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, error = "另存为失败：${e.message}") }
+            }
+        }
+    }
+
+    fun renamePreset(preset: GenerationPreset, requestedName: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                val id = presetId(requestedName)
+                require(id != preset.id) { "新名称与原名称相同" }
+                require(_uiState.value.presets.none { it.category == preset.category && it.id == id }) {
+                    "同分类已存在预设“$id”"
+                }
+                val wasSelected = dataStore.readSelectedPresetName(preset.category) == preset.id
+                dataStore.savePreset(preset.copy(id = id, name = requestedName.trim()))
+                dataStore.deletePreset(preset.id, preset.category.name)
+                if (wasSelected) dataStore.selectPreset(preset.category, id)
+                val selected = dataStore.readSelectedPresetName(preset.category)
+                val presets = dataStore.listPresets()
+                _uiState.update {
+                    it.copy(
+                        presets = presets,
+                        selectedPresetNames = if (selected == null) it.selectedPresetNames - preset.category
+                            else it.selectedPresetNames + (preset.category to selected),
+                        isLoading = false,
+                        info = "预设已重命名为“${requestedName.trim()}”。",
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, error = "重命名失败：${e.message}") }
+            }
+        }
+    }
+
+    fun exportPreset(context: Context, uri: Uri, preset: GenerationPreset) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                val raw = dataStore.readPreset(preset.category, preset.id)?.raw ?: preset.raw
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.use { output ->
+                        output.write(json.encodeToString(JsonObject.serializer(), raw).encodeToByteArray())
+                    } ?: error("无法创建导出文件")
+                }
+                _uiState.update { it.copy(isLoading = false, info = "预设“${preset.name}”已导出。") }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, error = "导出预设失败：${e.message}") }
+            }
+        }
+    }
+
+    fun deletePreset(id: String, providerType: String? = null) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                val deletedPreset = _uiState.value.presets.firstOrNull {
+                    it.id == id && (providerType == null || it.providerType == providerType)
+                }
+                dataStore.deletePreset(id, providerType)
+                val presets = dataStore.listPresets()
+                val selectedNames = deletedPreset?.category?.let { category ->
+                    val selected = dataStore.readSelectedPresetName(category)
+                    if (selected == null) _uiState.value.selectedPresetNames - category
+                    else _uiState.value.selectedPresetNames + (category to selected)
+                } ?: _uiState.value.selectedPresetNames
+                _uiState.update {
+                    it.copy(
+                        presets = presets,
+                        selectedPresetNames = selectedNames,
                         isLoading = false,
                         info = "预设已删除。",
                     )
@@ -523,6 +691,49 @@ class SettingsViewModel(
     fun clearInfo() {
         _uiState.update { it.copy(info = null) }
     }
+
+    private fun providerConfigFromState(state: SettingsUiState): ProviderConfig {
+        val advanced = compatibilitySettingsFromState(state)
+        val compatible = ProviderConfigPersistence.hasCustomOpenAiSettings(state.selectedProviderId)
+        return ProviderConfig(
+            providerType = state.selectedProviderId,
+            baseUrl = state.baseUrl,
+            apiKey = state.apiKey.ifBlank { null },
+            model = state.model.ifBlank { null },
+            headers = if (compatible) advanced.headers else emptyMap(),
+            options = if (compatible) advanced.toOptions() else JsonObject(emptyMap()),
+        )
+    }
+
+    private fun compatibilitySettingsFromState(state: SettingsUiState): OpenAiCompatibilitySettings {
+        if (!ProviderConfigPersistence.hasCustomOpenAiSettings(state.selectedProviderId)) return state.compatibility
+        val headerObject = parseJsonObject(state.extraHeadersJson, "附加 Headers")
+        val headers = headerObject.mapValues { (name, value) ->
+            (value as? JsonPrimitive)?.contentOrNull
+                ?: throw IllegalArgumentException("附加 Header“$name”必须是字符串")
+        }
+        val extraBody = parseJsonObject(state.extraBodyJson, "附加请求体")
+        return state.compatibility.copy(
+            modelsPath = state.compatibility.modelsPath.trim().ifBlank { "/v1/models" },
+            chatCompletionsPath = state.compatibility.chatCompletionsPath.trim().ifBlank { "/v1/chat/completions" },
+            authHeader = state.compatibility.authHeader.trim().ifBlank { "Authorization" },
+            maxTokensField = state.compatibility.maxTokensField.trim().also {
+                require(it in setOf("max_tokens", "max_completion_tokens")) {
+                    "输出长度字段只能是 max_tokens 或 max_completion_tokens"
+                }
+            },
+            headers = headers,
+            extraBody = extraBody,
+        )
+    }
+
+    private fun parseJsonObject(source: String, label: String): JsonObject = runCatching {
+        json.parseToJsonElement(source.ifBlank { "{}" }).jsonObject
+    }.getOrElse { throw IllegalArgumentException("$label 必须是合法的 JSON 对象") }
+
+    private fun presetId(name: String): String = name.trim()
+        .replace(Regex("""[\\/:*?"<>|]"""), "_")
+        .ifBlank { "preset" }
 }
 
 class SettingsViewModelFactory(

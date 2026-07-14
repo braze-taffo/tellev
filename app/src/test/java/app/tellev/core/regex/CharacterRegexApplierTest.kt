@@ -72,10 +72,11 @@ class CharacterRegexApplierTest {
             CharacterRegexApplier.applyForDisplay("[start]", MessageRole.Character, card),
         )
 
-        // Disabling by id skips the script, leaving text unchanged.
+        // The card's own disabled flag is authoritative.
+        val disabledCard = CharacterRegexApplier.withScriptEnabled(card, "r1", enabled = false)
         assertEquals(
             "[start]",
-            CharacterRegexApplier.applyForDisplay("[start]", MessageRole.Character, card, setOf("r1")),
+            CharacterRegexApplier.applyForDisplay("[start]", MessageRole.Character, disabledCard),
         )
     }
 
@@ -112,4 +113,89 @@ class CharacterRegexApplierTest {
         assertEquals("idx:1", summaries[1].id)
         assertEquals("/b/g", summaries[1].name)
     }
+    @Test
+    fun `display and prompt modes honor flags depth captures and character macros`() {
+        val card = CharacterImporter().importFromJson(
+            """
+            {
+              "spec":"chara_card_v3",
+              "spec_version":"3.0",
+              "data":{
+                "name":"Alice",
+                "extensions":{"regex_scripts":[
+                  {
+                    "id":"display",
+                    "findRegex":"/(STATE)/g",
+                    "replaceString":"<body>{{char}}/{{user}}-$1</body>",
+                    "placement":[2],
+                    "markdownOnly":true
+                  },
+                  {
+                    "id":"prompt",
+                    "findRegex":"/<secret>[\\s\\S]*?<\\/secret>/g",
+                    "replaceString":"",
+                    "placement":[2],
+                    "promptOnly":true,
+                    "minDepth":2,
+                    "maxDepth":3
+                  }
+                ]}
+              }
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(
+            "<body>Alice/道友-STATE</body>",
+            CharacterRegexApplier.applyForDisplay(
+                "STATE",
+                MessageRole.Character,
+                card,
+                userName = "道友",
+            ),
+        )
+        assertEquals(
+            "<secret>hidden</secret>",
+            CharacterRegexApplier.applyForPrompt(
+                "<secret>hidden</secret>",
+                MessageRole.Character,
+                card,
+                depth = 1,
+            ),
+        )
+        assertEquals(
+            "",
+            CharacterRegexApplier.applyForPrompt(
+                "<secret>hidden</secret>",
+                MessageRole.Character,
+                card,
+                depth = 2,
+            ),
+        )
+    }
+
+    @Test
+    fun `javascript global flag controls first versus all replacements`() {
+        fun card(findRegex: String) = CharacterImporter().importFromJson(
+            """
+            {
+              "spec":"chara_card_v3",
+              "spec_version":"3.0",
+              "data":{
+                "name":"Regex",
+                "extensions":{"regex_scripts":[{
+                  "findRegex":"$findRegex",
+                  "replaceString":"[$1]",
+                  "placement":[2]
+                }]}
+              }
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals("[x]x", CharacterRegexApplier.applyForDisplay("xx", MessageRole.Character, card("/(x)/")))
+        assertEquals("[x][x]", CharacterRegexApplier.applyForDisplay("xx", MessageRole.Character, card("/(x)/g")))
+    }
+
+
 }
