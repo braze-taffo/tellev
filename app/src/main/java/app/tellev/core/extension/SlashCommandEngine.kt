@@ -39,15 +39,36 @@ class SlashCommandEngine(
 
     data class Command(
         val name: String,
-        val args: List<String>,
+        val args: List<Arg>,
         val namedArgs: Map<String, String>,
-    )
+    ) {
+        /** A command argument: plain text or a parsed `{: ... :}` closure. */
+        sealed interface Arg {
+            val text: String
+
+            data class Text(val value: String, val quoted: Boolean = false) : Arg {
+                override val text: String get() = value
+            }
+
+            data class Closure(val lines: List<List<Command>>) : Arg {
+                /** Closures render empty when coerced to text (ST never stringifies them). */
+                override val text: String get() = ""
+            }
+        }
+
+        /** Positional args coerced to text (closures become ""). */
+        fun textArgs(): List<String> = args.map { it.text }
+
+        /** Positional closure args in order of appearance. */
+        fun closureArgs(): List<Arg.Closure> = args.filterIsInstance<Arg.Closure>()
+    }
 
     data class Result(
         val handled: Boolean,
         val output: String = "",
         val isError: Boolean = false,
         val isAborted: Boolean = false,
+        val isBreak: Boolean = false,
         val errorMessage: String = "",
     ) {
         companion object {
@@ -61,248 +82,338 @@ class SlashCommandEngine(
                 output = "",
             )
             fun abort() = Result(handled = true, isAborted = true)
+
+            /** `/break` — unwinds to the nearest enclosing `/while` loop. */
+            fun breakResult() = Result(handled = true, isBreak = true)
         }
     }
 
     /**
-     * Parse and execute a full STScript text.  Multiple lines are executed
-     * sequentially; each line may contain a pipe chain.
+     * Parse and execute a full STScript text. Multiple lines are executed
+     * sequentially; each line may contain a pipe chain. `{: ... :}` closures
+     * (possibly spanning lines) are parsed as first-class arguments.
      */
     fun execute(scriptText: String): Result {
-        val lines = scriptText.split('\n').map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("//") }
+        val tokens = tokenizeScript(scriptText)
+        val lines = ScriptParser(tokens).parseStatements(stopOnClosureEnd = false)
+        val result = executeLines(lines)
+        // A /break that escapes every loop aborts the script (ST behavior).
+        return if (result.isBreak) Result.abort() else result
+    }
+
+    private fun executeLines(lines: List<List<Command>>): Result {
         var lastResult = Result.ok()
-
         for (line in lines) {
-            val pipeCommands = parsePipe(line)
-            var pipeInput = ""
+            lastResult = executeLine(line)
+            if (lastResult.isAborted || lastResult.isError || lastResult.isBreak) return lastResult
+        }
+        return lastResult
+    }
 
-            for ((index, cmd) in pipeCommands.withIndex()) {
-                val effectiveCmd = if (index > 0 && cmd.args.isNotEmpty() && cmd.args.last() == "{{pipe}}") {
-                    cmd.copy(args = cmd.args.dropLast(1) + pipeInput)
-                } else if (index > 0 && pipeInput.isNotEmpty()) {
-                    cmd.copy(args = cmd.args + pipeInput)
-                } else {
-                    cmd
-                }
+    private fun executeLine(line: List<Command>): Result {
+        var pipeInput = ""
+        var result = Result.ok()
+        for ((index, cmd) in line.withIndex()) {
+            val effectiveCmd = if (index > 0) applyPipe(cmd, pipeInput) else cmd
+            result = executeCommand(effectiveCmd)
+            if (result.isAborted || result.isError || result.isBreak) return result
+            pipeInput = result.output
+        }
+        return result
+    }
 
-                lastResult = executeCommand(effectiveCmd)
-                if (lastResult.isAborted) return lastResult
-                if (lastResult.isError) return lastResult
-                pipeInput = lastResult.output
+    /**
+     * Pipe semantics: `{{pipe}}` is replaced wherever it appears inside any
+     * argument (ST macro semantics); otherwise the previous output is appended
+     * as the last positional argument when it is non-empty.
+     */
+    private fun applyPipe(cmd: Command, pipeInput: String): Command {
+        val args = cmd.args.toMutableList()
+        var replaced = false
+        for (i in args.indices) {
+            val arg = args[i]
+            if (arg is Command.Arg.Text && arg.value.contains("{{pipe}}")) {
+                args[i] = Command.Arg.Text(arg.value.replace("{{pipe}}", pipeInput), arg.quoted)
+                replaced = true
             }
         }
-
-        return lastResult
+        if (!replaced && pipeInput.isNotEmpty()) args.add(Command.Arg.Text(pipeInput))
+        return cmd.copy(args = args)
     }
 
     // ── Parser ──────────────────────────────────────────────────────────
 
-    private fun parsePipe(line: String): List<Command> {
-        val commands = mutableListOf<Command>()
-        val segments = splitTopLevel(line, '|')
-
-        for (seg in segments) {
-            val trimmed = seg.trim()
-            if (trimmed.isEmpty()) continue
-            val cmd = parseCommand(trimmed) ?: continue
-            commands.add(cmd)
-        }
-
-        return commands
+    private sealed interface Token {
+        data class Word(val text: String, val quoted: Boolean) : Token
+        data object ClosureStart : Token
+        data object ClosureEnd : Token
+        data object Pipe : Token
+        data object PipeBreak : Token
+        data object Newline : Token
     }
 
-    private fun parseCommand(text: String): Command? {
-        val tokens = tokenize(text)
-        if (tokens.isEmpty() || !tokens[0].startsWith("/")) return null
-
-        val name = tokens[0].removePrefix("/")
-        val positional = mutableListOf<String>()
-        val named = mutableMapOf<String, String>()
-
-        for (token in tokens.drop(1)) {
-            val eqIdx = token.indexOf('=')
-            val isComparison = eqIdx > 0 && (
-                token[eqIdx - 1] == '!' || token[eqIdx - 1] == '>' || token[eqIdx - 1] == '<' ||
-                (eqIdx + 1 < token.length && token[eqIdx + 1] == '=')
-            )
-            if (eqIdx > 0 && !token.startsWith("\"") && !token.startsWith("'") && !isComparison) {
-                val key = token.substring(0, eqIdx)
-                val value = token.substring(eqIdx + 1)
-                named[key] = value
-            } else {
-                positional.add(token)
-            }
-        }
-
-        return Command(name = name, args = positional, namedArgs = named)
-    }
-
-    private fun tokenize(text: String): List<String> {
-        val tokens = mutableListOf<String>()
+    /**
+     * Tokenize the whole script into a stream. Quotes are stripped (and the
+     * token marked quoted so named-arg detection can ignore quoted `=`), `{:`
+     * and `:}` become closure delimiters, `|`/`||` pipe separators.
+     */
+    private fun tokenizeScript(script: String): List<Token> {
+        val tokens = mutableListOf<Token>()
         val current = StringBuilder()
         var inQuote: Char? = null
         var i = 0
 
-        while (i < text.length) {
-            val c = text[i]
+        fun flushWord() {
+            if (current.isNotEmpty()) {
+                tokens.add(Token.Word(current.toString(), quoted = false))
+                current.clear()
+            }
+        }
 
+        while (i < script.length) {
+            val c = script[i]
             when {
                 inQuote != null -> {
                     if (c == inQuote) {
+                        tokens.add(Token.Word(current.toString(), quoted = true))
+                        current.clear()
                         inQuote = null
                     } else {
                         current.append(c)
                     }
                 }
                 c == '"' || c == '\'' -> {
+                    flushWord()
                     inQuote = c
                 }
-                c.isWhitespace() -> {
-                    if (current.isNotEmpty()) {
-                        tokens.add(current.toString())
-                        current.clear()
+                c == '{' && i + 1 < script.length && script[i + 1] == ':' -> {
+                    flushWord()
+                    tokens.add(Token.ClosureStart)
+                    i++
+                }
+                c == ':' && i + 1 < script.length && script[i + 1] == '}' -> {
+                    flushWord()
+                    tokens.add(Token.ClosureEnd)
+                    i++
+                }
+                c == '|' -> {
+                    flushWord()
+                    if (i + 1 < script.length && script[i + 1] == '|') {
+                        tokens.add(Token.PipeBreak)
+                        i++
+                    } else {
+                        tokens.add(Token.Pipe)
                     }
                 }
+                c == '\n' -> {
+                    flushWord()
+                    tokens.add(Token.Newline)
+                }
+                c.isWhitespace() -> flushWord()
                 else -> {
+                    // Inline comments: `//` (and `/#`) to end of line, but only
+                    // outside quotes and when starting a token.
+                    if (c == '/' && current.isEmpty() && i + 1 < script.length &&
+                        (script[i + 1] == '/' || script[i + 1] == '#')
+                    ) {
+                        while (i < script.length && script[i] != '\n' && script[i] != '|') i++
+                        continue
+                    }
                     current.append(c)
                 }
             }
             i++
         }
-
         if (current.isNotEmpty()) {
-            tokens.add(current.toString())
+            tokens.add(Token.Word(current.toString(), quoted = inQuote != null))
         }
-
         return tokens
     }
 
-    private fun splitTopLevel(text: String, delimiter: Char): List<String> {
-        val result = mutableListOf<String>()
-        val current = StringBuilder()
-        var inQuote: Char? = null
-        var i = 0
+    private inner class ScriptParser(private val tokens: List<Token>) {
+        private var pos = 0
 
-        while (i < text.length) {
-            val c = text[i]
-            when {
-                inQuote != null -> {
-                    if (c == inQuote) inQuote = null
-                    current.append(c)
+        /**
+         * Parse statements (lines of pipe-chained commands). With
+         * [stopOnClosureEnd] the parser returns at the matching `:}` (which it
+         * consumes), producing the closure body.
+         */
+        fun parseStatements(stopOnClosureEnd: Boolean): List<List<Command>> {
+            val lines = mutableListOf<List<Command>>()
+            var currentLine = mutableListOf<Command>()
+            var expectCommand = true
+
+            while (pos < tokens.size) {
+                when (val token = tokens[pos]) {
+                    is Token.Newline -> {
+                        pos++
+                        if (currentLine.isNotEmpty()) {
+                            lines.add(currentLine)
+                            currentLine = mutableListOf()
+                        }
+                        expectCommand = true
+                    }
+                    is Token.Pipe, is Token.PipeBreak -> {
+                        pos++
+                        expectCommand = true
+                    }
+                    is Token.ClosureEnd -> {
+                        pos++
+                        if (stopOnClosureEnd) {
+                            if (currentLine.isNotEmpty()) lines.add(currentLine)
+                            return lines
+                        }
+                        // Stray `:}` — ignore.
+                    }
+                    is Token.Word -> {
+                        if (expectCommand && token.text.startsWith("/")) {
+                            pos++
+                            currentLine.add(parseCommand(token.text.removePrefix("/")))
+                            expectCommand = false
+                        } else {
+                            // Stray word outside a command — skip (ST would error).
+                            pos++
+                        }
+                    }
+                    is Token.ClosureStart -> {
+                        // Stray closure outside a command — parse and discard.
+                        pos++
+                        parseStatements(stopOnClosureEnd = true)
+                    }
                 }
-                c == '"' || c == '\'' -> {
-                    inQuote = c
-                    current.append(c)
-                }
-                c == delimiter -> {
-                    result.add(current.toString())
-                    current.clear()
-                }
-                else -> current.append(c)
             }
-            i++
+            if (currentLine.isNotEmpty()) lines.add(currentLine)
+            return lines
         }
 
-        if (current.isNotEmpty()) {
-            result.add(current.toString())
-        }
+        private fun parseCommand(name: String): Command {
+            val args = mutableListOf<Command.Arg>()
+            val named = mutableMapOf<String, String>()
 
-        return result
+            while (pos < tokens.size) {
+                when (val token = tokens[pos]) {
+                    is Token.Word -> {
+                        pos++
+                        val eqIdx = token.text.indexOf('=')
+                        val isComparison = eqIdx > 0 && (
+                            token.text[eqIdx - 1] == '!' || token.text[eqIdx - 1] == '>' ||
+                                token.text[eqIdx - 1] == '<' ||
+                                (eqIdx + 1 < token.text.length && token.text[eqIdx + 1] == '=')
+                            )
+                        if (eqIdx > 0 && !token.quoted && !isComparison) {
+                            named[token.text.substring(0, eqIdx)] = token.text.substring(eqIdx + 1)
+                        } else {
+                            args.add(Command.Arg.Text(token.text, token.quoted))
+                        }
+                    }
+                    is Token.ClosureStart -> {
+                        pos++
+                        val body = parseStatements(stopOnClosureEnd = true)
+                        args.add(Command.Arg.Closure(body))
+                    }
+                    else -> return Command(name, args, named)
+                }
+            }
+            return Command(name, args, named)
+        }
     }
 
     // ── Built-in command executors ──────────────────────────────────────
 
     private fun executeCommand(cmd: Command): Result {
-        if (cmd.name in UNSUPPORTED_COMMANDS) {
-            return Result.unsupported(cmd.name)
-        }
+        // Commands that can't be fully implemented on mobile (UI, clipboard,
+        // file system, etc.) are handled as no-ops (Result.ok("")) in the
+        // when-block below.  Previously they were in an UNSUPPORTED_COMMANDS
+        // set that returned a hard error, which aborted the entire script
+        // (audit S2).  Removing the gate lets scripts with incidental
+        // unsupported commands continue running.
 
         return when (cmd.name) {
-            "echo" -> Result.ok(cmd.args.joinToString(" "))
+            "echo" -> Result.ok(cmd.textArgs().joinToString(" "))
 
-            "noop", "pass", "return" -> Result.ok(cmd.args.joinToString(" "))
+            "noop", "pass", "return" -> Result.ok(cmd.textArgs().joinToString(" "))
 
             "delay", "wait", "sleep" -> {
-                val ms = cmd.args.firstOrNull()?.toLongOrNull() ?: 1000L
+                val ms = cmd.textArgs().firstOrNull()?.toLongOrNull() ?: 1000L
                 Thread.sleep(ms.coerceAtMost(30_000L))
                 Result.ok("")
             }
 
             "setvar", "setchatvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.getOrNull(0) ?: ""
-                val value = cmd.namedArgs["value"] ?: cmd.args.getOrNull(1) ?: ""
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().getOrNull(0) ?: ""
+                val value = cmd.namedArgs["value"] ?: cmd.textArgs().getOrNull(1) ?: ""
                 if (name.isBlank()) return Result.error("setvar requires a variable name")
                 variableStore?.setLocal(name, value)
                 Result.ok(value)
             }
 
             "setglobalvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.getOrNull(0) ?: ""
-                val value = cmd.namedArgs["value"] ?: cmd.args.getOrNull(1) ?: ""
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().getOrNull(0) ?: ""
+                val value = cmd.namedArgs["value"] ?: cmd.textArgs().getOrNull(1) ?: ""
                 if (name.isBlank()) return Result.error("setglobalvar requires a variable name")
                 variableStore?.setGlobal(name, value)
                 Result.ok(value)
             }
 
             "getvar", "getchatvar", "var" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
                 if (name.isBlank()) return Result.error("getvar requires a variable name")
                 Result.ok(variableStore?.getLocal(name) ?: "")
             }
 
             "getglobalvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
                 if (name.isBlank()) return Result.error("getglobalvar requires a variable name")
                 Result.ok(variableStore?.getGlobal(name) ?: "")
             }
 
             "addvar", "addchatvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.getOrNull(0) ?: ""
-                val increment = cmd.namedArgs["value"] ?: cmd.args.getOrNull(1) ?: ""
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().getOrNull(0) ?: ""
+                val increment = cmd.namedArgs["value"] ?: cmd.textArgs().getOrNull(1) ?: ""
                 if (name.isBlank()) return Result.error("addvar requires a variable name")
                 Result.ok(variableStore?.addLocal(name, increment) ?: "0")
             }
 
             "addglobalvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.getOrNull(0) ?: ""
-                val increment = cmd.namedArgs["value"] ?: cmd.args.getOrNull(1) ?: ""
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().getOrNull(0) ?: ""
+                val increment = cmd.namedArgs["value"] ?: cmd.textArgs().getOrNull(1) ?: ""
                 if (name.isBlank()) return Result.error("addglobalvar requires a variable name")
                 Result.ok(variableStore?.addGlobal(name, increment) ?: "0")
             }
 
             "incvar", "incchatvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
                 if (name.isBlank()) return Result.error("incvar requires a variable name")
                 Result.ok(variableStore?.incLocal(name) ?: "0")
             }
 
             "incglobalvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
                 if (name.isBlank()) return Result.error("incglobalvar requires a variable name")
                 Result.ok(variableStore?.incGlobal(name) ?: "0")
             }
 
             "decvar", "decchatvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
                 if (name.isBlank()) return Result.error("decvar requires a variable name")
                 Result.ok(variableStore?.decLocal(name) ?: "0")
             }
 
             "decglobalvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
                 if (name.isBlank()) return Result.error("decglobalvar requires a variable name")
                 Result.ok(variableStore?.decGlobal(name) ?: "0")
             }
 
             "flushvar", "flushchatvar", "deletevar", "delvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
                 if (name.isBlank()) return Result.error("flushvar requires a variable name")
                 variableStore?.deleteLocal(name)
                 Result.ok("")
             }
 
             "flushglobalvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
                 if (name.isBlank()) return Result.error("flushglobalvar requires a variable name")
                 variableStore?.deleteGlobal(name)
                 Result.ok("")
@@ -320,137 +431,231 @@ class SlashCommandEngine(
             }
 
             "hasvar", "varexists" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
                 Result.ok(if (variableStore?.hasLocal(name) == true) "true" else "false")
             }
 
             "hasglobalvar", "globalvarexists" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.firstOrNull() ?: ""
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
                 Result.ok(if (variableStore?.hasGlobal(name) == true) "true" else "false")
             }
 
             "let" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.args.getOrNull(0) ?: ""
-                val value = cmd.namedArgs["value"] ?: cmd.args.drop(1).joinToString(" ")
+                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().getOrNull(0) ?: ""
+                val value = cmd.namedArgs["value"] ?: cmd.textArgs().drop(1).joinToString(" ")
                 if (name.isBlank()) return Result.error("let requires a variable name")
                 variableStore?.setLocal(name, value)
                 Result.ok(value)
             }
 
             "if" -> {
-                val condition = cmd.args.joinToString(" ")
-                val result = evaluateCondition(condition)
-                Result.ok(if (result) "true" else "false")
+                val closures = cmd.closureArgs()
+                val hasNamedOperands = cmd.namedArgs.containsKey("left") || cmd.namedArgs.containsKey("rule")
+                if (!hasNamedOperands && closures.isEmpty()) {
+                    // tellev legacy form: /if <condition string> -> "true"/"false"
+                    val condition = cmd.textArgs().joinToString(" ")
+                    return Result.ok(if (evaluateCondition(condition)) "true" else "false")
+                }
+                // ST form: /if left=x right=y rule=eq {:then:} else={:else:}
+                // (variables.js ifCallback). `else={:...:}` tokenizes as an empty
+                // named arg followed by a positional closure, so a second closure
+                // after an empty `else` is treated as the else branch.
+                val thenClosure = closures.firstOrNull()
+                val elseClosure = if (cmd.namedArgs["else"] == "") closures.getOrNull(1) else null
+                if (evaluateIfCondition(cmd)) {
+                    when {
+                        thenClosure != null -> executeLines(thenClosure.lines)
+                        else -> {
+                            val text = cmd.textArgs().filter { it.isNotBlank() }.joinToString(" ")
+                            if (text.isBlank()) Result.ok("") else execute(text)
+                        }
+                    }
+                } else {
+                    val elseText = cmd.namedArgs["else"]?.takeIf { it.isNotBlank() }
+                    when {
+                        elseClosure != null -> executeLines(elseClosure.lines)
+                        elseText != null -> execute(elseText)
+                        else -> Result.ok("")
+                    }
+                }
             }
 
             "while" -> {
-                val condition = cmd.args.joinToString(" ")
-                val body = cmd.namedArgs["body"] ?: ""
+                val body = cmd.closureArgs().firstOrNull()
+                if (body == null) {
+                    // tellev legacy: /while <condition> body=<commands>
+                    val condition = cmd.textArgs().joinToString(" ")
+                    val bodyText = cmd.namedArgs["body"] ?: ""
+                    var iterations = 0
+                    var output = ""
+                    while (evaluateCondition(condition) && iterations < maxLoopIterations) {
+                        if (bodyText.isNotBlank()) {
+                            val r = execute(bodyText)
+                            if (r.isBreak) break
+                            if (r.isAborted || r.isError) return r
+                            output = r.output
+                        }
+                        iterations++
+                    }
+                    return Result.ok(if (iterations >= maxLoopIterations) "max_iterations" else output)
+                }
+                // ST form: /while left=x right=y rule=neq guard=100 {:body:}
+                // (variables.js whileCallback; guard defaults to 100).
+                val guard = cmd.namedArgs["guard"]?.toIntOrNull() ?: 100
+                val cap = minOf(guard, maxLoopIterations)
                 var iterations = 0
-                while (evaluateCondition(condition) && iterations < maxLoopIterations) {
-                    if (body.isNotBlank()) execute(body)
+                var output = ""
+                while (evaluateIfCondition(cmd) && iterations < cap) {
+                    val r = executeLines(body.lines)
+                    if (r.isBreak) break
+                    if (r.isAborted || r.isError) return r
+                    output = r.output
                     iterations++
                 }
-                Result.ok(if (iterations >= maxLoopIterations) "max_iterations" else "")
+                Result.ok(output)
             }
 
             "times" -> {
-                val count = cmd.args.firstOrNull()?.toIntOrNull() ?: 0
-                val body = cmd.namedArgs["body"] ?: ""
-                repeat(count.coerceAtMost(maxLoopIterations)) { if (body.isNotBlank()) execute(body) }
-                Result.ok("")
+                val count = cmd.textArgs().firstOrNull()?.toIntOrNull() ?: 0
+                val bodyClosure = cmd.closureArgs().firstOrNull()
+                val bodyText = cmd.namedArgs["body"] ?: ""
+                var output = ""
+                repeat(count.coerceAtMost(maxLoopIterations)) {
+                    if (bodyClosure != null) {
+                        val r = executeLines(bodyClosure.lines)
+                        if (r.isBreak) return@repeat
+                        if (r.isAborted || r.isError) return r
+                        output = r.output
+                    } else if (bodyText.isNotBlank()) {
+                        val r = execute(bodyText)
+                        if (r.isBreak) return@repeat
+                        if (r.isAborted || r.isError) return r
+                        output = r.output
+                    }
+                }
+                Result.ok(output)
             }
+
+            "run", "call", "exec" -> {
+                // ST /run (aliases call/exec): execute closure(s) or a command string.
+                val closures = cmd.closureArgs()
+                if (closures.isNotEmpty()) {
+                    var output = ""
+                    for (closure in closures) {
+                        val r = executeLines(closure.lines)
+                        if (r.isAborted || r.isError || r.isBreak) return r
+                        output = r.output
+                    }
+                    Result.ok(output)
+                } else {
+                    val text = cmd.textArgs().joinToString(" ")
+                    if (text.isBlank()) Result.ok("") else execute(text)
+                }
+            }
+
+            ":" -> {
+                // ST /: — immediately execute the closure argument(s).
+                var output = ""
+                for (closure in cmd.closureArgs()) {
+                    val r = executeLines(closure.lines)
+                    if (r.isAborted || r.isError || r.isBreak) return r
+                    output = r.output
+                }
+                Result.ok(output)
+            }
+
+            "break" -> Result.breakResult()
 
             "abort", "stop" -> Result.abort()
 
             "len" -> {
-                val input = cmd.args.joinToString(" ")
+                val input = cmd.textArgs().joinToString(" ")
                 Result.ok(input.length.toString())
             }
 
-            "upper" -> Result.ok(cmd.args.joinToString(" ").uppercase())
+            "upper" -> Result.ok(cmd.textArgs().joinToString(" ").uppercase())
 
-            "lower" -> Result.ok(cmd.args.joinToString(" ").lowercase())
+            "lower" -> Result.ok(cmd.textArgs().joinToString(" ").lowercase())
 
             "replace" -> {
-                val input = cmd.args.getOrNull(2) ?: cmd.namedArgs["input"] ?: ""
-                val from = cmd.args.getOrNull(0) ?: ""
-                val to = cmd.args.getOrNull(1) ?: ""
+                val input = cmd.textArgs().getOrNull(2) ?: cmd.namedArgs["input"] ?: ""
+                val from = cmd.textArgs().getOrNull(0) ?: ""
+                val to = cmd.textArgs().getOrNull(1) ?: ""
                 Result.ok(input.replace(from, to))
             }
 
             "substr" -> {
-                val input = cmd.args.getOrNull(0) ?: ""
-                val start = cmd.args.getOrNull(1)?.toIntOrNull() ?: 0
-                val end = cmd.args.getOrNull(2)?.toIntOrNull() ?: input.length
+                val input = cmd.textArgs().getOrNull(0) ?: ""
+                val start = cmd.textArgs().getOrNull(1)?.toIntOrNull() ?: 0
+                val end = cmd.textArgs().getOrNull(2)?.toIntOrNull() ?: input.length
                 Result.ok(input.substring(start.coerceAtLeast(0), end.coerceAtMost(input.length)))
             }
 
             "add" -> {
-                val a = cmd.args.getOrNull(0)?.toDoubleOrNull() ?: 0.0
-                val b = cmd.args.getOrNull(1)?.toDoubleOrNull() ?: 0.0
+                val a = cmd.textArgs().getOrNull(0)?.toDoubleOrNull() ?: 0.0
+                val b = cmd.textArgs().getOrNull(1)?.toDoubleOrNull() ?: 0.0
                 Result.ok((a + b).toString())
             }
 
             "sub" -> {
-                val a = cmd.args.getOrNull(0)?.toDoubleOrNull() ?: 0.0
-                val b = cmd.args.getOrNull(1)?.toDoubleOrNull() ?: 0.0
+                val a = cmd.textArgs().getOrNull(0)?.toDoubleOrNull() ?: 0.0
+                val b = cmd.textArgs().getOrNull(1)?.toDoubleOrNull() ?: 0.0
                 Result.ok((a - b).toString())
             }
 
             "mul" -> {
-                val a = cmd.args.getOrNull(0)?.toDoubleOrNull() ?: 0.0
-                val b = cmd.args.getOrNull(1)?.toDoubleOrNull() ?: 0.0
+                val a = cmd.textArgs().getOrNull(0)?.toDoubleOrNull() ?: 0.0
+                val b = cmd.textArgs().getOrNull(1)?.toDoubleOrNull() ?: 0.0
                 Result.ok((a * b).toString())
             }
 
             "div" -> {
-                val a = cmd.args.getOrNull(0)?.toDoubleOrNull() ?: 0.0
-                val b = cmd.args.getOrNull(1)?.toDoubleOrNull() ?: 1.0
+                val a = cmd.textArgs().getOrNull(0)?.toDoubleOrNull() ?: 0.0
+                val b = cmd.textArgs().getOrNull(1)?.toDoubleOrNull() ?: 1.0
                 if (b == 0.0) return Result.error("Division by zero")
                 Result.ok((a / b).toString())
             }
 
             "mod" -> {
-                val a = cmd.args.getOrNull(0)?.toLongOrNull() ?: 0L
-                val b = cmd.args.getOrNull(1)?.toLongOrNull() ?: 1L
+                val a = cmd.textArgs().getOrNull(0)?.toLongOrNull() ?: 0L
+                val b = cmd.textArgs().getOrNull(1)?.toLongOrNull() ?: 1L
                 if (b == 0L) return Result.error("Modulo by zero")
                 Result.ok((a % b).toString())
             }
 
             "pow" -> {
-                val a = cmd.args.getOrNull(0)?.toDoubleOrNull() ?: 0.0
-                val b = cmd.args.getOrNull(1)?.toDoubleOrNull() ?: 1.0
+                val a = cmd.textArgs().getOrNull(0)?.toDoubleOrNull() ?: 0.0
+                val b = cmd.textArgs().getOrNull(1)?.toDoubleOrNull() ?: 1.0
                 Result.ok(Math.pow(a, b).toString())
             }
 
             "abs" -> {
-                val a = cmd.args.getOrNull(0)?.toDoubleOrNull() ?: 0.0
+                val a = cmd.textArgs().getOrNull(0)?.toDoubleOrNull() ?: 0.0
                 Result.ok(Math.abs(a).toString())
             }
 
             "sqrt" -> {
-                val a = cmd.args.getOrNull(0)?.toDoubleOrNull() ?: 0.0
+                val a = cmd.textArgs().getOrNull(0)?.toDoubleOrNull() ?: 0.0
                 Result.ok(Math.sqrt(a).toString())
             }
 
             "round" -> {
-                val a = cmd.args.getOrNull(0)?.toDoubleOrNull() ?: 0.0
+                val a = cmd.textArgs().getOrNull(0)?.toDoubleOrNull() ?: 0.0
                 Result.ok(Math.round(a).toString())
             }
 
             "max" -> {
-                val values = cmd.args.mapNotNull { it.toDoubleOrNull() }
+                val values = cmd.textArgs().mapNotNull { it.toDoubleOrNull() }
                 Result.ok(values.maxOrNull()?.toString() ?: "")
             }
 
             "min" -> {
-                val values = cmd.args.mapNotNull { it.toDoubleOrNull() }
+                val values = cmd.textArgs().mapNotNull { it.toDoubleOrNull() }
                 Result.ok(values.minOrNull()?.toString() ?: "")
             }
 
             "rand", "random" -> {
-                val values = cmd.args
+                val values = cmd.textArgs()
                 if (values.isEmpty()) {
                     Result.ok((0..Int.MAX_VALUE).random().toString())
                 } else {
@@ -459,7 +664,7 @@ class SlashCommandEngine(
             }
 
             "sort" -> {
-                val items = cmd.args
+                val items = cmd.textArgs()
                 val sorted = if (cmd.namedArgs["reverse"] == "true") {
                     items.sortedDescending()
                 } else {
@@ -469,73 +674,73 @@ class SlashCommandEngine(
             }
 
             "array-wrap" -> {
-                Result.ok(cmd.args.joinToString(" | "))
+                Result.ok(cmd.textArgs().joinToString(" | "))
             }
 
             "array-unwrap" -> {
-                val input = cmd.args.joinToString(" ")
+                val input = cmd.textArgs().joinToString(" ")
                 Result.ok(input.split(" | ").joinToString(" "))
             }
 
             "trimtokens", "trimstart", "trimend" -> {
-                Result.ok(cmd.args.joinToString(" "))
+                Result.ok(cmd.textArgs().joinToString(" "))
             }
 
             "tokens" -> {
-                val input = cmd.args.joinToString(" ")
+                val input = cmd.textArgs().joinToString(" ")
                 Result.ok(input.split(Regex("\\s+")).filter { it.isNotEmpty() }.size.toString())
             }
 
-            "concat" -> Result.ok(cmd.args.joinToString(""))
+            "concat" -> Result.ok(cmd.textArgs().joinToString(""))
 
             "join" -> {
                 val separator = cmd.namedArgs["separator"] ?: "\n"
-                Result.ok(cmd.args.joinToString(separator))
+                Result.ok(cmd.textArgs().joinToString(separator))
             }
 
             "split" -> {
-                val input = cmd.args.getOrNull(0) ?: ""
-                val separator = cmd.args.getOrNull(1) ?: " "
+                val input = cmd.textArgs().getOrNull(0) ?: ""
+                val separator = cmd.textArgs().getOrNull(1) ?: " "
                 Result.ok(input.split(separator).joinToString("\n"))
             }
 
             "match" -> {
-                val pattern = cmd.args.getOrNull(0) ?: ""
-                val input = cmd.args.getOrNull(1) ?: ""
+                val pattern = cmd.textArgs().getOrNull(0) ?: ""
+                val input = cmd.textArgs().getOrNull(1) ?: ""
                 val regex = runCatching { Regex(pattern) }.getOrNull()
                 Result.ok(if (regex?.containsMatchIn(input) == true) "true" else "false")
             }
 
             "test" -> {
-                val pattern = cmd.args.getOrNull(0) ?: ""
-                val input = cmd.args.getOrNull(1) ?: ""
+                val pattern = cmd.textArgs().getOrNull(0) ?: ""
+                val input = cmd.textArgs().getOrNull(1) ?: ""
                 val regex = runCatching { Regex(pattern) }.getOrNull()
                 Result.ok(if (regex?.containsMatchIn(input) == true) "true" else "false")
             }
 
             "fuzzy" -> {
-                val needle = cmd.args.getOrNull(0) ?: ""
-                val haystack = cmd.args.getOrNull(1) ?: ""
+                val needle = cmd.textArgs().getOrNull(0) ?: ""
+                val haystack = cmd.textArgs().getOrNull(1) ?: ""
                 Result.ok(if (haystack.contains(needle, ignoreCase = true)) "true" else "false")
             }
 
-            "input", "prompt" -> Result.ok(cmd.args.joinToString(" "))
+            "input", "prompt" -> Result.ok(cmd.textArgs().joinToString(" "))
 
-            "popup", "buttons" -> Result.ok(cmd.args.joinToString(" "))
+            "popup", "buttons" -> Result.ok(cmd.textArgs().joinToString(" "))
 
             "message-role" -> {
-                val role = cmd.args.firstOrNull() ?: "system"
+                val role = cmd.textArgs().firstOrNull() ?: "system"
                 Result.ok(role)
             }
 
             "message-name" -> {
-                val name = cmd.args.joinToString(" ")
+                val name = cmd.textArgs().joinToString(" ")
                 Result.ok(name)
             }
 
-            "comment" -> Result.ok(cmd.args.joinToString(" "))
+            "comment" -> Result.ok(cmd.textArgs().joinToString(" "))
 
-            "send", "sys", "sysname" -> Result.ok(cmd.args.joinToString(" "))
+            "send", "sys", "sysname" -> Result.ok(cmd.textArgs().joinToString(" "))
 
             "gen", "genraw" -> Result.ok("")
 
@@ -548,7 +753,7 @@ class SlashCommandEngine(
             "model" -> Result.ok("")
 
             "tokenizer" -> {
-                val input = cmd.args.joinToString(" ")
+                val input = cmd.textArgs().joinToString(" ")
                 Result.ok(input.split(Regex("\\s+")).filter { it.isNotEmpty() }.size.toString())
             }
 
@@ -563,8 +768,8 @@ class SlashCommandEngine(
             }
 
             "event-emit" -> {
-                val event = cmd.namedArgs["event"] ?: cmd.args.getOrNull(0) ?: ""
-                val dataArgs = cmd.args.drop(if (cmd.namedArgs["event"] != null) 0 else 1)
+                val event = cmd.namedArgs["event"] ?: cmd.textArgs().getOrNull(0) ?: ""
+                val dataArgs = cmd.textArgs().drop(if (cmd.namedArgs["event"] != null) 0 else 1)
                 val dataFromNamed = cmd.namedArgs.filterKeys { it != "event" }.values.toList()
                 val allData = dataArgs + dataFromNamed
                 eventEmitter?.invoke(event, allData)
@@ -737,8 +942,60 @@ class SlashCommandEngine(
         }
     }
 
-    private fun evaluateCondition(condition: String): Boolean {
-        val trimmed = condition.trim()
+    /**
+     * ST-compatible condition evaluation for `/if` and `/while`
+     * (variables.js parseBooleanOperands + evalBoolean).
+     */
+    private fun evaluateIfCondition(cmd: Command): Boolean {
+        val leftRaw = cmd.namedArgs["left"] ?: cmd.textArgs().firstOrNull { it.isNotBlank() } ?: ""
+        val rightRaw = cmd.namedArgs["right"]
+        val rule = cmd.namedArgs["rule"] ?: "eq"
+        val left = resolveOperand(leftRaw)
+        val right = rightRaw?.let { resolveOperand(it) }
+
+        if (right == null) {
+            // No right operand: truthy check; 'not' inverts.
+            val truthy = isTruthyValue(left)
+            return if (rule == "not") !truthy else truthy
+        }
+        val aNum = left.toDoubleOrNull()
+        val bNum = right.toDoubleOrNull()
+        return when (rule) {
+            "eq", "==" -> if (aNum != null && bNum != null) aNum == bNum else left == right
+            "neq", "!=" -> if (aNum != null && bNum != null) aNum != bNum else left != right
+            "in" -> left.contains(right)
+            "nin" -> !left.contains(right)
+            "gt" -> (aNum ?: 0.0) > (bNum ?: 0.0)
+            "gte" -> (aNum ?: 0.0) >= (bNum ?: 0.0)
+            "lt" -> (aNum ?: 0.0) < (bNum ?: 0.0)
+            "lte" -> (aNum ?: 0.0) <= (bNum ?: 0.0)
+            "not" -> !isTruthyValue(left)
+            else -> left == right
+        }
+    }
+
+    /**
+     * ST operand resolution order (variables.js:440-480): numeric literal,
+     * local variable, global variable, string literal. The tellev legacy
+     * `{{name}}` / `{{getvar::name}}` forms are also resolved.
+     */
+    private fun resolveOperand(raw: String): String {
+        if (raw.toDoubleOrNull() != null) return raw
+        variableStore?.getLocal(raw)?.let { return it }
+        variableStore?.getGlobal(raw)?.let { return it }
+        val macroMatch = Regex("^\\{\\{(?:getvar::)?([^}]+)\\}\\}$").matchEntire(raw.trim())
+        if (macroMatch != null) {
+            val name = macroMatch.groupValues[1].trim()
+            variableStore?.getLocal(name)?.let { return it }
+            variableStore?.getGlobal(name)?.let { return it }
+        }
+        return raw
+    }
+
+    private fun isTruthyValue(value: String): Boolean =
+        value.isNotBlank() && value != "0" && !value.equals("false", ignoreCase = true)
+
+    private fun evaluateCondition(condition: String): Boolean {        val trimmed = condition.trim()
         if (trimmed.isEmpty()) return false
 
         // Check for comparison operators
@@ -783,54 +1040,6 @@ class SlashCommandEngine(
          * native engine. Keep them distinguishable from unknown extension
          * commands: callers get an explicit error and never a fake success.
          */
-        private val UNSUPPORTED_COMMANDS: Set<String> = setOf(
-            "trimtokens", "trimstart", "trimend",
-            "input", "prompt", "popup", "buttons",
-            "send", "sys", "sysname", "gen", "genraw",
-            "continue", "regenerate", "swipe", "newchat", "del", "cut",
-            "model", "clipboard-get", "clipboard-set", "beep",
-            "inject", "listinjects", "flushinject", "getpromptentry", "setpromptentry",
-            "chat-render", "chat-reload", "reroll-pick",
-            "profile", "profile-list", "tempchat", "closechat",
-            "getchatname", "renamechat", "delchat", "forcesave",
-            "instruct", "instruct-on", "instruct-off", "instruct-state",
-            "context", "panels", "bg",
-            "char-find", "char-create", "char-update", "char-duplicate", "char-get", "char-delete",
-            "sendas", "single", "bubble", "flat", "go", "rename-char", "sysgen",
-            "ask", "delname", "trigger", "hide", "unhide",
-            "member-get", "member-disable", "member-enable", "member-add", "member-remove",
-            "member-up", "member-down", "member-peek", "member-count",
-            "delswipe", "addswipe", "messages", "setinput", "pick-icon",
-            "api", "api-url", "chat-jump", "prompt-post-processing", "vn", "resetpanels",
-            "bgcol", "theme", "css-var", "movingui", "stop-strings", "start-reply-with",
-            "persona-create", "persona-update", "persona-get", "persona-delete", "persona-duplicate",
-            "persona-lock", "persona-set", "persona-sync",
-            "reasoning-get", "reasoning-set", "reasoning-parse", "reasoning-format",
-            "reasoning-template", "reasoning-collapse", "reasoning-expand", "reasoning-toggle",
-            "secret-id", "secret-delete", "secret-write", "secret-rename", "secret-read",
-            "sysprompt", "sysprompt-on", "sysprompt-off", "sysprompt-state",
-            "extension-enable", "extension-disable", "extension-toggle", "extension-state",
-            "extension-exists", "reload-page",
-            "note", "note-depth", "note-frequency", "note-position", "note-role",
-            "lockbg", "unlockbg", "autobg",
-            "branch-create", "checkpoint-create", "checkpoint-go", "checkpoint-exit",
-            "checkpoint-parent", "checkpoint-get", "checkpoint-list",
-            "tag-add", "tag-remove", "tag-exists", "tag-list", "tag-import",
-            "tools-list", "tools-invoke", "tools-register", "tools-unregister",
-            "preset", "proxy", "loader-wrap", "loader-show", "loader-hide", "loader-stop",
-            "db", "db-list", "db-get", "db-add", "db-update", "db-disable", "db-enable", "db-delete",
-            "db-ingest", "db-purge", "db-search", "vector-threshold", "vector-query",
-            "vector-max-entries", "vector-chats-state", "vector-files-state", "vector-worldinfo-state",
-            "imagine", "imagine-source", "imagine-style", "imagine-comfy-workflow",
-            "expression-set", "expression-fallback", "expression-folder-override", "expression-last",
-            "expression-list", "expression-classify", "expression-upload",
-            "profile-create", "profile-update", "profile-get", "profile-genstream",
-            "regex-preset", "regex", "regex-state", "regex-toggle",
-            "show-gallery", "list-gallery", "summarize", "caption", "translate", "speak", "count",
-            "world", "getchatbook", "getglobalbooks", "getpersonabook", "getcharbook",
-            "findentry", "getentryfield", "createentry", "setentryfield",
-            "wi-set-timed-effect", "wi-get-timed-effect", "yt-script",
-        )
 
         val BUILTIN_COMMANDS: Set<String> = setOf(
             "echo", "noop", "pass", "return", "delay", "wait", "sleep",

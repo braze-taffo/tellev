@@ -578,49 +578,75 @@ class DefaultPromptTemplateProcessor(
     private fun callFunction(name: String, args: List<Any?>, state: TemplateState): Any? {
         return when (name) {
             "getwi", "getWorldInfo" -> resolveWorldInfo(args, state)
-            "getvar", "getchatvar" -> {
+            // ST-Prompt-Template exposes both lowercase aliases (legacy) and the
+            // camelCase scope-explicit family (ejs.ts:279-307); accept both.
+            "getvar", "getchatvar", "getLocalVar" -> {
                 val key = stringify(args.getOrNull(0))
                 val fallback = args.getOrNull(1)
                 getPath(state.localVariables, key) ?: fallback ?: ""
             }
-            "getglobalvar" -> {
+            "getglobalvar", "getGlobalVar" -> {
                 val key = stringify(args.getOrNull(0))
                 val fallback = args.getOrNull(1)
                 getPath(state.globalVariables, key) ?: fallback ?: ""
             }
-            "setvar", "setchatvar" -> {
+            "setvar", "setchatvar", "setLocalVar" -> {
                 val key = stringify(args.getOrNull(0))
                 setLocalVariable(state, key, args.getOrNull(1))
                 ""
             }
-            "setglobalvar" -> {
+            "setglobalvar", "setGlobalVar" -> {
                 val key = stringify(args.getOrNull(0))
                 setGlobalVariable(state, key, args.getOrNull(1))
                 ""
             }
-            "incvar" -> {
+            "incvar", "incLocalVar" -> {
                 val key = stringify(args.getOrNull(0))
-                val next = numeric(getPath(state.localVariables, key)) + 1.0
+                val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
+                val next = numeric(getPath(state.localVariables, key)) + amount
                 setLocalVariable(state, key, next)
                 formatNumber(next)
             }
-            "decvar" -> {
+            "decvar", "decLocalVar" -> {
                 val key = stringify(args.getOrNull(0))
-                val next = numeric(getPath(state.localVariables, key)) - 1.0
+                val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
+                val next = numeric(getPath(state.localVariables, key)) - amount
                 setLocalVariable(state, key, next)
                 formatNumber(next)
             }
-            "incglobalvar" -> {
+            "incglobalvar", "incGlobalVar" -> {
                 val key = stringify(args.getOrNull(0))
-                val next = numeric(getPath(state.globalVariables, key)) + 1.0
+                val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
+                val next = numeric(getPath(state.globalVariables, key)) + amount
                 setGlobalVariable(state, key, next)
                 formatNumber(next)
             }
-            "decglobalvar" -> {
+            "decglobalvar", "decGlobalVar" -> {
                 val key = stringify(args.getOrNull(0))
-                val next = numeric(getPath(state.globalVariables, key)) - 1.0
+                val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
+                val next = numeric(getPath(state.globalVariables, key)) - amount
                 setGlobalVariable(state, key, next)
                 formatNumber(next)
+            }
+            "delvar", "delLocalVar" -> {
+                val key = stringify(args.getOrNull(0))
+                deletePath(state.localVariables, key)
+                refreshMergedVariables(state)
+                ""
+            }
+            "delGlobalVar" -> {
+                val key = stringify(args.getOrNull(0))
+                deletePath(state.globalVariables, key)
+                refreshMergedVariables(state)
+                ""
+            }
+            // ST insertVariable (variables.ts:559): array -> push / splice at
+            // index (negative counts from the end); otherwise assign.
+            "insvar", "insertLocalVar" -> {
+                insertVariable(state.localVariables, args) { path, value -> setLocalVariable(state, path, value) }
+            }
+            "insertGlobalVar" -> {
+                insertVariable(state.globalVariables, args) { path, value -> setGlobalVariable(state, path, value) }
             }
             "String" -> stringify(args.getOrNull(0))
             "Number" -> numeric(args.getOrNull(0))
@@ -861,6 +887,47 @@ class DefaultPromptTemplateProcessor(
             }
         }
         current[parts.last()] = value
+    }
+
+    private fun deletePath(root: MutableMap<String, Any?>, path: String): Boolean {
+        val parts = path.split('.').filter { it.isNotBlank() }
+        if (parts.isEmpty()) return false
+        var current: Any? = root
+        for (part in parts.dropLast(1)) {
+            current = (current as? Map<*, *>)?.get(part) ?: return false
+        }
+        @Suppress("UNCHECKED_CAST")
+        val parent = current as? MutableMap<String, Any?> ?: return false
+        return parent.remove(parts.last()) != null
+    }
+
+    /**
+     * ST insertVariable semantics (variables.ts:559): when the current value is
+     * an array, push or splice at [index] (negative counts from the end);
+     * otherwise assign the value directly.
+     */
+    private fun insertVariable(
+        scope: MutableMap<String, Any?>,
+        args: List<Any?>,
+        setter: (String, Any?) -> Unit,
+    ): String {
+        val key = stringify(args.getOrNull(0))
+        val value = args.getOrNull(1)
+        val index = args.getOrNull(2)?.let { stringify(it) }?.takeIf { it.isNotBlank() }?.toIntOrNull()
+        val current = getPath(scope, key)
+        val list = (current as? List<*>)?.toMutableList()
+        if (list != null) {
+            if (index == null) {
+                list.add(value)
+            } else {
+                val at = if (index < 0) (list.size + index).coerceAtLeast(0) else index.coerceAtMost(list.size)
+                list.add(at, value)
+            }
+            setter(key, list)
+        } else {
+            setter(key, value)
+        }
+        return ""
     }
 
     private fun compare(left: Any?, right: Any?, operator: String): Boolean {

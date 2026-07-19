@@ -7,7 +7,9 @@ import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.GroupChat
+import app.tellev.core.model.MessageRole
 import app.tellev.core.model.PresetCategory
+import app.tellev.core.model.PresetPrompt
 import app.tellev.core.model.Persona
 import app.tellev.core.model.WorldBook
 import app.tellev.core.provider.ProviderAdapter
@@ -18,12 +20,15 @@ import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.provider.ProviderStatus
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.StDataStore
+import app.tellev.core.storage.applyPromptOrder
+import app.tellev.core.storage.parsePresetPrompts
 import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.json.JsonArray
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
@@ -33,6 +38,10 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import kotlin.io.path.createDirectories
+import kotlin.io.path.exists
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
 
 /**
  * Routes [VirtualApiRequest]s to real backend services ([StDataStore],
@@ -127,6 +136,14 @@ class VirtualApiRouter(
             method == "DELETE" && segments.size == 2 && segments[0] == "characters" ->
                 handleDeleteCharacter(segments[1])
 
+            // ST-style character routes (POST): /all, /get, /delete
+            method == "POST" && segments.size == 2 && segments[0] == "characters" && segments[1] == "all" ->
+                handleStAllCharacters()
+            method == "POST" && segments.size == 2 && segments[0] == "characters" && segments[1] == "get" ->
+                handleStGetCharacter(request)
+            method == "POST" && segments.size == 2 && segments[0] == "characters" && segments[1] == "delete" ->
+                handleStDeleteCharacter(request)
+
             // ── chats ──────────────────────────────────────────────
             method == "GET" && segments.size == 1 && segments[0] == "chats" ->
                 handleListChats(request)
@@ -173,6 +190,15 @@ class VirtualApiRouter(
             // ST-style: POST /api/worldinfo/get { name }
             method == "POST" && segments.size == 2 && segments[0] == "worldinfo" && segments[1] == "get" ->
                 handleStGetWorldInfo(request)
+
+            // ST-style: POST /api/worldinfo/list → bare [{file_id, name, extensions}]
+            method == "POST" && segments.size == 2 && segments[0] == "worldinfo" && segments[1] == "list" ->
+                handleStListWorldInfo()
+
+            // ST-style: POST /api/worldinfo/edit { name, data } — the endpoint ST
+            // uses to save world info files.
+            method == "POST" && segments.size == 2 && segments[0] == "worldinfo" && segments[1] == "edit" ->
+                handleStEditWorldInfo(request)
 
             // ── settings / presets ─────────────────────────────────
             method == "GET" && segments.size == 1 && segments[0] == "settings" ->
@@ -594,6 +620,23 @@ class VirtualApiRouter(
         val completion = raw.intValue("openai_max_tokens")
             ?: raw.intValue("max_tokens")
             ?: existing?.maxCompletionTokens
+        // Parse prompts / prompts_unused / prompt_order from the supplied raw
+        // JSON (same semantics as FileStDataStore.parsePreset). When the write
+        // does not carry a prompt list, keep the existing one — previously the
+        // typed lists were left empty and savePreset() then rewrote
+        // merged["prompts"] = [], silently destroying the preset's prompts.
+        val prompts: List<PresetPrompt>
+        val promptsUnused: List<PresetPrompt>
+        if (raw["prompts"] is JsonArray) {
+            val definitions = parsePresetPrompts(raw["prompts"])
+            val (ordered, inferredUnused) = applyPromptOrder(definitions, raw["prompt_order"])
+            val explicitUnused = parsePresetPrompts(raw["prompts_unused"] ?: raw["promptsUnused"])
+            prompts = ordered
+            promptsUnused = (inferredUnused + explicitUnused).distinctBy { it.identifier }
+        } else {
+            prompts = existing?.prompts.orEmpty()
+            promptsUnused = existing?.promptsUnused.orEmpty()
+        }
         return (existing ?: GenerationPreset(
             id = name,
             name = name,
@@ -611,6 +654,9 @@ class VirtualApiRouter(
             maxCompletionTokens = completion,
             presencePenalty = raw.doubleValue("presence_penalty") ?: existing?.presencePenalty,
             frequencyPenalty = raw.doubleValue("frequency_penalty") ?: existing?.frequencyPenalty,
+            seed = raw["seed"]?.jsonPrimitive?.content?.toLongOrNull() ?: existing?.seed,
+            prompts = prompts,
+            promptsUnused = promptsUnused,
             stop = (raw["stop"] as? JsonArray)?.mapNotNull {
                 (it as? JsonPrimitive)?.content
             } ?: existing?.stop.orEmpty(),
@@ -851,10 +897,14 @@ class VirtualApiRouter(
     }
 
     private fun jsonResponse(status: Int, body: JsonObject): VirtualApiResponse =
+        jsonResponse(status, body as kotlinx.serialization.json.JsonElement)
+
+    /** Bare-array / non-object ST responses (worldinfo/list, characters/all, chats/get). */
+    private fun jsonResponse(status: Int, body: kotlinx.serialization.json.JsonElement): VirtualApiResponse =
         VirtualApiResponse(
             status = status,
             headers = mapOf("Content-Type" to "application/json"),
-            body = json.encodeToString(JsonObject.serializer(), body),
+            body = json.encodeToString(kotlinx.serialization.json.JsonElement.serializer(), body),
         )
 
     private fun CharacterCard.extensionObject(): JsonObject {
@@ -936,7 +986,41 @@ class VirtualApiRouter(
         val chatId = bodyObj?.get("file_name")?.jsonPrimitive?.content
             ?: bodyObj?.get("ch_name")?.jsonPrimitive?.content
             ?: return errorResponse(400, "Missing file_name/ch_name")
-        return handleReadChat(chatId)
+        val session = runCatching { dataStore.readChatSession(chatId) }.getOrNull()
+            ?: return errorResponse(404, "Chat not found: $chatId")
+        return jsonResponse(200, sessionToStChatArray(session))
+    }
+
+    /**
+     * ST `/api/chats/get` response shape (chats.js getChatData): a bare array
+     * whose first element is the metadata header line, followed by message
+     * objects with ST field names (mes/name/is_user/is_system/send_date/
+     * swipes/swipe_id/variables/extra).
+     */
+    private fun sessionToStChatArray(session: ChatSession): JsonArray = buildJsonArray {
+        add(
+            buildJsonObject {
+                put("user_name", session.metadata["userName"]?.jsonPrimitive?.content ?: "User")
+                put("character_name", session.metadata["characterName"]?.jsonPrimitive?.content ?: "")
+                put("create_date", session.metadata["create_date"]?.jsonPrimitive?.content ?: "")
+                put("chat_metadata", session.metadata)
+            },
+        )
+        session.messages.forEach { msg ->
+            add(
+                buildJsonObject {
+                    put("name", msg.name)
+                    put("mes", msg.swipes.getOrNull(msg.swipeIndex) ?: msg.content)
+                    put("is_user", msg.role == MessageRole.User)
+                    put("is_system", msg.role == MessageRole.System || msg.isHidden)
+                    put("send_date", msg.createdAtMillis)
+                    put("swipes", JsonArray(msg.swipes.map { JsonPrimitive(it) }))
+                    put("swipe_id", msg.swipeIndex)
+                    put("variables", JsonArray(msg.variables))
+                    put("extra", msg.metadata)
+                },
+            )
+        }
     }
 
     private suspend fun handleStGetGroupChat(request: VirtualApiRequest): VirtualApiResponse {
@@ -975,7 +1059,76 @@ class VirtualApiRouter(
         val name = bodyObj?.get("name")?.jsonPrimitive?.content
             ?: bodyObj?.get("wim_name")?.jsonPrimitive?.content
             ?: return errorResponse(400, "Missing name")
-        return handleReadWorld(name)
+        // ST returns the world file verbatim: entries as a uid-keyed object
+        // (worldinfo.js /get). Serve the on-disk ST-format file.
+        val file = dataStore.layout.worlds.resolve("$name.json")
+        if (!file.exists()) return errorResponse(404, "World info not found: $name")
+        val raw = runCatching { json.parseToJsonElement(file.readText()) as? JsonObject }.getOrNull()
+            ?: return errorResponse(500, "Failed to read world info: $name")
+        return jsonResponse(200, raw)
+    }
+
+    private suspend fun handleStListWorldInfo(): VirtualApiResponse {
+        // ST returns a bare array of {file_id, name, extensions} (worldinfo.js /list).
+        val array = buildJsonArray {
+            dataStore.listWorldBooks().forEach { book ->
+                add(
+                    buildJsonObject {
+                        put("file_id", book.id)
+                        put("name", book.name)
+                        put("extensions", (book.raw["extensions"] as? JsonObject) ?: buildJsonObject { })
+                    },
+                )
+            }
+        }
+        return jsonResponse(200, array)
+    }
+
+    private suspend fun handleStEditWorldInfo(request: VirtualApiRequest): VirtualApiResponse {
+        val body = parseBodyAsJsonObject(request)
+        val name = body.stringValue("name")?.takeIf { it.isNotBlank() }
+            ?: return errorResponse(400, "World file must have a name")
+        val data = body["data"] as? JsonObject
+            ?: return errorResponse(400, "Is not a valid world info file")
+        if (data["entries"] !is JsonObject) {
+            return errorResponse(400, "Is not a valid world info file")
+        }
+        // ST semantics (worldinfo.js /edit): write the file verbatim.
+        dataStore.layout.worlds.createDirectories()
+        dataStore.layout.worlds.resolve("$name.json").writeText(
+            json.encodeToString(JsonObject.serializer(), data),
+        )
+        return jsonResponse(200, buildJsonObject { put("name", name) })
+    }
+
+    private suspend fun handleStAllCharacters(): VirtualApiResponse {
+        // ST /api/characters/all returns a bare array.
+        val array = buildJsonArray {
+            dataStore.listCharacters().forEach {
+                add(json.encodeToJsonElement(CharacterSummary.serializer(), it))
+            }
+        }
+        return jsonResponse(200, array)
+    }
+
+    private suspend fun handleStGetCharacter(request: VirtualApiRequest): VirtualApiResponse {
+        val body = parseBodyAsJsonObject(request)
+        val id = body.stringValue("id") ?: body.stringValue("name") ?: body.stringValue("avatar_url")
+            ?: return errorResponse(400, "Missing character id/name")
+        val card = runCatching { dataStore.readCharacter(id.substringBeforeLast(".png")) }.getOrNull()
+            ?: return errorResponse(404, "Character not found: $id")
+        val bodyJson = json.encodeToJsonElement(CharacterCard.serializer(), card)
+        return jsonResponse(200, bodyJson as? JsonObject ?: buildJsonObject { put("data", bodyJson) })
+    }
+
+    private suspend fun handleStDeleteCharacter(request: VirtualApiRequest): VirtualApiResponse {
+        val body = parseBodyAsJsonObject(request)
+        val id = body.stringValue("id") ?: body.stringValue("name") ?: body.stringValue("avatar_url")
+            ?: return errorResponse(400, "Missing character id/name")
+        return runCatching {
+            dataStore.deleteCharacter(id.substringBeforeLast(".png"))
+            jsonResponse(200, buildJsonObject { put("ok", true) })
+        }.getOrElse { errorResponse(404, "Character not found: $id") }
     }
 
     private suspend fun handleStGetSettings(): VirtualApiResponse {

@@ -176,7 +176,8 @@ data class WorldBookEntry(
     val secondaryKeys: List<String> = emptyList(),
     val content: String,
     val enabled: Boolean = true,
-    val selective: Boolean = false,
+    /** ST default is true (world-info.js newWorldInfoEntryDefinition). */
+    val selective: Boolean = true,
     val constant: Boolean = false,
     val priority: Int = 0,
     val insertionOrder: Int = 100,
@@ -186,21 +187,52 @@ data class WorldBookEntry(
     val position: Int = 0,
     /** 0-100. Only rolled when [useProbability] is true. */
     val probability: Int = 100,
-    val useProbability: Boolean = false,
+    /** ST default is true (world-info.js newWorldInfoEntryDefinition). */
+    val useProbability: Boolean = true,
     /** world_info_logic: 0=AND_ANY,1=NOT_ALL,2=NOT_ANY,3=AND_ALL. Only used when [selective] is true. */
     val selectiveLogic: Int = 0,
     /** extension_prompt_roles: 0=SYSTEM,1=USER,2=ASSISTANT. Only meaningful at position=atDepth. */
     val role: Int = 0,
     val matchWholeWords: Boolean = false,
+    /** tellev extension (not in ST): treat plain keys as regex. ST-style `/pattern/flags` keys are always detected per key. */
     val useRegex: Boolean = false,
     val caseSensitive: Boolean = false,
     val comment: String = "",
     val excludeRecursion: Boolean = false,
     val preventRecursion: Boolean = false,
-    val delayUntilRecursion: Boolean = false,
+    /** ST delayUntilRecursion is a number (recursion level); boolean true maps to 1. 0 = no delay. */
+    val delayUntilRecursion: Int = 0,
     /** Include this entry even after the world-info token budget is exhausted. */
     val ignoreBudget: Boolean = false,
     val raw: JsonObject = buildJsonObject { },
+)
+
+/** World-info scan settings, mirroring ST's world_info_* settings (world-info.js:69-82). */
+@Serializable
+data class WorldInfoSettings(
+    /** ST world_info_recursive (default false): rescan using newly activated entries' content. */
+    val recursive: Boolean = false,
+    /** ST world_info_max_recursion_steps (default 0 = unlimited, only meaningful when recursive is on). */
+    val maxRecursionSteps: Int = 0,
+    /** Chat history depth scanned for keys. ST world_info_depth defaults to 2; tellev keeps its wider 12. */
+    val scanDepth: Int = 12,
+)
+
+/**
+ * Prompt assembly preferences, mirroring ST power_user settings that control
+ * whether character-card-provided prompts override the global defaults.
+ * Both default to true so variable cards work out of the box.
+ */
+@Serializable
+data class PromptSettings(
+    /** ST power_user.prefer_character_prompt: use the card's data.system_prompt when present. */
+    val preferCharacterPrompt: Boolean = true,
+    /** ST power_user.prefer_character_jailbreak: use the card's data.post_history_instructions when present. */
+    val preferCharacterJailbreak: Boolean = true,
+    /** Enable instruct mode formatting (for completion-style APIs like textgen/kobold). */
+    val instructEnabled: Boolean = false,
+    /** Instruct preset name (file stem in the instruct/ directory, or empty for built-in ChatML). */
+    val instructPresetName: String = "",
 )
 
 @Serializable

@@ -163,6 +163,153 @@ class PromptEngineTest {
         )
     }
 
+    @Test
+    fun `group macro resolves from string-array groupMembers metadata`() {
+        // Regression guard: ChatViewModel writes groupMembers as an array of
+        // plain name strings; the reader side used to expect {"name": ...}
+        // objects, so {{group}} silently resolved to "".
+        val metadata = buildJsonObject {
+            put("maxContextTokens", 8192)
+            put(
+                "groupMembers",
+                kotlinx.serialization.json.JsonArray(
+                    listOf(
+                        kotlinx.serialization.json.JsonPrimitive("Alice"),
+                        kotlinx.serialization.json.JsonPrimitive("Carol"),
+                    ),
+                ),
+            )
+        }
+        val request = baseRequest(metadata).let {
+            it.copy(character = it.character.copy(description = "Members: {{group}}"))
+        }
+
+        val result = engine.build(request)
+
+        assertTrue(
+            "{{group}} should expand to the member names, got: ${result.messages.first().content}",
+            result.messages.first().content.contains("Alice, Carol"),
+        )
+    }
+
+    @Test
+    fun `injected prompts reserve budget from chat history`() {
+        // Regression guard for audit §12.2: injections used to be spliced in
+        // AFTER budget trimming, so a big injected prompt could push the whole
+        // request past maxContextTokens. Now injection tokens are reserved
+        // from the chat budget, so old chat messages are dropped to make room.
+        val base = engine.build(baseRequest(buildJsonObject { put("maxContextTokens", 500) }))
+        val bigInjection = "lorem ipsum dolor sit amet consectetur ".repeat(60)
+        val withInjection = engine.build(
+            baseRequest(
+                buildJsonObject {
+                    put("maxContextTokens", 500)
+                    put(
+                        "injectedPrompts",
+                        buildJsonObject {
+                            put(
+                                "ext/p1",
+                                buildJsonObject {
+                                    put("value", bigInjection)
+                                    put("position", 0)
+                                    put("depth", 0)
+                                    put("role", "system")
+                                },
+                            )
+                        },
+                    )
+                },
+            ),
+        )
+
+        val baseCount = base.messages.count { it.content.contains("Message number") }
+        val injectedCount = withInjection.messages.count { it.content.contains("Message number") }
+        assertTrue(withInjection.messages.any { it.content.contains("lorem ipsum") })
+        assertTrue(
+            "injection tokens must be reserved from the chat budget (base=$baseCount injected=$injectedCount)",
+            injectedCount < baseCount,
+        )
+    }
+
+    @Test
+    fun `depth_prompt is injected into chat at specified depth and role`() {
+        val cardWithDepthPrompt = character().copy(
+            raw = buildJsonObject {
+                put("name", "Alice")
+                put("data", buildJsonObject {
+                    put("name", "Alice")
+                    put("extensions", buildJsonObject {
+                        put("depth_prompt", buildJsonObject {
+                            put("prompt", "Remember: Alice is secretive.")
+                            put("depth", 2)
+                            put("role", "system")
+                        })
+                    })
+                })
+            },
+        )
+        val request = baseRequest(buildJsonObject { put("maxContextTokens", 8192) })
+            .copy(character = cardWithDepthPrompt)
+
+        val result = engine.build(request)
+
+        assertTrue(
+            "depth_prompt text should appear in the prompt",
+            result.messages.any { it.content.contains("Remember: Alice is secretive.") },
+        )
+    }
+
+    @Test
+    fun `system_prompt overrides default You are X opener`() {
+        val cardWithSysPrompt = character().copy(
+            raw = buildJsonObject {
+                put("name", "Alice")
+                put("data", buildJsonObject {
+                    put("name", "Alice")
+                    put("system_prompt", "You are a master storyteller in a fantasy world.")
+                })
+            },
+        )
+        val request = baseRequest(buildJsonObject { put("maxContextTokens", 8192) })
+            .copy(character = cardWithSysPrompt)
+
+        val result = engine.build(request)
+
+        val systemContent = result.messages.first().content
+        assertTrue(
+            "Custom system_prompt should be used, got: $systemContent",
+            systemContent.contains("master storyteller"),
+        )
+    }
+
+    @Test
+    fun `post_history_instructions injected at depth zero`() {
+        val cardWithJailbreak = character().copy(
+            raw = buildJsonObject {
+                put("name", "Alice")
+                put("data", buildJsonObject {
+                    put("name", "Alice")
+                    put("post_history_instructions", "[System: Stay in character at all times.]")
+                })
+            },
+        )
+        val request = baseRequest(buildJsonObject { put("maxContextTokens", 8192) })
+            .copy(character = cardWithJailbreak)
+
+        val result = engine.build(request)
+
+        assertTrue(
+            "post_history_instructions should appear in the prompt",
+            result.messages.any { it.content.contains("Stay in character at all times.") },
+        )
+        // The jailbreak should be near the end (depth 0 = last position before user input)
+        val lastFew = result.messages.takeLast(3)
+        assertTrue(
+            "post_history_instructions should be near the end of the message list",
+            lastFew.any { it.content.contains("Stay in character") },
+        )
+    }
+
     private fun contextPresetJson(): JsonObject = buildJsonObject {
         put("name", "TestContext")
         // Minimal story string exercising wiBefore/description/personality so

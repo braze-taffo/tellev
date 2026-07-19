@@ -153,12 +153,15 @@ object CharacterRegexApplier {
             )
         }
         return runCatching {
+            // JavaScript String.replace(): g replaces all matches; y without g
+            // matches only at position 0. When both g and y are present, g
+            // takes precedence (replace still replaces all matches).
             when {
+                'g' in flags -> regex.replace(input, replacer)
                 'y' in flags -> {
                     val first = regex.find(input)?.takeIf { it.range.first == 0 } ?: return@runCatching input
                     input.replaceRange(first.range, replacer(first))
                 }
-                'g' in flags -> regex.replace(input, replacer)
                 else -> {
                     val first = regex.find(input) ?: return@runCatching input
                     input.replaceRange(first.range, replacer(first))
@@ -178,10 +181,13 @@ object CharacterRegexApplier {
         match: MatchResult,
         trimStrings: List<String>,
     ): String {
-        val backrefRegex = Regex("""\$(\d{1,2})|\$<([^>]+)>|\$0""")
+        // JavaScript replacement syntax: $& = full match, $0 = full match
+        // (tellev extension), $1-$9 = capture groups, $<name> = named group.
+        val backrefRegex = Regex("""\$(\d{1,2})|\$<([^>]+)>|\$0|\$&""")
         return backrefRegex.replace(replacement) { ref ->
             val value = when {
                 ref.value == "$0" -> match.value
+                ref.value == "$&" -> match.value
                 ref.groups[1] != null -> match.groups[ref.groups[1]!!.value.toIntOrNull() ?: -1]?.value.orEmpty()
                 ref.groups[2] != null -> match.groups[ref.groups[2]!!.value]?.value.orEmpty()
                 else -> ""

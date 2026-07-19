@@ -530,7 +530,10 @@ fun SettingsScreen(
                         icon = Icons.Default.Settings,
                         title = "生成预设",
                         secondaryAction = {
-                            presetImportLauncher.launch("application/json")
+                            // Use */* so .json files stay selectable: many file
+                            // managers don't tag them as application/json and SAF
+                            // would grey them out.
+                            presetImportLauncher.launch("*/*")
                         },
                         action = {
                             showPresetDialog = true

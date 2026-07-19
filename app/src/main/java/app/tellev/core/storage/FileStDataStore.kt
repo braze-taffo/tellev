@@ -13,6 +13,8 @@ import app.tellev.core.model.MessageRole
 import app.tellev.core.model.Persona
 import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
+import app.tellev.core.model.PromptSettings
+import app.tellev.core.model.WorldInfoSettings
 import app.tellev.core.security.SensitiveFieldScanner
 import app.tellev.core.regex.CharacterRegexApplier
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -25,6 +27,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -617,6 +620,74 @@ class FileStDataStore(
         parsePreset(destination, rawObj, category).also { mutablePresetChanges.tryEmit(category) }
     }
 
+    override suspend fun readWorldInfoSettings(): WorldInfoSettings = withContext(Dispatchers.IO) {
+        val path = layout.root.resolve("world-info-settings.json")
+        if (!path.exists()) return@withContext WorldInfoSettings()
+        val raw = runCatching { json.parseToJsonElement(path.readText()) as? JsonObject }.getOrNull()
+            ?: return@withContext WorldInfoSettings()
+        WorldInfoSettings(
+            recursive = raw["recursive"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+            maxRecursionSteps = raw["maxRecursionSteps"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
+            scanDepth = raw["scanDepth"]?.jsonPrimitive?.content?.toIntOrNull()?.coerceAtLeast(1) ?: 12,
+        )
+    }
+
+    override suspend fun saveWorldInfoSettings(settings: WorldInfoSettings): Unit =
+        withContext(Dispatchers.IO) {
+            layout.root.resolve("world-info-settings.json").writeText(
+                json.encodeToString(
+                    JsonObject.serializer(),
+                    buildJsonObject {
+                        put("recursive", JsonPrimitive(settings.recursive))
+                        put("maxRecursionSteps", JsonPrimitive(settings.maxRecursionSteps))
+                        put("scanDepth", JsonPrimitive(settings.scanDepth))
+                    },
+                ),
+            )
+        }
+
+    override suspend fun readPromptSettings(): PromptSettings = withContext(Dispatchers.IO) {
+        val path = layout.root.resolve("prompt-settings.json")
+        if (!path.exists()) return@withContext PromptSettings()
+        val raw = runCatching { json.parseToJsonElement(path.readText()) as? JsonObject }.getOrNull()
+            ?: return@withContext PromptSettings()
+        PromptSettings(
+            preferCharacterPrompt = raw["preferCharacterPrompt"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true,
+            preferCharacterJailbreak = raw["preferCharacterJailbreak"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true,
+            instructEnabled = raw["instructEnabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+            instructPresetName = raw["instructPresetName"]?.jsonPrimitive?.content ?: "",
+        )
+    }
+
+    override suspend fun savePromptSettings(settings: PromptSettings): Unit =
+        withContext(Dispatchers.IO) {
+            layout.root.resolve("prompt-settings.json").writeText(
+                json.encodeToString(
+                    JsonObject.serializer(),
+                    buildJsonObject {
+                        put("preferCharacterPrompt", JsonPrimitive(settings.preferCharacterPrompt))
+                        put("preferCharacterJailbreak", JsonPrimitive(settings.preferCharacterJailbreak))
+                        put("instructEnabled", JsonPrimitive(settings.instructEnabled))
+                        put("instructPresetName", JsonPrimitive(settings.instructPresetName))
+                    },
+                ),
+            )
+        }
+
+    override suspend fun listInstructPresets(): List<String> = withContext(Dispatchers.IO) {
+        layout.instruct.toFile().listFiles()
+            ?.filter { it.isFile && it.extension.equals("json", ignoreCase = true) }
+            ?.map { it.nameWithoutExtension }
+            ?.sorted()
+            ?: emptyList()
+    }
+
+    override suspend fun readInstructPreset(name: String): JsonObject? = withContext(Dispatchers.IO) {
+        val path = layout.instruct.resolve("$name.json")
+        if (!path.exists()) return@withContext null
+        runCatching { json.parseToJsonElement(path.readText()) as? JsonObject }.getOrNull()
+    }
+
     override suspend fun listPersonas(): List<Persona> = withContext(Dispatchers.IO) {
         readJsonFiles(layout.user).map { (path, raw) ->
             Persona(
@@ -847,10 +918,58 @@ class FileStDataStore(
         }
     }
 
+
+    /**
+     * Build a non-empty default preset that mirrors SillyTavern's built-in
+     * prompt order. An empty default meant every chat fell back to a bare
+     * "You are X." system prompt, breaking character-card prompt injections
+     * that rely on named slots (e.g. TavernHelper scripts).
+     */
     private fun defaultPresetRaw(): JsonObject = buildJsonObject {
         put("name", "默认聊天")
         put("temperature", 0.7)
         put("top_p", 1.0)
+        put("openai_max_tokens", 300)
+        put("openai_max_context", 4096)
+
+        val identifiers = listOf(
+            "main" to "Main Prompt",
+            "worldInfoBefore" to "World Info (before)",
+            "charDescription" to "Character Description",
+            "charPersonality" to "Character Personality",
+            "scenario" to "Scenario",
+            "personaDescription" to "Persona Description",
+            "dialogueExamples" to "Dialogue Examples",
+            "worldInfoAfter" to "World Info (after)",
+            "chatHistory" to "Chat History",
+        )
+        putJsonArray("prompts") {
+            identifiers.forEachIndexed { index, (id, name) ->
+                addJsonObject {
+                    put("identifier", id)
+                    put("name", name)
+                    put("role", if (id == "chatHistory") "user" else "system")
+                    put("content", "")
+                    put("enabled", true)
+                    put("relative", id == "chatHistory")
+                    put("depth", 0)
+                    put("order", index)
+                }
+            }
+        }
+        putJsonArray("prompt_order") {
+            addJsonObject {
+                put("character_id", 100001)
+                putJsonArray("order") {
+                    identifiers.forEach { (id, _) ->
+                        addJsonObject {
+                            put("identifier", id)
+                            put("enabled", true)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun presetCategory(value: String): PresetCategory = when (value.lowercase()) {
@@ -906,57 +1025,8 @@ class FileStDataStore(
         )
     }
 
-    private fun parsePresetPrompts(element: JsonElement?): List<PresetPrompt> =
-        (element as? JsonArray)?.mapIndexedNotNull { index, item ->
-            val obj = item as? JsonObject ?: return@mapIndexedNotNull null
-            val identifier = obj.stringField("identifier")
-                ?: obj.stringField("id")
-                ?: obj.stringField("name")
-                ?: "prompt-$index"
-            PresetPrompt(
-                identifier = identifier,
-                name = obj.stringField("name") ?: identifier,
-                role = obj.stringField("role") ?: "system",
-                content = obj.stringField("content") ?: obj.stringField("prompt") ?: "",
-                enabled = obj["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true,
-                relative = obj["relative"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
-                    ?: (obj.intValue("injection_position") == 1),
-                depth = obj.intValue("depth") ?: obj.intValue("injection_depth") ?: 0,
-                order = obj.intValue("order") ?: index,
-                raw = obj,
-            )
-        } ?: emptyList()
-
-    private fun applyPromptOrder(
-        definitions: List<PresetPrompt>,
-        element: JsonElement?,
-    ): Pair<List<PresetPrompt>, List<PresetPrompt>> {
-        val groups = element as? JsonArray ?: return definitions to emptyList()
-        val selectedGroup = groups.mapNotNull { it as? JsonObject }
-            .firstOrNull { it.intValue("character_id") == 100001 }
-            ?: groups.mapNotNull { it as? JsonObject }.lastOrNull()
-            ?: return definitions to emptyList()
-        val order = selectedGroup["order"] as? JsonArray ?: return definitions to emptyList()
-        val byId = definitions.associateBy { it.identifier }
-        val ordered = order.mapIndexedNotNull { index, item ->
-            val orderItem = item as? JsonObject ?: return@mapIndexedNotNull null
-            val identifier = orderItem.stringField("identifier") ?: return@mapIndexedNotNull null
-            val definition = byId[identifier] ?: PresetPrompt(
-                identifier = identifier,
-                name = identifier,
-                order = index,
-                raw = orderItem,
-            )
-            definition.copy(
-                enabled = orderItem["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
-                    ?: definition.enabled,
-                order = index,
-            )
-        }
-        val orderedIds = ordered.mapTo(mutableSetOf()) { it.identifier }
-        return ordered to definitions.filterNot { it.identifier in orderedIds }
-    }
-
+    // Prompt list parsing (prompts / prompts_unused / prompt_order) lives in
+    // PresetPrompts.kt so the virtual API router can reuse the same semantics.
 
     private fun serializePresetPrompt(prompt: PresetPrompt): JsonObject {
         val merged = prompt.raw.toMutableMap()
@@ -1275,14 +1345,14 @@ class FileStDataStore(
                     secondaryKeys = extractStringList(entryObj, "keysecondary"),
                     content = entryObj["content"]?.jsonPrimitive?.content ?: "",
                     enabled = !(entryObj["disable"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false),
-                    selective = entryObj["selective"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+                    selective = entryObj["selective"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true,
                     constant = entryObj["constant"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
                     priority = entryObj["priority"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
                     insertionOrder = entryObj["order"]?.jsonPrimitive?.content?.toIntOrNull() ?: 100,
                     depth = entryObj["depth"]?.jsonPrimitive?.content?.toIntOrNull() ?: 4,
                     position = entryObj["position"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
                     probability = entryObj["probability"]?.jsonPrimitive?.content?.toIntOrNull() ?: 100,
-                    useProbability = entryObj["useProbability"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+                    useProbability = entryObj["useProbability"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true,
                     selectiveLogic = entryObj["selectiveLogic"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
                     role = entryObj["role"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
                     matchWholeWords = entryObj["matchWholeWords"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
@@ -1291,7 +1361,11 @@ class FileStDataStore(
                     comment = entryObj["comment"]?.jsonPrimitive?.content ?: "",
                     excludeRecursion = entryObj["excludeRecursion"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
                     preventRecursion = entryObj["preventRecursion"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
-                    delayUntilRecursion = entryObj["delayUntilRecursion"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+                    // ST delayUntilRecursion is a number (recursion level); older
+                    // cards / tellev builds may carry a boolean (true -> 1).
+                    delayUntilRecursion = entryObj["delayUntilRecursion"]?.jsonPrimitive?.content?.toIntOrNull()
+                        ?: entryObj["delayUntilRecursion"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()?.let { if (it) 1 else 0 }
+                        ?: 0,
                     ignoreBudget = extensions?.get("ignore_budget")?.jsonPrimitive?.content?.toBooleanStrictOrNull()
                         ?: entryObj["ignoreBudget"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
                         ?: entryObj["ignore_budget"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()

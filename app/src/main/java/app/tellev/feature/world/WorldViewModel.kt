@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
+import app.tellev.core.model.WorldInfoSettings
+import app.tellev.core.model.PromptSettings
 import app.tellev.core.storage.StDataStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +22,9 @@ data class WorldUiState(
     val selectedEntry: WorldBookEntry? = null,
     val searchQuery: String = "",
     val filteredEntries: List<WorldBookEntry> = emptyList(),
+    val worldInfoSettings: WorldInfoSettings = WorldInfoSettings(),
+    val promptSettings: PromptSettings = PromptSettings(),
+    val instructPresets: List<String> = emptyList(),
     val isLoading: Boolean = false,
     val error: String? = null,
     val info: String? = null,
@@ -42,10 +47,16 @@ class WorldViewModel(
             try {
                 val books = dataStore.listWorldBooks()
                 val disabledWorldIds = dataStore.readDisabledWorldIds()
+                val worldInfoSettings = dataStore.readWorldInfoSettings()
+                val promptSettings = dataStore.readPromptSettings()
+                val instructPresets = dataStore.listInstructPresets()
                 _uiState.update {
                     it.copy(
                         worldBooks = books,
                         disabledWorldIds = disabledWorldIds,
+                        worldInfoSettings = worldInfoSettings,
+                        promptSettings = promptSettings,
+                        instructPresets = instructPresets,
                         isLoading = false,
                     )
                 }
@@ -55,6 +66,32 @@ class WorldViewModel(
                         isLoading = false,
                         error = "加载世界书失败：${e.message}",
                     )
+                }
+            }
+        }
+    }
+
+    fun saveWorldInfoSettings(settings: WorldInfoSettings) {
+        viewModelScope.launch {
+            try {
+                dataStore.saveWorldInfoSettings(settings)
+                _uiState.update { it.copy(worldInfoSettings = settings) }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(error = "保存世界书设置失败：${e.message}")
+                }
+            }
+        }
+    }
+
+    fun savePromptSettings(settings: PromptSettings) {
+        viewModelScope.launch {
+            try {
+                dataStore.savePromptSettings(settings)
+                _uiState.update { it.copy(promptSettings = settings) }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(error = "保存提示词设置失败：${e.message}")
                 }
             }
         }

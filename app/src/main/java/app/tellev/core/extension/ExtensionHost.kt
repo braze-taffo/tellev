@@ -33,6 +33,14 @@ interface ExtensionHost {
      */
     fun setLocalVariableBackend(backend: LocalVariableBackend?) {}
 
+    /**
+     * Plug in the live per-message variable backend (`chat[i].variables[swipe_id]`)
+     * backing the TavernHelper `message` variable scope. Swapped in/out by the
+     * UI layer as the active chat changes — same pattern as
+     * [setLocalVariableBackend].
+     */
+    fun setMessageVariableBackend(backend: MessageVariableBackend?) {}
+
     suspend fun load(manifest: ExtensionManifest, scriptSource: String): ExtensionHandle
     suspend fun unload(extensionId: String)
     suspend fun emit(event: ExtensionEvent)

@@ -506,4 +506,92 @@ class MacroEngineTest {
         // A literal starting with '.' that isn't a valid identifier is left alone.
         assertEquals("{{.}}", engine.expand("{{.}}", context))
     }
+
+    // ── js-slash-runner macro_like family: get_/format_<scope>_variable ──
+
+    private val statDataContext = context.copy(
+        messageVariables = kotlinx.serialization.json.buildJsonObject {
+            put("stat_data", kotlinx.serialization.json.buildJsonObject {
+                put("hp", kotlinx.serialization.json.JsonPrimitive(80))
+                put("name", kotlinx.serialization.json.JsonPrimitive("渊"))
+                put("tags", kotlinx.serialization.json.buildJsonArray {
+                    add(kotlinx.serialization.json.JsonPrimitive("剑"))
+                    add(kotlinx.serialization.json.JsonPrimitive("道"))
+                })
+                put("\$internal", kotlinx.serialization.json.JsonPrimitive("hidden"))
+            })
+        },
+    )
+
+    @Test
+    fun `get_message_variable resolves nested paths`() {
+        assertEquals("80", engine.expand("{{get_message_variable::stat_data.hp}}", statDataContext))
+        assertEquals("渊", engine.expand("{{get_message_variable::stat_data.name}}", statDataContext))
+        assertEquals("[\"剑\",\"道\"]", engine.expand("{{get_message_variable::stat_data.tags}}", statDataContext))
+        assertEquals("null", engine.expand("{{get_message_variable::stat_data.missing}}", statDataContext))
+    }
+
+    @Test
+    fun `format_message_variable renders YAML and strips dollar keys`() {
+        val out = engine.expand("{{format_message_variable::stat_data}}", statDataContext)
+        assertTrue(out.contains("hp: 80"))
+        assertTrue(out.contains("name: 渊"))
+        assertTrue(out.contains("- 剑"))
+        assertFalse(out.contains("internal"))
+    }
+
+    @Test
+    fun `get_chat_variable and get_global_variable resolve their scopes`() {
+        engine.variableStore = newStore(mutableMapOf("chapter" to "3"))
+        engine.variableStore?.setGlobal("reputation", "50")
+        assertEquals("3", engine.expand("{{get_chat_variable::chapter}}", context))
+        assertEquals("50", engine.expand("{{get_global_variable::reputation}}", context))
+    }
+
+    @Test
+    fun `scoped variable macros degrade safely without stores`() {
+        engine.variableStore = null
+        assertEquals("null", engine.expand("{{get_chat_variable::anything}}", context))
+        assertEquals("null", engine.expand("{{format_global_variable::anything}}", context))
+    }
+
+    // ── Macro behavior alignment (random comma form / trim / roll / reverse / UTC time) ──
+
+    @Test
+    fun `random comma list picks one of the items`() {
+        val items = setOf("x", "y", "z")
+        repeat(20) {
+            assertTrue(items.contains(engine.expand("{{random:x,y,z}}", context)))
+        }
+    }
+
+    @Test
+    fun `random comma list respects escaped comma`() {
+        assertEquals("a,b", engine.expand("{{random:a\\,b}}", context))
+    }
+
+    @Test
+    fun `trim removes surrounding newlines`() {
+        assertEquals("ab", engine.expand("a\n{{trim}}\nb", context))
+        assertEquals("ab", engine.expand("a\n\n{{trim}}\n\nb", context))
+        assertEquals("ab", engine.expand("a{{trim}}b", context))
+    }
+
+    @Test
+    fun `roll accepts ST legacy single-colon and space forms`() {
+        repeat(10) {
+            assertTrue(engine.expand("{{roll:1d6}}", context).toInt() in 1..6)
+            assertTrue(engine.expand("{{roll 1d6}}", context).toInt() in 1..6)
+        }
+    }
+
+    @Test
+    fun `reverse accepts ST legacy single-colon form`() {
+        assertEquals("cba", engine.expand("{{reverse:abc}}", context))
+    }
+
+    @Test
+    fun `time with UTC offset formats HH mm`() {
+        assertTrue(engine.expand("{{time_UTC+8}}", context).matches(Regex("\\d{2}:\\d{2}")))
+    }
 }

@@ -37,7 +37,9 @@ tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是
 - 宏展开：`{{char}}`、`{{user}}`、日期/时间、`{{random}}`/`{{roll}}`、`{{newline}}`/`{{space}}`/`{{reverse}}`、`{{greeting::N}}`、`{{model}}`/`{{persona}}`/`{{input}}`、变量宏（`{{getvar::}}` / `{{setvar::name::value}}` / `{{incvar::}}` 等，local/global 分流）与变量简写（`{{.name}}` / `{{$name}}` 及 `++`/`--`/`=`/`+=`/`==`/`!=`/`>`/`<`/`||`/`??`/`||=`/`??=` 等操作符）、扩展提供的宏
 - Instruct 模式与上下文模板（Context Template）
 - 世界书激活引擎：关键词匹配、selectiveLogic 四逻辑、概率触发、递归扫描、8 种注入位置（before/after/ANTop/ANBottom/atDepth/EMTop/EMBottom/outlet）、@depth 消息注入、优先级与插入顺序排序
-- Per-scope 变量：local（`chat_metadata.variables`，随对话持久化）与 global（全局持久化），斜杠命令/宏/EJS 三处分流一致
+- Per-scope 变量：local（`chat_metadata.variables`，随对话持久化）与 global（全局持久化），character（`tavern_helper.variables`，角色卡默认值只读），message（`chat[i].variables[swipe_id]`），斜杠命令/宏/EJS 三处分流一致
+- 角色卡深度提示（`data.extensions.depth_prompt`）：按指定 depth 和 role 注入聊天历史
+- 角色卡系统提示词（`data.system_prompt`）与越狱提示（`data.post_history_instructions`）
 - 群聊发言人排序
 - Token 预算感知的上下文裁剪
 - ST-Prompt-Template 兼容的 EJS 模板处理（`<%= ... %>` / `<% ... %>`）
@@ -74,9 +76,9 @@ tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是
 
 tellev 的扩展运行环境是 SillyTavern / 酒馆助手兼容层的一个**脚本风格子集**实现，并非完整复刻。当前兼容范围：
 
-- **支持**：角色卡内嵌的 TavernHelper 脚本（`data.extensions.tavern_helper.scripts`）、EJS 模板语法（`<%= ... %>` / `<% ... %>`）、`eventSource` 事件总线、`TavernHelper.*` API、slash 命令、虚拟 `/api/` 路由。
-- **不支持**：直接安装酒馆助手（JS-Slash-Runner）本体或提示词模板（ST-Prompt-Template）本体的 ESM 产物——这两个扩展以 ES Module 形式打包并依赖大量 SillyTavern 内部模块，tellev 的经典 `<script>` 注入模型无法加载它们。tellev 已内置 `TavernHelper` / `EjsTemplate` 兼容 shim 提供等价的脚本能力。
-- **不支持**：需要 Tailwind / Vue / jQuery UI 渲染的消息 iframe 扩展、Node 服务端插件、直接文件系统访问、非 `/api` 的网络请求（被 CSP 阻断）。
+- **支持**：角色卡内嵌的 TavernHelper 脚本（`data.extensions.tavern_helper.scripts`），包括 ES Module 语法（`import`/`export`）的脚本（如 MVU/ZOD 框架），通过 `<script type="module">` 加载并允许 HTTPS CDN 导入；EJS 模板语法（`<%= ... %>` / `<% ... %>`）、`eventSource` 事件总线、`TavernHelper.*` API、slash 命令、虚拟 `/api/` 路由。
+- **不支持**：直接安装酒馆助手（JS-Slash-Runner）本体或提示词模板（ST-Prompt-Template）本体——这两个扩展依赖大量 SillyTavern 内部模块，tellev 的兼容 shim 无法提供完整运行时。tellev 已内置 `TavernHelper` / `EjsTemplate` 兼容 shim 提供等价的脚本能力。
+- **不支持**：需要 Tailwind / Vue / jQuery UI 渲染的消息 iframe 扩展、Node 服务端插件、直接文件系统访问、
 
 ## 下载安装
 

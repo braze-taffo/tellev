@@ -75,11 +75,14 @@ class WorldInfoScanner(
      * Scan [entries] against [searchText]. [expand] is applied to each entry's
      * content when it is activated (so recursion feeds expanded text and the
      * returned [ActivatedEntry] carries the expanded content).
+     * [keyExpand] is applied to primary/secondary keys before matching,
+     * mirroring ST's substituteParams on keys (world-info.js:4803-4804,4835).
      */
     fun scan(
         entries: List<WorldBookEntry>,
         searchText: String,
         expand: (WorldBookEntry) -> String,
+        keyExpand: (String) -> String = { it },
     ): ScanResult {
         // SillyTavern always rejects disabled entries before considering the
         // constant flag. A disabled constant is still disabled.
@@ -88,7 +91,9 @@ class WorldInfoScanner(
         val failedProbability = mutableSetOf<WorldBookEntry>()
 
         // ── Initial pass ──────────────────────────────────────────────────
-        val initialMatches = candidates.filter { !it.delayUntilRecursion && matchEntry(it, searchText) }
+        // ST suppresses delayUntilRecursion entries outside recursion scans
+        // (world-info.js:4749-4752), regardless of the delay level.
+        val initialMatches = candidates.filter { it.delayUntilRecursion <= 0 && matchEntry(it, searchText, keyExpand) }
         for (entry in initialMatches) {
             if (passesProbability(entry)) {
                 val content = expand(entry)
@@ -103,6 +108,7 @@ class WorldInfoScanner(
             var newlyActivated = activated.keys.toList()
             var steps = 0
             while (newlyActivated.isNotEmpty() && steps < maxRecursionSteps) {
+                val currentLevel = steps + 1
                 // Build the recursion text from entries activated in the
                 // previous pass, skipping those that opt out of feeding
                 // recursion. preventRecursion entries do not feed further
@@ -119,16 +125,17 @@ class WorldInfoScanner(
                 val combinedText = "$searchText\n$recursionText"
                 // Recursion candidates: anything not yet activated and not
                 // already failed a probability roll. delayUntilRecursion
-                // entries were skipped in the initial pass and get their
-                // first chance here.
+                // entries become eligible once the scan reaches their level
+                // (world-info.js:4753-4756).
                 val recursionCandidates = candidates.filter {
                     !activated.containsKey(it) &&
                         !failedProbability.contains(it) &&
-                        !it.excludeRecursion
+                        !it.excludeRecursion &&
+                        it.delayUntilRecursion <= currentLevel
                 }
 
                 val matchedThisRound = recursionCandidates
-                    .filter { matchEntry(it, combinedText) }
+                    .filter { matchEntry(it, combinedText, keyExpand) }
 
                 val nextNew = mutableListOf<WorldBookEntry>()
                 for (entry in matchedThisRound) {
@@ -146,13 +153,14 @@ class WorldInfoScanner(
         }
 
         // ── Sort + bucket by position ────────────────────────────────────
-        val sorted = activated.entries.toList().sortedWith(
-            compareByDescending<Map.Entry<WorldBookEntry, String>> { it.key.priority }
-                .thenByDescending { it.key.insertionOrder },
-        )
+        // ST sorts descending by `order` for budget selection (world-info.js:88),
+        // then unshifts into the position buckets, so the final text order
+        // inside each bucket is ascending by `order`.
+        val sorted = activated.entries.toList()
+            .sortedByDescending { it.key.insertionOrder }
 
         val budgeted = applyTokenBudget(sorted)
-        val all = budgeted.map { ActivatedEntry(it.key, it.value) }
+        val all = budgeted.asReversed().map { ActivatedEntry(it.key, it.value) }
         return ScanResult(
             before = all.bucket(WorldInfoPosition.BEFORE),
             after = all.bucket(WorldInfoPosition.AFTER),
@@ -195,43 +203,51 @@ class WorldInfoScanner(
     /**
      * True if [entry] matches [text] under its primary-key + selective-logic
      * rules. constant entries are handled by the caller (they skip matching).
+     * Keys are macro-expanded via [keyExpand] before matching (ST substitutes
+     * params in keys, world-info.js:4803-4804,4835).
      */
-    private fun matchEntry(entry: WorldBookEntry, text: String): Boolean {
+    private fun matchEntry(entry: WorldBookEntry, text: String, keyExpand: (String) -> String): Boolean {
         if (entry.constant) return true
-        val primaryMatched = entry.keys.any { it.isNotBlank() && matchKey(it, text, entry) }
+        val primaryMatched = entry.keys.any { it.isNotBlank() && matchKey(keyExpand(it), text, entry) }
         if (!entry.selective) return primaryMatched
         if (!primaryMatched) return false
-        return evaluateSecondary(entry, text)
+        return evaluateSecondary(entry, text, keyExpand)
     }
 
-    private fun evaluateSecondary(entry: WorldBookEntry, text: String): Boolean {
+    private fun evaluateSecondary(entry: WorldBookEntry, text: String, keyExpand: (String) -> String): Boolean {
         val secondary = entry.secondaryKeys.filter { it.isNotBlank() }
         if (secondary.isEmpty()) return true
         val logic = WorldInfoLogic.of(entry.selectiveLogic)
         return when (logic) {
-            WorldInfoLogic.AND_ANY -> secondary.any { matchKey(it, text, entry) }
-            WorldInfoLogic.AND_ALL -> secondary.all { matchKey(it, text, entry) }
-            WorldInfoLogic.NOT_ANY -> secondary.none { matchKey(it, text, entry) }
-            WorldInfoLogic.NOT_ALL -> secondary.any { !matchKey(it, text, entry) }
+            WorldInfoLogic.AND_ANY -> secondary.any { matchKey(keyExpand(it), text, entry) }
+            WorldInfoLogic.AND_ALL -> secondary.all { matchKey(keyExpand(it), text, entry) }
+            WorldInfoLogic.NOT_ANY -> secondary.none { matchKey(keyExpand(it), text, entry) }
+            WorldInfoLogic.NOT_ALL -> secondary.any { !matchKey(keyExpand(it), text, entry) }
         }
     }
 
     /**
-     * Match a single key against [haystack], honoring [WorldBookEntry.useRegex],
-     * [WorldBookEntry.matchWholeWords], and [WorldBookEntry.caseSensitive].
-     * Mirrors ST's matchKeys (world-info.js ~L337).
+     * Match a single key against [haystack]. ST-style `/pattern/flags` regex
+     * keys are detected per key (world-info.js parseRegexFromString); the
+     * tellev-only entry-level [WorldBookEntry.useRegex] additionally treats
+     * plain keys as regex. Otherwise honors [WorldBookEntry.matchWholeWords]
+     * and [WorldBookEntry.caseSensitive]. Mirrors ST's matchKeys
+     * (world-info.js ~L337).
      */
     private fun matchKey(needle: String, haystack: String, entry: WorldBookEntry): Boolean {
         val trimmed = needle.trim()
         if (trimmed.isEmpty()) return false
 
-        // Regex keys override all other options.
+        // Per-key regex in ST's `/pattern/flags` syntax. Regex keys override
+        // all other matching options and carry their own flags.
+        parseRegexFromString(trimmed)?.let { regex ->
+            return regex.containsMatchIn(haystack)
+        }
+
+        // tellev extension: entry-level useRegex treats plain keys as regex.
         if (entry.useRegex) {
             val regex = runCatching {
-                val pattern = if (trimmed.startsWith("/") && trimmed.lastIndexOf('/') > 0) {
-                    trimmed.trim('/').substringBeforeLast('/')
-                } else trimmed
-                Regex(pattern, if (entry.caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE))
+                Regex(trimmed, if (entry.caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE))
             }.getOrNull() ?: return false
             return regex.containsMatchIn(haystack)
         }
@@ -241,11 +257,32 @@ class WorldInfoScanner(
 
         if (!entry.matchWholeWords) return hay.contains(key)
 
-        // Whole-word matching. Multi-word keys fall back to contains (ST does the same).
-        if (key.contains(' ')) return hay.contains(key)
+        // Whole-word matching. Multi-word keys fall back to contains (ST does
+        // the same, splitting on any whitespace: world-info.js:350).
+        if (Regex("\\s").containsMatchIn(key)) return hay.contains(key)
         val boundary = runCatching {
             Regex("(?:^|\\W)(${Regex.escape(key)})(?:\$|\\W)")
         }.getOrNull() ?: return hay.contains(key)
         return boundary.containsMatchIn(hay)
+    }
+
+    /**
+     * ST-compatible parseRegexFromString (world-info.js:2821): `/pattern/flags`
+     * with flags from [gimsuy]. An unescaped inner slash invalidates the key,
+     * and escaped `\/` sequences are unescaped before compiling. Returns null
+     * when the key is not a regex or fails to compile.
+     */
+    private fun parseRegexFromString(input: String): Regex? {
+        val match = Regex("^/([\\w\\W]+?)/([gimsuy]*)$").matchEntire(input) ?: return null
+        val (rawPattern, flags) = match.destructured
+        // An unescaped `/` inside the pattern is not a valid delimited regex.
+        if (Regex("(^|[^\\\\])/").containsMatchIn(rawPattern)) return null
+        val pattern = rawPattern.replace("\\/", "/")
+        val options = mutableSetOf<RegexOption>()
+        if ('i' in flags) options += RegexOption.IGNORE_CASE
+        if ('m' in flags) options += RegexOption.MULTILINE
+        if ('s' in flags) options += RegexOption.DOT_MATCHES_ALL
+        // 'u'/'g'/'y' have no Kotlin RegexOption equivalent and are ignored.
+        return runCatching { Regex(pattern, options) }.getOrNull()
     }
 }

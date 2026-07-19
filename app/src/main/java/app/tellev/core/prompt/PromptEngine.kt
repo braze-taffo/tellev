@@ -13,6 +13,7 @@ import app.tellev.core.model.WorldBook
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
@@ -124,10 +125,12 @@ class DefaultPromptEngine(
         val expandedUserInput = macroEngine.expand(request.userInput, macroContext)
 
         // 3. Build search text for world book key matching
+        val worldInfoScanDepth = request.metadata["worldInfoScanDepth"]?.jsonPrimitive?.intOrNull
+            ?.coerceAtLeast(1) ?: 12
         val searchText = buildString {
             append(expandedUserInput)
             append('\n')
-            request.messages.takeLast(12).forEach { appendLine(it.content) }
+            request.messages.takeLast(worldInfoScanDepth).forEach { appendLine(it.content) }
             extensionInjectionScanText(request.metadata).forEach(::appendLine)
         }
 
@@ -145,7 +148,18 @@ class DefaultPromptEngine(
         // later via promptTemplateProcessor.process) and EJS is resolved. This
         // mirrors the previous single-scope path that filtered world content
         // through systemPromptContentFor before splicing into the system prompt.
-        val worldScanner = WorldInfoScanner(maxContentTokens = worldInfoTokenBudget)
+        // Recursion follows ST's world_info_recursive / world_info_max_recursion_steps
+        // settings (0 steps = unlimited); keys are macro-expanded before matching.
+        val worldInfoRecursive = request.metadata["worldInfoRecursive"]?.jsonPrimitive?.booleanOrNull ?: false
+        val worldInfoMaxRecursionSteps = request.metadata["worldInfoMaxRecursionSteps"]?.jsonPrimitive?.intOrNull ?: 0
+        val worldScanner = WorldInfoScanner(
+            maxRecursionSteps = if (worldInfoRecursive) {
+                if (worldInfoMaxRecursionSteps > 0) worldInfoMaxRecursionSteps else Int.MAX_VALUE
+            } else {
+                0
+            },
+            maxContentTokens = worldInfoTokenBudget,
+        )
         val worldScan = worldScanner.scan(
             entries = request.worldBooks.flatMap { it.entries },
             searchText = searchText,
@@ -162,6 +176,7 @@ class DefaultPromptEngine(
                     ),
                 )
             },
+            keyExpand = { macroEngine.expand(it, macroContext) },
         )
         val activatedEntries = worldScan.allActivated.map { it.entry }
 
@@ -196,6 +211,7 @@ class DefaultPromptEngine(
                 contextPreset = contextPreset,
                 macroContext = macroContext,
                 worldScan = worldScan,
+                request = request,
             )
         } else {
             buildSystemPrompt(request, expandedCharacter, worldScan, macroContext)
@@ -237,6 +253,8 @@ class DefaultPromptEngine(
         }
 
         // 7. Handle group chat ordering
+        val preferCharPrompt = request.metadata["preferCharacterPrompt"]
+            ?.jsonPrimitive?.booleanOrNull ?: true
         val presetOrderedMessages = applyPresetPromptOrder(
             messages = rawMessages,
             preset = request.preset,
@@ -244,6 +262,7 @@ class DefaultPromptEngine(
             character = expandedCharacter,
             personaDescription = request.persona?.description.orEmpty(),
             worldScan = worldScan,
+            preferCharPrompt = preferCharPrompt,
         )
         val orderedMessages = applyGroupChatOrdering(presetOrderedMessages, request.metadata)
 
@@ -284,19 +303,30 @@ class DefaultPromptEngine(
         // separate worldInfo/characterDescription would double-count their
         // tokens against the budget and trim legitimate chat messages too
         // eagerly. Pass empties so each token is reserved only once.
+        // Injections (extension prompts + WI AT_DEPTH) are collected first so
+        // their tokens are reserved from the chat budget instead of being
+        // spliced in unaccounted AFTER trimming (audit §12.2).
+        val extensionInjections = collectExtensionInjections(request.metadata, worldScan.atDepth)
+        val preferCharJailbreak = request.metadata["preferCharacterJailbreak"]
+            ?.jsonPrimitive?.booleanOrNull ?: true
+        val characterInjections = collectCharacterCardInjections(request.character, macroContext, preferCharJailbreak)
+        val allInjectionsForBudget = extensionInjections + characterInjections
+        val injectionTokens = injectionTokenCost(allInjectionsForBudget)
         val budgetedMessages = TokenBudget.fitToBudget(
             systemPrompt = templatedSystemPrompt,
             worldInfo = emptyList(),
             characterDescription = "",
             messages = templatedMessages.drop(1), // Drop system message, fitToBudget adds its own
-            budget = maxContextTokens - (request.preset.maxCompletionTokens ?: request.preset.maxTokens).orElse(0),
+            budget = (maxContextTokens - (request.preset.maxCompletionTokens ?: request.preset.maxTokens).orElse(0) - injectionTokens)
+                .coerceAtLeast(0),
         )
 
         // 9.5. Splice in extension-injected prompts (authored by loaded
-        // extensions via the ST-compatible `injectPrompts` JS API). Applied
-        // after budget trimming so injected system/user/assistant messages
-        // survive into the request and instruct mode sees them too.
-        val withInjections = applyExtensionInjections(budgetedMessages, request.metadata, worldScan.atDepth)
+        // extensions via the ST-compatible `injectPrompts` JS API) and
+        // character-card injections (depth_prompt + post_history_instructions).
+        // Applied after budget trimming so injected system/user/assistant
+        // messages survive into the request and instruct mode sees them too.
+        val withInjections = applyExtensionInjections(budgetedMessages, allInjectionsForBudget)
 
         // 10. Check for instruct mode
         val instructPresetObj = request.metadata["instructPreset"] as? JsonObject
@@ -350,6 +380,11 @@ class DefaultPromptEngine(
             .orEmpty()
 
         val groupMemberNames = extractGroupMemberNames(request.metadata)
+        // js-slash-runner message scope: the last message that carries a
+        // variables object at its current swipe.
+        val messageVariables = visible
+            .lastOrNull { it.variables.getOrNull(it.swipeIndex) != null }
+            ?.let { it.variables[it.swipeIndex] }
 
         return MacroContext(
             characterName = request.character.name,
@@ -374,6 +409,8 @@ class DefaultPromptEngine(
             lastCharMessage = lastCharMessage,
             lastMessageId = visible.lastIndex.toString(),
             alternateGreetings = request.character.alternateGreetings,
+            messageVariables = messageVariables,
+            characterVariables = extractCharacterVariables(request.character),
         )
     }
 
@@ -400,7 +437,18 @@ class DefaultPromptEngine(
         worldScan: WorldInfoScanner.ScanResult,
         macroContext: MacroContext,
     ): String = buildString {
-        appendLine("You are ${expandedCharacter.name}.")
+        // Use the character's system_prompt (data.system_prompt) when present
+        // AND preferCharacterPrompt is enabled (ST power_user.prefer_character_prompt,
+        // script.js:3356-3357); otherwise fall back to the default "You are X." opener.
+        val preferCharPrompt = request.metadata["preferCharacterPrompt"]
+            ?.jsonPrimitive?.booleanOrNull ?: true
+        val charSystemPrompt = (request.character.raw["data"] as? JsonObject)
+            ?.get("system_prompt")?.jsonPrimitive?.content?.trim()
+        if (preferCharPrompt && !charSystemPrompt.isNullOrEmpty()) {
+            appendLine(macroEngine.expand(charSystemPrompt, macroContext))
+        } else {
+            appendLine("You are ${expandedCharacter.name}.")
+        }
         // ↑Char (position 0) + outlet (7) folded into before.
         appendWorldInfo(worldScan.before + worldScan.outlet)
         appendBlock("Character description", expandedCharacter.description)
@@ -435,6 +483,7 @@ class DefaultPromptEngine(
         contextPreset: ContextPreset,
         macroContext: MacroContext,
         worldScan: WorldInfoScanner.ScanResult,
+        request: PromptBuildRequest,
     ): String {
         // The context template only exposes wiBefore/wiAfter slots, so map the
         // 8 ST positions onto the two: before-character positions (before,
@@ -446,12 +495,22 @@ class DefaultPromptEngine(
         val entriesAfter = (worldScan.after + worldScan.anBottom + worldScan.emBottom)
             .joinToString("\n") { it.content }
 
+        // Resolve the system prompt content so {{system}} renders actual text (audit M10).
+        val preferCharPrompt = request.metadata["preferCharacterPrompt"]?.jsonPrimitive?.booleanOrNull ?: true
+        val charSysPrompt = (expandedCharacter.raw["data"] as? JsonObject)?.get("system_prompt")?.jsonPrimitive?.content?.trim()
+        val systemContent = if (preferCharPrompt && !charSysPrompt.isNullOrEmpty()) {
+            macroEngine.expand(charSysPrompt, macroContext)
+        } else {
+            "You are ${expandedCharacter.name}."
+        }
+
         val enrichedContext = macroContext.copy(
             characterDescription = expandedCharacter.description,
             characterPersonality = expandedCharacter.personality,
             characterScenario = expandedCharacter.scenario,
             exampleMessages = expandedCharacter.exampleMessages,
             firstMessage = expandedCharacter.firstMessage,
+            customVariables = macroContext.customVariables + ("system" to systemContent),
         )
 
         return ContextTemplate.buildSystemPrompt(
@@ -491,6 +550,7 @@ class DefaultPromptEngine(
         character: CharacterCard,
         personaDescription: String,
         worldScan: WorldInfoScanner.ScanResult,
+        preferCharPrompt: Boolean = true,
     ): List<PromptMessage> {
         if (preset.prompts.isEmpty() || messages.isEmpty()) return messages
         val unused = preset.promptsUnused.map { it.identifier }.toSet()
@@ -519,8 +579,17 @@ class DefaultPromptEngine(
                 return@forEach
             }
             val component = when (identifier) {
-                "main", "system", "systemprompt" ->
-                    prompt.content.takeIf { it.isNotBlank() } ?: "You are ${character.name}."
+                "main", "system", "systemprompt" -> {
+                    // Prefer the character card's system_prompt when the preset
+                    // slot is empty and preferCharPrompt is enabled (ST:
+                    // `chat_metadata.system_prompt ||
+                    // character.data?.system_prompt`).
+                    val charSysPrompt = (character.raw["data"] as? JsonObject)
+                        ?.get("system_prompt")?.jsonPrimitive?.content?.trim()
+                    prompt.content.takeIf { it.isNotBlank() }
+                        ?: (if (preferCharPrompt) charSysPrompt?.takeIf { it.isNotBlank() } else null)
+                        ?: "You are ${character.name}."
+                }
                 "worldinfobefore" -> worldBefore
                 "worldinfoafter" -> worldAfter
                 "chardescription", "characterdescription" -> character.description
@@ -551,18 +620,7 @@ class DefaultPromptEngine(
         messages: List<PromptMessage>,
         metadata: JsonObject,
     ): List<PromptMessage> {
-        val groupMembers = metadata["groupMembers"] as? JsonArray ?: return messages
-        if (groupMembers.isEmpty()) return messages
-
-        // Extract member names from group member character cards
-        val memberNames = groupMembers.mapNotNull { element ->
-            try {
-                (element as? JsonObject)?.get("name")?.jsonPrimitive?.content
-            } catch (_: Exception) {
-                null
-            }
-        }
-
+        val memberNames = groupMemberNamesList(metadata)
         if (memberNames.size <= 1) return messages
 
         // For group chats, ensure assistant messages have proper name attribution
@@ -577,16 +635,24 @@ class DefaultPromptEngine(
         }
     }
 
-    private fun extractGroupMemberNames(metadata: JsonObject): String {
-        val groupMembers = metadata["groupMembers"] as? JsonArray ?: return ""
+    /**
+     * Extract group member names from metadata. ChatViewModel writes
+     * `groupMembers` as an array of name strings; the older object form
+     * (`[{"name": ...}]`) is also accepted.
+     */
+    private fun groupMemberNamesList(metadata: JsonObject): List<String> {
+        val groupMembers = metadata["groupMembers"] as? JsonArray ?: return emptyList()
         return groupMembers.mapNotNull { element ->
-            try {
-                (element as? JsonObject)?.get("name")?.jsonPrimitive?.content
-            } catch (_: Exception) {
-                null
+            when (element) {
+                is JsonObject -> element["name"]?.jsonPrimitive?.content
+                is JsonPrimitive -> element.content.takeIf { it.isNotBlank() }
+                else -> null
             }
-        }.joinToString(", ")
+        }
     }
+
+    private fun extractGroupMemberNames(metadata: JsonObject): String =
+        groupMemberNamesList(metadata).joinToString(", ")
 
     private fun extractMaxContextTokens(metadata: JsonObject): Int? {
         val element = metadata["maxContextTokens"] ?: return null
@@ -626,24 +692,17 @@ class DefaultPromptEngine(
     }
 
     /**
-     * Splice extension-injected prompts into the message list.
-     *
-     * The convention mirrors SillyTavern's `extension_prompt_types`:
-     * - `position == 2` (BEFORE_PROMPT): prepend before the system prompt.
-     * - `position == 0` (IN_PROMPT): insert immediately after the leading
-     *   run of system messages (i.e. after the system prompt).
-     * - `position == 1` (IN_CHAT): depth-based insertion. `depth == 0`
-     *   inserts at the very end of the message list, `depth == N` inserts
-     *   N positions from the end. Within a depth, entries are grouped by
-     *   role in the order system → user → assistant, matching ST's
-     *   "most important go lower" rule.
-     * - `position == -1` (NONE): skipped.
+     * Collect extension-injected prompts (ST `injectPrompts` API) and
+     * world-info AT_DEPTH entries as splice-ready injections. Collected
+     * BEFORE token trimming so their tokens can be reserved from the chat
+     * budget — mirroring ST, where injections are added to the message pool
+     * before the trim loop and real chat messages are dropped first
+     * (openai.js:1325).
      */
-    private fun applyExtensionInjections(
-        messages: List<PromptMessage>,
+    private fun collectExtensionInjections(
         metadata: JsonObject,
         wiDepthEntries: List<WorldInfoScanner.ActivatedEntry> = emptyList(),
-    ): List<PromptMessage> {
+    ): List<ExtensionInjection> {
         val injectedObj = metadata["injectedPrompts"] as? JsonObject ?: buildJsonObject { }
 
         val entries = mutableListOf<ExtensionInjection>()
@@ -670,6 +729,104 @@ class DefaultPromptEngine(
             val role = resolveExtensionInjectionRole(wi.entry.role.toString())
             entries.add(ExtensionInjection(wi.content, 1, wi.entry.depth, role, entries.size))
         }
+        return entries
+    }
+
+    /**
+     * Character-card injections: depth_prompt and post_history_instructions.
+     *
+     * - `data.extensions.depth_prompt` is a character-specific author's note
+     *   injected at [depth] (default 4) in the chat history with [role]
+     *   (default "system"). Mirrors ST script.js:4422-4426
+     *   `setExtensionPrompt(inject_ids.DEPTH_PROMPT, …, IN_CHAT, depth, …, role)`.
+     * - `data.post_history_instructions` is a jailbreak prompt injected at
+     *   depth 0 (very end of chat) as a system message. Mirrors ST's
+     *   "jailbreak" / post-history behavior in openai.js prompt assembly.
+     *
+     * Both are macro-expanded before injection.
+     */
+    private fun collectCharacterCardInjections(
+        character: CharacterCard,
+        context: MacroContext,
+        preferCharJailbreak: Boolean = true,
+    ): List<ExtensionInjection> {
+        val entries = mutableListOf<ExtensionInjection>()
+        val data = character.raw["data"] as? JsonObject ?: character.raw
+        val extensions = data["extensions"] as? JsonObject
+
+        // depth_prompt
+        val depthPrompt = extensions?.get("depth_prompt") as? JsonObject
+        val depthPromptText = depthPrompt?.get("prompt")?.jsonPrimitive?.content?.trim()
+        if (!depthPromptText.isNullOrEmpty()) {
+            val expanded = macroEngine.expand(depthPromptText, context)
+            if (expanded.isNotBlank()) {
+                val depth = depthPrompt["depth"]?.jsonPrimitive?.intOrNull ?: 4
+                val role = resolveExtensionInjectionRole(
+                    depthPrompt["role"]?.jsonPrimitive?.content,
+                )
+                entries.add(ExtensionInjection(expanded, 1, depth, role, entries.size))
+            }
+        }
+
+        // post_history_instructions (jailbreak) — injected at depth 0 as system.
+        val jailbreak = data["post_history_instructions"]?.jsonPrimitive?.content?.trim()
+        if (!jailbreak.isNullOrEmpty()) {
+            val expanded = macroEngine.expand(jailbreak, context)
+            if (expanded.isNotBlank()) {
+                entries.add(ExtensionInjection(expanded, 1, 0, MessageRole.System, entries.size))
+            }
+        }
+
+        return entries
+    }
+
+    /**
+     * Extract `data.extensions.tavern_helper.variables` from the character card
+     * as a JsonObject for the character variable scope. Returns null when the
+     * card has no tavern_helper variables.
+     */
+    private fun extractCharacterVariables(character: CharacterCard): JsonObject? {
+        val data = character.raw["data"] as? JsonObject ?: character.raw
+        val extensions = data["extensions"] as? JsonObject ?: return null
+        val tavernHelper = extensions["tavern_helper"] as? JsonObject ?: return null
+        // tavern_helper might be stored as an array of [key, value] pairs (old format)
+        val variables = tavernHelper["variables"]
+        return when {
+            variables is JsonObject -> variables
+            variables is JsonArray -> {
+                // Old format: [[key, value], ...] -> object
+                val map = variables.mapNotNull { element ->
+                    val pair = element as? JsonArray ?: return@mapNotNull null
+                    val key = pair.getOrNull(0)?.jsonPrimitive?.content ?: return@mapNotNull null
+                    val value = pair.getOrNull(1) ?: return@mapNotNull null
+                    key to value
+                }.toMap()
+                if (map.isEmpty()) null else JsonObject(map)
+            }
+            else -> null
+        }
+    }
+    private fun injectionTokenCost(entries: List<ExtensionInjection>): Int =
+        entries.sumOf { TokenBudget.estimateTokens(it.value) + 4 }
+
+    /**
+     * Splice extension-injected prompts into the message list.
+     *
+     * The convention mirrors SillyTavern's `extension_prompt_types`:
+     * - `position == 2` (BEFORE_PROMPT): prepend before the system prompt.
+     * - `position == 0` (IN_PROMPT): insert immediately after the leading
+     *   run of system messages (i.e. after the system prompt).
+     * - `position == 1` (IN_CHAT): depth-based insertion. `depth == 0`
+     *   inserts at the very end of the message list, `depth == N` inserts
+     *   N positions from the end. Within a depth, entries are grouped by
+     *   role in the order system → user → assistant, matching ST's
+     *   "most important go lower" rule.
+     * - `position == -1` (NONE): skipped.
+     */
+    private fun applyExtensionInjections(
+        messages: List<PromptMessage>,
+        entries: List<ExtensionInjection>,
+    ): List<PromptMessage> {
         if (entries.isEmpty()) return messages
 
         val beforePrompts = entries.filter { it.position == 2 }

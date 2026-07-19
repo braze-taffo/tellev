@@ -10,6 +10,7 @@ import app.tellev.core.extension.ExtensionManifest
 import app.tellev.core.extension.ExtensionPermission
 import app.tellev.core.extension.ExtensionPermissionManager
 import app.tellev.core.extension.LocalVariableBackend
+import app.tellev.core.extension.MessageVariableBackend
 import app.tellev.core.extension.StEventCatalog
 import app.tellev.core.model.Attachment
 import app.tellev.core.model.CharacterCard
@@ -115,6 +116,37 @@ class ChatViewModel(
 
             override fun update(transform: (MutableMap<String, String>) -> Unit): Map<String, String> =
                 updateChatVariables(transform)
+        })
+        extensionHost.setMessageVariableBackend(object : MessageVariableBackend {
+            override fun messageCount(): Int =
+                _uiState.value.currentSession?.messages?.size ?: 0
+
+            override fun messageVariables(index: Int): JsonObject? {
+                val message = _uiState.value.currentSession?.messages?.getOrNull(index) ?: return null
+                return message.variables.getOrNull(message.swipeIndex)
+            }
+
+            override fun lastIndexWithVariables(): Int {
+                val messages = _uiState.value.currentSession?.messages ?: return -1
+                return messages.indexOfLast { it.variables.getOrNull(it.swipeIndex) != null }
+            }
+
+            override fun replaceMessageVariables(index: Int, variables: JsonObject) {
+                // Apply via _uiState.update so concurrent session changes (e.g.
+                // streaming) are never clobbered — same discipline as
+                // updateChatVariables. Persist through the debounced save.
+                _uiState.update { state ->
+                    val session = state.currentSession ?: return@update state
+                    val messages = session.messages.toMutableList()
+                    val message = messages.getOrNull(index) ?: return@update state
+                    val vars = message.variables.toMutableList()
+                    while (vars.size <= message.swipeIndex) vars.add(buildJsonObject { })
+                    vars[message.swipeIndex] = variables
+                    messages[index] = message.copy(variables = vars)
+                    state.copy(currentSession = session.copy(messages = messages))
+                }
+                scheduleMetadataSave()
+            }
         })
         observeCharacterChanges()
         observePresetChanges()
@@ -385,6 +417,24 @@ class ChatViewModel(
                     false,
                 )
 
+                // Fire GENERATION_AFTER_COMMANDS BEFORE building the prompt so
+                // extensions (e.g. MVU) can call injectPrompts and have their
+                // injections picked up by buildPromptMetadata.  A short delay
+                // gives the WebView's async JS event handlers time to execute
+                // (evaluateJavascript dispatches but does not wait for JS).
+                emitStEvent(
+                    StEventCatalog.GENERATION_AFTER_COMMANDS,
+                    "normal",
+                    buildJsonObject {
+                        put("chatId", updatedSession.id)
+                        put("characterId", character.id)
+                    },
+                    false,
+                )
+                // Allow WebView JS event handlers to process the event and
+                // register any injectPrompts calls before we collect them.
+                delay(300)
+
                 val promptRequest = PromptBuildRequest(
                     character = character,
                     persona = state.selectedPersona,
@@ -412,16 +462,6 @@ class ChatViewModel(
                     targetSessionId = updatedSession.id,
                 )
                 emitPromptDiagnostics(promptResult)
-
-                emitStEvent(
-                    StEventCatalog.GENERATION_AFTER_COMMANDS,
-                    "normal",
-                    buildJsonObject {
-                        put("chatId", updatedSession.id)
-                        put("characterId", character.id)
-                    },
-                    false,
-                )
 
                 emitStEvent(
                     StEventCatalog.CHAT_COMPLETION_SETTINGS_READY,
@@ -1186,6 +1226,16 @@ class ChatViewModel(
                 original.copy(role = newRole)
             }
             "is_hidden" -> original.copy(isHidden = value.toBooleanStrictOrNull() ?: original.isHidden)
+            "data" -> {
+                // js-slash-runner setChatMessage semantics: fv.data replaces the
+                // message's variables at the current swipe (variables[swipe_id]).
+                val parsed = runCatching { Json.parseToJsonElement(value) as? JsonObject }.getOrNull()
+                    ?: return false
+                val vars = original.variables.toMutableList()
+                while (vars.size <= original.swipeIndex) vars.add(buildJsonObject { })
+                vars[original.swipeIndex] = parsed
+                original.copy(variables = vars)
+            }
             "swipe_id" -> {
                 val swipes = original.swipes.ifEmpty { listOf(original.content) }
                 val swipeIndex = value.toIntOrNull()?.coerceIn(0, swipes.lastIndex) ?: original.swipeIndex
@@ -1257,9 +1307,25 @@ class ChatViewModel(
             ?: variableSnapshot.local
         val globalVariables = variableSnapshot.global
         val mergedVariables = mergePromptTemplateVariables(globalVariables, localVariables)
+        val worldInfoSettings = dataStore.readWorldInfoSettings()
+        val promptSettings = dataStore.readPromptSettings()
 
         return buildJsonObject {
         put("providerType", config.providerType)
+        put("worldInfoRecursive", JsonPrimitive(worldInfoSettings.recursive))
+        put("worldInfoMaxRecursionSteps", JsonPrimitive(worldInfoSettings.maxRecursionSteps))
+        put("worldInfoScanDepth", JsonPrimitive(worldInfoSettings.scanDepth))
+        put("preferCharacterPrompt", JsonPrimitive(promptSettings.preferCharacterPrompt))
+        put("preferCharacterJailbreak", JsonPrimitive(promptSettings.preferCharacterJailbreak))
+        // Instruct mode: load preset and pass to PromptEngine when enabled.
+        if (promptSettings.instructEnabled) {
+            val instructPreset = if (promptSettings.instructPresetName.isNotBlank()) {
+                dataStore.readInstructPreset(promptSettings.instructPresetName)
+            } else {
+                DEFAULT_CHATML_INSTRUCT
+            }
+            instructPreset?.let { put("instructPreset", it) }
+        }
         put("maxContextTokens", JsonPrimitive(
             preset.maxContextTokens ?: defaultContextTokens(config.providerType, config.model),
         ))
@@ -1716,6 +1782,31 @@ class ChatViewModel(
 
     private fun generateMessageId(): String = "msg-${UUID.randomUUID()}"
     private fun generateSessionId(): String = "sess-${UUID.randomUUID()}"
+
+    companion object {
+        /** Built-in ChatML instruct preset used when no preset file is selected. */
+        private val DEFAULT_CHATML_INSTRUCT: JsonObject = buildJsonObject {
+            put("name", "ChatML")
+            put("input_sequence", "<|im_start|>user\n")
+            put("output_sequence", "<|im_start|>assistant\n")
+            put("last_output_sequence", "")
+            put("first_output_sequence", "")
+            put("first_input_sequence", "")
+            put("last_input_sequence", "")
+            put("system_sequence", "<|im_start|>system\n")
+            put("system_suffix", "<|im_end|>\n")
+            put("input_suffix", "<|im_end|>\n")
+            put("output_suffix", "<|im_end|>\n")
+            put("stop_sequence", "<|im_end|>")
+            put("wrap", true)
+            put("macro", true)
+            put("names", false)
+            put("names_force_groups", false)
+            put("activation_regex", "")
+            put("system_same_as_user", false)
+            put("skip_examples", false)
+        }
+    }
 }
 
 /**

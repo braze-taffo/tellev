@@ -95,14 +95,14 @@ object ContextTemplate {
      */
     private fun resolveFieldValue(fieldName: String, context: MacroContext): String {
         return when (fieldName) {
-            "system" -> "system" // Placeholder: system prompt exists by convention
+            "system" -> context.customVariables["system"] ?: ""
             "wiBefore", "wiAfter" -> "" // Handled externally; no data in context
             "description", "charDescription" -> context.characterDescription
             "personality" -> context.characterPersonality
             "scenario" -> context.characterScenario
-            "persona" -> context.userName // persona represented by user name
+            "persona" -> context.personaDescription
             "mes_example", "dialogueExamples" -> context.exampleMessages
-            "charPrompt" -> "" // System prompt content, handled externally
+            "charPrompt" -> context.customVariables["system"] ?: ""
             "chatStart" -> "" // Chat start marker, handled externally
             "firstMessage" -> context.firstMessage
             "lastMessage" -> context.lastMessage
@@ -128,12 +128,17 @@ object ContextTemplate {
         var storyTemplate = preset.storyString
 
         // Handle wiBefore and wiAfter conditionals by pre-processing
-        // We inject them as custom variables and re-resolve
+        // We inject them as custom variables and re-resolve.
+        // `system` is only set here if the caller hasn't already provided it
+        // (PromptEngine passes the actual system prompt content; the fallback
+        // "present" marker is used when called standalone).
+        val systemValue = context.customVariables["system"]
+            ?: if (preset.systemPromptPrefix.isNotEmpty() || preset.systemPromptSuffix.isNotEmpty()) "present" else ""
         val enrichedContext = context.copy(
             customVariables = context.customVariables + mapOf(
                 "wiBefore" to worldInfoBefore,
                 "wiAfter" to worldInfoAfter,
-                "system" to if (preset.systemPromptPrefix.isNotEmpty() || preset.systemPromptSuffix.isNotEmpty()) "present" else "",
+                "system" to systemValue,
             )
         )
 

@@ -160,6 +160,66 @@ class PromptTemplateProcessorTest {
     }
 
     @Test
+    fun `process supports ST camelCase variable functions`() {
+        val processor = DefaultPromptTemplateProcessor()
+        val result = processor.process(
+            PromptTemplateRequest(
+                messages = listOf(
+                    PromptMessage(
+                        role = MessageRole.System,
+                        content = "<% setGlobalVar('chapter', 'two') %><% setLocalVar('mood', 'calm') %>" +
+                            "<%= getGlobalVar('chapter') %>|<%= getLocalVar('mood') %>|" +
+                            "<%= incGlobalVar('count', 5) %>|<%= decLocalVar('lives', 2) %>",
+                    ),
+                ),
+                context = MacroContext(),
+                metadata = buildJsonObject {
+                    put("promptTemplateLocalVariables", buildJsonObject {
+                        put("mood", "tense")
+                        put("lives", 3)
+                    })
+                    put("promptTemplateGlobalVariables", buildJsonObject {
+                        put("chapter", "one")
+                        put("count", 10)
+                    })
+                },
+            ),
+        )
+
+        assertEquals("two|calm|15|1", result.messages.single().content)
+        assertEquals("two", result.variableUpdates.global?.get("chapter")?.jsonPrimitive?.content)
+        assertEquals("calm", result.variableUpdates.local?.get("mood")?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `process supports delvar and insert variable functions`() {
+        val processor = DefaultPromptTemplateProcessor()
+        val result = processor.process(
+            PromptTemplateRequest(
+                messages = listOf(
+                    PromptMessage(
+                        role = MessageRole.System,
+                        content = "<% delLocalVar('gone') %>" +
+                            "<% insertLocalVar('list', 'b') %><% insertLocalVar('list', 'a', 0) %>" +
+                            "<%= getLocalVar('list.0') %><%= getLocalVar('list.1') %>|<%= getLocalVar('gone', 'deleted') %>|" +
+                            "<% insertGlobalVar('scalar', 'v') %><%= getGlobalVar('scalar') %>",
+                    ),
+                ),
+                context = MacroContext(),
+                metadata = buildJsonObject {
+                    put("promptTemplateLocalVariables", buildJsonObject {
+                        put("gone", "x")
+                        put("list", kotlinx.serialization.json.buildJsonArray { })
+                    })
+                },
+            ),
+        )
+
+        // list: insert 'b' (push) then 'a' at index 0 -> [a, b]; 'gone' deleted -> fallback.
+        assertEquals("ab|deleted|v", result.messages.single().content)
+    }
+
+    @Test
     fun `legacy merged variables remain local for getvar compatibility`() {
         val processor = DefaultPromptTemplateProcessor()
         val result = processor.process(

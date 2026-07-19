@@ -232,7 +232,7 @@ class CharacterImporter(
             secondaryKeys = extractStringList(entryObj, "keysecondary") + extractStringList(entryObj, "secondary_keys"),
             content = entryObj.string("content").orEmpty(),
             enabled = enabled,
-            selective = entryObj.boolean("selective") ?: false,
+            selective = entryObj.boolean("selective") ?: true,
             constant = entryObj.boolean("constant") ?: false,
             priority = entryObj.int("priority") ?: 0,
             insertionOrder = entryObj.int("order")
@@ -247,7 +247,7 @@ class CharacterImporter(
                 ?: 100,
             useProbability = extensions?.boolean("useProbability")
                 ?: entryObj.boolean("useProbability")
-                ?: (extensions != null),
+                ?: true,
             selectiveLogic = extensions?.int("selectiveLogic")
                 ?: entryObj.int("selectiveLogic")
                 ?: 0,
@@ -274,10 +274,14 @@ class CharacterImporter(
                 ?: entryObj.boolean("preventRecursion")
                 ?: entryObj.boolean("prevent_recursion")
                 ?: false,
-            delayUntilRecursion = extensions?.boolean("delay_until_recursion")
-                ?: entryObj.boolean("delayUntilRecursion")
-                ?: entryObj.boolean("delay_until_recursion")
-                ?: false,
+            // ST delayUntilRecursion is a number (recursion level); boolean true maps to 1.
+            delayUntilRecursion = extensions?.int("delay_until_recursion")
+                ?: entryObj.int("delayUntilRecursion")
+                ?: entryObj.int("delay_until_recursion")
+                ?: extensions?.boolean("delay_until_recursion")?.let { if (it) 1 else 0 }
+                ?: entryObj.boolean("delayUntilRecursion")?.let { if (it) 1 else 0 }
+                ?: entryObj.boolean("delay_until_recursion")?.let { if (it) 1 else 0 }
+                ?: 0,
             ignoreBudget = extensions?.boolean("ignore_budget")
                 ?: entryObj.boolean("ignoreBudget")
                 ?: entryObj.boolean("ignore_budget")

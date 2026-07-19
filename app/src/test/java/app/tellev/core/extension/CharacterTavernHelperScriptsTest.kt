@@ -217,6 +217,107 @@ class CharacterTavernHelperScriptsTest {
         assertEquals("legacy();", scripts[0].content)
     }
 
+    @Test
+    fun `buildScriptSource injects character variables from tavern_helper`() {
+        val card = importCard(
+            """
+            "tavern_helper": {
+                "scripts": [
+                    { "type": "script", "id": "s1", "enabled": true, "content": "run();" }
+                ],
+                "variables": {
+                    "phone_data": { "user": { "name": "Test" } },
+                    "score": 42
+                }
+            }
+            """.trimIndent(),
+        )
+
+        val source = CharacterTavernHelperScripts.buildScriptSource(card)
+
+        assertTrue("Character variables should be injected", source.contains("_thScopedVariables.character"))
+        assertTrue("phone_data should be in the injected JSON", source.contains("phone_data"))
+        assertTrue("Script content should still be present", source.contains("run();"))
+    }
+
+    @Test
+    fun `buildScriptSource does not add variables init when absent`() {
+        val card = importCard(
+            """
+            "tavern_helper": {
+                "scripts": [
+                    { "type": "script", "id": "s1", "enabled": true, "content": "run();" }
+                ]
+            }
+            """.trimIndent(),
+        )
+
+        val source = CharacterTavernHelperScripts.buildScriptSource(card)
+
+        assertFalse("_thScopedVariables init should not be present", source.contains("_thScopedVariables.character"))
+    }
+
+    @Test
+    fun `ES module scripts are not wrapped in IIFE`() {
+        val card = importCard(
+            """
+            "tavern_helper": {
+                "scripts": [
+                    { "type": "script", "id": "mod", "enabled": true, "content": "import 'https://example.com/bundle.js';" }
+                ]
+            }
+            """.trimIndent(),
+        )
+
+        val source = CharacterTavernHelperScripts.buildScriptSource(card)
+
+        assertTrue("Module script content should be present", source.contains("import 'https://example.com/bundle.js'"))
+        assertFalse("Module scripts should NOT be wrapped in IIFE", source.contains("(function(){"))
+    }
+
+    @Test
+    fun `non-module scripts are still wrapped in IIFE`() {
+        val card = importCard(
+            """
+            "tavern_helper": {
+                "scripts": [
+                    { "type": "script", "id": "classic", "enabled": true, "content": "var x = 1;" }
+                ]
+            }
+            """.trimIndent(),
+        )
+
+        val source = CharacterTavernHelperScripts.buildScriptSource(card)
+
+        assertTrue("Non-module scripts should be wrapped in IIFE", source.contains("(function(){"))
+        assertTrue("Script content should be present", source.contains("var x = 1;"))
+    }
+
+    @Test
+    fun `hasModuleScripts detects import statements`() {
+        val cardWithModule = importCard(
+            """
+            "tavern_helper": {
+                "scripts": [
+                    { "type": "script", "id": "mod", "enabled": true, "content": "import { z } from 'https://cdn.com/z.js';" }
+                ]
+            }
+            """.trimIndent(),
+        )
+        val cardWithoutModule = importCard(
+            """
+            "tavern_helper": {
+                "scripts": [
+                    { "type": "script", "id": "classic", "enabled": true, "content": "var x = 1;" }
+                ]
+            }
+            """.trimIndent(),
+        )
+
+        assertTrue(CharacterTavernHelperScripts.hasModuleScripts(cardWithModule))
+        assertFalse(CharacterTavernHelperScripts.hasModuleScripts(cardWithoutModule))
+    }
+
     private fun importCard(extensionBody: String) =
         CharacterImporter().importFromJson(
             """

@@ -1,6 +1,7 @@
 package app.tellev.core.extension
 
 import app.tellev.core.model.CharacterCard
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -62,21 +63,94 @@ object CharacterTavernHelperScripts {
         return scripts
     }
 
-    fun buildScriptSource(character: CharacterCard): String =
-        extract(character).joinToString("\n\n") { script ->
-            val safeName = script.name.replace(Regex("[\\r\\n]+"), " ").ifBlank { script.id }
-            val safeSource = "tellev-character-${character.id}-${script.id}"
-                .replace(Regex("[^A-Za-z0-9_.-]"), "_")
-            """
-            // $safeName
-            ;(function(){
-            try{
-            ${script.content}
-            }catch(e){if(window.Tellev){tellevNative.log('error','${safeName.replace("'", "\\'")}: '+e);}}
-            })();
-            //# sourceURL=$safeSource.js
-            """.trimIndent()
+    fun buildScriptSource(character: CharacterCard): String {
+        val scripts = extract(character)
+        return buildString {
+            scripts.forEachIndexed { index, script ->
+                if (index > 0) append("\n\n")
+                val safeName = script.name.replace(Regex("[\\r\\n]+"), " ").ifBlank { script.id }
+                val safeSource = "tellev-character-${character.id}-${script.id}"
+                    .replace(Regex("[^A-Za-z0-9_.-]"), "_")
+                if (isModuleScript(script.content)) {
+                    // ES module scripts (import/export) cannot be wrapped in IIFEs.
+                    // Emit as-is; errors are caught by the global error handlers.
+                    append("// $safeName\n")
+                    append("//# sourceURL=$safeSource.js\n")
+                    append(script.content)
+                    append("\n")
+                } else {
+                    append("// $safeName\n")
+                    append(";(function(){\n")
+                    append("try{\n")
+                    append(script.content)
+                    append("\n}catch(e){if(window.Tellev){tellevNative.log('error','")
+                    append(safeName.replace("'", "\\'"))
+                    append(": '+e);}}\n")
+                    append("})();\n")
+                    append("//# sourceURL=$safeSource.js\n")
+                }
+            }
+            // Character-scope variables are appended at the END so that in module
+            // scripts, import declarations (which are hoisted) come first. The
+            // vars are read lazily by event handlers, not during initial execution.
+            append("\n")
+            append(buildCharacterVarsInit(character))
         }
+    }
+
+    /**
+     * Build JS that populates `_thScopedVariables.character` with the card's
+     * `tavern_helper.variables`. Returns empty string when the card has none.
+     */
+    private fun buildCharacterVarsInit(character: CharacterCard): String {
+        val vars = extractCharacterVariables(character) ?: return ""
+        val jsonStr = vars.toString()
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+        return "try{if(typeof _thScopedVariables!=='undefined'){_thScopedVariables.character=JSON.parse('$jsonStr');}}catch(e){}\n\n"
+    }
+
+    /**
+     * Extract `data.extensions.tavern_helper.variables` as a JsonObject.
+     * Returns null when the card has no tavern_helper variables.
+     */
+    private fun extractCharacterVariables(character: CharacterCard): JsonObject? {
+        val extensions = character.extensionObject()
+        val tavernHelper = extensions["tavern_helper"]?.asObjectOrNull() ?: return null
+        val variables = tavernHelper["variables"]
+        return when {
+            variables is JsonObject -> variables
+            variables is JsonArray -> {
+                val map = variables.mapNotNull { element ->
+                    val pair = element as? JsonArray ?: return@mapNotNull null
+                    val key = pair.getOrNull(0)?.stringOrNull() ?: return@mapNotNull null
+                    val value = pair.getOrNull(1) ?: return@mapNotNull null
+                    key to value
+                }.toMap()
+                if (map.isEmpty()) null else JsonObject(map)
+            }
+            else -> null
+        }
+    }
+
+    /**
+     * Detect ES module syntax: `import` or `export` at the start of a line
+     * (optionally preceded by whitespace). Matches both static imports
+     * (`import ... from '...'`) and side-effect imports (`import '...'`).
+     */
+    private fun isModuleScript(content: String): Boolean {
+        val pattern = Regex(
+            """^\s*(import\s|export\s|import\{|export\{)""",
+            RegexOption.MULTILINE,
+        )
+        return pattern.containsMatchIn(content)
+    }
+
+    /** True when any enabled script in the card uses ES module syntax. */
+    fun hasModuleScripts(character: CharacterCard): Boolean =
+        extract(character).any { isModuleScript(it.content) }
 
     fun hasScripts(character: CharacterCard): Boolean = extract(character).isNotEmpty()
 

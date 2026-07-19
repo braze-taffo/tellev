@@ -182,7 +182,7 @@ class InstructModeTest {
     }
 
     @Test
-    fun `wrap appends stopSequence when true`() {
+    fun `wrap appends outputSequence when true`() {
         val preset = InstructPreset(
             name = "Custom",
             inputSequence = "\n### In:\n",
@@ -205,8 +205,10 @@ class InstructModeTest {
 
         val result = InstructMode.applyInstruct(messages, preset, macroEngine, macroContext)
 
-        assertTrue("Should contain stop sequence when wrap is true", result.contains("### END"))
-        assertTrue("Stop sequence should be at the end", result.endsWith("\n### END\n"))
+        // wrap appends output_sequence (not stop_sequence) so the AI knows
+        // it's its turn to respond (ST instruct-mode.js behavior).
+        assertTrue("Should contain output sequence when wrap is true", result.contains("### Out"))
+        assertTrue("Output sequence should be at the end", result.trimEnd().endsWith("### Out:"))
     }
 
     @Test

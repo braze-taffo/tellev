@@ -114,14 +114,14 @@ internal fun tavernWorldBookEntry(
         secondaryKeys = raw.stringList("keysecondary") + raw.stringList("secondary_keys"),
         content = raw.string("content").orEmpty(),
         enabled = raw.boolean("enabled") ?: !(raw.boolean("disable") ?: false),
-        selective = raw.boolean("selective") ?: false,
+        selective = raw.boolean("selective") ?: true,
         constant = constant,
         priority = raw.int("priority") ?: 0,
         insertionOrder = raw.int("order") ?: raw.int("insertion_order") ?: 100,
         depth = raw.int("depth") ?: 4,
         position = position,
         probability = raw.int("probability") ?: 100,
-        useProbability = raw.boolean("useProbability") ?: false,
+        useProbability = raw.boolean("useProbability") ?: true,
         selectiveLogic = raw.int("selectiveLogic") ?: 0,
         role = raw.int("role") ?: 0,
         matchWholeWords = raw.boolean("matchWholeWords") ?: false,
@@ -130,7 +130,10 @@ internal fun tavernWorldBookEntry(
         comment = raw.string("comment").orEmpty(),
         excludeRecursion = raw.boolean("exclude_recursion") ?: raw.boolean("excludeRecursion") ?: false,
         preventRecursion = raw.boolean("prevent_recursion") ?: raw.boolean("preventRecursion") ?: false,
-        delayUntilRecursion = raw.boolean("delay_until_recursion") ?: raw.boolean("delayUntilRecursion") ?: false,
+        delayUntilRecursion = raw.int("delay_until_recursion") ?: raw.int("delayUntilRecursion")
+            ?: raw.boolean("delay_until_recursion")?.let { if (it) 1 else 0 }
+            ?: raw.boolean("delayUntilRecursion")?.let { if (it) 1 else 0 }
+            ?: 0,
         ignoreBudget = raw.boolean("ignore_budget") ?: raw.boolean("ignoreBudget") ?: false,
         raw = raw,
     )

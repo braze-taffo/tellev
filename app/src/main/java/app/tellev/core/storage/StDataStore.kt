@@ -8,9 +8,12 @@ import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.GroupChat
 import app.tellev.core.model.PresetCategory
 import app.tellev.core.model.Persona
+import app.tellev.core.model.PromptSettings
 import app.tellev.core.model.WorldBook
+import app.tellev.core.model.WorldInfoSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.serialization.json.JsonObject
 import java.nio.file.Path
 
 interface StDataStore {
@@ -81,6 +84,19 @@ interface StDataStore {
         providerCategory: String,
         sourceFileName: String,
     ): GenerationPreset
+
+    // World-info scan settings (ST world_info_recursive / world_info_max_recursion_steps /
+    // world_info_depth equivalents), persisted next to the ST data layout.
+    suspend fun readWorldInfoSettings(): WorldInfoSettings = WorldInfoSettings()
+    suspend fun saveWorldInfoSettings(settings: WorldInfoSettings) = Unit
+
+    // Prompt preferences (ST power_user.prefer_character_prompt / prefer_character_jailbreak).
+    suspend fun readPromptSettings(): PromptSettings = PromptSettings()
+    suspend fun savePromptSettings(settings: PromptSettings) = Unit
+
+    // Instruct preset loading (from the instruct/ directory).
+    suspend fun listInstructPresets(): List<String> = emptyList()
+    suspend fun readInstructPreset(name: String): JsonObject? = null
 
     suspend fun listPersonas(): List<Persona>
     suspend fun savePersona(persona: Persona)

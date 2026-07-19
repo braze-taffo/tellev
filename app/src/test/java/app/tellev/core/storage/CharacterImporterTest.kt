@@ -475,7 +475,7 @@ class CharacterImporterTest {
         assertTrue(entry.caseSensitive)
         assertTrue(entry.excludeRecursion)
         assertTrue(entry.preventRecursion)
-        assertTrue(entry.delayUntilRecursion)
+        assertEquals(1, entry.delayUntilRecursion)
         assertTrue(entry.ignoreBudget)
     }
 }

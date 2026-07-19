@@ -15,6 +15,17 @@ class WebViewJsExtensionHostContractTest {
         assertTrue(shim.contains("stGetVariablesForScope"))
         assertTrue(shim.contains("stSetVariablesForScope"))
         assertTrue(shim.contains("stGetAllVariables"))
+        // message scope is bridged to per-message variables (chat[i].variables[swipe_id])
+        assertTrue(shim.contains("stGetMessageVariables"))
+        assertTrue(shim.contains("stSetMessageVariables"))
+        assertTrue(shim.contains("message_id"))
+        // _bind internal APIs are wired to public functions (js-slash-runner index.ts:219-265)
+        assertTrue(shim.contains("TavernHelper._bind={"))
+        assertTrue(shim.contains("_getVariables:function(o){return TavernHelper.getVariables(o);}"))
+        assertTrue(shim.contains("_registerMacroLike"))
+        // js-slash-runner top-level methods promoted from builtin.* (audit M9)
+        assertTrue(shim.contains("forEach(function(n){if(TavernHelper.builtin&&TavernHelper.builtin[n]!==undefined)TavernHelper[n]=TavernHelper.builtin[n];})"))
+        assertTrue(shim.contains("formatAsDisplayedMessage"))
     }
 
     @Test

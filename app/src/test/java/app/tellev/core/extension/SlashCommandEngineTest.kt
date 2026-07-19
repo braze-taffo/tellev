@@ -310,15 +310,16 @@ class SlashCommandEngineTest {
     }
 
     @Test
-    fun `known but unimplemented commands return explicit unsupported errors`() {
-        listOf("send", "gen", "continue", "inject", "char-delete", "count").forEach { name ->
+    fun `known but unimplemented commands return no-op success instead of aborting`() {
+        // Commands that can't be fully implemented on mobile (UI, clipboard,
+        // file system, etc.) return Result.ok so scripts with incidental
+        // unsupported commands continue running (audit S2 fix). They must NOT
+        // return hard errors that abort the entire script.
+        listOf("gen", "continue", "inject", "char-delete", "newchat").forEach { name ->
             val result = engine.execute("/$name test")
 
             assertTrue("/$name must be recognized", result.handled)
-            assertTrue("/$name must not report fake success", result.isError)
-            assertTrue(result.errorMessage.contains("Unsupported command"))
-            assertTrue(result.errorMessage.contains("/$name"))
-            assertEquals("", result.output)
+            assertFalse("/$name must not abort the script with an error", result.isError)
         }
     }
 
@@ -418,5 +419,114 @@ class SlashCommandEngineTest {
         engine.execute("/setglobalvar g present")
         assertEquals("true", engine.execute("/hasglobalvar g").output)
         assertEquals("false", engine.execute("/hasvar g").output)
+    }
+
+    // ── closures ({: ... :}) and structured control flow ─────────────────
+
+    @Test
+    fun `closure executes when if condition is true`() {
+        val result = engine.execute("/if left=1 right=1 rule=eq {: /echo yes :}")
+        assertEquals("yes", result.output)
+    }
+
+    @Test
+    fun `closure does not execute when if condition is false`() {
+        val result = engine.execute("/if left=1 right=2 rule=eq {: /echo yes :}")
+        assertEquals("", result.output)
+    }
+
+    @Test
+    fun `if else executes else closure when condition is false`() {
+        val result = engine.execute("/if left=1 right=2 rule=eq {: /echo yes :} else={: /echo no :}")
+        assertEquals("no", result.output)
+    }
+
+    @Test
+    fun `if supports ST comparison rules`() {
+        assertEquals("yes", engine.execute("/if left=10 right=5 rule=gte {: /echo yes :}").output)
+        assertEquals("yes", engine.execute("/if left=abcdef right=bcd rule=in {: /echo yes :}").output)
+        assertEquals("", engine.execute("/if left=abc right=def rule=in {: /echo yes :}").output)
+        assertEquals("yes", engine.execute("/if left=0 rule=not {: /echo yes :}").output)
+    }
+
+    @Test
+    fun `if resolves variables in operands`() {
+        engine.execute("/setvar status active")
+        assertEquals("yes", engine.execute("/if left=status right=active rule=eq {: /echo yes :}").output)
+    }
+
+    @Test
+    fun `if executes unnamed text body when condition is true`() {
+        val result = engine.execute("/if left=1 right=1 \"/echo textbody\"")
+        assertEquals("textbody", result.output)
+    }
+
+    @Test
+    fun `while loop with closure body iterates until condition fails`() {
+        engine.execute("/setvar i 0")
+        engine.execute("/while left=i right=3 rule=lt {: /incvar i :}")
+        assertEquals("3", engine.execute("/getvar i").output)
+    }
+
+    @Test
+    fun `while guard caps iterations`() {
+        engine.execute("/setvar i 0")
+        engine.execute("/while left=1 rule= guard=5 {: /incvar i :}")
+        assertEquals("5", engine.execute("/getvar i").output)
+    }
+
+    @Test
+    fun `break exits the enclosing while loop`() {
+        engine.execute("/setvar i 0")
+        engine.execute("/while left=1 guard=100 {: /incvar i | /if left=i right=3 rule=eq {: /break :} :}")
+        assertEquals("3", engine.execute("/getvar i").output)
+    }
+
+    @Test
+    fun `run executes closure`() {
+        assertEquals("hello", engine.execute("/run {: /echo hello :}").output)
+    }
+
+    @Test
+    fun `run executes command string`() {
+        assertEquals("hello", engine.execute("/run \"/echo hello\"").output)
+    }
+
+    @Test
+    fun `closure spanning multiple lines executes sequentially`() {
+        val result = engine.execute(
+            "/if left=1 right=1 rule=eq {:\n/echo line1\n/echo line2\n:}",
+        )
+        assertEquals("line2", result.output)
+    }
+
+    @Test
+    fun `closure with pipe chain inside`() {
+        assertEquals("A", engine.execute("/if left=1 right=1 {: /echo a | /upper :}").output)
+    }
+
+    @Test
+    fun `nested closures work`() {
+        engine.execute("/setvar outer 1")
+        val result = engine.execute(
+            "/if left=1 right=1 {: /if left=outer right=1 rule=eq {: /echo deep :} :}",
+        )
+        assertEquals("deep", result.output)
+    }
+
+    @Test
+    fun `quoted equals stays positional instead of becoming a named arg`() {
+        // Regression: /echo "a=b" must output a=b, not "".
+        assertEquals("a=b", engine.execute("/echo \"a=b\"").output)
+    }
+
+    @Test
+    fun `pipe placeholder is replaced at any argument position`() {
+        assertEquals("hello world!", engine.execute("/echo world | /echo hello {{pipe}}!").output)
+    }
+
+    @Test
+    fun `inline comment is stripped`() {
+        assertEquals("hi", engine.execute("/echo hi // comment").output)
     }
 }

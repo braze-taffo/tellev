@@ -9,6 +9,7 @@ import app.tellev.core.model.MessageRole
 import app.tellev.core.model.PresetCategory
 import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
+import app.tellev.core.model.WorldInfoSettings
 import app.tellev.core.regex.CharacterRegexApplier
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonArray
@@ -187,6 +188,58 @@ class FileStDataStoreTest {
         assertEquals("37", entry["probability"]!!.jsonPrimitive.content)
         assertEquals("keep me", entry["comment"]!!.jsonPrimitive.content)
         assertEquals("fixture", entry["extensions"]!!.jsonObject["source"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `world book entries default selective and useProbability to true like ST`() = runBlocking {
+        layout.worlds.createDirectories()
+        layout.worlds.resolve("defaults.json").writeText("""
+        {
+            "name": "Defaults",
+            "entries": {
+                "0": {"uid": 0, "key": ["dragon"], "content": "No flags at all", "disable": false}
+            }
+        }
+        """.trimIndent())
+
+        val entry = store.readWorldBook("defaults").entries.single()
+        assertEquals(true, entry.selective)
+        assertEquals(true, entry.useProbability)
+        assertEquals(0, entry.delayUntilRecursion)
+    }
+
+    @Test
+    fun `world book delayUntilRecursion parses number and legacy boolean`() = runBlocking {
+        layout.worlds.createDirectories()
+        layout.worlds.resolve("delays.json").writeText("""
+        {
+            "name": "Delays",
+            "entries": {
+                "0": {"uid": 0, "key": ["a"], "content": "numeric", "delayUntilRecursion": 2},
+                "1": {"uid": 1, "key": ["b"], "content": "boolean", "delayUntilRecursion": true}
+            }
+        }
+        """.trimIndent())
+
+        val book = store.readWorldBook("delays")
+        assertEquals(2, book.entries.first { it.content == "numeric" }.delayUntilRecursion)
+        assertEquals(1, book.entries.first { it.content == "boolean" }.delayUntilRecursion)
+
+        // Saving must write the numeric ST form back, never a boolean.
+        store.saveWorldBook(book)
+        val saved = FileStDataStore.defaultJson
+            .parseToJsonElement(layout.worlds.resolve("delays.json").readText())
+            .jsonObject["entries"]!!.jsonObject
+        assertEquals("2", saved["0"]!!.jsonObject["delayUntilRecursion"]!!.jsonPrimitive.content)
+        assertEquals("1", saved["1"]!!.jsonObject["delayUntilRecursion"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `world info settings persist across reads`() = runBlocking {
+        assertEquals(WorldInfoSettings(), store.readWorldInfoSettings())
+        val settings = WorldInfoSettings(recursive = true, maxRecursionSteps = 3, scanDepth = 5)
+        store.saveWorldInfoSettings(settings)
+        assertEquals(settings, store.readWorldInfoSettings())
     }
 
     @Test
@@ -511,7 +564,7 @@ class FileStDataStoreTest {
         assertEquals("default", preset.name)
         assertEquals(0.7, preset.temperature ?: -1.0, 0.0001)
         assertEquals(1.0, preset.topP ?: -1.0, 0.0001)
-        assertEquals(null as Int?, preset.maxTokens)
+        assertEquals(300, preset.maxTokens)
     }
 
     @Test

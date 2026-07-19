@@ -1,8 +1,9 @@
-﻿package app.tellev.core.extension
+package app.tellev.core.extension
 
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.MessageRole
+import app.tellev.core.model.PresetCategory
 import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.FileStDataStore
@@ -287,6 +288,160 @@ class VirtualApiRouterTest {
             assertEquals("partial", body["compatibilityLevel"]?.jsonPrimitive?.content)
             assertTrue(body["limitations"]?.jsonArray?.isNotEmpty() == true)
         }
+    }
+
+    // ── Preset writes must not destroy prompt lists ─────────────────────
+    // Regression tests for the audit finding: presetFromRaw used to ignore
+    // prompts/prompts_unused/prompt_order in the request body, and
+    // FileStDataStore.savePreset then rewrote merged["prompts"] = [] whenever
+    // the raw contained a "prompts" key — silently destroying prompt lists on
+    // TavernHelper.setPreset/createPreset/replacePreset/updatePresetWith.
+
+    private val stPresetBody = """
+        {
+          "category": "openai",
+          "name": "promptkeep",
+          "preset": {
+            "temperature": 0.9,
+            "seed": 12345,
+            "prompts": [
+              {"identifier": "main", "name": "Main Prompt", "role": "system", "content": "You are X."},
+              {"identifier": "chatHistory", "marker": true},
+              {"identifier": "jailbreak", "name": "JB", "role": "system", "content": "Do Y."}
+            ],
+            "prompt_order": [
+              {"character_id": 100001, "order": [
+                {"identifier": "main", "enabled": true},
+                {"identifier": "chatHistory", "enabled": true},
+                {"identifier": "jailbreak", "enabled": false}
+              ]}
+            ]
+          }
+        }
+    """.trimIndent()
+
+    @Test
+    fun `POST presets_create preserves prompt list`() = runBlocking {
+        val response = router.route(VirtualApiRequest("POST", "/api/presets/create", body = stPresetBody))
+        assertEquals(201, response.status)
+
+        val saved = requireNotNull(store.readPreset(PresetCategory.OpenAi, "promptkeep"))
+        assertEquals(listOf("main", "chatHistory", "jailbreak"), saved.prompts.map { it.identifier })
+        assertEquals(false, saved.prompts.first { it.identifier == "jailbreak" }.enabled)
+        // On-disk raw must keep a non-empty prompts array (was rewritten to [] before the fix).
+        assertEquals(3, saved.raw["prompts"]?.jsonArray?.size)
+        assertEquals(12345L, saved.seed)
+    }
+
+    @Test
+    fun `POST presets_replace applies new prompt list`() = runBlocking {
+        router.route(VirtualApiRequest("POST", "/api/presets/create", body = stPresetBody))
+        val replaceBody = """
+            {"category":"openai","name":"promptkeep","load":false,"preset":{
+              "prompts":[{"identifier":"nsp","name":"New","role":"user","content":"fresh"}]
+            }}
+        """.trimIndent()
+        val response = router.route(VirtualApiRequest("POST", "/api/presets/replace", body = replaceBody))
+        assertEquals(200, response.status)
+
+        val saved = requireNotNull(store.readPreset(PresetCategory.OpenAi, "promptkeep"))
+        assertEquals(listOf("nsp"), saved.prompts.map { it.identifier })
+        assertEquals("fresh", saved.prompts[0].content)
+        // Scalars not present in the replacement body are inherited from the existing preset.
+        assertEquals(12345L, saved.seed)
+    }
+
+    @Test
+    fun `POST presets_replace without prompts keeps existing prompt list`() = runBlocking {
+        router.route(VirtualApiRequest("POST", "/api/presets/create", body = stPresetBody))
+        val replaceBody = """{"category":"openai","name":"promptkeep","load":false,"preset":{"temperature":0.5}}"""
+        val response = router.route(VirtualApiRequest("POST", "/api/presets/replace", body = replaceBody))
+        assertEquals(200, response.status)
+
+        val saved = requireNotNull(store.readPreset(PresetCategory.OpenAi, "promptkeep"))
+        assertEquals(listOf("main", "chatHistory", "jailbreak"), saved.prompts.map { it.identifier })
+        assertEquals(0.5, saved.temperature ?: -1.0, 0.0001)
+    }
+
+    // ── ST-style worldinfo / characters routes ─────────────────────────
+
+    @Test
+    fun `POST worldinfo_get returns entries as uid-keyed object`() = runBlocking {
+        val stJson = """{"name":"Lore","entries":{"0":{"uid":0,"key":["dragon"],"content":"lore"}}}"""
+        java.nio.file.Files.createDirectories(layout.worlds)
+        layout.worlds.resolve("lore.json").toFile().writeText(stJson)
+        val response = router.route(VirtualApiRequest("POST", "/api/worldinfo/get", body = """{"name":"lore"}"""))
+        assertEquals(200, response.status)
+        val body = json.parseToJsonElement(response.body).jsonObject
+        val entries = body["entries"]?.jsonObject
+        assertTrue(entries != null && entries["0"] != null)
+        assertEquals("lore", entries!!["0"]!!.jsonObject["content"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `POST worldinfo_list returns bare array`() = runBlocking {
+        java.nio.file.Files.createDirectories(layout.worlds)
+        layout.worlds.resolve("lore.json").toFile().writeText("""{"name":"Lore","entries":{}}""")
+        val response = router.route(VirtualApiRequest("POST", "/api/worldinfo/list", body = "{}"))
+        assertEquals(200, response.status)
+        val body = json.parseToJsonElement(response.body).jsonArray
+        assertEquals(1, body.size)
+        assertEquals("lore", body[0].jsonObject["file_id"]?.jsonPrimitive?.content)
+        assertEquals("Lore", body[0].jsonObject["name"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `POST worldinfo_edit writes the file verbatim`() = runBlocking {
+        val body = """{"name":"edited","data":{"name":"Edited","entries":{"0":{"uid":0,"key":["x"],"content":"new"}}}}"""
+        val response = router.route(VirtualApiRequest("POST", "/api/worldinfo/edit", body = body))
+        assertEquals(200, response.status)
+        val book = store.readWorldBook("edited")
+        assertEquals(1, book.entries.size)
+        assertEquals("new", book.entries[0].content)
+    }
+
+    @Test
+    fun `POST characters_all returns bare array`() = runBlocking {
+        val response = router.route(VirtualApiRequest("POST", "/api/characters/all", body = "{}"))
+        assertEquals(200, response.status)
+        // Must parse as a bare JSON array (ST shape), not a wrapper object.
+        assertTrue(json.parseToJsonElement(response.body).jsonArray.isEmpty())
+    }
+
+    @Test
+    fun `POST chats_get returns ST-shaped bare array with metadata header`() = runBlocking {
+        store.saveChatSession(
+            ChatSession(
+                id = "chat-1",
+                title = "T",
+                characterId = "char1",
+                groupId = null,
+                messages = listOf(
+                    ChatMessage(
+                        id = "m1",
+                        role = MessageRole.User,
+                        name = "Bob",
+                        content = "hello",
+                        createdAtMillis = 1L,
+                    ),
+                    ChatMessage(
+                        id = "m2",
+                        role = MessageRole.Assistant,
+                        name = "Alice",
+                        content = "hi there",
+                        createdAtMillis = 2L,
+                    ),
+                ),
+            ),
+        )
+        val response = router.route(VirtualApiRequest("POST", "/api/chats/get", body = """{"file_name":"chat-1"}"""))
+        assertEquals(200, response.status)
+        val body = json.parseToJsonElement(response.body).jsonArray
+        // First element is the metadata header, then messages with ST field names.
+        assertTrue(body[0].jsonObject["chat_metadata"] != null)
+        assertEquals("hello", body[1].jsonObject["mes"]?.jsonPrimitive?.content)
+        assertEquals(true, body[1].jsonObject["is_user"]?.jsonPrimitive?.content?.toBooleanStrictOrNull())
+        assertEquals(false, body[2].jsonObject["is_user"]?.jsonPrimitive?.content?.toBooleanStrictOrNull())
     }
 
     private class InMemorySecretStore : SecretStore {

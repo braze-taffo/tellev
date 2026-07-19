@@ -1,6 +1,11 @@
 package app.tellev.core.prompt
 
 import app.tellev.core.extension.VariableStore
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -44,6 +49,18 @@ data class MacroContext(
     val lastMessageId: String = "",
     /** {{greeting::N}} — alternate greetings (index 1+ = alternateGreetings[N-1]). */
     val alternateGreetings: List<String> = emptyList(),
+    /**
+     * Variables of the most recent message that carries a variables object at
+     * its current swipe (js-slash-runner message scope; used by the
+     * `{{get_message_variable::…}}` / `{{format_message_variable::…}}` macros).
+     */
+    val messageVariables: kotlinx.serialization.json.JsonObject? = null,
+    /**
+     * Character-scope variables (`data.extensions.tavern_helper.variables`).
+     * Read-only defaults shipped with the card; used by
+     * `{{get_character_variable::…}}` / `{{format_character_variable::…}}`.
+     */
+    val characterVariables: kotlinx.serialization.json.JsonObject? = null,
 )
 
 class DefaultMacroEngine : MacroEngine {
@@ -74,10 +91,16 @@ class DefaultMacroEngine : MacroEngine {
         return expandRecursive(text, context, depth = 0)
     }
 
+    // ST trim macro: {{trim}} removes itself AND any surrounding newlines
+    // (macros.js:633). Applied per recursion pass so {{trim}} produced by
+    // earlier expansions is also cleaned up.
+    private val trimPattern = Regex("(?:\\r?\\n)*\\{\\{trim\\}\\}(?:\\r?\\n)*")
+
     private fun expandRecursive(text: String, context: MacroContext, depth: Int): String {
         if (depth >= 10) return text
 
-        val result = macroPattern.replace(text) { matchResult ->
+        val trimmed = text.replace(trimPattern, "")
+        val result = macroPattern.replace(trimmed) { matchResult ->
             val macroExpression = matchResult.groupValues[1].trim()
             resolveExpression(macroExpression, context, depth)
         }
@@ -125,18 +148,21 @@ class DefaultMacroEngine : MacroEngine {
             }
         }
 
-        // Random macros: {{random:N}} or {{random:N-M}} (numeric) and
-        // {{random::a::b::c}} (list pick, SillyTavern canonical form).
+        // Random macros: {{random:N}} or {{random:N-M}} (numeric, tellev
+        // extension) and {{random::a::b::c}} / {{random:a,b,c}} (list pick,
+        // SillyTavern canonical forms; `\,` escapes a comma).
         if (expression.startsWith("random::")) {
             return resolveRandomList(expression.removePrefix("random::"))
         }
         if (expression.startsWith("random:")) {
-            return resolveRandom(expression.removePrefix("random:"))
+            val spec = expression.removePrefix("random:")
+            if (spec.contains(',')) return resolveRandomCommaList(spec)
+            return resolveRandom(spec)
         }
 
-        // Reverse transform: {{reverse::text}} — SillyTavern's only string transform.
-        if (expression.startsWith("reverse::")) {
-            val inner = expression.removePrefix("reverse::")
+        // Reverse transform: {{reverse::text}} and ST legacy {{reverse:text}}.
+        if (expression.startsWith("reverse::") || expression.startsWith("reverse:")) {
+            val inner = expression.removePrefix(if (expression.startsWith("reverse::")) "reverse::" else "reverse:")
             val resolved = resolveExpression(inner, context, depth)
             // If inner wasn't a recognized macro it resolves to its pass-through
             // form; fall back to the literal text in that case (matches upper:/lower:).
@@ -144,9 +170,22 @@ class DefaultMacroEngine : MacroEngine {
             return text.reversed()
         }
 
-        // Dice roll: {{roll::1d20}}, {{roll::6}}, {{roll::3d6+4}}.
+        // Dice roll: {{roll::1d20}}, {{roll:1d6}} / {{roll 3d6+4}} (ST legacy forms).
         if (expression.startsWith("roll::")) {
             return resolveRoll(expression.removePrefix("roll::"))
+        }
+        if (expression.startsWith("roll:")) {
+            return resolveRoll(expression.removePrefix("roll:"))
+        }
+        if (expression.startsWith("roll ")) {
+            return resolveRoll(expression.removePrefix("roll "))
+        }
+
+        // Time with UTC offset: {{time_UTC+8}} (ST legacy form).
+        if (expression.startsWith("time_UTC")) {
+            val offset = expression.removePrefix("time_UTC").toIntOrNull() ?: 0
+            return java.time.OffsetTime.now(java.time.ZoneOffset.ofHours(offset))
+                .format(DateTimeFormatter.ofPattern("HH:mm"))
         }
 
         // Alternate greeting by index: {{greeting::1}} = alternateGreetings[0].
@@ -168,6 +207,10 @@ class DefaultMacroEngine : MacroEngine {
             val format = expression.removePrefix("datetimeformat").trim()
             return resolveDateTimeFormat(format)
         }
+
+        // js-slash-runner macro_like family: {{get_<scope>_variable::path}} and
+        // {{format_<scope>_variable::path}} (macro_like.ts:60-78).
+        resolveScopedVariableMacro(expression, context)?.let { return it }
 
         // SillyTavern variable macros: {{getvar::name}}, {{setvar::name::value}}, ...
         resolveVariableMacro(expression)?.let { return it }
@@ -249,11 +292,13 @@ class DefaultMacroEngine : MacroEngine {
                 Random.nextInt(high, low + 1).toString()
             }
         } else {
-            val max = trimmed.toIntOrNull() ?: 0
-            if (max > 0) {
-                Random.nextInt(0, max).toString()
-            } else {
-                "0"
+            val max = trimmed.toIntOrNull()
+            when {
+                max != null && max > 0 -> Random.nextInt(0, max).toString()
+                max != null -> "0"
+                // ST semantics: a non-numeric spec is a single-item list and
+                // comes back unchanged (macros.js:492-509).
+                else -> trimmed
             }
         }
     }
@@ -276,6 +321,117 @@ class DefaultMacroEngine : MacroEngine {
                 }
             }
         }
+    }
+
+    /**
+     * js-slash-runner macro_like family (macro_like.ts:60-78):
+     * `{{get_<scope>_variable::path}}` returns the value (JSON for objects),
+     * `{{format_<scope>_variable::path}}` formats it as YAML. Keys starting
+     * with `$` are stripped like js's omitDeepBy. Scopes map to tellev stores;
+     * character/preset scopes are not yet persisted and resolve empty.
+     */
+    private fun resolveScopedVariableMacro(expression: String, context: MacroContext): String? {
+        val match = Regex("""^(get|format)_(message|chat|character|preset|global)_variable::(.+)$""")
+            .matchEntire(expression) ?: return null
+        val (kind, scope, path) = match.destructured
+        val variables: JsonObject? = when (scope) {
+            "message" -> context.messageVariables
+            "chat" -> variableStore?.localObject()
+            "global" -> variableStore?.globalObject()
+            "character" -> context.characterVariables
+            else -> null // preset scope is not persisted yet
+        }
+        val value = variables?.let { getJsonPathStripped(it, path.trim()) }
+        return when {
+            value == null || value is JsonNull -> "null"
+            value is JsonPrimitive -> value.content
+            kind == "get" -> value.toString()
+            else -> dumpYaml(value).trimEnd()
+        }
+    }
+
+    /** Path lookup (`a.b.0.c`) with `$`-prefixed keys stripped (js omitDeepBy). */
+    private fun getJsonPathStripped(root: JsonObject, path: String): JsonElement? {
+        var current: JsonElement = root
+        for (part in path.split('.').filter { it.isNotBlank() }) {
+            current = when (current) {
+                is JsonObject -> current[part] ?: return null
+                is JsonArray -> current.getOrNull(part.toIntOrNull() ?: return null) ?: return null
+                else -> return null
+            }
+        }
+        return stripDollarKeys(current)
+    }
+
+    private fun stripDollarKeys(element: JsonElement): JsonElement = when (element) {
+        is JsonObject -> JsonObject(
+            element.filterKeys { !it.startsWith("$") }.mapValues { stripDollarKeys(it.value) },
+        )
+        is JsonArray -> JsonArray(element.map { stripDollarKeys(it) })
+        else -> element
+    }
+
+    /** Minimal block-style YAML emitter for JSON-like values (maps/lists/scalars). */
+    private fun dumpYaml(element: JsonElement, indent: Int = 0): String {
+        val pad = "  ".repeat(indent)
+        return when (element) {
+            is JsonObject -> {
+                if (element.isEmpty()) return "{}"
+                element.entries.joinToString("\n") { (key, value) ->
+                    when {
+                        isEmptyContainer(value) -> "$pad$key: ${yamlScalar(value)}"
+                        value is JsonObject || value is JsonArray -> "$pad$key:\n${dumpYaml(value, indent + 1)}"
+                        else -> "$pad$key: ${yamlScalar(value)}"
+                    }
+                }
+            }
+            is JsonArray -> {
+                if (element.isEmpty()) return "[]"
+                element.joinToString("\n") { item ->
+                    when {
+                        isEmptyContainer(item) -> "$pad- ${yamlScalar(item)}"
+                        item is JsonObject || item is JsonArray ->
+                            "$pad- " + dumpYaml(item, indent + 1).removePrefix("$pad  ")
+                        else -> "$pad- ${yamlScalar(item)}"
+                    }
+                }
+            }
+            else -> "$pad${yamlScalar(element)}"
+        }
+    }
+
+    private fun isEmptyContainer(element: JsonElement): Boolean = when (element) {
+        is JsonObject -> element.isEmpty()
+        is JsonArray -> element.isEmpty()
+        else -> false
+    }
+
+    private fun yamlScalar(element: JsonElement): String = when (element) {
+        JsonNull -> "null"
+        is JsonObject -> "{}"
+        is JsonArray -> "[]"
+        is JsonPrimitive -> {
+            if (!element.isString) {
+                element.content
+            } else {
+                val s = element.content
+                when {
+                    s.isEmpty() -> "''"
+                    s.contains('\n') -> "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"")
+                        .replace("\n", "\\n") + "\""
+                    needsYamlQuoting(s) -> "'" + s.replace("'", "''") + "'"
+                    else -> s
+                }
+            }
+        }
+    }
+
+    private fun needsYamlQuoting(s: String): Boolean {
+        if (s != s.trim()) return true
+        if (s.toLongOrNull() != null || s.toDoubleOrNull() != null) return true
+        if (s.lowercase() in setOf("true", "false", "null", "~", "yes", "no", "on", "off")) return true
+        if (s.contains(": ") || s.contains(" #") || s.endsWith(':')) return true
+        return s.first() in "-?:,[]{}#&*!|>'\"%@`"
     }
 
     /**
@@ -453,6 +609,14 @@ class DefaultMacroEngine : MacroEngine {
     private fun resolveRandomList(spec: String): String {
         // {{random::a::b::c}} — pick one item, splitting on `::`.
         val items = spec.split("::").filter { it.isNotEmpty() }
+        if (items.isEmpty()) return ""
+        return items[Random.nextInt(items.size)]
+    }
+
+    private fun resolveRandomCommaList(spec: String): String {
+        // {{random:a,b,c}} — ST form; `\,` escapes a literal comma (macros.js:492-509).
+        val items = Regex("""(?<!\\),""").split(spec).map { it.replace("\\,", ",") }
+            .filter { it.isNotEmpty() }
         if (items.isEmpty()) return ""
         return items[Random.nextInt(items.size)]
     }

@@ -26,7 +26,7 @@ class WorldInfoScannerTest {
         caseSensitive: Boolean = false,
         excludeRecursion: Boolean = false,
         preventRecursion: Boolean = false,
-        delayUntilRecursion: Boolean = false,
+        delayUntilRecursion: Int = 0,
         ignoreBudget: Boolean = false,
         priority: Int = 0,
         insertionOrder: Int = 100,
@@ -62,7 +62,7 @@ class WorldInfoScannerTest {
         random: () -> Double = { 0.0 },
         maxRecursion: Int = 5,
     ) = WorldInfoScanner(random = random, maxRecursionSteps = maxRecursion)
-        .scan(entries, text) { it.content }
+        .scan(entries, text, expand = { it.content })
 
     private fun ids(activated: List<WorldInfoScanner.ActivatedEntry>) = activated.map { it.entry.id }.toSet()
 
@@ -181,7 +181,7 @@ class WorldInfoScannerTest {
         val a = entry("a", keys = listOf("start"), content = "dragon")
         val b = entry("b", keys = listOf("dragon"), content = "dragon lore")
         val result = WorldInfoScanner(random = { 0.0 })
-            .scan(listOf(a, b), "start") { it.content }
+            .scan(listOf(a, b), "start", expand = { it.content })
 
         assertEquals(setOf("a"), ids(result.allActivated))
     }
@@ -189,10 +189,32 @@ class WorldInfoScannerTest {
     @Test
     fun `delayUntilRecursion only matches during recursion`() {
         val a = entry("a", keys = listOf("start"), content = "trigger delayed")
-        val delayed = entry("d", keys = listOf("delayed"), content = "delayed content", delayUntilRecursion = true)
+        val delayed = entry("d", keys = listOf("delayed"), content = "delayed content", delayUntilRecursion = 1)
         // Initial text does NOT contain "delayed" — only the recursion text does.
         val result = scan(listOf(a, delayed), "start here")
         assertEquals(setOf("a", "d"), ids(result.allActivated))
+    }
+
+    @Test
+    fun `delayUntilRecursion level 2 waits for the second recursion pass`() {
+        val a = entry("a", keys = listOf("start"), content = "mentions lvl1")
+        val d1 = entry("d1", keys = listOf("lvl1"), content = "mentions lvl2", delayUntilRecursion = 1)
+        val d2 = entry("d2", keys = listOf("lvl2"), content = "lvl2 lore", delayUntilRecursion = 2)
+        // Full run: d1 at level 1, d2 at level 2.
+        assertEquals(setOf("a", "d1", "d2"), ids(scan(listOf(a, d1, d2), "start").allActivated))
+        // Capped at one recursion pass: d2 is not eligible yet.
+        assertEquals(setOf("a", "d1"), ids(scan(listOf(a, d1, d2), "start", maxRecursion = 1).allActivated))
+    }
+
+    @Test
+    fun `delayUntilRecursion entry is suppressed even when its key is in the scan text`() {
+        val a = entry("a", keys = listOf("start"), content = "mentions lvl1")
+        val d1 = entry("d1", keys = listOf("lvl1"), content = "chain", delayUntilRecursion = 1)
+        val d2 = entry("d2", keys = listOf("lvl2"), content = "lvl2 lore", delayUntilRecursion = 2)
+        // "lvl2" is present in the initial scan text, but d2 must still wait
+        // for recursion level 2 — it must not activate in earlier passes.
+        assertEquals(setOf("a", "d1"), ids(scan(listOf(a, d1, d2), "start lvl2", maxRecursion = 1).allActivated))
+        assertEquals(setOf("a", "d1", "d2"), ids(scan(listOf(a, d1, d2), "start lvl2", maxRecursion = 2).allActivated))
     }
 
     // ── position bucketing ───────────────────────────────────────────────
@@ -239,12 +261,79 @@ class WorldInfoScannerTest {
     // ── sorting ──────────────────────────────────────────────────────────
 
     @Test
-    fun `entries sort by priority desc then insertionOrder desc`() {
+    fun `entries sort ascending by insertionOrder inside buckets like ST`() {
+        // ST sorts descending by `order` for budget selection, then unshifts
+        // into buckets, so the final in-bucket order is ascending by `order`.
         val a = entry("a", keys = listOf("k"), priority = 10, insertionOrder = 5)
         val b = entry("b", keys = listOf("k"), priority = 10, insertionOrder = 1)
         val c = entry("c", keys = listOf("k"), priority = 100, insertionOrder = 9)
         val result = scan(listOf(a, b, c), "k")
-        assertEquals(listOf("c", "a", "b"), result.before.map { it.entry.id })
+        assertEquals(listOf("b", "a", "c"), result.before.map { it.entry.id })
+    }
+
+    @Test
+    fun `token budget keeps higher-order entries`() {
+        // Budget selection follows ST's descending-order pass: the entry with
+        // the higher `order` wins the limited budget.
+        val low = entry("low", keys = listOf("k"), content = "aaaa", insertionOrder = 1)
+        val high = entry("high", keys = listOf("k"), content = "bbbb", insertionOrder = 9)
+        val result = WorldInfoScanner(random = { 0.0 }, maxContentTokens = 2)
+            .scan(listOf(low, high), "k", expand = { it.content })
+        assertEquals(setOf("high"), ids(result.allActivated))
+    }
+
+    // ── ST-style regex keys (/pattern/flags) ─────────────────────────────
+
+    @Test
+    fun `slash regex key matches without entry useRegex flag`() {
+        val e = entry("e", keys = listOf("/foo\\d+/"))
+        assertEquals(setOf("e"), ids(scan(listOf(e), "foo123 bar").allActivated))
+        assertTrue(scan(listOf(e), "foo bar").allActivated.isEmpty())
+    }
+
+    @Test
+    fun `regex key flags are honored`() {
+        // i flag: case-insensitive
+        assertEquals(setOf("e"), ids(scan(listOf(entry("e", keys = listOf("/FOO/i"))), "foo").allActivated))
+        // no flag: case-sensitive
+        assertTrue(scan(listOf(entry("e", keys = listOf("/FOO/"))), "foo").allActivated.isEmpty())
+        // s flag: dot matches newline
+        assertEquals(setOf("e"), ids(scan(listOf(entry("e", keys = listOf("/a.c/s"))), "a\nc").allActivated))
+    }
+
+    @Test
+    fun `regex key with escaped inner slash matches`() {
+        val e = entry("e", keys = listOf("/a\\/b/"))
+        assertEquals(setOf("e"), ids(scan(listOf(e), "a/b").allActivated))
+    }
+
+    @Test
+    fun `key with unescaped inner slash falls back to literal matching`() {
+        // "/a/b/" is not a valid ST regex (unescaped delimiter) and is treated
+        // as a plain key, like ST's matchKeys does.
+        val e = entry("e", keys = listOf("/a/b/"))
+        assertEquals(setOf("e"), ids(scan(listOf(e), "see /a/b/ here").allActivated))
+        assertTrue(scan(listOf(e), "see a/b here").allActivated.isEmpty())
+    }
+
+    // ── key macro substitution ───────────────────────────────────────────
+
+    @Test
+    fun `primary keys are macro-expanded before matching`() {
+        val e = entry("e", keys = listOf("{{k}}"))
+        val result = WorldInfoScanner(random = { 0.0 }, maxRecursionSteps = 0)
+            .scan(listOf(e), "dragon lore", expand = { it.content }, keyExpand = { if (it == "{{k}}") "dragon" else it })
+        assertEquals(setOf("e"), ids(result.allActivated))
+        // Without expansion the raw "{{k}}" key does not match.
+        assertTrue(scan(listOf(e), "dragon lore").allActivated.isEmpty())
+    }
+
+    @Test
+    fun `secondary keys are macro-expanded before matching`() {
+        val e = entry("e", keys = listOf("alpha"), secondaryKeys = listOf("{{s}}"), selective = true, selectiveLogic = 0)
+        val result = WorldInfoScanner(random = { 0.0 }, maxRecursionSteps = 0)
+            .scan(listOf(e), "alpha beta", expand = { it.content }, keyExpand = { if (it == "{{s}}") "beta" else it })
+        assertEquals(setOf("e"), ids(result.allActivated))
     }
 
     @Test
@@ -270,7 +359,7 @@ class WorldInfoScannerTest {
             ignoreBudget = true,
         )
         val result = WorldInfoScanner(random = { 0.0 }, maxContentTokens = 1)
-            .scan(listOf(regular, forced), "") { it.content }
+            .scan(listOf(regular, forced), "", expand = { it.content })
 
         assertEquals(setOf("forced"), ids(result.allActivated))
     }

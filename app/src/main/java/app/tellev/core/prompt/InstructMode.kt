@@ -11,6 +11,7 @@ data class InstructPreset(
     val inputSequence: String,
     val outputSequence: String,
     val lastOutputSequence: String,
+    val firstOutputSequence: String = "",
     val firstInputSequence: String,
     val lastInputSequence: String,
     val systemSequence: String,
@@ -20,6 +21,11 @@ data class InstructPreset(
     val macro: Boolean,
     val names: Boolean,
     val namesForceGroups: Boolean,
+    val inputSuffix: String = "",
+    val outputSuffix: String = "",
+    val systemSuffix: String = "",
+    val skipExamples: Boolean = false,
+    val systemSameAsUser: Boolean = false,
 )
 
 object InstructMode {
@@ -28,38 +34,31 @@ object InstructMode {
 
     fun loadPreset(jsonString: String): InstructPreset {
         val obj = json.parseToJsonElement(jsonString) as JsonObject
-        return InstructPreset(
-            name = obj.stringField("name", ""),
-            inputSequence = obj.stringField("input_sequence", ""),
-            outputSequence = obj.stringField("output_sequence", ""),
-            lastOutputSequence = obj.stringField("last_output_sequence", ""),
-            firstInputSequence = obj.stringField("first_input_sequence", ""),
-            lastInputSequence = obj.stringField("last_input_sequence", ""),
-            systemSequence = obj.stringField("system_sequence", ""),
-            stopSequence = obj.stringField("stop_sequence", ""),
-            activationRegex = obj.stringField("activation_regex", ""),
-            wrap = obj.boolField("wrap", false),
-            macro = obj.boolField("macro", true),
-            names = obj.boolField("names", false),
-            namesForceGroups = obj.boolField("names_force_groups", false),
-        )
+        return loadPreset(obj)
     }
 
     fun loadPreset(obj: JsonObject): InstructPreset {
+        val systemSameAsUser = obj.boolField("system_same_as_user", false)
         return InstructPreset(
             name = obj.stringField("name", ""),
             inputSequence = obj.stringField("input_sequence", ""),
             outputSequence = obj.stringField("output_sequence", ""),
             lastOutputSequence = obj.stringField("last_output_sequence", ""),
+            firstOutputSequence = obj.stringField("first_output_sequence", ""),
             firstInputSequence = obj.stringField("first_input_sequence", ""),
             lastInputSequence = obj.stringField("last_input_sequence", ""),
-            systemSequence = obj.stringField("system_sequence", ""),
+            systemSequence = if (systemSameAsUser) obj.stringField("input_sequence", "") else obj.stringField("system_sequence", ""),
             stopSequence = obj.stringField("stop_sequence", ""),
             activationRegex = obj.stringField("activation_regex", ""),
             wrap = obj.boolField("wrap", false),
             macro = obj.boolField("macro", true),
             names = obj.boolField("names", false),
             namesForceGroups = obj.boolField("names_force_groups", false),
+            inputSuffix = obj.stringField("input_suffix", ""),
+            outputSuffix = obj.stringField("output_suffix", ""),
+            systemSuffix = obj.stringField("system_suffix", ""),
+            skipExamples = obj.boolField("skip_examples", false),
+            systemSameAsUser = systemSameAsUser,
         )
     }
 
@@ -77,12 +76,14 @@ object InstructMode {
 
         val result = StringBuilder()
 
-        // Find indices of last user and last assistant messages
         val lastUserIndex = messages.indexOfLast { it.role == MessageRole.User }
         val lastAssistantIndex = messages.indexOfLast {
             it.role == MessageRole.Assistant || it.role == MessageRole.Character
         }
         val firstUserIndex = messages.indexOfFirst { it.role == MessageRole.User }
+        val firstAssistantIndex = messages.indexOfFirst {
+            it.role == MessageRole.Assistant || it.role == MessageRole.Character
+        }
 
         for ((index, message) in messages.withIndex()) {
             val isSystem = message.role == MessageRole.System
@@ -90,59 +91,58 @@ object InstructMode {
             val isAssistant = message.role == MessageRole.Assistant || message.role == MessageRole.Character
             val isFirstUser = index == firstUserIndex
             val isLastUser = index == lastUserIndex
+            val isFirstAssistant = index == firstAssistantIndex
             val isLastAssistant = index == lastAssistantIndex
 
             when {
                 isSystem -> {
                     val sysSeq = expand(preset.systemSequence)
-                    if (sysSeq.isNotEmpty()) {
-                        result.append(sysSeq)
-                    }
-                    if (preset.names && message.name != null) {
-                        result.append(message.name).append(": ")
-                    }
+                    if (sysSeq.isNotEmpty()) result.append(sysSeq)
+                    if (preset.names && message.name != null) result.append(message.name).append(": ")
                     result.append(message.content)
+                    val sysSuf = expand(preset.systemSuffix)
+                    if (sysSuf.isNotEmpty()) result.append(sysSuf)
                 }
 
                 isUser -> {
                     val inputSeq = when {
-                        isFirstUser && preset.firstInputSequence.isNotEmpty() ->
-                            expand(preset.firstInputSequence)
-                        isLastUser && preset.lastInputSequence.isNotEmpty() ->
-                            expand(preset.lastInputSequence)
+                        isFirstUser && preset.firstInputSequence.isNotEmpty() -> expand(preset.firstInputSequence)
+                        isLastUser && preset.lastInputSequence.isNotEmpty() -> expand(preset.lastInputSequence)
                         else -> expand(preset.inputSequence)
                     }
-                    result.append(inputSeq)
-                    if (preset.names && message.name != null) {
-                        result.append(message.name).append(": ")
-                    }
+                    if (inputSeq.isNotEmpty()) result.append(inputSeq)
+                    if (preset.names && message.name != null) result.append(message.name).append(": ")
                     result.append(message.content)
+                    val inputSuf = expand(preset.inputSuffix)
+                    if (inputSuf.isNotEmpty()) result.append(inputSuf)
                 }
 
                 isAssistant -> {
-                    val outputSeq = if (isLastAssistant && preset.lastOutputSequence.isNotEmpty()) {
-                        expand(preset.lastOutputSequence)
-                    } else {
-                        expand(preset.outputSequence)
+                    val outputSeq = when {
+                        isLastAssistant && preset.lastOutputSequence.isNotEmpty() -> expand(preset.lastOutputSequence)
+                        isFirstAssistant && preset.firstOutputSequence.isNotEmpty() -> expand(preset.firstOutputSequence)
+                        else -> expand(preset.outputSequence)
                     }
-                    result.append(outputSeq)
-                    if (preset.names && message.name != null) {
-                        result.append(message.name).append(": ")
-                    }
+                    if (outputSeq.isNotEmpty()) result.append(outputSeq)
+                    if (preset.names && message.name != null) result.append(message.name).append(": ")
                     result.append(message.content)
+                    val outputSuf = expand(preset.outputSuffix)
+                    if (outputSuf.isNotEmpty()) result.append(outputSuf)
                 }
 
                 else -> {
-                    // Tool or other roles: use input sequence
                     result.append(expand(preset.inputSequence))
                     result.append(message.content)
+                    result.append(expand(preset.inputSuffix))
                 }
             }
         }
 
-        // If wrap is true, append stop sequence at the end
-        if (preset.wrap && preset.stopSequence.isNotEmpty()) {
-            result.append(expand(preset.stopSequence))
+        // wrap: append the output sequence so the AI knows it's its turn (ST
+        // appends output_sequence, not stop_sequence, to prompt generation).
+        if (preset.wrap) {
+            val wrapSeq = expand(preset.outputSequence)
+            if (wrapSeq.isNotEmpty()) result.append(wrapSeq)
         }
 
         return result.toString()
