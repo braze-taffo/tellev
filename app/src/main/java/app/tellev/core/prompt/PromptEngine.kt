@@ -21,6 +21,26 @@ import kotlinx.serialization.json.jsonPrimitive
 
 private const val DEFAULT_MAX_CONTEXT_TOKENS = 8192
 
+/** [PromptMessage.channel] of the main/system prompt — anchor for BEFORE_PROMPT/IN_PROMPT injections. */
+internal const val CHANNEL_MAIN = "main"
+
+/** [PromptMessage.channel] of chat-history (and pending user input) messages — anchor span for depth injections. */
+internal const val CHANNEL_CHAT = "chat"
+
+/** [PromptMessage.channel] of structural markers ('[Start a new Chat]', '[Example Chat]') —
+ * excluded from the prompt-template numeric index space so [GENERATE:N]/@INJECT index=N
+ * keep addressing "system prompt, then chat messages". */
+internal const val CHANNEL_MARKER = "marker"
+
+/** Internal injection position: standalone message after the chat span (fallback-path PHI). */
+private const val POSITION_AFTER_CHAT = 99
+
+/** ST {{original}} macro inside character-card main/jailbreak overrides (PromptManager preparePrompt). */
+private val ORIGINAL_MACRO = Regex("\\{\\{original\\}\\}", RegexOption.IGNORE_CASE)
+
+/** ST splits example messages into chats on `<START>` lines (case-insensitive). */
+private val EXAMPLE_CHAT_SPLIT = Regex("<START>", RegexOption.IGNORE_CASE)
+
 interface PromptEngine {
     fun build(request: PromptBuildRequest): PromptBuildResult
 
@@ -67,6 +87,14 @@ data class PromptMessage(
     val role: MessageRole,
     val name: String? = null,
     val content: String,
+    /**
+     * Which prompt slot this message belongs to. Depth injections anchor to the
+     * span of "chat" messages and BEFORE_PROMPT/IN_PROMPT extension prompts
+     * anchor to the "main" message, mirroring ST where injections splice into
+     * the chat-history array (openai.js populationInjectionPrompts) and
+     * relative extension prompts insert around the `main` prompt (injectToMain).
+     */
+    val channel: String? = null,
 )
 
 @Serializable
@@ -124,13 +152,24 @@ class DefaultPromptEngine(
         val expandedCharacter = expandCharacterFields(request.character, macroContext)
         val expandedUserInput = macroEngine.expand(request.userInput, macroContext)
 
-        // 3. Build search text for world book key matching
+        // 3. Build search text for world book key matching. ST prefixes each
+        // scanned message with the speaker name (script.js:4565 chatForWI,
+        // world_info_include_names defaults to true), so name keys match.
         val worldInfoScanDepth = request.metadata["worldInfoScanDepth"]?.jsonPrimitive?.intOrNull
             ?.coerceAtLeast(1) ?: 12
+        val userName = request.persona?.name ?: "User"
         val searchText = buildString {
+            append(userName)
+            append(": ")
             append(expandedUserInput)
             append('\n')
-            request.messages.takeLast(worldInfoScanDepth).forEach { appendLine(it.content) }
+            // ST scans coreChat = chat.filter(x => !x.is_system) (script.js:4560-4565);
+            // hidden messages never feed world-info activation.
+            request.messages.filterNot { it.isHidden }.takeLast(worldInfoScanDepth).forEach {
+                append(it.name.ifBlank { if (it.role == MessageRole.User) userName else request.character.name })
+                append(": ")
+                appendLine(it.swipes.getOrNull(it.swipeIndex) ?: it.content)
+            }
             extensionInjectionScanText(request.metadata).forEach(::appendLine)
         }
 
@@ -217,10 +256,23 @@ class DefaultPromptEngine(
             buildSystemPrompt(request, expandedCharacter, worldScan, macroContext)
         }
 
-        // 6. Build prompt messages
+        // 6. Build prompt messages. The combined system prompt is the "main"
+        // anchor; history and the pending user input are "chat" — depth
+        // injections must land inside the chat span only (ST splices
+        // injections into the chat-history array, openai.js:1325).
         val visibleHistory = request.messages.filterNot { it.isHidden }
+        // ST opens the chat-history block with the new-chat marker
+        // (openai.js:107-108, populateChatHistory): '[Start a new Chat]', or
+        // the group variant listing the members.
+        val groupNames = groupMemberNamesList(request.metadata)
+        val newChatMarker = if (groupNames.size > 1) {
+            macroEngine.expand("[Start a new group chat. Group members: {{group}}]", macroContext)
+        } else {
+            "[Start a new Chat]"
+        }
         val rawMessages = buildList {
-            add(PromptMessage(role = MessageRole.System, content = systemPrompt))
+            add(PromptMessage(role = MessageRole.System, content = systemPrompt, channel = CHANNEL_MAIN))
+            add(PromptMessage(role = MessageRole.System, content = newChatMarker, channel = CHANNEL_MARKER))
             visibleHistory.forEachIndexed { index, message ->
                 val expandedContent = macroEngine.expand(
                     message.swipes.getOrNull(message.swipeIndex) ?: message.content,
@@ -240,6 +292,7 @@ class DefaultPromptEngine(
                             userName = request.persona?.name ?: "User",
                             depth = visibleHistory.lastIndex - index,
                         ),
+                        channel = CHANNEL_CHAT,
                     ),
                 )
             }
@@ -248,14 +301,17 @@ class DefaultPromptEngine(
                     role = MessageRole.User,
                     name = request.persona?.name,
                     content = expandedUserInput,
+                    channel = CHANNEL_CHAT,
                 ),
             )
         }
 
-        // 7. Handle group chat ordering
+        // 7. Handle preset prompt order and group chat ordering
         val preferCharPrompt = request.metadata["preferCharacterPrompt"]
             ?.jsonPrimitive?.booleanOrNull ?: true
-        val presetOrderedMessages = applyPresetPromptOrder(
+        val preferCharJailbreak = request.metadata["preferCharacterJailbreak"]
+            ?.jsonPrimitive?.booleanOrNull ?: true
+        val presetOrder = applyPresetPromptOrder(
             messages = rawMessages,
             preset = request.preset,
             context = macroContext,
@@ -263,8 +319,9 @@ class DefaultPromptEngine(
             personaDescription = request.persona?.description.orEmpty(),
             worldScan = worldScan,
             preferCharPrompt = preferCharPrompt,
+            preferCharJailbreak = preferCharJailbreak,
         )
-        val orderedMessages = applyGroupChatOrdering(presetOrderedMessages, request.metadata)
+        val orderedMessages = applyGroupChatOrdering(presetOrder.messages, request.metadata)
 
         // 8. Apply ST-Prompt-Template compatible EJS processing before token trimming/provider formatting.
         // Macro expansion above can mutate LOCAL/GLOBAL variables. Feed the
@@ -306,13 +363,25 @@ class DefaultPromptEngine(
         // Injections (extension prompts + WI AT_DEPTH) are collected first so
         // their tokens are reserved from the chat budget instead of being
         // spliced in unaccounted AFTER trimming (audit §12.2).
-        val extensionInjections = collectExtensionInjections(request.metadata, worldScan.atDepth)
-        val preferCharJailbreak = request.metadata["preferCharacterJailbreak"]
-            ?.jsonPrimitive?.booleanOrNull ?: true
-        val characterInjections = collectCharacterCardInjections(request.character, macroContext, preferCharJailbreak)
-        val allInjectionsForBudget = extensionInjections + characterInjections
+        val extensionInjections = collectExtensionInjections(request.metadata, worldScan.atDepth, macroContext)
+        // PHI routes through the preset's `jailbreak` slot when a prompt-manager
+        // preset is active (ST openai.js:1496-1504); the standalone depth-0
+        // injection only applies in the presetless fallback path.
+        val characterInjections = collectCharacterCardInjections(
+            character = request.character,
+            context = macroContext,
+            preferCharJailbreak = preferCharJailbreak,
+            includeJailbreak = request.preset.prompts.isEmpty(),
+        )
+        // WI ↑AT/↓AT entries attach to the author's note slot, which ST injects
+        // in-chat at depth 4 as system by default (authors-note.js:272-274,
+        // world-info.js:5149-5153). tellev has no AN text, so the entries alone
+        // form the note payload.
+        val anInjections = collectAuthorsNoteWorldInfo(worldScan)
+        val allInjectionsForBudget =
+            presetOrder.absoluteInjections + extensionInjections + characterInjections + anInjections
         val injectionTokens = injectionTokenCost(allInjectionsForBudget)
-        val budgetedMessages = TokenBudget.fitToBudget(
+        val budgetedRaw = TokenBudget.fitToBudget(
             systemPrompt = templatedSystemPrompt,
             worldInfo = emptyList(),
             characterDescription = "",
@@ -320,6 +389,11 @@ class DefaultPromptEngine(
             budget = (maxContextTokens - (request.preset.maxCompletionTokens ?: request.preset.maxTokens).orElse(0) - injectionTokens)
                 .coerceAtLeast(0),
         )
+        // fitToBudget rebuilds the head system message from plain text, which
+        // drops its channel marker; restore it so injection anchoring works.
+        val budgetedMessages = if (budgetedRaw.isEmpty()) budgetedRaw else {
+            listOf(budgetedRaw.first().copy(channel = templatedMessages.firstOrNull()?.channel)) + budgetedRaw.drop(1)
+        }
 
         // 9.5. Splice in extension-injected prompts (authored by loaded
         // extensions via the ST-compatible `injectPrompts` JS API) and
@@ -449,32 +523,34 @@ class DefaultPromptEngine(
         } else {
             appendLine("You are ${expandedCharacter.name}.")
         }
-        // ↑Char (position 0) + outlet (7) folded into before.
-        appendWorldInfo(worldScan.before + worldScan.outlet)
+        // Slot order follows ST's default chat-completion prompt order: main,
+        // worldInfoBefore, personaDescription, charDescription,
+        // charPersonality, scenario, worldInfoAfter, dialogueExamples.
+        // Outlet (7) entries are NOT emitted: ST registers them as extension
+        // prompts with position NONE unless a named outlet placeholder
+        // consumes them (script.js:4615-4618).
+        appendWorldInfo(worldScan.before)
+        appendBlock("Persona", request.persona?.description?.let { macroEngine.expand(it, macroContext) }.orEmpty())
         appendBlock("Character description", expandedCharacter.description)
-        // ↓Char (position 1).
-        appendWorldInfo(worldScan.after)
         appendBlock("Personality", expandedCharacter.personality)
         appendBlock("Scenario", expandedCharacter.scenario)
-        // ↑AT (position 2) before persona.
-        appendWorldInfo(worldScan.anTop)
-        appendBlock("Persona", request.persona?.description?.let { macroEngine.expand(it, macroContext) }.orEmpty())
-        // ↓AT (position 3) after persona.
-        appendWorldInfo(worldScan.anBottom)
+        // ↓Char (position 1).
+        appendWorldInfo(worldScan.after)
         // ↑EM (position 5) before example messages.
         appendWorldInfo(worldScan.emTop)
         appendBlock("Example messages", expandedCharacter.exampleMessages)
         // ↓EM (position 6) after example messages.
         appendWorldInfo(worldScan.emBottom)
-        // Note: AT_DEPTH (position 4) entries are not part of the system
+        // Note: AT_DEPTH (4), ↑AT/↓AT (2/3) entries are not part of the system
         // prompt; they are spliced into the chat history by
-        // [applyExtensionInjections] as depth-based messages.
+        // [applyExtensionInjections] — ↑AT/↓AT ride the author's-note slot,
+        // which defaults to in-chat depth 4 (authors-note.js:272-274).
     }.trim()
 
+    /** ST joins world info plainly with newlines (default wi_format `{0}`, openai.js:106). */
     private fun StringBuilder.appendWorldInfo(entries: List<WorldInfoScanner.ActivatedEntry>) {
         val nonBlank = entries.map { it.content.trim() }.filter { it.isNotEmpty() }
         if (nonBlank.isEmpty()) return
-        appendLine("World info:")
         nonBlank.forEach { appendLine(it) }
     }
 
@@ -485,15 +561,12 @@ class DefaultPromptEngine(
         worldScan: WorldInfoScanner.ScanResult,
         request: PromptBuildRequest,
     ): String {
-        // The context template only exposes wiBefore/wiAfter slots, so map the
-        // 8 ST positions onto the two: before-character positions (before,
-        // outlet, ANTop, EMTop) → wiBefore; after-character positions (after,
-        // ANBottom, EMBottom) → wiAfter. AT_DEPTH is handled as chat-history
-        // injection, not here.
-        val entriesBefore = (worldScan.before + worldScan.outlet + worldScan.anTop + worldScan.emTop)
-            .joinToString("\n") { it.content }
-        val entriesAfter = (worldScan.after + worldScan.anBottom + worldScan.emBottom)
-            .joinToString("\n") { it.content }
+        // wiBefore/wiAfter carry only ↑Char/↓Char entries, matching ST's
+        // worldInfoBefore/worldInfoAfter (world-info.js:5146-5147). ↑AT/↓AT and
+        // AT_DEPTH are chat-history injections; ↑EM/↓EM wrap the example
+        // messages; outlet entries are dropped without an outlet placeholder.
+        val entriesBefore = worldScan.before.joinToString("\n") { it.content }
+        val entriesAfter = worldScan.after.joinToString("\n") { it.content }
 
         // Resolve the system prompt content so {{system}} renders actual text (audit M10).
         val preferCharPrompt = request.metadata["preferCharacterPrompt"]?.jsonPrimitive?.booleanOrNull ?: true
@@ -504,11 +577,18 @@ class DefaultPromptEngine(
             "You are ${expandedCharacter.name}."
         }
 
+        // ↑EM/↓EM entries prepend/append to the example-message block, mirroring
+        // ST's mesExamplesArray unshift/push (script.js:4580-4596).
+        val examplesWithWi = listOf(
+            worldScan.emTop.joinToString("\n") { it.content },
+            expandedCharacter.exampleMessages,
+            worldScan.emBottom.joinToString("\n") { it.content },
+        ).filter { it.isNotBlank() }.joinToString("\n")
         val enrichedContext = macroContext.copy(
             characterDescription = expandedCharacter.description,
             characterPersonality = expandedCharacter.personality,
             characterScenario = expandedCharacter.scenario,
-            exampleMessages = expandedCharacter.exampleMessages,
+            exampleMessages = examplesWithWi,
             firstMessage = expandedCharacter.firstMessage,
             customVariables = macroContext.customVariables + ("system" to systemContent),
         )
@@ -543,6 +623,15 @@ class DefaultPromptEngine(
         }
         return stops
     }
+    /** Result of preset prompt ordering: the relative (in-order) messages plus
+     * absolute (injection_position=1) prompts that must be depth-injected into
+     * the chat history alongside extension/WI injections, matching ST's
+     * absolutePrompts → populationInjectionPrompts flow (openai.js:1239-1325). */
+    private data class PresetOrderResult(
+        val messages: List<PromptMessage>,
+        val absoluteInjections: List<ExtensionInjection> = emptyList(),
+    )
+
     private fun applyPresetPromptOrder(
         messages: List<PromptMessage>,
         preset: GenerationPreset,
@@ -551,19 +640,24 @@ class DefaultPromptEngine(
         personaDescription: String,
         worldScan: WorldInfoScanner.ScanResult,
         preferCharPrompt: Boolean = true,
-    ): List<PromptMessage> {
-        if (preset.prompts.isEmpty() || messages.isEmpty()) return messages
+        preferCharJailbreak: Boolean = true,
+    ): PresetOrderResult {
+        if (preset.prompts.isEmpty() || messages.isEmpty()) return PresetOrderResult(messages)
         val unused = preset.promptsUnused.map { it.identifier }.toSet()
         val enabled = preset.prompts
             .filter { it.enabled && it.identifier !in unused }
             .sortedWith(compareBy({ it.order }, { it.identifier }))
         val system = messages.firstOrNull { it.role == MessageRole.System }
         val history = messages.filterNot { it === system }
-        val worldBefore = (worldScan.before + worldScan.outlet + worldScan.anTop + worldScan.emTop)
-            .joinToString("\n") { it.content.trim() }
-        val worldAfter = (worldScan.after + worldScan.anBottom + worldScan.emBottom)
-            .joinToString("\n") { it.content.trim() }
-        val relativeMessages = mutableListOf<Pair<Int, PromptMessage>>()
+        // worldInfoBefore/worldInfoAfter carry only ↑Char/↓Char entries
+        // (world-info.js:5093-5098). ↑AT/↓AT and @D are chat injections, ↑EM/↓EM
+        // wrap dialogue examples, and outlets need an explicit placeholder.
+        val worldBefore = worldScan.before.joinToString("\n") { it.content.trim() }
+        val worldAfter = worldScan.after.joinToString("\n") { it.content.trim() }
+        val charData = character.raw["data"] as? JsonObject
+        val charSysPrompt = charData?.get("system_prompt")?.jsonPrimitive?.content?.trim()
+        val charJailbreak = charData?.get("post_history_instructions")?.jsonPrimitive?.content?.trim()
+        val absolutes = mutableListOf<ExtensionInjection>()
         val ordered = mutableListOf<PromptMessage>()
 
         fun roleFor(value: String): MessageRole = when (value.lowercase()) {
@@ -572,47 +666,81 @@ class DefaultPromptEngine(
             else -> MessageRole.System
         }
 
+        /** ST character-card overrides replace the preset slot's content and may
+         * reference the replaced text via {{original}} (openai.js:1486-1504,
+         * PromptManager preparePrompt). */
+        fun applyOverride(presetContent: String, override: String?, allowed: Boolean, forbid: Boolean): String {
+            if (!allowed || forbid || override.isNullOrBlank()) return presetContent
+            return override.replace(ORIGINAL_MACRO, Regex.escapeReplacement(presetContent))
+        }
+
         enabled.forEach { prompt ->
             val identifier = prompt.identifier.lowercase().replace("_", "").replace("-", "")
             if (identifier in setOf("chathistory", "history")) {
                 ordered += history
                 return@forEach
             }
+            if (identifier in setOf("dialogueexamples", "examplemessages", "examples")) {
+                // ST populateDialogueExamples splits examples into chats on
+                // <START> and precedes each with '[Example Chat]'
+                // (openai.js:1092-1123, new_example_chat_prompt); ↑EM/↓EM WI
+                // entries become their own example blocks (script.js:4580-4596).
+                val chunks = buildList {
+                    worldScan.emTop.forEach { add(it.content.trim()) }
+                    character.exampleMessages.split(EXAMPLE_CHAT_SPLIT)
+                        .map { it.trim() }
+                        .forEach { add(it) }
+                    worldScan.emBottom.forEach { add(it.content.trim()) }
+                }.filter { it.isNotEmpty() }
+                chunks.forEach { chunk ->
+                    ordered += PromptMessage(role = MessageRole.System, content = "[Example Chat]", channel = CHANNEL_MARKER)
+                    ordered += PromptMessage(role = MessageRole.System, content = macroEngine.expand(chunk, context))
+                }
+                return@forEach
+            }
+            val channel = when (identifier) {
+                "main", "system", "systemprompt" -> CHANNEL_MAIN
+                else -> null
+            }
             val component = when (identifier) {
                 "main", "system", "systemprompt" -> {
-                    // Prefer the character card's system_prompt when the preset
-                    // slot is empty and preferCharPrompt is enabled (ST:
-                    // `chat_metadata.system_prompt ||
-                    // character.data?.system_prompt`).
-                    val charSysPrompt = (character.raw["data"] as? JsonObject)
-                        ?.get("system_prompt")?.jsonPrimitive?.content?.trim()
-                    prompt.content.takeIf { it.isNotBlank() }
-                        ?: (if (preferCharPrompt) charSysPrompt?.takeIf { it.isNotBlank() } else null)
-                        ?: "You are ${character.name}."
+                    val base = prompt.content.takeIf { it.isNotBlank() } ?: "You are ${character.name}."
+                    applyOverride(base, charSysPrompt, preferCharPrompt, prompt.forbidOverrides)
                 }
+                "jailbreak", "posthistoryinstructions", "phi" ->
+                    applyOverride(prompt.content, charJailbreak, preferCharJailbreak, prompt.forbidOverrides)
                 "worldinfobefore" -> worldBefore
                 "worldinfoafter" -> worldAfter
                 "chardescription", "characterdescription" -> character.description
                 "charpersonality", "characterpersonality" -> character.personality
                 "scenario" -> character.scenario
                 "personadescription", "persona" -> macroEngine.expand(personaDescription, context)
-                "dialogueexamples", "examplemessages", "examples" -> character.exampleMessages
                 else -> prompt.content
             }
             if (component.isBlank()) return@forEach
-            val message = PromptMessage(
-                role = roleFor(prompt.role),
-                content = macroEngine.expand(component, context),
-            )
-            if (prompt.relative) relativeMessages += prompt.depth.coerceAtLeast(0) to message
-            else ordered += message
+            val expanded = macroEngine.expand(component, context)
+            if (prompt.relative) {
+                // injection_position=1 (absolute): depth-inject into chat
+                // history with the prompt's role, depth and order, exactly like
+                // ST's absolutePrompts (openai.js:1239-1244, 801-866).
+                absolutes += ExtensionInjection(
+                    value = expanded,
+                    position = 1,
+                    depth = prompt.depth.coerceAtLeast(0),
+                    role = roleFor(prompt.role),
+                    order = absolutes.size,
+                    key = null,
+                    orderGroup = prompt.injectionOrder,
+                )
+            } else {
+                ordered += PromptMessage(
+                    role = roleFor(prompt.role),
+                    content = expanded,
+                    channel = channel,
+                )
+            }
         }
-
-        relativeMessages.forEach { (depth, message) ->
-            val index = (ordered.size - depth).coerceIn(0, ordered.size)
-            ordered.add(index, message)
-        }
-        return ordered
+        return PresetOrderResult(ordered, absolutes)
     }
 
 
@@ -702,13 +830,17 @@ class DefaultPromptEngine(
     private fun collectExtensionInjections(
         metadata: JsonObject,
         wiDepthEntries: List<WorldInfoScanner.ActivatedEntry> = emptyList(),
+        macroContext: MacroContext? = null,
     ): List<ExtensionInjection> {
         val injectedObj = metadata["injectedPrompts"] as? JsonObject ?: buildJsonObject { }
 
         val entries = mutableListOf<ExtensionInjection>()
-        for ((_, entryElement) in injectedObj) {
+        for ((promptKey, entryElement) in injectedObj) {
             val entry = entryElement as? JsonObject ?: continue
-            val value = runCatching { entry["value"]?.jsonPrimitive?.content }.getOrNull() ?: continue
+            val rawValue = runCatching { entry["value"]?.jsonPrimitive?.content }.getOrNull() ?: continue
+            // ST substitutes macros when the prompt is read at generation time
+            // (script.js:3215, 3267 substituteParams).
+            val value = macroContext?.let { macroEngine.expand(rawValue, it) } ?: rawValue
             if (value.isBlank()) continue
             val included = runCatching { entry["filter"]?.jsonPrimitive?.booleanOrNull }
                 .getOrNull() ?: true
@@ -719,16 +851,28 @@ class DefaultPromptEngine(
                 runCatching { entry["role"]?.jsonPrimitive?.content }.getOrNull(),
             )
             if (position == -1) continue // extension_prompt_types.NONE
-            entries.add(ExtensionInjection(value, position, depth, role, entries.size))
+            entries.add(ExtensionInjection(value, position, depth, role, entries.size, key = promptKey))
         }
-        // World-info AT_DEPTH entries → IN_CHAT (position 1) injections at the
-        // entry's depth, with the entry's role. Reuses the same depth+role
-        // grouping logic as extension injections.
-        for (wi in wiDepthEntries) {
-            if (wi.content.isBlank()) continue
-            val role = resolveExtensionInjectionRole(wi.entry.role.toString())
-            entries.add(ExtensionInjection(wi.content, 1, wi.entry.depth, role, entries.size))
-        }
+        // World-info AT_DEPTH entries: ST groups them per (depth, role) and
+        // joins the group with newlines into ONE extension prompt keyed
+        // customDepthWI (world-info.js:5116-5127, script.js:4609-4614).
+        wiDepthEntries
+            .filter { it.content.isNotBlank() }
+            .groupBy { it.entry.depth to it.entry.role }
+            .forEach { (depthRole, group) ->
+                val (depth, roleInt) = depthRole
+                val role = resolveExtensionInjectionRole(roleInt.toString())
+                entries.add(
+                    ExtensionInjection(
+                        value = group.joinToString("\n") { it.content },
+                        position = 1,
+                        depth = depth,
+                        role = role,
+                        order = entries.size,
+                        key = "customDepthWI-$depth-$roleInt",
+                    ),
+                )
+            }
         return entries
     }
 
@@ -749,6 +893,7 @@ class DefaultPromptEngine(
         character: CharacterCard,
         context: MacroContext,
         preferCharJailbreak: Boolean = true,
+        includeJailbreak: Boolean = true,
     ): List<ExtensionInjection> {
         val entries = mutableListOf<ExtensionInjection>()
         val data = character.raw["data"] as? JsonObject ?: character.raw
@@ -764,20 +909,46 @@ class DefaultPromptEngine(
                 val role = resolveExtensionInjectionRole(
                     depthPrompt["role"]?.jsonPrimitive?.content,
                 )
-                entries.add(ExtensionInjection(expanded, 1, depth, role, entries.size))
+                entries.add(ExtensionInjection(expanded, 1, depth, role, entries.size, key = "DEPTH_PROMPT"))
             }
         }
 
-        // post_history_instructions (jailbreak) — injected at depth 0 as system.
-        val jailbreak = data["post_history_instructions"]?.jsonPrimitive?.content?.trim()
-        if (!jailbreak.isNullOrEmpty()) {
-            val expanded = macroEngine.expand(jailbreak, context)
-            if (expanded.isNotBlank()) {
-                entries.add(ExtensionInjection(expanded, 1, 0, MessageRole.System, entries.size))
+        // post_history_instructions (jailbreak). With an active prompt-manager
+        // preset, ST routes PHI exclusively through the preset's `jailbreak`
+        // slot (openai.js:1496-1504) — see applyPresetPromptOrder. Only the
+        // presetless fallback appends it here, as its own message after the
+        // chat history (mirroring the default order where jailbreak follows
+        // chatHistory).
+        if (includeJailbreak && preferCharJailbreak) {
+            val jailbreak = data["post_history_instructions"]?.jsonPrimitive?.content?.trim()
+            if (!jailbreak.isNullOrEmpty()) {
+                val expanded = macroEngine.expand(jailbreak, context)
+                if (expanded.isNotBlank()) {
+                    entries.add(
+                        ExtensionInjection(expanded, POSITION_AFTER_CHAT, 0, MessageRole.System, entries.size),
+                    )
+                }
             }
         }
 
         return entries
+    }
+
+    /**
+     * WI ↑AT/↓AT entries ride the author's-note extension prompt
+     * (world-info.js:5149-5153). tellev has no author's-note text, so the
+     * joined entries form the whole payload, at the AN slot's defaults:
+     * in-chat, depth 4, system role (authors-note.js:272-274).
+     */
+    private fun collectAuthorsNoteWorldInfo(worldScan: WorldInfoScanner.ScanResult): List<ExtensionInjection> {
+        val payload = (worldScan.anTop + worldScan.anBottom)
+            .map { it.content.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString("\n")
+        if (payload.isBlank()) return emptyList()
+        return listOf(
+            ExtensionInjection(payload, 1, 4, MessageRole.System, 0, key = "2_floating_prompt"),
+        )
     }
 
     /**
@@ -810,17 +981,25 @@ class DefaultPromptEngine(
         entries.sumOf { TokenBudget.estimateTokens(it.value) + 4 }
 
     /**
-     * Splice extension-injected prompts into the message list.
+     * Splice injected prompts into the message list, mirroring SillyTavern.
      *
-     * The convention mirrors SillyTavern's `extension_prompt_types`:
-     * - `position == 2` (BEFORE_PROMPT): prepend before the system prompt.
-     * - `position == 0` (IN_PROMPT): insert immediately after the leading
-     *   run of system messages (i.e. after the system prompt).
-     * - `position == 1` (IN_CHAT): depth-based insertion. `depth == 0`
-     *   inserts at the very end of the message list, `depth == N` inserts
-     *   N positions from the end. Within a depth, entries are grouped by
-     *   role in the order system → user → assistant, matching ST's
-     *   "most important go lower" rule.
+     * - `position == 2` (BEFORE_PROMPT): insert before the `main` prompt
+     *   (openai.js injectToMain with position 'start').
+     * - `position == 0` (IN_PROMPT): insert right after the `main` prompt
+     *   (injectToMain 'end'); without a main anchor, after the leading run of
+     *   system messages.
+     * - `position == 1` (IN_CHAT): depth-based insertion into the CHAT span
+     *   only (openai.js:1325 populationInjectionPrompts operates on the chat
+     *   history array). `depth == 0` lands right after the newest chat
+     *   message; depths beyond the chat length clamp to the top of the chat.
+     *   Within one depth, ST emits per order-group, per-role messages whose
+     *   contents are JOINED with newlines (openai.js:824-855): chronological
+     *   order is ascending order-group, each group assistant → user → system,
+     *   so system sits closest to the end ("most important go lower").
+     *   Within a role, preset absolute prompts come first, then
+     *   extension-style prompts sorted by key (script.js:3250-3251).
+     * - `position == 99` (internal AFTER_CHAT): standalone message appended
+     *   after the chat span and any depth-0 injections (fallback-path PHI).
      * - `position == -1` (NONE): skipped.
      */
     private fun applyExtensionInjections(
@@ -830,43 +1009,104 @@ class DefaultPromptEngine(
         if (entries.isEmpty()) return messages
 
         val beforePrompts = entries.filter { it.position == 2 }
-        val afterSystemPrompts = entries.filter { it.position == 0 }
+        val afterMainPrompts = entries.filter { it.position == 0 }
         val inChat = entries.filter { it.position == 1 }
+        val afterChat = entries.filter { it.position == POSITION_AFTER_CHAT }
 
         val result = messages.toMutableList()
 
-        // BEFORE_PROMPT → prepend in arrival order.
-        var frontIdx = 0
-        for (entry in beforePrompts) {
-            result.add(frontIdx, PromptMessage(role = entry.role, content = entry.value))
-            frontIdx++
+        fun mainIndex(): Int {
+            val idx = result.indexOfFirst { it.channel == CHANNEL_MAIN }
+            return idx
         }
 
-        // IN_PROMPT → right after the leading run of system messages.
-        val firstNonSystem = result.indexOfFirst { it.role != MessageRole.System }
-        val inPromptBase = if (firstNonSystem < 0) result.size else firstNonSystem
-        var inPromptIdx = inPromptBase
-        for (entry in afterSystemPrompts) {
+        // BEFORE_PROMPT → before the main prompt, in arrival order.
+        val beforeBase = mainIndex().coerceAtLeast(0)
+        beforePrompts.forEachIndexed { i, entry ->
+            result.add(beforeBase + i, PromptMessage(role = entry.role, content = entry.value))
+        }
+
+        // IN_PROMPT → right after the main prompt; fallback: after the leading
+        // run of system messages.
+        val mainIdx = mainIndex()
+        var inPromptIdx = if (mainIdx >= 0) {
+            mainIdx + 1
+        } else {
+            val firstNonSystem = result.indexOfFirst { it.role != MessageRole.System }
+            if (firstNonSystem < 0) result.size else firstNonSystem
+        }
+        for (entry in afterMainPrompts) {
             result.add(inPromptIdx, PromptMessage(role = entry.role, content = entry.value))
             inPromptIdx++
         }
 
-        // IN_CHAT at depth → deepest first to keep indices stable.
-        val byDepth = inChat.groupBy { it.depth }.toSortedMap(reverseOrder())
-        for (depth in byDepth.keys) {
-            val atDepth = byDepth[depth] ?: emptyList()
-            val insertIdx = (result.size - depth).coerceIn(0, result.size)
-            val roleOrder = listOf(MessageRole.System, MessageRole.User, MessageRole.Assistant)
-            var offset = 0
-            for (role in roleOrder) {
-                for (entry in atDepth.filter { it.role == role }) {
-                    result.add(insertIdx + offset, PromptMessage(role = entry.role, content = entry.value))
-                    offset++
-                }
-            }
+        // IN_CHAT at depth, anchored to the chat span.
+        val chatStart = result.indexOfFirst { it.channel == CHANNEL_CHAT }
+        val chatEndExclusive = result.indexOfLast { it.channel == CHANNEL_CHAT } + 1
+        val anchorStart: Int
+        val anchorEnd: Int
+        if (chatStart < 0) {
+            // No chat messages at all: injections land after the leading system run.
+            val firstNonSystem = result.indexOfFirst { it.role != MessageRole.System }
+            val base = if (firstNonSystem < 0) result.size else firstNonSystem
+            anchorStart = base
+            anchorEnd = base
+        } else {
+            anchorStart = chatStart
+            anchorEnd = chatEndExclusive
+        }
+
+        // Iterate depths ascending: each deeper insertion index is strictly
+        // smaller than all previous ones, so earlier splices stay valid.
+        val byDepth = inChat.groupBy { it.depth }.toSortedMap()
+        for ((depth, atDepth) in byDepth) {
+            val insertIdx = (anchorEnd - depth).coerceIn(anchorStart, anchorEnd)
+            result.addAll(insertIdx, buildInjectionBlock(atDepth))
+        }
+
+        // Fallback-path PHI: its own message after the chat and all depth-0
+        // injections, like the default-order jailbreak slot after chatHistory.
+        var afterChatIdx = if (chatStart < 0) result.size else {
+            result.indexOfLast { it.channel == CHANNEL_CHAT } + 1 + insertedAtDepthZero(byDepth)
+        }
+        afterChatIdx = afterChatIdx.coerceIn(0, result.size)
+        for (entry in afterChat) {
+            result.add(afterChatIdx, PromptMessage(role = entry.role, content = entry.value))
+            afterChatIdx++
         }
 
         return result
+    }
+
+    private fun insertedAtDepthZero(byDepth: Map<Int, List<ExtensionInjection>>): Int =
+        byDepth[0]?.let { buildInjectionBlock(it).size } ?: 0
+
+    /**
+     * Build the chronological message block for one depth: ascending
+     * order-group, each group assistant → user → system; same-group same-role
+     * contents joined with '\n' (preset absolutes first, then extension
+     * prompts sorted by key).
+     */
+    private fun buildInjectionBlock(atDepth: List<ExtensionInjection>): List<PromptMessage> {
+        val block = mutableListOf<PromptMessage>()
+        val byGroup = atDepth.groupBy { it.orderGroup }.toSortedMap()
+        for ((_, group) in byGroup) {
+            for (role in listOf(MessageRole.Assistant, MessageRole.User, MessageRole.System)) {
+                val rolePrompts = group.filter { it.role == role }
+                if (rolePrompts.isEmpty()) continue
+                val presetParts = rolePrompts.filter { it.key == null }
+                    .sortedBy { it.order }
+                    .map { it.value.trim() }
+                val extensionParts = rolePrompts.filter { it.key != null }
+                    .sortedBy { it.key }
+                    .map { it.value.trim() }
+                val joined = (presetParts + extensionParts).filter { it.isNotEmpty() }.joinToString("\n")
+                if (joined.isNotEmpty()) {
+                    block.add(PromptMessage(role = role, content = joined))
+                }
+            }
+        }
+        return block
     }
 
     private fun resolveExtensionInjectionRole(raw: String?): MessageRole {
@@ -875,17 +1115,25 @@ class DefaultPromptEngine(
             "0", "system" -> MessageRole.System
             "1", "user" -> MessageRole.User
             "2", "assistant", "char", "character" -> MessageRole.Assistant
-            "tool" -> MessageRole.Tool
+            // ST extension_prompt_roles has no tool role; unknown roles coerce
+            // to system so the injection is never silently dropped.
             else -> MessageRole.System
         }
     }
 
     private data class ExtensionInjection(
         val value: String,
+        /** ST extension_prompt_types: -1 NONE, 0 IN_PROMPT, 1 IN_CHAT, 2 BEFORE_PROMPT; 99 internal AFTER_CHAT. */
         val position: Int,
         val depth: Int,
         val role: MessageRole,
+        /** Arrival order; tiebreak within preset absolutes of one order group. */
         val order: Int,
+        /** Extension-prompt key for ST's key-sorted joining (script.js:3250);
+         * null marks a preset absolute prompt, which joins before keyed ones. */
+        val key: String? = null,
+        /** ST injection_order (default 100); groups merge ascending in the final prompt. */
+        val orderGroup: Int = 100,
     )
 
     private fun compatibilityWarnings(request: PromptBuildRequest): List<String> = buildList {

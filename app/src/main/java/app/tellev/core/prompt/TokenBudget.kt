@@ -109,14 +109,32 @@ object TokenBudget {
             val includedMessages = mutableListOf<PromptMessage>()
             var messageTokensUsed = 0
 
+            // When channel markers are present, only chat-history messages are
+            // subject to trimming — SillyTavern never drops prompt-manager
+            // entries to fit chat, it only trims the chat history itself
+            // (openai.js populateChatHistory). Unmarked lists (legacy callers)
+            // keep the original oldest-first trimming.
+            val hasChannels = messages.any { it.channel == CHANNEL_CHAT }
+            var chatBudgetExhausted = false
+
             // Iterate from most recent to oldest
             for (message in messages.asReversed()) {
                 val msgTokens = estimateTokens(message.content) +
                     (message.name?.let { estimateTokens(it) } ?: 0) +
                     4 // overhead for role/formatting tokens
-                if (messageTokensUsed + msgTokens <= remainingBudget) {
+                if (hasChannels && message.channel != CHANNEL_CHAT) {
+                    // Non-chat prompt slots are always kept.
                     includedMessages.add(message)
                     messageTokensUsed += msgTokens
+                    continue
+                }
+                if (!chatBudgetExhausted && messageTokensUsed + msgTokens <= remainingBudget) {
+                    includedMessages.add(message)
+                    messageTokensUsed += msgTokens
+                } else if (hasChannels) {
+                    // Skip this chat message and all older ones, but keep
+                    // scanning for non-chat slots that must survive.
+                    chatBudgetExhausted = true
                 } else {
                     // Can't fit this message; stop including older messages
                     break

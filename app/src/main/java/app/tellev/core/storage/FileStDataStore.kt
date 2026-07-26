@@ -1370,6 +1370,10 @@ class FileStDataStore(
                         ?: entryObj["ignoreBudget"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
                         ?: entryObj["ignore_budget"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
                         ?: false,
+                    group = entryObj["group"]?.jsonPrimitive?.content ?: "",
+                    groupOverride = entryObj["groupOverride"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+                    groupWeight = entryObj["groupWeight"]?.jsonPrimitive?.content?.toIntOrNull() ?: 100,
+                    useGroupScoring = entryObj["useGroupScoring"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
                     raw = entryObj,
                 )
             }.getOrNull()

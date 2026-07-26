@@ -27,8 +27,11 @@ internal fun parsePresetPrompts(element: JsonElement?): List<PresetPrompt> =
             enabled = obj["enabled"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true,
             relative = obj["relative"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
                 ?: (obj.intValue("injection_position") == 1),
-            depth = obj.intValue("depth") ?: obj.intValue("injection_depth") ?: 0,
+            // ST PromptManager DEFAULT_DEPTH = 4 when injection_depth is absent.
+            depth = obj.intValue("depth") ?: obj.intValue("injection_depth") ?: 4,
             order = obj.intValue("order") ?: index,
+            injectionOrder = obj.intValue("injection_order") ?: 100,
+            forbidOverrides = obj["forbid_overrides"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
             raw = obj,
         )
     } ?: emptyList()

@@ -178,12 +178,31 @@ class DefaultPromptTemplateProcessor(
         }
     }
 
+    /**
+     * Numeric [GENERATE:N]/@INJECT indices address the logical layout
+     * "system prompt, then chat messages". Structural marker messages
+     * ('[Start a new Chat]', '[Example Chat]') are invisible to that index
+     * space, so cards written against SillyTavern (whose template runs before
+     * markers exist) keep working.
+     */
+    private fun logicalIndexToArrayIndex(messages: List<PromptMessage>, logical: Int): Int {
+        if (logical < 0) return 0
+        var counted = -1
+        messages.forEachIndexed { arrayIndex, message ->
+            if (message.channel != CHANNEL_MARKER) {
+                counted++
+                if (counted == logical) return arrayIndex
+            }
+        }
+        return messages.size
+    }
+
     private fun resolveGenerateTarget(
         messages: List<PromptMessage>,
         block: InstructionBlock,
         state: TemplateState,
     ): Int? {
-        block.index?.let { return it.coerceIn(0, messages.lastIndex) }
+        block.index?.let { return logicalIndexToArrayIndex(messages, it).coerceIn(0, messages.lastIndex) }
         block.regex?.let { pattern ->
             val regex = runCatching { Regex(pattern, RegexOption.DOT_MATCHES_ALL) }.getOrElse {
                 state.warn("Invalid [GENERATE:REGEX] pattern: $pattern")
@@ -214,7 +233,7 @@ class DefaultPromptTemplateProcessor(
         state: TemplateState,
     ): Int {
         block.index?.let {
-            val base = it.coerceIn(0, messages.size)
+            val base = logicalIndexToArrayIndex(messages, it).coerceIn(0, messages.size)
             return when (block.placement ?: Placement.Before) {
                 Placement.Before -> base
                 Placement.After -> (base + 1).coerceAtMost(messages.size)

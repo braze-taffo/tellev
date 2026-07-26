@@ -1305,10 +1305,14 @@ class WebViewJsExtensionHost(
                 "else{prompts=promptsOrId;options=contentOrOptions||{};}" +
                 "var ids=[];prompts.forEach(function(p){if(!p||typeof p!=='object')throw new Error('injectPrompts expects prompt objects');" +
                     "var id=(p.id===undefined||p.id===null||String(p.id)==='')?TavernHelper.builtin.uuidv4():String(p.id);" +
-                    "var position=isLegacy?(p.position===undefined?0:Number(p.position)):(p.position==='none'?-1:(p.position==='in_chat'||p.position===undefined?1:Number(p.position)));" +
+                    "var position=isLegacy?(p.position===undefined?0:(isNaN(Number(p.position))?0:Number(p.position))):(p.position==='none'?-1:1);" +
                     "var depth=p.depth===undefined?(isLegacy?4:0):Number(p.depth);var role=String(p.role||'system').toLowerCase();" +
-                    "if(typeof p.filter==='function'){tellevNative.log('warning','Dynamic injectPrompts filter is not supported; skipped '+id);return;}" +
-                    "var allowed=p.filter===undefined?true:Boolean(p.filter);if(!allowed)return;" +
+                    "var allowed=true;" +
+                    "if(typeof p.filter==='function'){" +
+                        "try{allowed=Boolean(p.filter());}catch(e){allowed=true;}" +
+                        "tellevNative.log('info','injectPrompts filter evaluated once at inject time for '+id+' (ST re-evaluates per generation)');" +
+                    "}else if(p.filter!==undefined){allowed=Boolean(p.filter);}" +
+                    "if(!allowed)return;" +
                     "var shouldScan=Boolean(p.should_scan!==undefined?p.should_scan:p.shouldScan);" +
                     "tellevNative.stInjectPromptWithOptions(id,String(p.content||''),position,depth,role,shouldScan);ids.push(id);});" +
                 "var deleted=false;var uninject=function(){if(deleted)return;TavernHelper.uninjectPrompts(ids);deleted=true;};" +

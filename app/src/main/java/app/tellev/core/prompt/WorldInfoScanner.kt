@@ -87,42 +87,65 @@ class WorldInfoScanner(
         // SillyTavern always rejects disabled entries before considering the
         // constant flag. A disabled constant is still disabled.
         val candidates = entries.filter { it.enabled }
+        // Leading @@decorator lines are parsed out of the content before
+        // anything else (world-info.js:4517 parseDecorators); [stripped]
+        // carries the decorator-free entry passed to [expand] so decorator
+        // lines never reach the prompt or the recursion buffer.
+        val decorators = HashMap<WorldBookEntry, List<String>>()
+        val stripped = HashMap<WorldBookEntry, WorldBookEntry>()
+        for (entry in candidates) {
+            val (decs, content) = parseDecorators(entry.content)
+            decorators[entry] = decs
+            stripped[entry] = if (content == entry.content) entry else entry.copy(content = content)
+        }
         val activated = LinkedHashMap<WorldBookEntry, String>()
         val failedProbability = mutableSetOf<WorldBookEntry>()
+
+        fun processMatchedPass(matched: List<WorldBookEntry>, passText: String): List<WorldBookEntry> {
+            // Inclusion groups run on each pass's fresh matches BEFORE the
+            // probability rolls (world-info.js:4893 filterByInclusionGroups).
+            val survivors = filterByInclusionGroups(matched, activated.keys, passText, keyExpand)
+            val nextNew = mutableListOf<WorldBookEntry>()
+            for (entry in survivors) {
+                if (activated.containsKey(entry)) continue
+                if (passesProbability(entry)) {
+                    activated[entry] = expand(stripped.getValue(entry))
+                    nextNew.add(entry)
+                } else {
+                    failedProbability.add(entry)
+                }
+            }
+            return nextNew
+        }
 
         // ── Initial pass ──────────────────────────────────────────────────
         // ST suppresses delayUntilRecursion entries outside recursion scans
         // (world-info.js:4749-4752), regardless of the delay level.
-        val initialMatches = candidates.filter { it.delayUntilRecursion <= 0 && matchEntry(it, searchText, keyExpand) }
-        for (entry in initialMatches) {
-            if (passesProbability(entry)) {
-                val content = expand(entry)
-                activated[entry] = content
-            } else {
-                failedProbability.add(entry)
-            }
+        val initialMatches = candidates.filter {
+            it.delayUntilRecursion <= 0 && matchEntry(it, searchText, keyExpand, decorators.getValue(it))
         }
+        processMatchedPass(initialMatches, searchText)
 
         // ── Recursive passes ──────────────────────────────────────────────
         if (maxRecursionSteps > 0) {
             var newlyActivated = activated.keys.toList()
+            // ST's recurse buffer accumulates across ALL passes
+            // (WorldInfoBuffer.addRecurse pushes, never clears mid-scan).
+            val recurseBuffer = StringBuilder()
             var steps = 0
             while (newlyActivated.isNotEmpty() && steps < maxRecursionSteps) {
                 val currentLevel = steps + 1
-                // Build the recursion text from entries activated in the
-                // previous pass, skipping those that opt out of feeding
-                // recursion. preventRecursion entries do not feed further
-                // recursion (but were still activated themselves).
+                // preventRecursion entries do not feed further recursion (but
+                // were still activated themselves).
                 val recursionText = buildString {
                     newlyActivated
                         .filter { !it.preventRecursion }
                         .forEach { append(activated[it]); append('\n') }
                 }
-                if (recursionText.isBlank()) break
+                if (recursionText.isBlank() && recurseBuffer.isBlank()) break
+                recurseBuffer.append(recursionText)
 
-                // Combine the original search text with the recursion buffer,
-                // mirroring ST's buffer.get() which appends recursion content.
-                val combinedText = "$searchText\n$recursionText"
+                val combinedText = "$searchText\n$recurseBuffer"
                 // Recursion candidates: anything not yet activated and not
                 // already failed a probability roll. delayUntilRecursion
                 // entries become eligible once the scan reaches their level
@@ -135,19 +158,9 @@ class WorldInfoScanner(
                 }
 
                 val matchedThisRound = recursionCandidates
-                    .filter { matchEntry(it, combinedText, keyExpand) }
+                    .filter { matchEntry(it, combinedText, keyExpand, decorators.getValue(it)) }
 
-                val nextNew = mutableListOf<WorldBookEntry>()
-                for (entry in matchedThisRound) {
-                    if (activated.containsKey(entry)) continue
-                    if (passesProbability(entry)) {
-                        activated[entry] = expand(entry)
-                        nextNew.add(entry)
-                    } else {
-                        failedProbability.add(entry)
-                    }
-                }
-                newlyActivated = nextNew
+                newlyActivated = processMatchedPass(matchedThisRound, combinedText)
                 steps++
             }
         }
@@ -183,12 +196,27 @@ class WorldInfoScanner(
         val budget = maxContentTokens?.takeIf { it > 0 } ?: return entries
         val included = mutableListOf<Map.Entry<WorldBookEntry, String>>()
         var usedTokens = 0
+        var overflowed = false
 
+        // ST semantics (world-info.js:4900-4954): the entry that crosses the
+        // budget is dropped AND the overflow latches — every later entry is
+        // skipped too, except ignoreBudget entries which always insert.
         for (entry in entries) {
+            if (entry.key.ignoreBudget) {
+                // Always inserted, but its content still counts toward the
+                // budget for later entries (ST accumulates newContent
+                // unconditionally before the overflow check).
+                included += entry
+                usedTokens += TokenBudget.estimateTokens(entry.value)
+                continue
+            }
+            if (overflowed) continue
             val contentTokens = TokenBudget.estimateTokens(entry.value)
-            if (entry.key.ignoreBudget || usedTokens + contentTokens < budget) {
+            if (usedTokens + contentTokens < budget) {
                 included += entry
                 usedTokens += contentTokens
+            } else {
+                overflowed = true
             }
         }
         return included
@@ -204,14 +232,142 @@ class WorldInfoScanner(
      * True if [entry] matches [text] under its primary-key + selective-logic
      * rules. constant entries are handled by the caller (they skip matching).
      * Keys are macro-expanded via [keyExpand] before matching (ST substitutes
-     * params in keys, world-info.js:4803-4804,4835).
+     * params in keys, world-info.js:4803-4804,4835). Decorators short-circuit
+     * matching: @@activate forces the entry in, @@dont_activate keeps it out
+     * (world-info.js:4763-4772; @@activate checked first).
      */
-    private fun matchEntry(entry: WorldBookEntry, text: String, keyExpand: (String) -> String): Boolean {
+    private fun matchEntry(
+        entry: WorldBookEntry,
+        text: String,
+        keyExpand: (String) -> String,
+        decorators: List<String> = emptyList(),
+    ): Boolean {
+        if ("@@activate" in decorators) return true
+        if ("@@dont_activate" in decorators) return false
         if (entry.constant) return true
         val primaryMatched = entry.keys.any { it.isNotBlank() && matchKey(keyExpand(it), text, entry) }
         if (!entry.selective) return primaryMatched
         if (!primaryMatched) return false
         return evaluateSecondary(entry, text, keyExpand)
+    }
+
+    /**
+     * ST parseDecorators (world-info.js:4540-4585): leading lines starting
+     * with `@@` are decorators; `@@@` marks a fallback that only applies when
+     * the preceding `@@` line was unknown. Returns (decorators, content
+     * without the decorator lines).
+     */
+    private fun parseDecorators(content: String): Pair<List<String>, String> {
+        if (!content.startsWith("@@")) return emptyList<String>() to content
+        val known = listOf("@@activate", "@@dont_activate")
+        fun isKnown(line: String): Boolean {
+            val data = if (line.startsWith("@@@")) line.substring(1) else line
+            return known.any { data.startsWith(it) }
+        }
+        val lines = content.split("\n")
+        val decorators = mutableListOf<String>()
+        var newContent = ""
+        var fallbacked = false
+        for (i in lines.indices) {
+            val line = lines[i]
+            if (line.startsWith("@@")) {
+                if (line.startsWith("@@@") && !fallbacked) continue
+                if (isKnown(line)) {
+                    decorators.add(if (line.startsWith("@@@")) line.substring(1) else line)
+                    fallbacked = false
+                } else {
+                    fallbacked = true
+                }
+            } else {
+                newContent = lines.drop(i).joinToString("\n")
+                break
+            }
+        }
+        // Normalize to the bare decorator names for matching.
+        val normalized = decorators.map { line -> known.first { line.startsWith(it) } }
+        return normalized to newContent
+    }
+
+    /**
+     * ST inclusion groups (world-info.js:5269-5361 filterByInclusionGroups +
+     * 5173-5209 filterGroupsByScoring, minus timed effects which tellev does
+     * not implement): among this pass's fresh matches that share a group
+     * label, only one wins — by prioritize flag (sorted by insertion order),
+     * else by weighted random roll. A group that already has an activated
+     * entry admits no new members.
+     */
+    private fun filterByInclusionGroups(
+        matched: List<WorldBookEntry>,
+        alreadyActivated: Collection<WorldBookEntry>,
+        passText: String,
+        keyExpand: (String) -> String,
+    ): List<WorldBookEntry> {
+        val grouped = LinkedHashMap<String, MutableList<WorldBookEntry>>()
+        for (entry in matched) {
+            if (entry.group.isBlank()) continue
+            entry.group.split(Regex(",\\s*")).filter { it.isNotEmpty() }.forEach { label ->
+                grouped.getOrPut(label) { mutableListOf() }.add(entry)
+            }
+        }
+        if (grouped.isEmpty()) return matched
+
+        val removed = mutableSetOf<WorldBookEntry>()
+        for ((label, group) in grouped) {
+            val alive = group.filterNot { it in removed }.toMutableList()
+
+            // Scoring pass: keep only the best key-match scorers among entries
+            // that opted into group scoring (world-info.js:5173-5209).
+            if (alive.any { it.useGroupScoring }) {
+                val scores = alive.associateWith { groupScore(it, passText, keyExpand) }
+                val maxScore = scores.values.maxOrNull() ?: 0
+                alive.filter { it.useGroupScoring && (scores[it] ?: 0) < maxScore }
+                    .forEach { removed.add(it); alive.remove(it) }
+            }
+
+            // ST compares the FULL group string against the label here
+            // (world-info.js:5314 `x.group === key`), quirk included.
+            if (alreadyActivated.any { it.group == label }) {
+                alive.forEach { removed.add(it) }
+                continue
+            }
+            if (alive.size <= 1) continue
+
+            // Prioritized entries win by insertion order (sortFn: order desc).
+            val prios = alive.filter { it.groupOverride }.sortedByDescending { it.insertionOrder }
+            val winner: WorldBookEntry? = if (prios.isNotEmpty()) {
+                prios.first()
+            } else {
+                // Weighted random roll (DEFAULT_WEIGHT = 100).
+                val totalWeight = alive.sumOf { it.groupWeight.coerceAtLeast(0) }
+                val rollValue = random() * totalWeight
+                var currentWeight = 0
+                var picked: WorldBookEntry? = null
+                for (entry in alive) {
+                    currentWeight += entry.groupWeight.coerceAtLeast(0)
+                    if (rollValue <= currentWeight) {
+                        picked = entry
+                        break
+                    }
+                }
+                picked
+            }
+            if (winner != null) {
+                alive.filter { it !== winner }.forEach { removed.add(it) }
+            }
+        }
+        return matched.filterNot { it in removed }
+    }
+
+    /** ST WorldInfoBuffer.getScore: count of matching primary keys, plus
+     * secondary-key contributions per the entry's selective logic. */
+    private fun groupScore(entry: WorldBookEntry, text: String, keyExpand: (String) -> String): Int {
+        val primary = entry.keys.count { it.isNotBlank() && matchKey(keyExpand(it), text, entry) }
+        if (!entry.selective || entry.secondaryKeys.isEmpty()) return primary
+        val secondary = entry.secondaryKeys.count { it.isNotBlank() && matchKey(keyExpand(it), text, entry) }
+        return when (WorldInfoLogic.of(entry.selectiveLogic)) {
+            WorldInfoLogic.AND_ANY, WorldInfoLogic.AND_ALL -> primary + secondary
+            WorldInfoLogic.NOT_ANY, WorldInfoLogic.NOT_ALL -> primary
+        }
     }
 
     private fun evaluateSecondary(entry: WorldBookEntry, text: String, keyExpand: (String) -> String): Boolean {

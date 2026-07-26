@@ -286,6 +286,21 @@ class CharacterImporter(
                 ?: entryObj.boolean("ignoreBudget")
                 ?: entryObj.boolean("ignore_budget")
                 ?: false,
+            group = extensions?.string("group")
+                ?: entryObj.string("group")
+                ?: "",
+            groupOverride = extensions?.boolean("group_override")
+                ?: entryObj.boolean("groupOverride")
+                ?: entryObj.boolean("group_override")
+                ?: false,
+            groupWeight = extensions?.int("group_weight")
+                ?: entryObj.int("groupWeight")
+                ?: entryObj.int("group_weight")
+                ?: 100,
+            useGroupScoring = extensions?.boolean("use_group_scoring")
+                ?: entryObj.boolean("useGroupScoring")
+                ?: entryObj.boolean("use_group_scoring")
+                ?: false,
             raw = entryObj,
         )
     }

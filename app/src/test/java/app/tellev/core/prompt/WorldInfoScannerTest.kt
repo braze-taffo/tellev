@@ -363,4 +363,29 @@ class WorldInfoScannerTest {
 
         assertEquals(setOf("forced"), ids(result.allActivated))
     }
+
+    @Test
+    fun `budget overflow latches and drops all later non-ignoreBudget entries`() {
+        // ST world-info.js:4900-4954: once the budget is crossed, every later
+        // entry is skipped even if it would individually fit; only
+        // ignoreBudget entries still insert.
+        val big = entry(
+            "big", keys = emptyList(), constant = true, insertionOrder = 3,
+            content = "long lore ".repeat(40), // ~100 tokens
+        )
+        val smallLater = entry(
+            "smallLater", keys = emptyList(), constant = true, insertionOrder = 2,
+            content = "tiny",
+        )
+        val forcedLater = entry(
+            "forcedLater", keys = emptyList(), constant = true, insertionOrder = 1,
+            content = "forced", ignoreBudget = true,
+        )
+        val result = WorldInfoScanner(random = { 0.0 }, maxContentTokens = 50)
+            .scan(listOf(big, smallLater, forcedLater), "", expand = { it.content })
+
+        // `big` (order 3, scanned first) crosses the 50-token budget: dropped,
+        // and `smallLater` is dropped with it despite fitting on its own.
+        assertEquals(setOf("forcedLater"), ids(result.allActivated))
+    }
 }

@@ -228,4 +228,29 @@ class TokenBudgetTest {
         assertTrue("Should have at least system prompt", result.isNotEmpty())
         assertEquals(MessageRole.System, result.first().role)
     }
+
+    @Test
+    fun `fitToBudget trims only chat channel messages and keeps prompt slots`() {
+        // ST never drops prompt-manager entries to fit chat history — only the
+        // chat itself is trimmed (openai.js populateChatHistory).
+        val slot = PromptMessage(role = MessageRole.System, content = "PROMPT SLOT " + "x".repeat(40))
+        val oldChat = PromptMessage(role = MessageRole.User, content = "old ".repeat(40), channel = CHANNEL_CHAT)
+        val newChat = PromptMessage(role = MessageRole.User, content = "newest", channel = CHANNEL_CHAT)
+        val postSlot = PromptMessage(role = MessageRole.System, content = "POST HISTORY SLOT")
+
+        val result = TokenBudget.fitToBudget(
+            systemPrompt = "Sys",
+            worldInfo = emptyList(),
+            characterDescription = "",
+            messages = listOf(slot, oldChat, newChat, postSlot),
+            budget = 40,
+        )
+
+        val contents = result.map { it.content }
+        assertTrue(contents.any { it.startsWith("PROMPT SLOT") })
+        assertTrue(contents.contains("POST HISTORY SLOT"))
+        assertTrue(contents.contains("newest"))
+        // The oversized old chat message is the one dropped.
+        assertTrue(contents.none { it.startsWith("old ") })
+    }
 }

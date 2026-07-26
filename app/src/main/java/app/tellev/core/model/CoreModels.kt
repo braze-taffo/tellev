@@ -135,6 +135,10 @@ data class PresetPrompt(
     val relative: Boolean = false,
     val depth: Int = 0,
     val order: Int = 0,
+    /** ST injection_order (default 100): merge priority among same-depth chat injections. */
+    val injectionOrder: Int = 100,
+    /** ST forbid_overrides: block character-card main/jailbreak overrides for this slot. */
+    val forbidOverrides: Boolean = false,
     val raw: JsonObject = buildJsonObject { },
 )
 
@@ -204,6 +208,15 @@ data class WorldBookEntry(
     val delayUntilRecursion: Int = 0,
     /** Include this entry even after the world-info token budget is exhausted. */
     val ignoreBudget: Boolean = false,
+    // ── Inclusion groups (ST world-info.js filterByInclusionGroups) ──────
+    /** Comma-separated group labels; at most one entry per group activates per scan. */
+    val group: String = "",
+    /** "Prioritize inclusion": win the group by insertion order instead of random roll. */
+    val groupOverride: Boolean = false,
+    /** Weight for the group's random roll (ST DEFAULT_WEIGHT = 100). */
+    val groupWeight: Int = 100,
+    /** Keep only the best key-match scorers in the group before rolling. */
+    val useGroupScoring: Boolean = false,
     val raw: JsonObject = buildJsonObject { },
 )
 

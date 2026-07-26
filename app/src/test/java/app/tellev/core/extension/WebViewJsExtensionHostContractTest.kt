@@ -37,7 +37,9 @@ class WebViewJsExtensionHostContractTest {
         assertTrue(shim.contains("event_types.GENERATION_ENDED"))
         assertTrue(shim.contains("event_types.GENERATION_STOPPED"))
         assertTrue(shim.contains("typeof p.filter==='function'"))
-        assertTrue(shim.contains("Dynamic injectPrompts filter is not supported"))
+        // Function filters are evaluated once at inject time (ST re-evaluates
+        // per generation via getExtensionPrompt's filter callback).
+        assertTrue(shim.contains("allowed=Boolean(p.filter())"))
         assertTrue(shim.contains("p.should_scan"))
         assertTrue(shim.contains("stInjectPromptWithOptions"))
     }

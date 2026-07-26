@@ -255,7 +255,10 @@ class DefaultPromptEngineTest {
             ),
         )
 
-        assertEquals("First history.\nHistory suffix.", result.messages[1].content)
+        // [GENERATE:1:AFTER] addresses the first chat message; index 1 in the
+        // final array is the '[Start a new Chat]' marker, which the logical
+        // index space skips.
+        assertEquals("First history.\nHistory suffix.", result.messages[2].content)
     }
 
     @Test
@@ -285,8 +288,11 @@ class DefaultPromptEngineTest {
             ),
         )
 
-        assertEquals(MessageRole.System, result.messages[1].role)
-        assertEquals("Inserted system note.", result.messages[1].content)
+        // @INJECT pos=1 addresses the logical slot after the system prompt;
+        // the '[Start a new Chat]' marker at array index 1 is skipped by the
+        // logical index space, so the note lands at array index 2.
+        assertEquals(MessageRole.System, result.messages[2].role)
+        assertEquals("Inserted system note.", result.messages[2].content)
     }
 
     @Test
@@ -324,8 +330,9 @@ class DefaultPromptEngineTest {
             ),
         )
 
-        assertEquals(MessageRole.Assistant, result.messages[2].role)
-        assertEquals("Targeted reminder.", result.messages[2].content)
+        // system(0), new-chat marker(1), targeted chat message(2), injection(3).
+        assertEquals(MessageRole.Assistant, result.messages[3].role)
+        assertEquals("Targeted reminder.", result.messages[3].content)
     }
 
     @Test
@@ -590,5 +597,397 @@ class DefaultPromptEngineTest {
         assertTrue((result.diagnostics.estimatedTokenCount ?: Int.MAX_VALUE) < 8192)
     }
 
+    // ── ST injection-parity regression tests ────────────────────────────────
+    // Reference behavior: SillyTavern @51ad27fb (openai.js
+    // populationInjectionPrompts, preparePromptsForChatCompletion;
+    // world-info.js checkWorldInfo; authors-note.js defaults).
 
+    private fun chatMessages(count: Int): List<ChatMessage> = (1..count).map { i ->
+        ChatMessage(
+            id = "m$i",
+            role = if (i % 2 == 1) MessageRole.User else MessageRole.Character,
+            name = if (i % 2 == 1) "User" else "Alice",
+            content = "chat message $i",
+            createdAtMillis = i.toLong(),
+        )
+    }
+
+    private fun buildWith(
+        preset: GenerationPreset = GenerationPreset(id = "d", name = "D", providerType = "openai-compatible"),
+        messages: List<ChatMessage> = chatMessages(4),
+        worldBooks: List<WorldBook> = emptyList(),
+        metadata: kotlinx.serialization.json.JsonObject = buildJsonObject { },
+        characterRaw: kotlinx.serialization.json.JsonObject = buildJsonObject { },
+        userInput: String = "current input",
+    ): PromptBuildResult = DefaultPromptEngine().build(
+        PromptBuildRequest(
+            character = CharacterCard(id = "alice", name = "Alice", description = "Alice desc", raw = characterRaw),
+            persona = Persona(id = "p", name = "Mira", description = ""),
+            messages = messages,
+            worldBooks = worldBooks,
+            preset = preset,
+            userInput = userInput,
+            providerType = "openai-compatible",
+            metadata = metadata,
+        ),
+    )
+
+    @Test
+    fun `depth zero injection lands after last chat message with system closest to end`() {
+        val metadata = buildJsonObject {
+            putJsonObject("injectedPrompts") {
+                putJsonObject("ext/a") {
+                    put("value", "SYS INJECT ONE")
+                    put("position", 1)
+                    put("depth", 0)
+                    put("role", "system")
+                }
+                putJsonObject("ext/b") {
+                    put("value", "SYS INJECT TWO")
+                    put("position", 1)
+                    put("depth", 0)
+                    put("role", "system")
+                }
+                putJsonObject("ext/c") {
+                    put("value", "USER INJECT")
+                    put("position", 1)
+                    put("depth", 0)
+                    put("role", "user")
+                }
+            }
+        }
+        val result = buildWith(metadata = metadata)
+        val messages = result.messages
+        val lastChatIdx = messages.indexOfLast { it.content == "current input" }
+        // ST populationInjectionPrompts: same depth+role JOINED with \n into ONE
+        // message; chronological role order assistant → user → system.
+        assertEquals("USER INJECT", messages[lastChatIdx + 1].content)
+        assertEquals(MessageRole.User, messages[lastChatIdx + 1].role)
+        assertEquals("SYS INJECT ONE\nSYS INJECT TWO", messages[lastChatIdx + 2].content)
+        assertEquals(MessageRole.System, messages[lastChatIdx + 2].role)
+    }
+
+    @Test
+    fun `deep injection clamps to top of chat not above system prompt`() {
+        val metadata = buildJsonObject {
+            putJsonObject("injectedPrompts") {
+                putJsonObject("ext/deep") {
+                    put("value", "DEEP INJECT")
+                    put("position", 1)
+                    put("depth", 100)
+                    put("role", "system")
+                }
+            }
+        }
+        val result = buildWith(metadata = metadata, messages = chatMessages(2))
+        val messages = result.messages
+        val injectIdx = messages.indexOfFirst { it.content == "DEEP INJECT" }
+        val firstChatIdx = messages.indexOfFirst { it.content == "chat message 1" }
+        // The injection sits at the top of the chat span, never before the
+        // system prompt (index 0).
+        assertTrue(injectIdx > 0)
+        assertEquals(firstChatIdx, injectIdx + 1)
+    }
+
+    @Test
+    fun `world info at depth entries with same depth and role merge into one message`() {
+        val worldBooks = listOf(
+            WorldBook(
+                id = "world",
+                name = "World",
+                entries = listOf(
+                    WorldBookEntry(
+                        id = "wiA", keys = emptyList(), content = "WI ALPHA",
+                        constant = true, position = 4, depth = 1, role = 0, insertionOrder = 1,
+                    ),
+                    WorldBookEntry(
+                        id = "wiB", keys = emptyList(), content = "WI BETA",
+                        constant = true, position = 4, depth = 1, role = 0, insertionOrder = 2,
+                    ),
+                ),
+            ),
+        )
+        val result = buildWith(worldBooks = worldBooks)
+        val merged = result.messages.filter { it.content.contains("WI ALPHA") }
+        assertEquals(1, merged.size)
+        assertTrue(merged.first().content.contains("WI BETA"))
+        // Depth 1: one position above the end of the chat span.
+        val idx = result.messages.indexOfFirst { it.content.contains("WI ALPHA") }
+        assertEquals("current input", result.messages[idx + 1].content)
+    }
+
+    @Test
+    fun `an anchored entries inject in chat at depth four not into system prompt`() {
+        val worldBooks = listOf(
+            WorldBook(
+                id = "world",
+                name = "World",
+                entries = listOf(
+                    WorldBookEntry(
+                        id = "anTop", keys = emptyList(), content = "AN TOP ENTRY",
+                        constant = true, position = 2,
+                    ),
+                    WorldBookEntry(
+                        id = "anBottom", keys = emptyList(), content = "AN BOTTOM ENTRY",
+                        constant = true, position = 3,
+                    ),
+                ),
+            ),
+        )
+        val result = buildWith(worldBooks = worldBooks, messages = chatMessages(6))
+        // Not part of the system prompt (ST anchors ↑AT/↓AT to the author's
+        // note, which defaults to in-chat depth 4).
+        assertFalse(result.messages.first().content.contains("AN TOP ENTRY"))
+        val idx = result.messages.indexOfFirst { it.content.contains("AN TOP ENTRY") }
+        assertTrue(idx > 0)
+        assertEquals(MessageRole.System, result.messages[idx].role)
+        assertTrue(result.messages[idx].content.contains("AN BOTTOM ENTRY"))
+        // Depth 4: exactly four chat messages sit below the injection.
+        val below = result.messages.drop(idx + 1)
+        assertEquals(4, below.count { it.content.startsWith("chat message") || it.content == "current input" })
+    }
+
+    @Test
+    fun `outlet entries activate but are not emitted without an outlet placeholder`() {
+        val worldBooks = listOf(
+            WorldBook(
+                id = "world",
+                name = "World",
+                entries = listOf(
+                    WorldBookEntry(
+                        id = "outlet", keys = emptyList(), content = "OUTLET CONTENT",
+                        constant = true, position = 7,
+                    ),
+                ),
+            ),
+        )
+        val result = buildWith(worldBooks = worldBooks)
+        assertTrue(result.diagnostics.activatedWorldEntryIds.contains("outlet"))
+        assertFalse(result.messages.any { it.content.contains("OUTLET CONTENT") })
+    }
+
+    @Test
+    fun `character system prompt overrides preset main and supports original macro`() {
+        val preset = GenerationPreset(
+            id = "p", name = "P", providerType = "openai-compatible",
+            prompts = listOf(
+                PresetPrompt(identifier = "main", content = "PRESET MAIN", order = 0),
+                PresetPrompt(identifier = "chatHistory", order = 1),
+            ),
+        )
+        val characterRaw = buildJsonObject {
+            putJsonObject("data") {
+                put("system_prompt", "CARD OVERRIDE [{{original}}]")
+            }
+        }
+        val result = buildWith(preset = preset, characterRaw = characterRaw)
+        val main = result.messages.first { it.content.contains("CARD OVERRIDE") }
+        // ST replaces the preset main content with the card override and
+        // substitutes {{original}} with the replaced text (openai.js:1486-1494).
+        assertEquals("CARD OVERRIDE [PRESET MAIN]", main.content)
+        assertFalse(result.messages.any { it.content == "PRESET MAIN" })
+    }
+
+    @Test
+    fun `post history instructions route through preset jailbreak slot`() {
+        val preset = GenerationPreset(
+            id = "p", name = "P", providerType = "openai-compatible",
+            prompts = listOf(
+                PresetPrompt(identifier = "main", content = "PRESET MAIN", order = 0),
+                PresetPrompt(identifier = "chatHistory", order = 1),
+                PresetPrompt(identifier = "jailbreak", content = "PRESET JB", order = 2),
+            ),
+        )
+        val characterRaw = buildJsonObject {
+            putJsonObject("data") {
+                put("post_history_instructions", "CARD PHI [{{original}}]")
+            }
+        }
+        val result = buildWith(preset = preset, characterRaw = characterRaw)
+        val jb = result.messages.last()
+        // The override replaces the slot content in place (after chatHistory).
+        assertEquals("CARD PHI [PRESET JB]", jb.content)
+        assertEquals(1, result.messages.count { it.content.contains("CARD PHI") })
+    }
+
+    @Test
+    fun `post history instructions dropped when preset has no jailbreak slot`() {
+        val preset = GenerationPreset(
+            id = "p", name = "P", providerType = "openai-compatible",
+            prompts = listOf(
+                PresetPrompt(identifier = "main", content = "PRESET MAIN", order = 0),
+                PresetPrompt(identifier = "chatHistory", order = 1),
+            ),
+        )
+        val characterRaw = buildJsonObject {
+            putJsonObject("data") {
+                put("post_history_instructions", "CARD PHI")
+            }
+        }
+        val result = buildWith(preset = preset, characterRaw = characterRaw)
+        // ST only emits PHI by overriding an existing enabled jailbreak prompt.
+        assertFalse(result.messages.any { it.content.contains("CARD PHI") })
+    }
+
+    @Test
+    fun `post history instructions fallback lands after chat without preset`() {
+        val characterRaw = buildJsonObject {
+            putJsonObject("data") {
+                put("post_history_instructions", "CARD PHI")
+            }
+        }
+        val result = buildWith(characterRaw = characterRaw)
+        assertEquals("CARD PHI", result.messages.last().content)
+        assertEquals(MessageRole.System, result.messages.last().role)
+    }
+
+    @Test
+    fun `preset absolute prompt injects into chat history at its depth`() {
+        val preset = GenerationPreset(
+            id = "p", name = "P", providerType = "openai-compatible",
+            prompts = listOf(
+                PresetPrompt(identifier = "main", content = "PRESET MAIN", order = 0),
+                PresetPrompt(identifier = "chatHistory", order = 1),
+                PresetPrompt(
+                    identifier = "styleGuide", content = "STYLE GUIDE",
+                    order = 2, relative = true, depth = 2, role = "user",
+                ),
+            ),
+        )
+        val result = buildWith(preset = preset, messages = chatMessages(4))
+        val idx = result.messages.indexOfFirst { it.content == "STYLE GUIDE" }
+        assertTrue(idx > 0)
+        assertEquals(MessageRole.User, result.messages[idx].role)
+        // Depth 2 within the chat span: two chat messages remain below it.
+        val below = result.messages.drop(idx + 1)
+        assertEquals(2, below.count { it.content.startsWith("chat message") || it.content == "current input" })
+    }
+
+    @Test
+    fun `world info scan text includes speaker names`() {
+        val worldBooks = listOf(
+            WorldBook(
+                id = "world",
+                name = "World",
+                entries = listOf(
+                    WorldBookEntry(id = "byName", keys = listOf("Mira"), content = "PERSONA NAME MATCHED"),
+                ),
+            ),
+        )
+        // No message content mentions "Mira" — only the speaker name prefix
+        // (ST chatForWI includes names, script.js:4565).
+        val result = buildWith(worldBooks = worldBooks)
+        assertTrue(result.diagnostics.activatedWorldEntryIds.contains("byName"))
+    }
+
+    @Test
+    fun `em entries wrap dialogue examples in preset path`() {
+        val preset = GenerationPreset(
+            id = "p", name = "P", providerType = "openai-compatible",
+            prompts = listOf(
+                PresetPrompt(identifier = "main", content = "PRESET MAIN", order = 0),
+                PresetPrompt(identifier = "dialogueExamples", order = 1),
+                PresetPrompt(identifier = "chatHistory", order = 2),
+            ),
+        )
+        val worldBooks = listOf(
+            WorldBook(
+                id = "world",
+                name = "World",
+                entries = listOf(
+                    WorldBookEntry(id = "emTop", keys = emptyList(), content = "EM TOP", constant = true, position = 5),
+                    WorldBookEntry(id = "emBottom", keys = emptyList(), content = "EM BOTTOM", constant = true, position = 6),
+                ),
+            ),
+        )
+        val result = DefaultPromptEngine().build(
+            PromptBuildRequest(
+                character = CharacterCard(
+                    id = "alice", name = "Alice",
+                    exampleMessages = "EXAMPLE DIALOGUE",
+                ),
+                persona = null,
+                messages = chatMessages(2),
+                worldBooks = worldBooks,
+                preset = preset,
+                userInput = "current input",
+                providerType = "openai-compatible",
+            ),
+        )
+        // ST emits each example chat as its own block preceded by the
+        // '[Example Chat]' marker; ↑EM entries come first, ↓EM last.
+        val contents = result.messages.map { it.content }
+        val emTopIdx = contents.indexOf("EM TOP")
+        val exampleIdx = contents.indexOf("EXAMPLE DIALOGUE")
+        val emBottomIdx = contents.indexOf("EM BOTTOM")
+        assertTrue(emTopIdx in 1 until exampleIdx)
+        assertTrue(exampleIdx < emBottomIdx)
+        assertEquals("[Example Chat]", contents[emTopIdx - 1])
+        assertEquals("[Example Chat]", contents[exampleIdx - 1])
+        assertEquals("[Example Chat]", contents[emBottomIdx - 1])
+    }
+
+    @Test
+    fun `chat history opens with the new chat marker`() {
+        val result = buildWith(messages = chatMessages(2))
+        val contents = result.messages.map { it.content }
+        val markerIdx = contents.indexOf("[Start a new Chat]")
+        assertTrue(markerIdx > 0)
+        assertEquals("chat message 1", contents[markerIdx + 1])
+    }
+
+    @Test
+    fun `inclusion group activates only one member`() {
+        val entries = (1..3).map { i ->
+            WorldBookEntry(
+                id = "g$i", keys = listOf("academy"), content = "GROUP ENTRY $i",
+                group = "faction", insertionOrder = i,
+            )
+        }
+        val result = buildWith(
+            worldBooks = listOf(WorldBook("world", "World", entries)),
+            userInput = "tell me about the academy",
+        )
+        assertEquals(1, result.diagnostics.activatedWorldEntryIds.count { it.startsWith("g") })
+    }
+
+    @Test
+    fun `inclusion group prioritized entry wins by insertion order`() {
+        val entries = listOf(
+            WorldBookEntry(
+                id = "loser", keys = listOf("academy"), content = "LOSER",
+                group = "faction", insertionOrder = 5,
+            ),
+            WorldBookEntry(
+                id = "prio", keys = listOf("academy"), content = "PRIO WINNER",
+                group = "faction", groupOverride = true, insertionOrder = 1,
+            ),
+        )
+        val result = buildWith(
+            worldBooks = listOf(WorldBook("world", "World", entries)),
+            userInput = "tell me about the academy",
+        )
+        assertEquals(listOf("prio"), result.diagnostics.activatedWorldEntryIds)
+    }
+
+    @Test
+    fun `dont_activate decorator suppresses and is stripped from content`() {
+        val entries = listOf(
+            WorldBookEntry(
+                id = "suppressed", keys = listOf("academy"),
+                content = "@@dont_activate\nSUPPRESSED LORE",
+            ),
+            WorldBookEntry(
+                id = "forced", keys = listOf("neverseen"),
+                content = "@@activate\nFORCED LORE",
+            ),
+        )
+        val result = buildWith(
+            worldBooks = listOf(WorldBook("world", "World", entries)),
+            userInput = "tell me about the academy",
+        )
+        assertEquals(listOf("forced"), result.diagnostics.activatedWorldEntryIds)
+        assertTrue(result.messages.first().content.contains("FORCED LORE"))
+        assertFalse(result.messages.first().content.contains("@@activate"))
+    }
 }
