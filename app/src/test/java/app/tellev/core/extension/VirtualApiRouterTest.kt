@@ -401,6 +401,41 @@ class VirtualApiRouterTest {
     }
 
     @Test
+    fun `chats get then save round-trips an edit`() = runBlocking {
+        // Regression: /chats/get was switched to the ST row shape while /save
+        // still only decoded tellev's internal shape, so every row failed to
+        // deserialize, was skipped, and the endpoint still answered 200 — a
+        // read/modify/write cycle silently wrote nothing.
+        saveSessionFor("bob")
+        val chatId = "chat-bob"
+
+        val get = router.route(
+            VirtualApiRequest("POST", "/api/chats/get", body = """{"file_name":"$chatId"}"""),
+        )
+        assertEquals(200, get.status)
+        val rows = json.parseToJsonElement(get.body).jsonArray
+        assertEquals(2, rows.size) // header + one message
+
+        val edited = buildString {
+            append("""{"file_name":"$chatId","chat":[""")
+            append(rows[0])
+            append(",")
+            append(rows[1].jsonObject.toMutableMap().let { row ->
+                row["mes"] = kotlinx.serialization.json.JsonPrimitive("edited text")
+                kotlinx.serialization.json.JsonObject(row)
+            })
+            append("]}")
+        }
+        val save = router.route(VirtualApiRequest("POST", "/api/chats/save", body = edited))
+        assertEquals(200, save.status)
+
+        val reloaded = store.readChatSession(chatId)
+        assertEquals(1, reloaded.messages.size)
+        assertEquals("edited text", reloaded.messages[0].content)
+        assertEquals(MessageRole.User, reloaded.messages[0].role)
+    }
+
+    @Test
     fun `POST characters_all returns bare array`() = runBlocking {
         val response = router.route(VirtualApiRequest("POST", "/api/characters/all", body = "{}"))
         assertEquals(200, response.status)

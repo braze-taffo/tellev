@@ -8,6 +8,39 @@ import org.junit.Test
 class TokenBudgetTest {
 
     @Test
+    fun `non-chat prompt slots are reserved before chat history is fitted`() {
+        // Regression: the mandatory slots sit at the head of the list, i.e.
+        // last in the reversed walk, so counting them as they were met let the
+        // chat history fill the entire window and stacked the slots on top —
+        // the request then blew past max_context.
+        val slot = PromptMessage(
+            role = MessageRole.System,
+            content = "X".repeat(1600), // ~400 tokens
+            channel = "preset",
+        )
+        val chat = (1..40).map {
+            PromptMessage(
+                role = MessageRole.User,
+                content = "Y".repeat(400), // ~100 tokens each
+                channel = CHANNEL_CHAT,
+            )
+        }
+        val budget = 1000
+        val fitted = TokenBudget.fitToBudget(
+            systemPrompt = "",
+            worldInfo = emptyList(),
+            characterDescription = "",
+            messages = listOf(slot) + chat,
+            budget = budget,
+        )
+
+        assertTrue("mandatory slot must survive", fitted.any { it.channel == "preset" })
+        assertTrue("chat must be trimmed", fitted.count { it.channel == CHANNEL_CHAT } < chat.size)
+        val total = TokenBudget.estimateTotalTokens(fitted)
+        assertTrue("total $total must stay within budget $budget", total <= budget)
+    }
+
+    @Test
     fun `estimateTokens returns zero for empty string`() {
         assertEquals(0, TokenBudget.estimateTokens(""))
     }

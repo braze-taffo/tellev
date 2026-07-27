@@ -51,6 +51,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -112,10 +113,11 @@ class ChatViewModel(
                 generateTextFromExtension(options)
         })
         extensionHost.setLocalVariableBackend(object : LocalVariableBackend {
-            override fun snapshot(): Map<String, String> = snapshotLocalVariables()
+            override fun snapshot(): Map<String, JsonElement> = snapshotLocalVariables()
 
-            override fun update(transform: (MutableMap<String, String>) -> Unit): Map<String, String> =
-                updateChatVariables(transform)
+            override fun update(
+                transform: (MutableMap<String, JsonElement>) -> Unit,
+            ): Map<String, JsonElement> = updateChatVariables(transform)
         })
         extensionHost.setMessageVariableBackend(object : MessageVariableBackend {
             override fun messageCount(): Int =
@@ -267,20 +269,41 @@ class ChatViewModel(
                 }
                 val allSessions = dataStore.listChatSessions(characterId = characterId)
 
-                // Exclusive activation of world books only: selecting a character
-                // makes its own embedded world book the sole active one and
-                // deactivates the rest, persisted to the activation file so the
-                // world-book screen reflects the same selection.
+                // Selecting a character activates the books bound to it. That is
+                // its embedded character_book *and* any external book named by
+                // data.extensions.world — the way most real cards bind a
+                // lorebook. Only ever force-disabling everything else meant such
+                // a card activated nothing at all, and it also switched off
+                // standalone books the user had enabled globally (in ST a global
+                // lorebook stays on regardless of the selected character).
                 //
                 // Regex switches live only in the character card's
                 // extensions.regex_scripts[].disabled fields.
-                val ownWorldBookId = StDataStore.embeddedCharacterBookId(characterId)
+                //
                 // Read the full world-book list from the store directly rather
                 // than relying on uiState.worldBooks being loaded yet, so the
-                // exclusive set is correct even if the user selects a character
-                // before initial data load finishes.
-                val allWorldBookIds = dataStore.listWorldBooks().map { it.id }.toSet()
-                val disabledWorldIds = allWorldBookIds - ownWorldBookId
+                // set is correct even if the user selects a character before
+                // initial data load finishes.
+                val allWorldBooks = dataStore.listWorldBooks()
+                val embeddedId = StDataStore.embeddedCharacterBookId(characterId)
+                val ownWorldBookIds = buildSet {
+                    add(embeddedId)
+                    characterWorldBookNames(character).forEach { name ->
+                        allWorldBooks
+                            .firstOrNull { it.name.equals(name, ignoreCase = true) || it.id == name }
+                            ?.let { add(it.id) }
+                    }
+                }
+                // Another character's embedded book must not stay active across
+                // a switch; standalone books keep whatever the user chose.
+                val otherEmbeddedIds = allWorldBooks
+                    .map { it.id }
+                    .filter {
+                        it.endsWith(StDataStore.EMBEDDED_CHARACTER_BOOK_SUFFIX) &&
+                            it !in ownWorldBookIds
+                    }
+                val disabledWorldIds =
+                    (dataStore.readDisabledWorldIds() + otherEmbeddedIds) - ownWorldBookIds
                 dataStore.saveDisabledWorldIds(disabledWorldIds)
 
                 _uiState.update {
@@ -977,9 +1000,24 @@ class ChatViewModel(
                         if (action.systemText != null && !handled) {
                             _uiState.value.currentSession?.let { dataStore.saveChatSession(it) }
                         }
-                        buildJsonObject {
-                            put("handled", handled)
-                            put("pipe", "")
+                        if (handled) {
+                            buildJsonObject {
+                                put("handled", true)
+                                put("pipe", "")
+                            }
+                        } else {
+                            // The regex matcher above only recognises the four
+                            // chat-mutating shapes it has to run on the UI
+                            // thread. Everything else — /setvar, /run, closures,
+                            // pipes, the whole rest of STScript — goes to the
+                            // real engine instead of silently doing nothing.
+                            val engineResult = extensionHost.executeStScript(script)
+                            buildJsonObject {
+                                put("handled", engineResult.handled)
+                                put("pipe", engineResult.output)
+                                engineResult.metadata["isError"]?.let { put("isError", it) }
+                                engineResult.metadata["errorMessage"]?.let { put("errorMessage", it) }
+                            }
                         }
                     }
                     else -> error("不支持的消息渲染操作：$operation")
@@ -1291,10 +1329,14 @@ class ChatViewModel(
      * groupMembers is populated for group chats and unblocks
      * applyGroupChatOrdering + the {{group}} macro.
      *
-     * instructPreset / contextPreset are intentionally NOT wired here: the app
-     * has no storage or UI for them yet, so there is no value to feed (applying a
-     * default would silently change message formatting for everyone). Their
-     * branches in DefaultPromptEngine stay dormant until preset management lands.
+     * instructPreset IS wired (see below) and reads the instruct/ directory.
+     *
+     * contextPreset is still NOT wired: there is no storage or UI for context
+     * templates yet, so there is no value to feed and applying a default would
+     * silently change the system prompt for everyone. That means
+     * [app.tellev.core.prompt.ContextTemplate] and the `contextPreset` branch
+     * of DefaultPromptEngine are unreachable in production today — do not read
+     * the presence of that code as "story strings are supported".
      */
     private suspend fun buildPromptMetadata(
         state: ChatUiState,
@@ -1360,13 +1402,15 @@ class ChatViewModel(
     // persist through a debounced save so frequent /setvar calls don't rewrite
     // the entire JSONL on every keystroke.
 
-    private fun snapshotLocalVariables(): Map<String, String> {
+    private fun snapshotLocalVariables(): Map<String, JsonElement> {
         val vars = _uiState.value.currentSession?.metadata?.get("variables") as? JsonObject
             ?: return emptyMap()
-        return parseVariableMap(vars)
+        return LinkedHashMap(vars)
     }
 
-    private fun updateChatVariables(transform: (MutableMap<String, String>) -> Unit): Map<String, String> {
+    private fun updateChatVariables(
+        transform: (MutableMap<String, JsonElement>) -> Unit,
+    ): Map<String, JsonElement> {
         // Capture the transform result, then apply via _uiState.update so we
         // never clobber concurrent session changes (e.g. streaming message
         // updates) — we only re-read and rewrite the `variables` slot.
@@ -1374,15 +1418,19 @@ class ChatViewModel(
         if (session == null) {
             // Still run the transform against an empty map so callers observe
             // a consistent (empty) snapshot rather than a partial one.
-            val empty = mutableMapOf<String, String>()
+            val empty = mutableMapOf<String, JsonElement>()
             transform(empty)
             return empty
         }
-        val current = parseVariableMap(session.metadata["variables"] as? JsonObject)
-        val mutable = current.toMutableMap()
+        // Values stay JsonElement end to end. Round-tripping them through
+        // String collapsed every nested object a variable card had written
+        // (and any EJS-authored structure) into an opaque JSON string.
+        val mutable = LinkedHashMap<String, JsonElement>(
+            (session.metadata["variables"] as? JsonObject) ?: JsonObject(emptyMap()),
+        )
         transform(mutable)
         val newVars = buildJsonObject {
-            mutable.forEach { (k, v) -> put(k, JsonPrimitive(v)) }
+            mutable.forEach { (k, v) -> put(k, v) }
         }
         _uiState.update { state ->
             val s = state.currentSession ?: return@update state
@@ -1407,7 +1455,7 @@ class ChatViewModel(
     ): PromptBuildResult {
         val initialLocal = (session?.metadata?.get("variables") as? JsonObject)
             ?: JsonObject(emptyMap())
-        val backend = TrackingPromptLocalBackend(parseVariableMap(initialLocal))
+        val backend = TrackingPromptLocalBackend(LinkedHashMap(initialLocal))
         val result = promptEngine.buildWithLocalVariableBackend(request, backend)
         val templateLocal = result.promptTemplateVariableUpdates.local
         val combinedLocal = when {
@@ -1438,13 +1486,15 @@ class ChatViewModel(
         }
     })
 
-    private class TrackingPromptLocalBackend(initial: Map<String, String>) : LocalVariableBackend {
+    private class TrackingPromptLocalBackend(initial: Map<String, JsonElement>) : LocalVariableBackend {
         private val initialValues = LinkedHashMap(initial)
         private val values = LinkedHashMap(initial)
 
-        override fun snapshot(): Map<String, String> = values.toMap()
+        override fun snapshot(): Map<String, JsonElement> = values.toMap()
 
-        override fun update(transform: (MutableMap<String, String>) -> Unit): Map<String, String> {
+        override fun update(
+            transform: (MutableMap<String, JsonElement>) -> Unit,
+        ): Map<String, JsonElement> {
             transform(values)
             return snapshot()
         }
@@ -1455,7 +1505,7 @@ class ChatViewModel(
             val currentValues = this@TrackingPromptLocalBackend.values
             (initialValues.keys + currentValues.keys).forEach { key ->
                 if (initialValues[key] != currentValues[key]) {
-                    currentValues[key]?.let { put(key, JsonPrimitive(it)) } ?: remove(key)
+                    currentValues[key]?.let { put(key, it) } ?: remove(key)
                 }
             }
         })
@@ -1543,6 +1593,24 @@ class ChatViewModel(
             }
         }
         return out
+    }
+
+    /**
+     * External lorebooks a card binds by name: `data.extensions.world` is the
+     * field SillyTavern writes when you pick a lorebook for a character, and a
+     * bare top-level `world` shows up on older exports.
+     */
+    private fun characterWorldBookNames(card: CharacterCard): List<String> {
+        val data = (card.raw["data"] as? JsonObject) ?: card.raw
+        val names = mutableListOf<String>()
+        fun add(element: JsonElement?) {
+            (element as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+                ?.let(names::add)
+        }
+        add((data["extensions"] as? JsonObject)?.get("world"))
+        add(data["world"])
+        add(card.raw["world"])
+        return names.distinct()
     }
 
     private fun buildTavernContext(state: ChatUiState): JsonObject {

@@ -23,8 +23,11 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -124,7 +127,69 @@ class WebViewJsExtensionHost(
                 )
             }
         },
+        // ST substitutes macros into every slash-command argument right before
+        // execution (SlashCommandClosure.js:544,582). The variable store is
+        // already wired into macroEngine above, so {{getvar::}}, {{char}},
+        // {{user}} and friends resolve through the same state the prompt
+        // builder sees.
+        macroExpander = macroEngine?.let { engine ->
+            { text: String ->
+                runCatching { engine.expand(text, slashMacroContext()) }.getOrDefault(text)
+            }
+        },
+        onUnimplementedCommand = { name ->
+            scope.launch {
+                mutableEvents.emit(
+                    ExtensionEvent(
+                        name = "extension_log",
+                        payload = buildJsonObject {
+                            put("level", "warn")
+                            put(
+                                "message",
+                                "/$name 在 tellev 中没有实际实现：命令返回空结果，脚本会继续执行。",
+                            )
+                        },
+                    ),
+                )
+            }
+        },
     )
+
+    /**
+     * Macro context for slash-command arguments, built from the live
+     * `getContext()` snapshot. Kept deliberately small — the prompt builder
+     * owns the full context; this only needs the identity/chat macros that
+     * scripts actually use in command arguments.
+     */
+    private fun slashMacroContext(): MacroContext {
+        val snapshot = runCatching { _contextProvider?.snapshot() }.getOrNull()
+            ?: return MacroContext()
+        fun str(key: String): String =
+            (snapshot[key] as? JsonPrimitive)?.contentOrNull.orEmpty()
+        val chat = snapshot["chat"] as? JsonArray
+        fun messageText(predicate: (JsonObject) -> Boolean): String =
+            chat?.asReversed()
+                ?.filterIsInstance<JsonObject>()
+                ?.firstOrNull(predicate)
+                ?.get("mes")
+                ?.let { (it as? JsonPrimitive)?.contentOrNull }
+                .orEmpty()
+        val character = snapshot["character"] as? JsonObject
+        fun charField(key: String): String =
+            (character?.get(key) as? JsonPrimitive)?.contentOrNull.orEmpty()
+        return MacroContext(
+            characterName = str("name2"),
+            userName = str("name1"),
+            characterDescription = charField("description"),
+            characterPersonality = charField("personality"),
+            characterScenario = charField("scenario"),
+            lastMessage = messageText { true },
+            lastUserMessage = messageText { (it["is_user"] as? JsonPrimitive)?.content == "true" },
+            lastCharMessage = messageText { (it["is_user"] as? JsonPrimitive)?.content != "true" },
+            lastMessageId = (snapshot["lastMessageId"] as? JsonPrimitive)?.content.orEmpty(),
+            maxContextTokens = (snapshot["maxContext"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0,
+        )
+    }
 
     /** Mutable so the UI layer can plug in a live context snapshot. */
     private var _contextProvider: ExtensionContextProvider? = contextProvider
@@ -400,6 +465,20 @@ class WebViewJsExtensionHost(
         slashCommands[command.name] = RegisteredCommand(
             extensionId = extensionId,
             command = command.copy(extensionId = extensionId),
+        )
+    }
+
+    override suspend fun executeStScript(script: String): SlashCommandResult {
+        val result = runCatching { slashCommandEngine.execute(script) }
+            .getOrElse { SlashCommandEngine.Result.error(it.message ?: "execution error") }
+        return SlashCommandResult(
+            handled = result.handled && !result.isError,
+            output = result.output,
+            metadata = buildJsonObject {
+                put("isError", result.isError)
+                put("isAborted", result.isAborted)
+                if (result.errorMessage.isNotEmpty()) put("errorMessage", result.errorMessage)
+            },
         )
     }
 
@@ -1287,7 +1366,20 @@ class WebViewJsExtensionHost(
             // tellev's object literal placed them under builtin.* (audit M9).
             "['deleteWorldbook','updateWorldbookWith','createWorldbookEntries','deleteWorldbookEntries','getGlobalWorldbookNames','rebindGlobalWorldbooks','getCharWorldbookNames','rebindCharWorldbooks','getChatWorldbookName','rebindChatWorldbook','getOrCreateChatWorldbook','createChatMessages','deleteChatMessages','rotateChatMessages','formatAsDisplayedMessage','retrieveDisplayedMessage','refreshOneMessage','createOrReplacePreset'].forEach(function(n){if(TavernHelper.builtin&&TavernHelper.builtin[n]!==undefined)TavernHelper[n]=TavernHelper.builtin[n];});" +
             "TavernHelper.updateVariablesWith=function(updater,opt){var v=TavernHelper.getVariables(opt);var r=updater(v);r=r||v;TavernHelper.replaceVariables(r,opt);return r;};" +
-            "TavernHelper.insertOrAssignVariables=function(nv,opt){var v=TavernHelper.getVariables(opt);var merged={};for(var k in v)merged[k]=v[k];for(var k in nv)merged[k]=nv[k];TavernHelper.replaceVariables(merged,opt);return merged;};" +
+            // js-slash-runner merges with lodash mergeWith (variables.ts:241),
+            // i.e. recursively. A shallow assign wiped every sibling key under
+            // a nested object, which is exactly how variable cards do partial
+            // state updates.
+            "function _thDeepMerge(base,extra,newWins){if(extra===undefined||extra===null)return base;" +
+                "if(typeof base!=='object'||base===null||Array.isArray(base)||typeof extra!=='object'||extra===null||Array.isArray(extra))" +
+                    "return newWins?extra:(base===undefined?extra:base);" +
+                "var out={};var k;for(k in base)out[k]=base[k];" +
+                "for(k in extra){out[k]=Object.prototype.hasOwnProperty.call(base,k)?_thDeepMerge(base[k],extra[k],newWins):extra[k];}" +
+                "return out;}" +
+            "TavernHelper.insertOrAssignVariables=function(nv,opt){var v=TavernHelper.getVariables(opt);var merged=_thDeepMerge(v,nv||{},true);TavernHelper.replaceVariables(merged,opt);return merged;};" +
+            // insertVariables keeps the *existing* value on conflict
+            // (variables.ts:261 merges {} <- new <- old) and returns the result.
+            "TavernHelper.insertVariables=function(nv,opt){var v=TavernHelper.getVariables(opt);var merged=_thDeepMerge(v,nv||{},false);TavernHelper.replaceVariables(merged,opt);return merged;};" +
             "TavernHelper.deleteVariable=function(path,opt){var v=TavernHelper.getVariables(opt);var parts=String(path).split('.');var obj=v;for(var i=0;i<parts.length-1;i++){if(obj[parts[i]]===undefined||obj[parts[i]]===null)return{variables:v,delete_occurred:false};obj=obj[parts[i]];}var occurred=Object.prototype.hasOwnProperty.call(obj,parts[parts.length-1]);delete obj[parts[parts.length-1]];TavernHelper.replaceVariables(v,opt);return{variables:v,delete_occurred:occurred};};" +
             // js-slash-runner _bind.* internal APIs (index.ts:219-265): wire to the
             // public TavernHelper/event functions so scripts touching
@@ -1333,7 +1425,56 @@ class WebViewJsExtensionHost(
             "TavernHelper.builtin.getLoadedPresetName=TavernHelper.getLoadedPresetName;" +
             "TavernHelper.builtin.createOrReplacePreset=function(name,data,opt){return TavernHelper.getPresetNames(opt).then(function(ns){return ns.indexOf(String(name))>=0?TavernHelper.replacePreset(name,data,opt):TavernHelper.createPreset(name,data,opt);});};" +
             "TavernHelper.builtin.replacePreset=TavernHelper.replacePreset;TavernHelper.builtin.updatePresetWith=TavernHelper.updatePresetWith;" +
-            "eventSource.emit=function(t){var args=[].slice.call(arguments,1);var n=_normEvent(t);tellevNative.emitFromEventSource(String(n),JSON.stringify({args:args}));return _fireLocal(n,args);};"
+            "eventSource.emit=function(t){var args=[].slice.call(arguments,1);var n=_normEvent(t);tellevNative.emitFromEventSource(String(n),JSON.stringify({args:args}));return _fireLocal(n,args);};" +
+            // Promoting the builtin.* placeholders to the top level (above) made
+            // scripts stop crashing on them, but it also turned a loud
+            // TypeError into a silent no-op. Keep the promotion and make the
+            // no-op observable instead: one warn per method per runtime.
+            "['createChatMessages','deleteChatMessages','rotateChatMessages','deleteWorldbook','updateWorldbookWith','createWorldbookEntries','deleteWorldbookEntries','getGlobalWorldbookNames','rebindGlobalWorldbooks','getCharWorldbookNames','rebindCharWorldbooks','getChatWorldbookName','rebindChatWorldbook','getOrCreateChatWorldbook','retrieveDisplayedMessage','refreshOneMessage','formatAsDisplayedMessage','formatAsTavernRegexedString'].forEach(function(n){" +
+                "var f=TavernHelper[n];if(typeof f!=='function')return;var warned=false;" +
+                "TavernHelper[n]=function(){if(!warned){warned=true;try{tellevNative.log('warn','TavernHelper.'+n+'() is not implemented in tellev: the call returns an empty result instead of doing anything.');}catch(e){}}return f.apply(this,arguments);};" +
+                "if(TavernHelper.builtin&&typeof TavernHelper.builtin[n]==='function')TavernHelper.builtin[n]=TavernHelper[n];});" +
+            // triggerSlash resolves to the pipe string and rejects on error
+            // (js-slash-runner slash.ts); handing back the raw payload object
+            // broke `(await triggerSlash(...)).toUpperCase()` and made
+            // try/catch on a failed command unreachable.
+            "TavernHelper.triggerSlash=function(cmd){return Promise.resolve(executeSlashCommandsWithOptions(String(cmd||''))).then(function(r){" +
+                "if(r&&r.isError)throw new Error(r.errorMessage||('slash command failed: '+cmd));return (r&&r.pipe)||'';});};" +
+            // getChatMessages: `data` is the *current swipe's* variables, not
+            // the whole per-swipe array; range accepts macros; option filters
+            // (role / hide_state) were parsed and then ignored.
+            "var _thRawGetChatMessages=TavernHelper.getChatMessages;" +
+            "TavernHelper.getChatMessages=function(range,opt){" +
+                "opt=opt||{};" +
+                "if(typeof range==='string'&&range.indexOf('{{')>=0){var c=_getContext();var last=((c&&c.chat)||[]).length-1;" +
+                    "range=range.replace(/{{lastMessageId}}/gi,String(last)).replace(/{{firstMessageId}}/gi,'0');}" +
+                "function shape(list){if(!Array.isArray(list))return list;" +
+                    "var out=list.map(function(m){if(!m)return m;" +
+                        "if(Array.isArray(m.data))m.data=m.data[Number(m.swipe_id||0)]||{};" +
+                        "if(m.data===undefined||m.data===null)m.data={};return m;});" +
+                    "if(opt.role&&String(opt.role)!=='all')out=out.filter(function(m){return m&&m.role===opt.role;});" +
+                    "if(opt.hide_state&&String(opt.hide_state)!=='all')" +
+                        "out=out.filter(function(m){var s=m&&m.is_hidden?'hidden':'unhidden';return s===opt.hide_state;});" +
+                    "return out;}" +
+                "var r=_thRawGetChatMessages.call(this,range,opt);" +
+                "return (r&&typeof r.then==='function')?r.then(shape):shape(r);};" +
+            // waitGlobalInitialized has to actually wait — resolving only when
+            // the global already exists left every `await waitGlobalInitialized('Mvu')`
+            // hanging forever whenever the provider script loaded second.
+            "TavernHelper.initializeGlobal=function(n,v){window[n]=v;try{eventSource.emit('tellev_global_initialized',n);}catch(e){}" +
+                "var w=window._thGlobalWaiters&&window._thGlobalWaiters[n];if(w){w.forEach(function(f){try{f(v);}catch(e){}});delete window._thGlobalWaiters[n];}return v;};" +
+            "TavernHelper.waitGlobalInitialized=function(n){if(window[n]!==undefined)return Promise.resolve(window[n]);" +
+                "return new Promise(function(resolve){window._thGlobalWaiters=window._thGlobalWaiters||{};" +
+                    "(window._thGlobalWaiters[n]=window._thGlobalWaiters[n]||[]).push(resolve);" +
+                    // Scripts that assign window.X directly never call
+                    // initializeGlobal, so poll as a backstop.
+                    "var tries=0;var timer=setInterval(function(){tries++;" +
+                        "if(window[n]!==undefined){clearInterval(timer);resolve(window[n]);}" +
+                        "else if(tries>600){clearInterval(timer);try{tellevNative.log('warn','waitGlobalInitialized(\"'+n+'\") timed out after 60s');}catch(e){}}" +
+                    "},100);});};" +
+            "if(TavernHelper._bind){TavernHelper._bind._initializeGlobal=TavernHelper.initializeGlobal;" +
+                "TavernHelper._bind._waitGlobalInitialized=TavernHelper.waitGlobalInitialized;" +
+                "TavernHelper._bind._insertVariables=function(v,o){return TavernHelper.insertVariables(v,o);};}"
 
         internal const val EXTENSION_LOAD_GUARDS: String =
             "window.addEventListener('error',function(e){if(!e||!e.message)return;try{if(e.error&&e.error.stack)tellevNative.log('error',String(e.error.stack));else if(e.filename)tellevNative.log('error',String(e.message)+' @'+e.filename+':'+e.lineno);tellevNative.extensionFailed(String(e.message));}catch(_e){}},true);" +

@@ -942,6 +942,11 @@ class FileStDataStore(
             "dialogueExamples" to "Dialogue Examples",
             "worldInfoAfter" to "World Info (after)",
             "chatHistory" to "Chat History",
+            // ST's Default.json ships a jailbreak slot, and that is where a
+            // card's data.post_history_instructions lands. Without it, a
+            // fresh install silently dropped the PHI of every modern card
+            // (the prompt-manager path only emits slots the preset declares).
+            "jailbreak" to "Post-History Instructions",
         )
         putJsonArray("prompts") {
             identifiers.forEachIndexed { index, (id, name) ->

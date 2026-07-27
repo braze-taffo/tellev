@@ -105,9 +105,8 @@ object TokenBudget {
 
         // 4. Messages - include most recent first, then reverse to chronological order
         val remainingBudget = budget - usedTokens
-        if (remainingBudget > 0 && messages.isNotEmpty()) {
+        if (messages.isNotEmpty()) {
             val includedMessages = mutableListOf<PromptMessage>()
-            var messageTokensUsed = 0
 
             // When channel markers are present, only chat-history messages are
             // subject to trimming — SillyTavern never drops prompt-manager
@@ -115,22 +114,32 @@ object TokenBudget {
             // (openai.js populateChatHistory). Unmarked lists (legacy callers)
             // keep the original oldest-first trimming.
             val hasChannels = messages.any { it.channel == CHANNEL_CHAT }
+
+            // Non-chat slots are mandatory, so their cost has to be *reserved*
+            // before deciding how much chat fits. Counting them as they are
+            // encountered instead (they sit at the head of the list, i.e. last
+            // in this reversed walk) let the chat history fill the whole window
+            // and then stacked the slots on top of it, overflowing max_context.
+            val reservedTokens = if (hasChannels) {
+                messages.filter { it.channel != CHANNEL_CHAT }.sumOf { messageTokens(it) }
+            } else {
+                0
+            }
+            val chatBudget = remainingBudget - reservedTokens
+            var chatTokensUsed = 0
             var chatBudgetExhausted = false
 
             // Iterate from most recent to oldest
             for (message in messages.asReversed()) {
-                val msgTokens = estimateTokens(message.content) +
-                    (message.name?.let { estimateTokens(it) } ?: 0) +
-                    4 // overhead for role/formatting tokens
+                val msgTokens = messageTokens(message)
                 if (hasChannels && message.channel != CHANNEL_CHAT) {
-                    // Non-chat prompt slots are always kept.
+                    // Non-chat prompt slots are always kept (already reserved).
                     includedMessages.add(message)
-                    messageTokensUsed += msgTokens
                     continue
                 }
-                if (!chatBudgetExhausted && messageTokensUsed + msgTokens <= remainingBudget) {
+                if (!chatBudgetExhausted && chatTokensUsed + msgTokens <= chatBudget) {
                     includedMessages.add(message)
-                    messageTokensUsed += msgTokens
+                    chatTokensUsed += msgTokens
                 } else if (hasChannels) {
                     // Skip this chat message and all older ones, but keep
                     // scanning for non-chat slots that must survive.
@@ -147,6 +156,12 @@ object TokenBudget {
 
         return result
     }
+
+    /** Per-message cost, including the role/formatting overhead. */
+    private fun messageTokens(message: PromptMessage): Int =
+        estimateTokens(message.content) +
+            (message.name?.let { estimateTokens(it) } ?: 0) +
+            4
 
     /**
      * Estimates the total token count for a list of prompt messages.

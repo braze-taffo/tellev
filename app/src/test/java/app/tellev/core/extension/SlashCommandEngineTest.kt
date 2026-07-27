@@ -19,6 +19,62 @@ class SlashCommandEngineTest {
         engine = SlashCommandEngine(variableStore = variableStore)
     }
 
+    // ── Argument-shape regressions (audit 2026-07-27) ───────────────────
+
+    @Test
+    fun `named argument keeps a quoted value`() {
+        // Fixing `/echo "a=b"` had split `key="value"` into an empty named arg
+        // plus a stray positional one, silently breaking every quoted
+        // named argument (`/replace pattern="x"`, `/if right="some text"`, ...).
+        engine.execute("/setvar key=\"my var\" value=\"hello world\"")
+        assertEquals("hello world", engine.execute("/getvar \"my var\"").output)
+    }
+
+    @Test
+    fun `quoted positional argument is still positional`() {
+        assertEquals("a=b", engine.execute("/echo \"a=b\"").output)
+    }
+
+    @Test
+    fun `setvar accepts the documented key form with an unnamed value`() {
+        // ST's shape: /setvar key=x <值>. tellev read the value off index 1 of
+        // the positional list and stored an empty string instead.
+        engine.execute("/setvar key=mood 高兴")
+        assertEquals("高兴", engine.execute("/getvar mood").output)
+    }
+
+    @Test
+    fun `addvar accepts the documented key form`() {
+        engine.execute("/setvar key=n 5")
+        engine.execute("/addvar key=n 3")
+        assertEquals("8", engine.execute("/getvar n").output)
+    }
+
+    @Test
+    fun `macros in arguments are expanded before execution`() {
+        val withMacros = SlashCommandEngine(
+            variableStore = variableStore,
+            macroExpander = { it.replace("{{char}}", "Alice") },
+        )
+        withMacros.execute("/setvar key=who {{char}}")
+        assertEquals("Alice", withMacros.execute("/getvar who").output)
+        assertEquals("Alice", withMacros.execute("/echo {{char}}").output)
+    }
+
+    @Test
+    fun `unimplemented commands report themselves once`() {
+        val seen = mutableListOf<String>()
+        val reporting = SlashCommandEngine(
+            variableStore = variableStore,
+            onUnimplementedCommand = { seen.add(it) },
+        )
+        val first = reporting.execute("/gen write something")
+        assertTrue(first.handled)
+        assertFalse(first.isError)
+        reporting.execute("/gen write something else")
+        assertEquals(listOf("gen"), seen)
+    }
+
     @Test
     fun `echo returns its arguments`() {
         val result = engine.execute("/echo hello world")
@@ -113,16 +169,36 @@ class SlashCommandEngineTest {
     }
 
     @Test
-    fun `pipe passes output to next command`() {
+    fun `pipe is dropped when the next command has its own argument`() {
+        // ST injects the pipe only into a command with no unnamed argument
+        // (SlashCommandClosure.js:555-562). Appending unconditionally shifted
+        // every index-based argument in a chain.
         val result = engine.execute("/echo hello | /echo world")
-        assertEquals("world hello", result.output)
+        assertEquals("world", result.output)
     }
 
     @Test
-    fun `pipe appends output as last positional arg`() {
+    fun `pipe fills a command that has no argument of its own`() {
         engine.execute("/setvar name Alice")
-        val result = engine.execute("/getvar name | /echo greeting:")
-        assertEquals("greeting: Alice", result.output)
+        val result = engine.execute("/getvar name | /echo")
+        assertEquals("Alice", result.output)
+    }
+
+    @Test
+    fun `pipe placeholder works in positional and named arguments`() {
+        engine.execute("/setvar name Alice")
+        assertEquals("greeting: Alice", engine.execute("/getvar name | /echo \"greeting: {{pipe}}\"").output)
+        engine.execute("/getvar name | /setvar key=copy value={{pipe}}")
+        assertEquals("Alice", engine.execute("/getvar copy").output)
+    }
+
+    @Test
+    fun `a pipe chain survives being split across lines`() {
+        engine.execute("/setvar name Alice")
+        val trailing = engine.execute("/getvar name |\n/echo \"hi {{pipe}}\"")
+        assertEquals("hi Alice", trailing.output)
+        val leading = engine.execute("/getvar name\n| /echo \"hi {{pipe}}\"")
+        assertEquals("hi Alice", leading.output)
     }
 
     @Test

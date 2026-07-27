@@ -4,7 +4,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -32,20 +34,87 @@ class VariableStoreTest {
                 settingsStore = settingsStore,
                 settingsKey = "_test_global",
             )
-            store.setLocalBackend(object : LocalVariableBackend {
-                override fun snapshot(): Map<String, String> = local.toMap()
-                override fun update(transform: (MutableMap<String, String>) -> Unit): Map<String, String> {
-                    transform(local)
-                    return local.toMap()
-                }
-            })
+            store.setLocalBackend(stringBackedBackend(local))
             return store
         }
+
+        /**
+         * Adapter over a plain `String` map so the scalar-oriented tests keep
+         * working now that [LocalVariableBackend] carries JsonElement values.
+         */
+        fun stringBackedBackend(local: MutableMap<String, String>): LocalVariableBackend =
+            object : LocalVariableBackend {
+                override fun snapshot(): Map<String, JsonElement> =
+                    local.mapValues { (_, v) -> JsonPrimitive(v) }
+
+                override fun update(
+                    transform: (MutableMap<String, JsonElement>) -> Unit,
+                ): Map<String, JsonElement> {
+                    val working = LinkedHashMap<String, JsonElement>(
+                        local.mapValues { (_, v) -> JsonPrimitive(v) as JsonElement },
+                    )
+                    transform(working)
+                    local.clear()
+                    working.forEach { (k, v) ->
+                        local[k] = (v as? JsonPrimitive)?.content ?: v.toString()
+                    }
+                    return working
+                }
+            }
     }
 
+    /**
+     * Adapter over a plain String map so the existing scalar-oriented tests
+     * keep working now that [LocalVariableBackend] speaks JsonElement.
+     */
     private fun newStore(): VariableStore {
         val local = ConcurrentHashMap<String, String>()
         return storeWith(local)
+    }
+
+    @Test
+    fun `local scope keeps nested structures intact`() {
+        // Regression: local values used to be stringified, so a variable card's
+        // nested state came back as an opaque JSON string and any scalar write
+        // flattened the whole table.
+        val local = LinkedHashMap<String, JsonElement>()
+        val backing = object : LocalVariableBackend {
+            override fun snapshot(): Map<String, JsonElement> = local.toMap()
+            override fun update(
+                transform: (MutableMap<String, JsonElement>) -> Unit,
+            ): Map<String, JsonElement> {
+                transform(local)
+                return local.toMap()
+            }
+        }
+        val dir = Files.createTempDirectory("tellev-vars-nested")
+        val store = VariableStore(
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+            settingsStore = ExtensionSettingsStore(dir),
+            settingsKey = "_test_global",
+        )
+        store.setLocalBackend(backing)
+
+        store.replaceLocal(
+            buildJsonObject {
+                put("stat_data", buildJsonObject { put("hp", JsonPrimitive(100)) })
+            },
+        )
+        // A scalar write elsewhere must not collapse the nested value.
+        store.setLocal("mood", "calm")
+
+        val nested = store.localObject()["stat_data"]
+        assertTrue("stat_data must stay an object, was $nested", nested is JsonObject)
+        assertEquals("100", (nested as JsonObject)["hp"]?.jsonPrimitive?.content)
+        assertEquals("calm", store.getLocal("mood"))
+    }
+
+    @Test
+    fun `addLocal adds decimals numerically`() {
+        val s = newStore()
+        s.setLocal("affection", "1.5")
+        assertEquals("2", s.addLocal("affection", "0.5"))
+        assertEquals("2.5", s.addLocal("affection", "0.5"))
     }
 
     @Test
@@ -76,13 +145,7 @@ class VariableStoreTest {
         val active = mutableMapOf("name" to "active")
         val scoped = mutableMapOf("name" to "origin")
         val store = storeWith(active)
-        val scopedBackend = object : LocalVariableBackend {
-            override fun snapshot(): Map<String, String> = scoped.toMap()
-            override fun update(transform: (MutableMap<String, String>) -> Unit): Map<String, String> {
-                transform(scoped)
-                return scoped.toMap()
-            }
-        }
+        val scopedBackend = stringBackedBackend(scoped)
 
         store.withLocalBackend(scopedBackend) {
             assertEquals("origin", store.getLocal("name"))

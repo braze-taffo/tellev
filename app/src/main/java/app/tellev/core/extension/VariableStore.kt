@@ -21,15 +21,22 @@ enum class VariableScope { LOCAL, GLOBAL }
  * pattern used by [ExtensionContextProvider].
  */
 interface LocalVariableBackend {
-    /** Cheap snapshot of the current local variables as flat String→String. */
-    fun snapshot(): Map<String, String>
+    /**
+     * Cheap snapshot of the current local variables.
+     *
+     * Values are [JsonElement], not String: variable cards (MVU and friends)
+     * keep structured state here, and stringifying it on the way in or out
+     * made `getVariables().stat_data.hp` undefined and let any scalar write
+     * collapse the whole table into flat strings.
+     */
+    fun snapshot(): Map<String, JsonElement>
 
     /**
      * Atomically mutate the local variables via [transform] and return the
      * resulting snapshot.  Implementations are responsible for persisting
      * the change (debounced) to the chat JSONL.
      */
-    fun update(transform: (MutableMap<String, String>) -> Unit): Map<String, String>
+    fun update(transform: (MutableMap<String, JsonElement>) -> Unit): Map<String, JsonElement>
 }
 
 /**
@@ -84,20 +91,21 @@ class VariableStore(
 
     // ── LOCAL (String API) ───────────────────────────────────────────────
 
-    fun getLocal(name: String): String? = activeLocalBackend()?.snapshot()?.get(name)
+    fun getLocal(name: String): String? =
+        activeLocalBackend()?.snapshot()?.get(name)?.let { elementToString(it) }
 
     fun setLocal(name: String, value: String) {
         if (name.isBlank()) return
-        activeLocalBackend()?.update { it[name] = value }
+        activeLocalBackend()?.update { it[name] = JsonPrimitive(value) }
     }
 
     fun addLocal(name: String, increment: String): String {
         val b = activeLocalBackend() ?: return "0"
         val snap = b.update { m ->
-            val current = m[name] ?: "0"
-            m[name] = addStrings(current, increment)
+            val current = m[name]?.let { elementToString(it) } ?: "0"
+            m[name] = JsonPrimitive(addStrings(current, increment))
         }
-        return snap[name] ?: "0"
+        return snap[name]?.let { elementToString(it) } ?: "0"
     }
 
     fun incLocal(name: String): String = addLocal(name, "1")
@@ -159,7 +167,7 @@ class VariableStore(
     fun localObject(): JsonObject {
         val snap = activeLocalBackend()?.snapshot() ?: emptyMap()
         return buildJsonObject {
-            snap.forEach { (k, v) -> put(k, JsonPrimitive(v)) }
+            snap.forEach { (k, v) -> put(k, v) }
         }
     }
 
@@ -167,7 +175,7 @@ class VariableStore(
     fun replaceLocal(obj: JsonObject) {
         activeLocalBackend()?.update { m ->
             m.clear()
-            obj.forEach { (k, v) -> m[k] = elementToString(v) }
+            obj.forEach { (k, v) -> m[k] = v }
         }
     }
 
@@ -178,7 +186,7 @@ class VariableStore(
      */
     fun mergedObject(): JsonObject = buildJsonObject {
         global.forEach { (k, v) -> put(k, v) }
-        activeLocalBackend()?.snapshot()?.forEach { (k, v) -> put(k, JsonPrimitive(v)) }
+        activeLocalBackend()?.snapshot()?.forEach { (k, v) -> put(k, v) }
     }
 
     private fun persistGlobal() {
@@ -196,10 +204,25 @@ class VariableStore(
         else -> element.toString()
     }
 
-    /** ST addvar semantics: numeric add when both parse, else string concat. */
+    /**
+     * ST addvar semantics: numeric add when both parse, else string concat.
+     * Decimals count as numbers — restricting this to Long turned
+     * `/addvar 好感度 0.5` into string concatenation, so the value grew into
+     * `"00.50.5…"` instead of adding up.
+     */
     private fun addStrings(current: String, increment: String): String {
         val a = current.toLongOrNull()
         val b = increment.toLongOrNull()
-        return if (a != null && b != null) (a + b).toString() else current + increment
+        if (a != null && b != null) return (a + b).toString()
+        val x = current.toDoubleOrNull()
+        val y = increment.toDoubleOrNull()
+        if (x != null && y != null) {
+            val sum = x + y
+            // Keep integral results integral so {{getvar}} doesn't start
+            // rendering "5.0" where ST renders "5".
+            return if (sum == Math.floor(sum) && !sum.isInfinite()) sum.toLong().toString()
+            else sum.toString()
+        }
+        return current + increment
     }
 }

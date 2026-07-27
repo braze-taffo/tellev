@@ -236,44 +236,53 @@ class DefaultMacroEngine : MacroEngine {
             return ""
         }
 
-        // Standard macros
-        return when (expression) {
+        // Standard macros. Matched case-insensitively: every macro regex in
+        // SillyTavern's macros.js carries the /i flag, and real cards very
+        // commonly write {{Char}}, {{User}}, {{Description}}, {{Scenario}} —
+        // an exact match left those in the prompt as literal braces.
+        return when (expression.lowercase(Locale.ROOT)) {
             "char", "name2" -> context.characterName
             "user", "name1" -> context.userName
             "description" -> context.characterDescription
             "personality" -> context.characterPersonality
             "scenario" -> context.characterScenario
-            "mes_example", "dialogueExamples" -> context.exampleMessages
-            "charPrompt" -> "" // System prompt placeholder, handled at higher level
-            "charDescription" -> context.characterDescription
-            "chatStart" -> "" // Chat start marker, handled at higher level
-            "lastMessage" -> context.lastMessage
-            "firstMessage" -> context.firstMessage
+            "mes_example", "dialogueexamples" -> context.exampleMessages
+            "charprompt" -> "" // System prompt placeholder, handled at higher level
+            "chardescription" -> context.characterDescription
+            "chatstart" -> "" // Chat start marker, handled at higher level
+            "lastmessage" -> context.lastMessage
+            "firstmessage" -> context.firstMessage
             "group" -> context.groupMemberNames
             "date" -> LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
             "time" -> LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
             "weekday" -> LocalDate.now().dayOfWeek.getDisplayName(TextStyle.FULL, Locale.ENGLISH)
             "isodate" -> LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
             "isotime" -> LocalTime.now().format(DateTimeFormatter.ISO_LOCAL_TIME)
-            "maxPrompt", "maxPromptTokens" -> context.maxPromptTokens.toString()
-            "maxContext", "maxContextTokens" -> context.maxContextTokens.toString()
-            "maxResponse", "maxResponseTokens" -> context.maxResponseTokens.toString()
+            "maxprompt", "maxprompttokens" -> context.maxPromptTokens.toString()
+            "maxcontext", "maxcontexttokens" -> context.maxContextTokens.toString()
+            "maxresponse", "maxresponsetokens" -> context.maxResponseTokens.toString()
             "model" -> context.modelName
             "persona" -> context.personaDescription
             "input" -> context.inputText
-            "lastUserMessage" -> context.lastUserMessage
-            "lastCharMessage" -> context.lastCharMessage
-            "lastMessageId" -> context.lastMessageId
-            "isMobile" -> "true"
+            "lastusermessage" -> context.lastUserMessage
+            "lastcharmessage" -> context.lastCharMessage
+            "lastmessageid" -> context.lastMessageId
+            "ismobile" -> "true"
             // Greeting / alternate greetings. {{greeting}} and {{charFirstMessage}}
             // resolve to the main first message; {{greeting::N}} (N>=1) picks the
             // Nth alternate greeting. Handled below for the ::N form.
-            "greeting", "charFirstMessage" -> context.firstMessage
+            "greeting", "charfirstmessage" -> context.firstMessage
             else -> {
                 // Check custom variables
                 context.customVariables[expression]?.let { return it }
                 // Check custom macros
                 customMacros[expression]?.let { return it(context) }
+                context.customVariables.entries
+                    .firstOrNull { it.key.equals(expression, ignoreCase = true) }
+                    ?.let { return it.value }
+                customMacros.entries
+                    .firstOrNull { it.key.equals(expression, ignoreCase = true) }
+                    ?.let { return it.value(context) }
                 // Unknown macro: pass through unchanged
                 "{{${expression}}}"
             }
@@ -495,8 +504,12 @@ class DefaultMacroEngine : MacroEngine {
                 when (head) {
                     "setvar", "setchatvar" -> { variableStore?.setLocal(name, value); "" }
                     "setglobalvar" -> { variableStore?.setGlobal(name, value); "" }
-                    "addvar", "addchatvar" -> variableStore?.addLocal(name, value) ?: "0"
-                    "addglobalvar" -> variableStore?.addGlobal(name, value) ?: "0"
+                    // ST's addvar macro is side-effect only and renders empty
+                    // (variables.js getVariableMacros). Emitting the new value
+                    // pushed bare numbers into the prompt at every
+                    // `{{addvar::好感度::5}}` in a card.
+                    "addvar", "addchatvar" -> { variableStore?.addLocal(name, value); "" }
+                    "addglobalvar" -> { variableStore?.addGlobal(name, value); "" }
                     else -> ""
                 }
             }

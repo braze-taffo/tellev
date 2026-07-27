@@ -300,7 +300,17 @@ class DefaultPromptEngine(
                 PromptMessage(
                     role = MessageRole.User,
                     name = request.persona?.name,
-                    content = expandedUserInput,
+                    // The turn being sent has to go through USER_INPUT regex
+                    // scripts too (ST runs them on the outgoing message, not
+                    // only once it has become history). Skipping it meant a
+                    // card's input-rewriting regex took effect one turn late.
+                    content = CharacterRegexApplier.applyForPrompt(
+                        text = expandedUserInput,
+                        role = MessageRole.User,
+                        character = request.character,
+                        userName = request.persona?.name ?: "User",
+                        depth = 0,
+                    ),
                     channel = CHANNEL_CHAT,
                 ),
             )
@@ -371,7 +381,12 @@ class DefaultPromptEngine(
             character = request.character,
             context = macroContext,
             preferCharJailbreak = preferCharJailbreak,
-            includeJailbreak = request.preset.prompts.isEmpty(),
+            // ...but only when the preset actually *has* that slot. Keying on
+            // "preset has no prompts at all" silently dropped PHI for every
+            // preset that simply lacks a jailbreak entry — including the
+            // default preset shipped before it gained one, which is still on
+            // disk for existing installs.
+            includeJailbreak = !request.preset.hasJailbreakSlot(),
         )
         // WI ↑AT/↓AT entries attach to the author's note slot, which ST injects
         // in-chat at depth 4 as system by default (authors-note.js:272-274,
@@ -418,7 +433,7 @@ class DefaultPromptEngine(
             // completion-style APIs
             listOf(PromptMessage(role = MessageRole.User, content = instructText))
         } else {
-            withInjections
+            applyNamesBehavior(withInjections, request.metadata)
         }
 
         // 11. Build stop sequences
@@ -439,6 +454,36 @@ class DefaultPromptEngine(
             ),
             promptTemplateVariableUpdates = promptTemplateResult.variableUpdates,
         )
+    }
+
+    /**
+     * SillyTavern's `names_behavior` default (`NONE`/0, openai.js:495) does not
+     * put a `name` field on chat-completion messages at all; it only prefixes
+     * `Name: ` to the content in group chats or when a force_avatar is set
+     * (openai.js:586-604). tellev attached `name` to every message, so the
+     * request differed from ST's for the same card and preset — and a CJK
+     * character name produced `"name": "小明"`, which fails the OpenAI
+     * `^[a-zA-Z0-9_-]+$` rule and makes strict endpoints reject the request
+     * outright.
+     *
+     * The name is still carried internally up to this point because group
+     * ordering and instruct formatting need it.
+     */
+    private fun applyNamesBehavior(
+        messages: List<PromptMessage>,
+        metadata: JsonObject,
+    ): List<PromptMessage> {
+        val isGroup = groupMemberNamesList(metadata).size > 1
+        return messages.map { message ->
+            val name = message.name
+            when {
+                name.isNullOrBlank() -> message.copy(name = null)
+                isGroup && message.role == MessageRole.Assistant &&
+                    !message.content.startsWith("$name: ") ->
+                    message.copy(name = null, content = "$name: ${message.content}")
+                else -> message.copy(name = null)
+            }
+        }
     }
 
     private fun buildMacroContext(request: PromptBuildRequest): MacroContext {
@@ -889,6 +934,16 @@ class DefaultPromptEngine(
      *
      * Both are macro-expanded before injection.
      */
+    /**
+     * Whether the preset declares a post-history-instructions slot, using the
+     * same identifier normalisation as [applyPresetPromptOrder].
+     */
+    private fun GenerationPreset.hasJailbreakSlot(): Boolean =
+        prompts.any {
+            it.identifier.lowercase().replace("_", "").replace("-", "") in
+                setOf("jailbreak", "posthistoryinstructions", "phi")
+        }
+
     private fun collectCharacterCardInjections(
         character: CharacterCard,
         context: MacroContext,

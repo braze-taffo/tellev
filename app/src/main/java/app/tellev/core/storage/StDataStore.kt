@@ -113,6 +113,9 @@ interface StDataStore {
          * duplicating the string rule.
          */
         fun embeddedCharacterBookId(characterId: String): String =
-            "${characterId}_character_book"
+            "$characterId$EMBEDDED_CHARACTER_BOOK_SUFFIX"
+
+        /** Suffix of [embeddedCharacterBookId]; lets callers recognise such ids. */
+        const val EMBEDDED_CHARACTER_BOOK_SUFFIX = "_character_book"
     }
 }

@@ -465,13 +465,7 @@ class DefaultPromptEngineTest {
         val variableStore = VariableStoreTest.storeWith(activeChat)
         val macroEngine = DefaultMacroEngine().apply { this.variableStore = variableStore }
         val engine = DefaultPromptEngine(macroEngine = macroEngine)
-        val backend = object : LocalVariableBackend {
-            override fun snapshot(): Map<String, String> = scoped.toMap()
-            override fun update(transform: (MutableMap<String, String>) -> Unit): Map<String, String> {
-                transform(scoped)
-                return scoped.toMap()
-            }
-        }
+        val backend = VariableStoreTest.stringBackedBackend(scoped)
 
         val result = engine.buildWithLocalVariableBackend(
             PromptBuildRequest(
@@ -811,7 +805,7 @@ class DefaultPromptEngineTest {
     }
 
     @Test
-    fun `post history instructions dropped when preset has no jailbreak slot`() {
+    fun `post history instructions survive a preset with no jailbreak slot`() {
         val preset = GenerationPreset(
             id = "p", name = "P", providerType = "openai-compatible",
             prompts = listOf(
@@ -825,8 +819,16 @@ class DefaultPromptEngineTest {
             }
         }
         val result = buildWith(preset = preset, characterRaw = characterRaw)
-        // ST only emits PHI by overriding an existing enabled jailbreak prompt.
-        assertFalse(result.messages.any { it.content.contains("CARD PHI") })
+        // A preset that reaches the prompt manager without a jailbreak entry
+        // does not exist in SillyTavern: checkForMissingPrompts pushes every
+        // missing default prompt — jailbreak included — back onto the array
+        // before assembly (PromptManager.js:1043-1057, called from
+        // sanitizeServiceSettings :1018-1020). So the card's PHI is never
+        // dropped for lack of a slot; it lands at the end, exactly where the
+        // default prompt_order puts the jailbreak marker. tellev reaches the
+        // same outcome through the card-injection fallback.
+        assertEquals("CARD PHI", result.messages.last().content)
+        assertEquals(1, result.messages.count { it.content.contains("CARD PHI") })
     }
 
     @Test

@@ -63,6 +63,16 @@ interface ExtensionHost {
     fun registerSlashCommand(extensionId: String, command: SlashCommand)
     suspend fun executeSlashCommand(input: SlashCommandInput): SlashCommandResult
 
+    /**
+     * Run raw STScript through the built-in command engine — the same path
+     * `TavernHelper.triggerSlash` takes from an extension WebView. Exposed so
+     * message-embedded scripts (the front-end cards that drive everything
+     * through `triggerSlash`) reach the real engine instead of a
+     * special-cased handful of commands.
+     */
+    suspend fun executeStScript(script: String): SlashCommandResult =
+        SlashCommandResult(handled = false)
+
     fun registerVirtualRoute(extensionId: String, route: VirtualApiRoute)
     suspend fun handleVirtualApi(request: VirtualApiRequest): VirtualApiResponse
 

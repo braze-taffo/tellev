@@ -1013,6 +1013,11 @@ class VirtualApiRouter(
                     put("mes", msg.swipes.getOrNull(msg.swipeIndex) ?: msg.content)
                     put("is_user", msg.role == MessageRole.User)
                     put("is_system", msg.role == MessageRole.System || msg.isHidden)
+                    // ST folds "hidden" into is_system; TavernHelper exposes it
+                    // separately as is_hidden. Emitting both keeps the
+                    // get→edit→save round-trip from turning a hidden character
+                    // message into a narrator message and vice versa.
+                    put("is_hidden", msg.isHidden)
                     put("send_date", msg.createdAtMillis)
                     put("swipes", JsonArray(msg.swipes.map { JsonPrimitive(it) }))
                     put("swipe_id", msg.swipeIndex)
@@ -1044,15 +1049,60 @@ class VirtualApiRouter(
             ?: return errorResponse(400, "Missing file_name")
         val chatArray = bodyObj["chat"]?.let { runCatching { it.jsonArray }.getOrNull() }
             ?: return errorResponse(400, "Missing chat array")
-        // Persist each message; the first element is the header.
-        for ((index, element) in chatArray.withIndex()) {
-            if (index == 0) continue // skip header
-            val msg = runCatching { json.decodeFromJsonElement(ChatMessage.serializer(), element) }.getOrNull()
-                ?: continue
-            dataStore.appendMessage(chatId, msg)
-        }
+        val session = runCatching { dataStore.readChatSession(chatId) }.getOrNull()
+            ?: return errorResponse(404, "Chat not found: $chatId")
+
+        // ST `/api/chats/save` replaces the whole chat file (chats.js saveChat);
+        // the rows use ST field names, which is also what our own
+        // `/api/chats/get` hands out. Decoding them straight into ChatMessage
+        // always failed (no id/role/createdAtMillis) and the `?: continue` made
+        // that a silent 200 with zero writes — a read/modify/write round-trip
+        // reported success and lost every edit.
+        val messages = stChatArrayToMessages(chatArray, chatId)
+        val header = chatArray.firstOrNull() as? JsonObject
+        val metadata = (header?.get("chat_metadata") as? JsonObject) ?: session.metadata
+        dataStore.saveChatSession(session.copy(messages = messages, metadata = metadata))
         return jsonResponse(200, buildJsonObject { put("ok", true) })
     }
+
+    /**
+     * Inverse of [sessionToStChatArray]: ST-shaped rows (mes/name/is_user/
+     * is_system/send_date/swipes/swipe_id/variables/extra) back into
+     * [ChatMessage]. The first element is the metadata header and is skipped.
+     */
+    private fun stChatArrayToMessages(chatArray: JsonArray, chatId: String): List<ChatMessage> =
+        chatArray.drop(1).mapIndexedNotNull { index, element ->
+            val obj = element as? JsonObject ?: return@mapIndexedNotNull null
+            val isUser = obj["is_user"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+            val isSystem = obj["is_system"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+            // Plain ST data has no is_hidden, and there is_system *means* hidden.
+            val isHidden = obj["is_hidden"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: isSystem
+            val swipes = runCatching {
+                obj["swipes"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
+            }.getOrDefault(emptyList())
+            val swipeId = obj["swipe_id"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+            val content = obj["mes"]?.jsonPrimitive?.content
+                ?: swipes.getOrNull(swipeId)
+                ?: ""
+            ChatMessage(
+                id = "$chatId-$index",
+                role = when {
+                    isUser -> MessageRole.User
+                    isSystem && !isHidden -> MessageRole.System
+                    else -> MessageRole.Character
+                },
+                name = obj["name"]?.jsonPrimitive?.content ?: if (isUser) "You" else "Character",
+                content = content,
+                createdAtMillis = obj["send_date"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L,
+                swipeIndex = swipeId,
+                swipes = swipes,
+                metadata = obj["extra"] as? JsonObject ?: buildJsonObject { },
+                variables = runCatching {
+                    obj["variables"]?.jsonArray?.mapNotNull { it as? JsonObject } ?: emptyList()
+                }.getOrDefault(emptyList()),
+                isHidden = isHidden,
+            )
+        }
 
     private suspend fun handleStGetWorldInfo(request: VirtualApiRequest): VirtualApiResponse {
         val bodyObj = parseBodyAsJsonObjectOrNull(request)

@@ -12,6 +12,26 @@ class MacroEngineTest {
 
     private val engine = DefaultMacroEngine()
 
+    @Test
+    fun `standard macros are case-insensitive like SillyTavern`() {
+        // Every macro regex in ST's macros.js carries /i, and real cards very
+        // commonly write {{Char}} / {{Description}}. Exact matching left those
+        // in the prompt as literal braces.
+        assertEquals("Alice", engine.expand("{{Char}}", context))
+        assertEquals("Bob", engine.expand("{{USER}}", context))
+        assertEquals("A curious explorer.", engine.expand("{{Description}}", context))
+    }
+
+    @Test
+    fun `addvar macro is side-effect only and renders nothing`() {
+        val local = java.util.concurrent.ConcurrentHashMap<String, String>()
+        val store = VariableStoreTest.storeWith(local)
+        val e = DefaultMacroEngine().apply { variableStore = store }
+        e.expand("{{setvar::affection::5}}", context)
+        assertEquals("", e.expand("{{addvar::affection::3}}", context))
+        assertEquals("8", e.expand("{{getvar::affection}}", context))
+    }
+
     private val context = MacroContext(
         characterName = "Alice",
         userName = "Bob",

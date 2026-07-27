@@ -31,7 +31,34 @@ class SlashCommandEngine(
      * the event name and the positional argument list.
      */
     private val eventEmitter: ((String, List<String>) -> Unit)? = null,
+    /**
+     * Expands `{{...}}` macros in command arguments. SillyTavern runs
+     * `substituteParams` over every named and unnamed argument right before a
+     * command executes (SlashCommandClosure.js:544,582); without it
+     * `/setvar key=n {{char}}` stores the literal `{{char}}` and
+     * `/times {{getvar::n}}` loops zero times, both silently.
+     */
+    private val macroExpander: ((String) -> String)? = null,
+    /**
+     * Called the first time a command that exists only as a no-op is executed.
+     * Dropping the old hard-error gate stopped scripts from aborting on an
+     * incidental unsupported command, but it also made those commands
+     * indistinguishable from success — `/gen | /setvar key=reply` quietly
+     * stored an empty string. Reporting them keeps the script running *and*
+     * leaves a trace.
+     */
+    private val onUnimplementedCommand: ((String) -> Unit)? = null,
 ) {
+
+    private val reportedStubs = java.util.Collections.newSetFromMap(
+        java.util.concurrent.ConcurrentHashMap<String, Boolean>(),
+    )
+
+    /** A command that parses and "succeeds" but has no effect in tellev. */
+    private fun stubOk(name: String, output: String = ""): Result {
+        if (reportedStubs.add(name)) onUnimplementedCommand?.invoke(name)
+        return Result.ok(output)
+    }
 
     data class RegisteredCommandRef(
         val extensionId: String,
@@ -96,6 +123,11 @@ class SlashCommandEngine(
     fun execute(scriptText: String): Result {
         val tokens = tokenizeScript(scriptText)
         val lines = ScriptParser(tokens).parseStatements(stopOnClosureEnd = false)
+        // Nothing parsed as a command (empty text, or plain prose): report it
+        // as unhandled so callers can fall back instead of reading an empty
+        // success. Matters now that message-embedded triggerSlash falls
+        // through to this engine.
+        if (lines.isEmpty()) return Result(handled = false)
         val result = executeLines(lines)
         // A /break that escapes every loop aborts the script (ST behavior).
         return if (result.isBreak) Result.abort() else result
@@ -114,8 +146,8 @@ class SlashCommandEngine(
         var pipeInput = ""
         var result = Result.ok()
         for ((index, cmd) in line.withIndex()) {
-            val effectiveCmd = if (index > 0) applyPipe(cmd, pipeInput) else cmd
-            result = executeCommand(effectiveCmd)
+            val piped = if (index > 0) applyPipe(cmd, pipeInput) else cmd
+            result = executeCommand(expandMacros(piped))
             if (result.isAborted || result.isError || result.isBreak) return result
             pipeInput = result.output
         }
@@ -123,9 +155,13 @@ class SlashCommandEngine(
     }
 
     /**
-     * Pipe semantics: `{{pipe}}` is replaced wherever it appears inside any
-     * argument (ST macro semantics); otherwise the previous output is appended
-     * as the last positional argument when it is non-empty.
+     * Pipe semantics, following SlashCommandClosure.substituteUnnamedArgument
+     * (:555-562): `{{pipe}}` is replaced wherever it appears in any argument,
+     * and otherwise the previous output is injected **only when the command
+     * carries no unnamed argument of its own**. Appending unconditionally —
+     * what tellev used to do — changed the argument list of every command in a
+     * chain, so `/echo hello | /echo world` printed `world hello` instead of
+     * `world` and any command reading args by index was shifted.
      */
     private fun applyPipe(cmd: Command, pipeInput: String): Command {
         val args = cmd.args.toMutableList()
@@ -137,14 +173,81 @@ class SlashCommandEngine(
                 replaced = true
             }
         }
-        if (!replaced && pipeInput.isNotEmpty()) args.add(Command.Arg.Text(pipeInput))
-        return cmd.copy(args = args)
+        val named = cmd.namedArgs.mapValues { (_, v) ->
+            if (v.contains("{{pipe}}")) {
+                replaced = true
+                v.replace("{{pipe}}", pipeInput)
+            } else {
+                v
+            }
+        }
+        if (!replaced && args.isEmpty() && pipeInput.isNotEmpty()) {
+            args.add(Command.Arg.Text(pipeInput))
+        }
+        return cmd.copy(args = args, namedArgs = named)
+    }
+
+    /**
+     * Expand macros in every argument, matching ST's per-argument
+     * `substituteParams` pass. Closure arguments are left alone — their bodies
+     * are expanded when the closure's own commands run.
+     */
+    private fun expandMacros(cmd: Command): Command {
+        val expand = macroExpander ?: return cmd
+        if (cmd.args.none { it is Command.Arg.Text && it.value.contains("{{") } &&
+            cmd.namedArgs.none { it.value.contains("{{") }
+        ) {
+            return cmd
+        }
+        return cmd.copy(
+            args = cmd.args.map { arg ->
+                if (arg is Command.Arg.Text && arg.value.contains("{{")) {
+                    Command.Arg.Text(expand(arg.value), arg.quoted)
+                } else {
+                    arg
+                }
+            },
+            namedArgs = cmd.namedArgs.mapValues { (_, v) ->
+                if (v.contains("{{")) expand(v) else v
+            },
+        )
+    }
+
+    /**
+     * ST's variable commands take the name from `key=` and the value from the
+     * unnamed argument (variables.js:933-963), i.e. `/setvar key=x 值`. tellev
+     * historically only understood `/setvar x 值` and `value=`, so the
+     * documented form read the value off index 1 of a one-element list and
+     * silently stored an empty string. Both shapes are accepted now.
+     */
+    private fun Command.varName(): String =
+        namedArgs["key"] ?: namedArgs["name"] ?: textArgs().firstOrNull() ?: ""
+
+    private fun Command.varValue(): String {
+        namedArgs["value"]?.let { return it }
+        val positional = textArgs()
+        val nameWasNamed = namedArgs.containsKey("key") || namedArgs.containsKey("name")
+        return if (nameWasNamed) {
+            positional.joinToString(" ")
+        } else {
+            positional.drop(1).joinToString(" ")
+        }
     }
 
     // ── Parser ──────────────────────────────────────────────────────────
 
     private sealed interface Token {
-        data class Word(val text: String, val quoted: Boolean) : Token
+        /**
+         * [unquotedPrefixLen] is how many leading characters of [text] came
+         * from outside quotes. Named-argument detection only searches for `=`
+         * inside that prefix, so `key="a=b"` binds `key` while `"a=b"` stays a
+         * positional argument.
+         */
+        data class Word(
+            val text: String,
+            val quoted: Boolean,
+            val unquotedPrefixLen: Int = text.length,
+        ) : Token
         data object ClosureStart : Token
         data object ClosureEnd : Token
         data object Pipe : Token
@@ -161,12 +264,22 @@ class SlashCommandEngine(
         val tokens = mutableListOf<Token>()
         val current = StringBuilder()
         var inQuote: Char? = null
+        var unquotedLen = 0
+        var sawQuote = false
         var i = 0
 
         fun flushWord() {
-            if (current.isNotEmpty()) {
-                tokens.add(Token.Word(current.toString(), quoted = false))
+            if (current.isNotEmpty() || sawQuote) {
+                tokens.add(
+                    Token.Word(
+                        text = current.toString(),
+                        quoted = sawQuote && unquotedLen == 0,
+                        unquotedPrefixLen = unquotedLen,
+                    ),
+                )
                 current.clear()
+                unquotedLen = 0
+                sawQuote = false
             }
         }
 
@@ -175,16 +288,18 @@ class SlashCommandEngine(
             when {
                 inQuote != null -> {
                     if (c == inQuote) {
-                        tokens.add(Token.Word(current.toString(), quoted = true))
-                        current.clear()
+                        // A closing quote ends the quoted run, not the word:
+                        // `key="value"` has to stay one token or the `key=`
+                        // prefix is emitted as a named arg with an empty value
+                        // and the value becomes a stray positional argument.
                         inQuote = null
                     } else {
                         current.append(c)
                     }
                 }
                 c == '"' || c == '\'' -> {
-                    flushWord()
                     inQuote = c
+                    sawQuote = true
                 }
                 c == '{' && i + 1 < script.length && script[i + 1] == ':' -> {
                     flushWord()
@@ -220,13 +335,12 @@ class SlashCommandEngine(
                         continue
                     }
                     current.append(c)
+                    unquotedLen++
                 }
             }
             i++
         }
-        if (current.isNotEmpty()) {
-            tokens.add(Token.Word(current.toString(), quoted = inQuote != null))
-        }
+        flushWord()
         return tokens
     }
 
@@ -247,14 +361,26 @@ class SlashCommandEngine(
                 when (val token = tokens[pos]) {
                     is Token.Newline -> {
                         pos++
-                        if (currentLine.isNotEmpty()) {
+                        // A newline only ends the statement when the chain is
+                        // actually over. Real scripts are written one command
+                        // per line with the `|` either trailing the previous
+                        // line or leading the next one; treating every newline
+                        // as a break severed those chains, so `{{pipe}}` was
+                        // emitted literally and upstream output was dropped.
+                        var lookahead = pos
+                        while (lookahead < tokens.size && tokens[lookahead] is Token.Newline) lookahead++
+                        val continuesChain = lookahead < tokens.size &&
+                            (tokens[lookahead] is Token.Pipe || tokens[lookahead] is Token.PipeBreak)
+                        if (!continuesChain && currentLine.isNotEmpty()) {
                             lines.add(currentLine)
                             currentLine = mutableListOf()
+                            expectCommand = true
                         }
-                        expectCommand = true
                     }
                     is Token.Pipe, is Token.PipeBreak -> {
                         pos++
+                        // Skip newlines between `|` and the next command.
+                        while (pos < tokens.size && tokens[pos] is Token.Newline) pos++
                         expectCommand = true
                     }
                     is Token.ClosureEnd -> {
@@ -294,7 +420,9 @@ class SlashCommandEngine(
                 when (val token = tokens[pos]) {
                     is Token.Word -> {
                         pos++
-                        val eqIdx = token.text.indexOf('=')
+                        // Only the unquoted prefix can carry the `key=` separator.
+                        val prefixLen = token.unquotedPrefixLen.coerceIn(0, token.text.length)
+                        val eqIdx = token.text.take(prefixLen).indexOf('=')
                         val isComparison = eqIdx > 0 && (
                             token.text[eqIdx - 1] == '!' || token.text[eqIdx - 1] == '>' ||
                                 token.text[eqIdx - 1] == '<' ||
@@ -340,80 +468,80 @@ class SlashCommandEngine(
             }
 
             "setvar", "setchatvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().getOrNull(0) ?: ""
-                val value = cmd.namedArgs["value"] ?: cmd.textArgs().getOrNull(1) ?: ""
+                val name = cmd.varName()
+                val value = cmd.varValue()
                 if (name.isBlank()) return Result.error("setvar requires a variable name")
                 variableStore?.setLocal(name, value)
                 Result.ok(value)
             }
 
             "setglobalvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().getOrNull(0) ?: ""
-                val value = cmd.namedArgs["value"] ?: cmd.textArgs().getOrNull(1) ?: ""
+                val name = cmd.varName()
+                val value = cmd.varValue()
                 if (name.isBlank()) return Result.error("setglobalvar requires a variable name")
                 variableStore?.setGlobal(name, value)
                 Result.ok(value)
             }
 
             "getvar", "getchatvar", "var" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
+                val name = cmd.varName()
                 if (name.isBlank()) return Result.error("getvar requires a variable name")
                 Result.ok(variableStore?.getLocal(name) ?: "")
             }
 
             "getglobalvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
+                val name = cmd.varName()
                 if (name.isBlank()) return Result.error("getglobalvar requires a variable name")
                 Result.ok(variableStore?.getGlobal(name) ?: "")
             }
 
             "addvar", "addchatvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().getOrNull(0) ?: ""
-                val increment = cmd.namedArgs["value"] ?: cmd.textArgs().getOrNull(1) ?: ""
+                val name = cmd.varName()
+                val increment = cmd.varValue()
                 if (name.isBlank()) return Result.error("addvar requires a variable name")
                 Result.ok(variableStore?.addLocal(name, increment) ?: "0")
             }
 
             "addglobalvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().getOrNull(0) ?: ""
-                val increment = cmd.namedArgs["value"] ?: cmd.textArgs().getOrNull(1) ?: ""
+                val name = cmd.varName()
+                val increment = cmd.varValue()
                 if (name.isBlank()) return Result.error("addglobalvar requires a variable name")
                 Result.ok(variableStore?.addGlobal(name, increment) ?: "0")
             }
 
             "incvar", "incchatvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
+                val name = cmd.varName()
                 if (name.isBlank()) return Result.error("incvar requires a variable name")
                 Result.ok(variableStore?.incLocal(name) ?: "0")
             }
 
             "incglobalvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
+                val name = cmd.varName()
                 if (name.isBlank()) return Result.error("incglobalvar requires a variable name")
                 Result.ok(variableStore?.incGlobal(name) ?: "0")
             }
 
             "decvar", "decchatvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
+                val name = cmd.varName()
                 if (name.isBlank()) return Result.error("decvar requires a variable name")
                 Result.ok(variableStore?.decLocal(name) ?: "0")
             }
 
             "decglobalvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
+                val name = cmd.varName()
                 if (name.isBlank()) return Result.error("decglobalvar requires a variable name")
                 Result.ok(variableStore?.decGlobal(name) ?: "0")
             }
 
             "flushvar", "flushchatvar", "deletevar", "delvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
+                val name = cmd.varName()
                 if (name.isBlank()) return Result.error("flushvar requires a variable name")
                 variableStore?.deleteLocal(name)
                 Result.ok("")
             }
 
             "flushglobalvar" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
+                val name = cmd.varName()
                 if (name.isBlank()) return Result.error("flushglobalvar requires a variable name")
                 variableStore?.deleteGlobal(name)
                 Result.ok("")
@@ -431,18 +559,18 @@ class SlashCommandEngine(
             }
 
             "hasvar", "varexists" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
+                val name = cmd.varName()
                 Result.ok(if (variableStore?.hasLocal(name) == true) "true" else "false")
             }
 
             "hasglobalvar", "globalvarexists" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().firstOrNull() ?: ""
+                val name = cmd.varName()
                 Result.ok(if (variableStore?.hasGlobal(name) == true) "true" else "false")
             }
 
             "let" -> {
-                val name = cmd.namedArgs["name"] ?: cmd.namedArgs["key"] ?: cmd.textArgs().getOrNull(0) ?: ""
-                val value = cmd.namedArgs["value"] ?: cmd.textArgs().drop(1).joinToString(" ")
+                val name = cmd.varName()
+                val value = cmd.varValue()
                 if (name.isBlank()) return Result.error("let requires a variable name")
                 variableStore?.setLocal(name, value)
                 Result.ok(value)
@@ -742,26 +870,26 @@ class SlashCommandEngine(
 
             "send", "sys", "sysname" -> Result.ok(cmd.textArgs().joinToString(" "))
 
-            "gen", "genraw" -> Result.ok("")
+            "gen", "genraw" -> stubOk(cmd.name)
 
-            "continue", "regenerate", "swipe" -> Result.ok("")
+            "continue", "regenerate", "swipe" -> stubOk(cmd.name)
 
-            "newchat" -> Result.ok("")
+            "newchat" -> stubOk(cmd.name)
 
-            "del", "cut" -> Result.ok("")
+            "del", "cut" -> stubOk(cmd.name)
 
-            "model" -> Result.ok("")
+            "model" -> stubOk(cmd.name)
 
             "tokenizer" -> {
                 val input = cmd.textArgs().joinToString(" ")
                 Result.ok(input.split(Regex("\\s+")).filter { it.isNotEmpty() }.size.toString())
             }
 
-            "clipboard-get" -> Result.ok("")
+            "clipboard-get" -> stubOk(cmd.name)
 
-            "clipboard-set" -> Result.ok("")
+            "clipboard-set" -> stubOk(cmd.name)
 
-            "beep" -> Result.ok("")
+            "beep" -> stubOk(cmd.name)
 
             "help", "?" -> {
                 Result.ok(BUILTIN_COMMANDS.joinToString("\n") { "/$it" })
@@ -776,161 +904,161 @@ class SlashCommandEngine(
                 Result.ok(event)
             }
 
-            "inject" -> Result.ok("")
+            "inject" -> stubOk(cmd.name)
 
-            "listinjects" -> Result.ok("")
+            "listinjects" -> stubOk(cmd.name)
 
-            "flushinject" -> Result.ok("")
+            "flushinject" -> stubOk(cmd.name)
 
-            "getpromptentry", "setpromptentry" -> Result.ok("")
+            "getpromptentry", "setpromptentry" -> stubOk(cmd.name)
 
-            "is-mobile" -> Result.ok("true")
+            "is-mobile" -> stubOk(cmd.name, "true")
 
-            "chat-render", "chat-reload" -> Result.ok("")
+            "chat-render", "chat-reload" -> stubOk(cmd.name)
 
-            "reroll-pick" -> Result.ok("")
+            "reroll-pick" -> stubOk(cmd.name)
 
-            "profile" -> Result.ok("")
+            "profile" -> stubOk(cmd.name)
 
-            "profile-list" -> Result.ok("")
+            "profile-list" -> stubOk(cmd.name)
 
-            "tempchat" -> Result.ok("")
+            "tempchat" -> stubOk(cmd.name)
 
-            "closechat" -> Result.ok("")
+            "closechat" -> stubOk(cmd.name)
 
-            "getchatname" -> Result.ok("")
+            "getchatname" -> stubOk(cmd.name)
 
-            "renamechat" -> Result.ok("")
+            "renamechat" -> stubOk(cmd.name)
 
-            "delchat" -> Result.ok("")
+            "delchat" -> stubOk(cmd.name)
 
-            "forcesave" -> Result.ok("")
+            "forcesave" -> stubOk(cmd.name)
 
-            "instruct", "instruct-on", "instruct-off", "instruct-state" -> Result.ok("")
+            "instruct", "instruct-on", "instruct-off", "instruct-state" -> stubOk(cmd.name)
 
-            "context" -> Result.ok("")
+            "context" -> stubOk(cmd.name)
 
-            "panels" -> Result.ok("")
+            "panels" -> stubOk(cmd.name)
 
-            "bg" -> Result.ok("")
+            "bg" -> stubOk(cmd.name)
 
-            "char-find" -> Result.ok("")
+            "char-find" -> stubOk(cmd.name)
 
-            "char-create", "char-update", "char-duplicate", "char-get", "char-delete" -> Result.ok("")
+            "char-create", "char-update", "char-duplicate", "char-get", "char-delete" -> stubOk(cmd.name)
 
-            "sendas" -> Result.ok("")
+            "sendas" -> stubOk(cmd.name)
 
-            "single", "bubble", "flat" -> Result.ok("")
+            "single", "bubble", "flat" -> stubOk(cmd.name)
 
-            "go" -> Result.ok("")
+            "go" -> stubOk(cmd.name)
 
-            "rename-char" -> Result.ok("")
+            "rename-char" -> stubOk(cmd.name)
 
-            "sysgen" -> Result.ok("")
+            "sysgen" -> stubOk(cmd.name)
 
-            "ask" -> Result.ok("")
+            "ask" -> stubOk(cmd.name)
 
-            "delname" -> Result.ok("")
+            "delname" -> stubOk(cmd.name)
 
-            "trigger" -> Result.ok("")
+            "trigger" -> stubOk(cmd.name)
 
-            "hide", "unhide" -> Result.ok("")
+            "hide", "unhide" -> stubOk(cmd.name)
 
             "member-get", "member-disable", "member-enable", "member-add", "member-remove",
-            "member-up", "member-down", "member-peek", "member-count" -> Result.ok("")
+            "member-up", "member-down", "member-peek", "member-count" -> stubOk(cmd.name)
 
-            "delswipe", "addswipe" -> Result.ok("")
+            "delswipe", "addswipe" -> stubOk(cmd.name)
 
-            "messages" -> Result.ok("")
+            "messages" -> stubOk(cmd.name)
 
-            "setinput" -> Result.ok("")
+            "setinput" -> stubOk(cmd.name)
 
-            "pick-icon" -> Result.ok("")
+            "pick-icon" -> stubOk(cmd.name)
 
-            "api", "api-url" -> Result.ok("")
+            "api", "api-url" -> stubOk(cmd.name)
 
-            "chat-jump" -> Result.ok("")
+            "chat-jump" -> stubOk(cmd.name)
 
-            "prompt-post-processing" -> Result.ok("")
+            "prompt-post-processing" -> stubOk(cmd.name)
 
-            "vn" -> Result.ok("")
+            "vn" -> stubOk(cmd.name)
 
-            "resetpanels" -> Result.ok("")
+            "resetpanels" -> stubOk(cmd.name)
 
-            "bgcol" -> Result.ok("")
+            "bgcol" -> stubOk(cmd.name)
 
-            "theme" -> Result.ok("")
+            "theme" -> stubOk(cmd.name)
 
-            "css-var" -> Result.ok("")
+            "css-var" -> stubOk(cmd.name)
 
-            "movingui" -> Result.ok("")
+            "movingui" -> stubOk(cmd.name)
 
-            "stop-strings" -> Result.ok("")
+            "stop-strings" -> stubOk(cmd.name)
 
-            "start-reply-with" -> Result.ok("")
+            "start-reply-with" -> stubOk(cmd.name)
 
             "persona-create", "persona-update", "persona-get", "persona-delete",
-            "persona-duplicate", "persona-lock", "persona-set", "persona-sync" -> Result.ok("")
+            "persona-duplicate", "persona-lock", "persona-set", "persona-sync" -> stubOk(cmd.name)
 
             "reasoning-get", "reasoning-set", "reasoning-parse", "reasoning-format",
-            "reasoning-template", "reasoning-collapse", "reasoning-expand", "reasoning-toggle" -> Result.ok("")
+            "reasoning-template", "reasoning-collapse", "reasoning-expand", "reasoning-toggle" -> stubOk(cmd.name)
 
-            "secret-id", "secret-delete", "secret-write", "secret-rename", "secret-read" -> Result.ok("")
+            "secret-id", "secret-delete", "secret-write", "secret-rename", "secret-read" -> stubOk(cmd.name)
 
-            "sysprompt", "sysprompt-on", "sysprompt-off", "sysprompt-state" -> Result.ok("")
+            "sysprompt", "sysprompt-on", "sysprompt-off", "sysprompt-state" -> stubOk(cmd.name)
 
             "extension-enable", "extension-disable", "extension-toggle", "extension-state",
-            "extension-exists", "reload-page" -> Result.ok("")
+            "extension-exists", "reload-page" -> stubOk(cmd.name)
 
-            "note", "note-depth", "note-frequency", "note-position", "note-role" -> Result.ok("")
+            "note", "note-depth", "note-frequency", "note-position", "note-role" -> stubOk(cmd.name)
 
-            "lockbg", "unlockbg", "autobg" -> Result.ok("")
+            "lockbg", "unlockbg", "autobg" -> stubOk(cmd.name)
 
             "branch-create", "checkpoint-create", "checkpoint-go", "checkpoint-exit",
-            "checkpoint-parent", "checkpoint-get", "checkpoint-list" -> Result.ok("")
+            "checkpoint-parent", "checkpoint-get", "checkpoint-list" -> stubOk(cmd.name)
 
-            "tag-add", "tag-remove", "tag-exists", "tag-list", "tag-import" -> Result.ok("")
+            "tag-add", "tag-remove", "tag-exists", "tag-list", "tag-import" -> stubOk(cmd.name)
 
-            "tools-list", "tools-invoke", "tools-register", "tools-unregister" -> Result.ok("")
+            "tools-list", "tools-invoke", "tools-register", "tools-unregister" -> stubOk(cmd.name)
 
-            "preset" -> Result.ok("")
+            "preset" -> stubOk(cmd.name)
 
-            "proxy" -> Result.ok("")
+            "proxy" -> stubOk(cmd.name)
 
-            "loader-wrap", "loader-show", "loader-hide", "loader-stop" -> Result.ok("")
+            "loader-wrap", "loader-show", "loader-hide", "loader-stop" -> stubOk(cmd.name)
 
-            "db", "db-list", "db-get", "db-add", "db-update", "db-disable", "db-enable", "db-delete" -> Result.ok("")
+            "db", "db-list", "db-get", "db-add", "db-update", "db-disable", "db-enable", "db-delete" -> stubOk(cmd.name)
 
             "db-ingest", "db-purge", "db-search", "vector-threshold", "vector-query",
-            "vector-max-entries", "vector-chats-state", "vector-files-state", "vector-worldinfo-state" -> Result.ok("")
+            "vector-max-entries", "vector-chats-state", "vector-files-state", "vector-worldinfo-state" -> stubOk(cmd.name)
 
-            "imagine", "imagine-source", "imagine-style", "imagine-comfy-workflow" -> Result.ok("")
+            "imagine", "imagine-source", "imagine-style", "imagine-comfy-workflow" -> stubOk(cmd.name)
 
             "expression-set", "expression-fallback", "expression-folder-override",
-            "expression-last", "expression-list", "expression-classify", "expression-upload" -> Result.ok("")
+            "expression-last", "expression-list", "expression-classify", "expression-upload" -> stubOk(cmd.name)
 
-            "profile-create", "profile-update", "profile-get", "profile-genstream" -> Result.ok("")
+            "profile-create", "profile-update", "profile-get", "profile-genstream" -> stubOk(cmd.name)
 
-            "regex-preset", "regex", "regex-state", "regex-toggle" -> Result.ok("")
+            "regex-preset", "regex", "regex-state", "regex-toggle" -> stubOk(cmd.name)
 
-            "show-gallery", "list-gallery" -> Result.ok("")
+            "show-gallery", "list-gallery" -> stubOk(cmd.name)
 
-            "summarize" -> Result.ok("")
+            "summarize" -> stubOk(cmd.name)
 
-            "caption" -> Result.ok("")
+            "caption" -> stubOk(cmd.name)
 
-            "translate" -> Result.ok("")
+            "translate" -> stubOk(cmd.name)
 
-            "speak" -> Result.ok("")
+            "speak" -> stubOk(cmd.name)
 
-            "count" -> Result.ok("0")
+            "count" -> stubOk(cmd.name, "0")
 
             "world", "getchatbook", "getglobalbooks", "getpersonabook", "getcharbook",
-            "findentry", "getentryfield", "createentry", "setentryfield" -> Result.ok("")
+            "findentry", "getentryfield", "createentry", "setentryfield" -> stubOk(cmd.name)
 
-            "wi-set-timed-effect", "wi-get-timed-effect" -> Result.ok("")
+            "wi-set-timed-effect", "wi-get-timed-effect" -> stubOk(cmd.name)
 
-            "yt-script" -> Result.ok("")
+            "yt-script" -> stubOk(cmd.name)
 
             else -> {
                 if (cmd.name in extensionCommands) {
