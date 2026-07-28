@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import app.tellev.core.model.Persona
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
@@ -45,9 +46,11 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -94,6 +97,8 @@ import app.tellev.core.model.PresetCategory
 import app.tellev.core.provider.ProviderConfigPersistence
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import app.tellev.feature.update.UpdateUiState
+import app.tellev.feature.update.UpdateViewModel
 import app.tellev.util.UriUtils
 import kotlin.math.roundToInt
 
@@ -101,9 +106,11 @@ import kotlin.math.roundToInt
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
+    updateViewModel: UpdateViewModel,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val updateState by updateViewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val versionName = remember(context) {
@@ -790,6 +797,11 @@ fun SettingsScreen(
                                 text = "tellev v$versionName",
                                 style = MaterialTheme.typography.bodyMedium,
                             )
+                            UpdateStatus(
+                                state = updateState,
+                                onCheck = updateViewModel::checkNow,
+                                onUpdate = updateViewModel::downloadAndInstall,
+                            )
                             Text(
                                 text = "基于 SillyTavern 的原生 Android 客户端。",
                                 style = MaterialTheme.typography.bodySmall,
@@ -1023,6 +1035,96 @@ private fun DonationQrImage(
                 .fillMaxWidth()
                 .height(360.dp),
         )
+    }
+}
+
+@Composable
+private fun UpdateStatus(
+    state: UpdateUiState,
+    onCheck: () -> Unit,
+    onUpdate: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        val info = state.pendingUpdate
+        when {
+            info != null -> {
+                Text(
+                    text = "发现新版本 v${info.version}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                if (info.releaseNotes.isNotBlank()) {
+                    Text(
+                        text = info.releaseNotes,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 6,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (state.downloading) {
+                    LinearProgressIndicator(
+                        progress = { state.progress },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        text = "正在下载… ${(state.progress * 100).roundToInt()}%",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                } else {
+                    Button(
+                        onClick = onUpdate,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (state.installStarted) "重新下载更新" else "下载更新")
+                    }
+                }
+                state.error?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+            state.checking -> {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Text(
+                        text = "正在检查更新…",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            state.error != null -> {
+                Text(
+                    text = "更新检查失败",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                TextButton(onClick = onCheck) { Text("重试") }
+            }
+            state.upToDate -> {
+                Text(
+                    text = "已是最新版本",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            else -> {
+                TextButton(onClick = onCheck) { Text("检查更新") }
+            }
+        }
     }
 }
 

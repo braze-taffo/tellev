@@ -16,6 +16,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -24,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -51,6 +53,8 @@ import app.tellev.feature.extensions.ExtensionsViewModelFactory
 import app.tellev.feature.settings.SettingsScreen
 import app.tellev.feature.settings.SettingsViewModel
 import app.tellev.feature.settings.SettingsViewModelFactory
+import app.tellev.feature.update.UpdateViewModel
+import app.tellev.feature.update.UpdateViewModelFactory
 import app.tellev.feature.world.WorldBookDetailScreen
 import app.tellev.feature.world.WorldBookEntryEditScreen
 import app.tellev.feature.world.WorldBooksListScreen
@@ -117,6 +121,26 @@ fun TellevRoot() {
             promptEngine = graph.promptEngine,
         ),
     )
+
+    val activityContext = LocalContext.current
+    val currentVersion = remember(activityContext) {
+        activityContext.packageManager
+            .getPackageInfo(activityContext.packageName, 0).versionName ?: "0.0.0"
+    }
+    val updateViewModel: UpdateViewModel = viewModel(
+        factory = UpdateViewModelFactory(
+            appContext = activityContext.applicationContext,
+            checker = graph.updateChecker,
+            preferences = graph.appPreferences,
+            currentVersion = currentVersion,
+        ),
+    )
+
+    // Silently check GitHub for a newer release on launch, rate-limited to
+    // once per day. The result surfaces in the 关于 card on the Settings tab.
+    LaunchedEffect(Unit) {
+        updateViewModel.maybeAutoCheck()
+    }
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
@@ -280,7 +304,10 @@ fun TellevRoot() {
 
             // Settings tab - single screen
             composable(TellevTab.Settings.route) {
-                SettingsScreen(viewModel = settingsViewModel)
+                SettingsScreen(
+                    viewModel = settingsViewModel,
+                    updateViewModel = updateViewModel,
+                )
             }
         }
     }

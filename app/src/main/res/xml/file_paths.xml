@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Exposes the app cache dir so the update checker can hand the downloaded
+  APK to the system PackageInstaller via FileProvider. The APK is written to
+  cacheDir/tellev-update.apk (see UpdateViewModel).
+-->
+<paths>
+    <cache-path name="update_apk" path="." />
+</paths>

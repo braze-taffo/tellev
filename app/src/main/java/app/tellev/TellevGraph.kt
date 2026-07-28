@@ -33,9 +33,11 @@ import app.tellev.core.provider.StableDiffusionAdapter
 import app.tellev.core.provider.TextGenAdapter
 import app.tellev.core.security.AndroidKeystoreSecretStore
 import app.tellev.core.security.SecretStore
+import app.tellev.core.storage.AppPreferences
 import app.tellev.core.storage.FileStDataStore
 import app.tellev.core.storage.StDataStore
 import app.tellev.core.storage.StDirectoryLayout
+import app.tellev.core.update.UpdateChecker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -54,6 +56,8 @@ class TellevGraph private constructor(
     val permissionManager: ExtensionPermissionManager,
     val apiRouter: VirtualApiRouter,
     val extensionSettingsStore: ExtensionSettingsStore,
+    val appPreferences: AppPreferences,
+    val updateChecker: UpdateChecker,
 ) {
     val importedCardSignal = MutableStateFlow(0L)
 
@@ -134,6 +138,16 @@ class TellevGraph private constructor(
             val dataStore = FileStDataStore(layout)
             val secretStore = AndroidKeystoreSecretStore(context)
 
+            // Update checker: short timeouts so a dead mirror is abandoned
+            // quickly before falling back to the next one.
+            val appPreferences = AppPreferences(context)
+            val updateChecker = UpdateChecker(
+                OkHttpClient.Builder()
+                    .connectTimeout(8, TimeUnit.SECONDS)
+                    .readTimeout(15, TimeUnit.SECONDS)
+                    .build(),
+            )
+
             // ── Extension layer assembly ───────────────────────────────
             // The WebView JS extension host, virtual API router, settings
             // store, and permission manager were previously dead code:
@@ -188,6 +202,8 @@ class TellevGraph private constructor(
                 permissionManager = permissionManager,
                 apiRouter = apiRouter,
                 extensionSettingsStore = extensionSettingsStore,
+                appPreferences = appPreferences,
+                updateChecker = updateChecker,
             )
         }
     }
