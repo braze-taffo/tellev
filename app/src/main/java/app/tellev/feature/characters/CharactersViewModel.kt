@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterSummary
+import app.tellev.core.model.WorldBook
 import app.tellev.core.storage.CharacterExporter
 import app.tellev.core.storage.CharacterImporter
 import app.tellev.core.storage.StDataStore
@@ -20,6 +21,9 @@ data class CharactersUiState(
     val filteredCharacters: List<CharacterSummary> = emptyList(),
     val searchQuery: String = "",
     val selectedCharacter: CharacterCard? = null,
+    // World books available to bind to the selected character (loaded lazily
+    // when a character is opened, for the binding picker in the detail screen).
+    val worldBooks: List<WorldBook> = emptyList(),
     val isLoading: Boolean = false,
     val error: String? = null,
     val info: String? = null,
@@ -80,9 +84,13 @@ class CharactersViewModel(
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
                 val character = dataStore.readCharacter(id)
+                // Load the world-book list alongside the card so the detail
+                // screen can offer a binding picker without a second round-trip.
+                val worldBooks = runCatching { dataStore.listWorldBooks() }.getOrDefault(emptyList())
                 _uiState.update {
                     it.copy(
                         selectedCharacter = character,
+                        worldBooks = worldBooks,
                         isLoading = false,
                     )
                 }
@@ -98,7 +106,7 @@ class CharactersViewModel(
     }
 
     fun clearSelectedCharacter() {
-        _uiState.update { it.copy(selectedCharacter = null) }
+        _uiState.update { it.copy(selectedCharacter = null, worldBooks = emptyList()) }
     }
 
     fun saveCharacter(card: CharacterCard) {

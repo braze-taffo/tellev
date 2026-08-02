@@ -51,7 +51,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -1600,18 +1599,8 @@ class ChatViewModel(
      * field SillyTavern writes when you pick a lorebook for a character, and a
      * bare top-level `world` shows up on older exports.
      */
-    private fun characterWorldBookNames(card: CharacterCard): List<String> {
-        val data = (card.raw["data"] as? JsonObject) ?: card.raw
-        val names = mutableListOf<String>()
-        fun add(element: JsonElement?) {
-            (element as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-                ?.let(names::add)
-        }
-        add((data["extensions"] as? JsonObject)?.get("world"))
-        add(data["world"])
-        add(card.raw["world"])
-        return names.distinct()
-    }
+    private fun characterWorldBookNames(card: CharacterCard): List<String> =
+        app.tellev.core.model.CharacterWorldBinding.linkedWorldBookNames(card)
 
     private fun buildTavernContext(state: ChatUiState): JsonObject {
         val character = state.selectedCharacter

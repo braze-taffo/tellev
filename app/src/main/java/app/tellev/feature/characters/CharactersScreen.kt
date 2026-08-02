@@ -8,6 +8,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -48,6 +49,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,6 +58,7 @@ import androidx.compose.material3.InputChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SearchBar
 import androidx.compose.material3.SnackbarHost
@@ -79,6 +82,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.tellev.core.model.CharacterCard
+import app.tellev.core.model.CharacterWorldBinding
+import app.tellev.core.model.WorldBook
 import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -438,6 +443,22 @@ fun CharacterDetailScreen(
     var creatorNotes by remember(character?.id) { mutableStateOf(character?.creatorNotes ?: "") }
     var tags by remember(character?.id) { mutableStateOf(character?.tags ?: emptyList()) }
     var newTag by remember { mutableStateOf("") }
+    // External world-book binding (data.extensions.world). Empty string = unbound.
+    var linkedWorldName by remember(character?.id) {
+        mutableStateOf(character?.let { CharacterWorldBinding.linkedWorldBookName(it) } ?: "")
+    }
+    var showWorldPicker by remember { mutableStateOf(false) }
+
+    fun updatedCard(c: CharacterCard) = c.copy(
+        name = name,
+        description = description,
+        personality = personality,
+        scenario = scenario,
+        firstMessage = firstMessage,
+        exampleMessages = exampleMessages,
+        creatorNotes = creatorNotes,
+        tags = tags,
+    )
 
     LaunchedEffect(state.error) {
         state.error?.let {
@@ -466,17 +487,11 @@ fun CharacterDetailScreen(
                 actions = {
                     IconButton(
                         onClick = {
-                            if (character != null) {
+                            character?.let { c ->
                                 viewModel.saveCharacter(
-                                    character.copy(
-                                        name = name,
-                                        description = description,
-                                        personality = personality,
-                                        scenario = scenario,
-                                        firstMessage = firstMessage,
-                                        exampleMessages = exampleMessages,
-                                        creatorNotes = creatorNotes,
-                                        tags = tags,
+                                    CharacterWorldBinding.withLinkedWorldBookName(
+                                        updatedCard(c),
+                                        linkedWorldName,
                                     ),
                                 )
                             }
@@ -502,6 +517,10 @@ fun CharacterDetailScreen(
                 CircularProgressIndicator()
             }
         } else {
+            val worldBooks = state.worldBooks
+            val boundBook = linkedWorldName.ifBlank { null }?.let { nm ->
+                worldBooks.firstOrNull { it.name.equals(nm, ignoreCase = true) || it.id == nm }
+            }
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -686,19 +705,46 @@ fun CharacterDetailScreen(
                     }
                 }
 
+                // World book binding (data.extensions.world): the external
+                // lorebook activated when chatting with this character, on top
+                // of the embedded character_book above.
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    ),
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "世界书绑定",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (linkedWorldName.isBlank()) {
+                                "未绑定（仅使用上方角色书）"
+                            } else if (boundBook != null) {
+                                "“${boundBook.name}” · ${boundBook.entries.size} 条条目"
+                            } else {
+                                "“$linkedWorldName”（该世界书未导入或已删除）"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        FilledTonalButton(onClick = { showWorldPicker = true }) {
+                            Text("选择世界书")
+                        }
+                    }
+                }
+
                 // Save button
                 FilledTonalButton(
                     onClick = {
                         viewModel.saveCharacter(
-                            character.copy(
-                                name = name,
-                                description = description,
-                                personality = personality,
-                                scenario = scenario,
-                                firstMessage = firstMessage,
-                                exampleMessages = exampleMessages,
-                                creatorNotes = creatorNotes,
-                                tags = tags,
+                            CharacterWorldBinding.withLinkedWorldBookName(
+                                updatedCard(character),
+                                linkedWorldName,
                             ),
                         )
                     },
@@ -708,6 +754,80 @@ fun CharacterDetailScreen(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            if (showWorldPicker) {
+                AlertDialog(
+                    onDismissRequest = { showWorldPicker = false },
+                    title = { Text("选择世界书") },
+                    text = {
+                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                            WorldPickerOption(
+                                label = "不绑定",
+                                selected = linkedWorldName.isBlank(),
+                                onClick = {
+                                    linkedWorldName = ""
+                                    showWorldPicker = false
+                                },
+                            )
+                            if (worldBooks.isEmpty()) {
+                                Text(
+                                    text = "暂无世界书。请先在“世界书”页导入或创建。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
+                                )
+                            } else {
+                                HorizontalDivider()
+                                worldBooks.forEach { book ->
+                                    WorldPickerOption(
+                                        label = book.name.ifBlank { book.id },
+                                        sublabel = "${book.entries.size} 条条目",
+                                        selected = book.name.equals(linkedWorldName, ignoreCase = true) ||
+                                            book.id == linkedWorldName,
+                                        onClick = {
+                                            linkedWorldName = book.name
+                                            showWorldPicker = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {},
+                    dismissButton = {
+                        TextButton(onClick = { showWorldPicker = false }) { Text("取消") }
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorldPickerOption(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    sublabel: String? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Spacer(modifier = Modifier.width(8.dp))
+        Column {
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+            if (sublabel != null) {
+                Text(
+                    text = sublabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
