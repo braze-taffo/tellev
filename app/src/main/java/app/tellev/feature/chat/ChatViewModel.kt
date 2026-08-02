@@ -1616,13 +1616,13 @@ class ChatViewModel(
             put("this_chid", if (character != null) 0 else -1)
             put("groupId", session?.groupId ?: "")
             put("selected_group", session?.groupId ?: "")
-            put("mainApi", state.providerConfig?.providerType ?: state.selectedProvider)
-            put("main_api", state.providerConfig?.providerType ?: state.selectedProvider)
+            put("mainApi", state.providerConfig?.providerType ?: ProviderConfigPersistence.adapterIdFor(state.selectedProvider))
+            put("main_api", state.providerConfig?.providerType ?: ProviderConfigPersistence.adapterIdFor(state.selectedProvider))
             put("onlineStatus", "connected")
             put(
                 "maxContext",
                 state.selectedPreset?.maxContextTokens
-                    ?: defaultContextTokens(state.providerConfig?.providerType ?: state.selectedProvider, state.providerConfig?.model),
+                    ?: defaultContextTokens(state.providerConfig?.providerType ?: ProviderConfigPersistence.adapterIdFor(state.selectedProvider), state.providerConfig?.model),
             )
             put("lastMessageId", state.messages.lastIndex)
             put("chatMetadata", session?.metadata ?: buildJsonObject { })

@@ -26,8 +26,8 @@ android {
         applicationId = "app.tellev"
         minSdk = 31
         targetSdk = 36
-        versionCode = 15
-        versionName = "1.4.2"
+        versionCode = 16
+        versionName = "1.4.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -11,6 +11,7 @@ import app.tellev.core.model.PresetCategory
 import app.tellev.core.provider.ProviderAdapter
 import app.tellev.core.provider.ProviderConfig
 import app.tellev.core.provider.ProviderConfigPersistence
+import app.tellev.core.provider.CustomProviderConfig
 import app.tellev.core.provider.ProviderDefaults
 import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.provider.ProviderStatus
@@ -39,6 +40,10 @@ enum class ThemeMode {
 data class SettingsUiState(
     val providers: List<ProviderAdapter> = emptyList(),
     val selectedProviderId: String = "openai-compatible",
+    // User-defined named OpenAI-compatible endpoints. The selectedProviderId may
+    // be `custom:{id}` to address one of these.
+    val customConfigs: List<CustomProviderConfig> = emptyList(),
+    val customConfigName: String = "",
     val baseUrl: String = "",
     val apiKey: String = "",
     val model: String = "",
@@ -94,6 +99,11 @@ class SettingsViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             try {
+                // Migrate the legacy single openai-compatible slot into named
+                // custom configs (idempotent), then load the current list.
+                ProviderConfigPersistence.migrateLegacyOpenAiCompatible(secretStore)
+                val customConfigs = ProviderConfigPersistence.listCustomConfigs(secretStore)
+
                 val providers = providerRegistry.all()
                 val presets = dataStore.listPresets()
                 val selectedPresetNames = PresetCategory.entries.mapNotNull { category ->
@@ -104,27 +114,24 @@ class SettingsViewModel(
                 val selectedId = secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
                     ?: _uiState.value.selectedProviderId
 
-                val baseUrl = secretStore.readSecret("provider-$selectedId-baseurl")
-                    ?: ProviderDefaults.baseUrl(selectedId)
-                val apiKey = secretStore.readSecret("provider-$selectedId-apikey") ?: ""
-                val model = secretStore.readSecret("provider-$selectedId-model")
-                    ?: ProviderDefaults.model(selectedId)
-                val advanced = ProviderConfigPersistence.loadAdvanced(secretStore, selectedId)
+                val fields = loadConfigFields(selectedId, customConfigs)
 
                 _uiState.update {
                     it.copy(
                         providers = providers,
                         selectedProviderId = selectedId,
+                        customConfigs = customConfigs,
+                        customConfigName = fields.customConfigName,
                         presets = presets,
                         selectedPresetNames = selectedPresetNames,
                         personas = personas,
                         secretIds = secretIds,
-                        baseUrl = baseUrl,
-                        apiKey = apiKey,
-                        model = model,
-                        compatibility = advanced,
-                        extraHeadersJson = json.encodeToString(advanced.headers),
-                        extraBodyJson = json.encodeToString(JsonObject.serializer(), advanced.extraBody),
+                        baseUrl = fields.baseUrl,
+                        apiKey = fields.apiKey,
+                        model = fields.model,
+                        compatibility = fields.compatibility,
+                        extraHeadersJson = json.encodeToString(fields.compatibility.headers),
+                        extraBodyJson = json.encodeToString(JsonObject.serializer(), fields.compatibility.extraBody),
                         isLoading = false,
                     )
                 }
@@ -139,25 +146,56 @@ class SettingsViewModel(
         }
     }
 
+    private data class ConfigFields(
+        val customConfigName: String,
+        val baseUrl: String,
+        val apiKey: String,
+        val model: String,
+        val compatibility: OpenAiCompatibilitySettings,
+    )
+
+    /** Loads the form fields for a selected id (custom config or built-in slot). */
+    private suspend fun loadConfigFields(
+        selectedId: String,
+        customConfigs: List<CustomProviderConfig>,
+    ): ConfigFields {
+        if (ProviderConfigPersistence.isCustomConfigId(selectedId)) {
+            val config = customConfigs.firstOrNull { it.id == ProviderConfigPersistence.customIdFrom(selectedId) }
+            return ConfigFields(
+                customConfigName = config?.name ?: "",
+                baseUrl = config?.baseUrl ?: "",
+                apiKey = config?.apiKey ?: "",
+                model = config?.model ?: "",
+                compatibility = config?.advanced ?: OpenAiCompatibilitySettings(),
+            )
+        }
+        return ConfigFields(
+            customConfigName = "",
+            baseUrl = secretStore.readSecret("provider-$selectedId-baseurl")
+                ?: ProviderDefaults.baseUrl(selectedId),
+            apiKey = secretStore.readSecret("provider-$selectedId-apikey") ?: "",
+            model = secretStore.readSecret("provider-$selectedId-model")
+                ?: ProviderDefaults.model(selectedId),
+            compatibility = ProviderConfigPersistence.loadAdvanced(secretStore, selectedId),
+        )
+    }
+
     fun selectProvider(id: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, selectedProviderId = id, providerStatus = null) }
             try {
-                val baseUrl = secretStore.readSecret("provider-$id-baseurl")
-                    ?: ProviderDefaults.baseUrl(id)
-                val apiKey = secretStore.readSecret("provider-$id-apikey") ?: ""
-                val model = secretStore.readSecret("provider-$id-model")
-                    ?: ProviderDefaults.model(id)
-                val advanced = ProviderConfigPersistence.loadAdvanced(secretStore, id)
-
+                val customConfigs = ProviderConfigPersistence.listCustomConfigs(secretStore)
+                val fields = loadConfigFields(id, customConfigs)
                 _uiState.update {
                     it.copy(
-                        baseUrl = baseUrl,
-                        apiKey = apiKey,
-                        model = model,
-                        compatibility = advanced,
-                        extraHeadersJson = json.encodeToString(advanced.headers),
-                        extraBodyJson = json.encodeToString(JsonObject.serializer(), advanced.extraBody),
+                        customConfigs = customConfigs,
+                        customConfigName = fields.customConfigName,
+                        baseUrl = fields.baseUrl,
+                        apiKey = fields.apiKey,
+                        model = fields.model,
+                        compatibility = fields.compatibility,
+                        extraHeadersJson = json.encodeToString(fields.compatibility.headers),
+                        extraBodyJson = json.encodeToString(JsonObject.serializer(), fields.compatibility.extraBody),
                         isLoading = false,
                         availableModels = emptyList(),
                     )
@@ -213,7 +251,9 @@ class SettingsViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isTesting = true, providerStatus = null, error = null) }
             try {
-                val adapter = providerRegistry.require(state.selectedProviderId)
+                val adapter = providerRegistry.require(
+                    ProviderConfigPersistence.adapterIdFor(state.selectedProviderId)
+                )
                 val status = withContext(Dispatchers.IO) {
                     adapter.checkStatus(config)
                 }
@@ -255,32 +295,58 @@ class SettingsViewModel(
             try {
                 val providerId = state.selectedProviderId
                 secretStore.putSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID, providerId)
-                if (state.baseUrl.isNotBlank()) {
-                    secretStore.putSecret("provider-$providerId-baseurl", state.baseUrl)
-                }
-                if (state.apiKey.isNotBlank()) {
-                    secretStore.putSecret("provider-$providerId-apikey", state.apiKey)
-                } else {
-                    secretStore.deleteSecret("provider-$providerId-apikey")
-                }
-                if (state.model.isNotBlank()) {
-                    secretStore.putSecret("provider-$providerId-model", state.model)
-                } else {
-                    secretStore.deleteSecret("provider-$providerId-model")
-                }
-                if (ProviderConfigPersistence.hasCustomOpenAiSettings(providerId)) {
-                    ProviderConfigPersistence.saveAdvanced(
-                        secretStore,
-                        providerId,
-                        compatibilitySettingsFromState(state),
-                    )
-                }
 
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        info = "模型服务配置已保存。",
-                    )
+                if (ProviderConfigPersistence.isCustomConfigId(providerId)) {
+                    val rawId = ProviderConfigPersistence.customIdFrom(providerId)
+                    val advanced = compatibilitySettingsFromState(state)
+                    val configs = ProviderConfigPersistence.listCustomConfigs(secretStore)
+                    val existing = configs.firstOrNull { it.id == rawId }
+                    val savedName = state.customConfigName.trim().ifBlank { existing?.name ?: "自定义配置" }
+                    val updated = configs.map { c ->
+                        if (c.id == rawId) c.copy(
+                            name = savedName,
+                            baseUrl = state.baseUrl.trim(),
+                            apiKey = state.apiKey.trim(),
+                            model = state.model.trim(),
+                            advanced = advanced,
+                        ) else c
+                    }
+                    ProviderConfigPersistence.saveCustomConfigs(secretStore, updated)
+                    _uiState.update {
+                        it.copy(
+                            customConfigs = updated,
+                            customConfigName = savedName,
+                            isLoading = false,
+                            info = "模型服务配置已保存。",
+                        )
+                    }
+                } else {
+                    if (state.baseUrl.isNotBlank()) {
+                        secretStore.putSecret("provider-$providerId-baseurl", state.baseUrl)
+                    }
+                    if (state.apiKey.isNotBlank()) {
+                        secretStore.putSecret("provider-$providerId-apikey", state.apiKey)
+                    } else {
+                        secretStore.deleteSecret("provider-$providerId-apikey")
+                    }
+                    if (state.model.isNotBlank()) {
+                        secretStore.putSecret("provider-$providerId-model", state.model)
+                    } else {
+                        secretStore.deleteSecret("provider-$providerId-model")
+                    }
+                    if (ProviderConfigPersistence.hasAdvancedSettings(providerId)) {
+                        ProviderConfigPersistence.saveAdvanced(
+                            secretStore,
+                            providerId,
+                            compatibilitySettingsFromState(state),
+                        )
+                    }
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            info = "模型服务配置已保存。",
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 _uiState.update {
@@ -289,6 +355,98 @@ class SettingsViewModel(
                         error = "保存服务商配置失败：${e.message}",
                     )
                 }
+            }
+        }
+    }
+
+    fun updateCustomConfigName(name: String) {
+        _uiState.update { it.copy(customConfigName = name) }
+    }
+
+    fun createCustomConfig() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                val configs = ProviderConfigPersistence.listCustomConfigs(secretStore)
+                val name = "自定义配置 ${configs.size + 1}"
+                val id = "cust_${UUID.randomUUID()}"
+                val newConfig = CustomProviderConfig(
+                    id = id,
+                    name = name,
+                    baseUrl = "",
+                    apiKey = "",
+                    model = "",
+                    advanced = OpenAiCompatibilitySettings(),
+                )
+                val updated = configs + newConfig
+                ProviderConfigPersistence.saveCustomConfigs(secretStore, updated)
+                val selectedId = ProviderConfigPersistence.selectedIdFor(id)
+                secretStore.putSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID, selectedId)
+                _uiState.update {
+                    it.copy(
+                        customConfigs = updated,
+                        selectedProviderId = selectedId,
+                        customConfigName = name,
+                        baseUrl = "",
+                        apiKey = "",
+                        model = "",
+                        compatibility = OpenAiCompatibilitySettings(),
+                        extraHeadersJson = "{}",
+                        extraBodyJson = "{}",
+                        availableModels = emptyList(),
+                        isLoading = false,
+                        info = "已创建自定义配置“$name”。",
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, error = "创建自定义配置失败：${e.message}") }
+            }
+        }
+    }
+
+    fun deleteCustomConfig(rawId: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                val wasSelected = _uiState.value.selectedProviderId ==
+                    ProviderConfigPersistence.selectedIdFor(rawId)
+                val configs = ProviderConfigPersistence.listCustomConfigs(secretStore)
+                val updated = configs.filterNot { it.id == rawId }
+                ProviderConfigPersistence.saveCustomConfigs(secretStore, updated)
+
+                if (wasSelected) {
+                    val fallback = updated.firstOrNull()
+                        ?.let { ProviderConfigPersistence.selectedIdFor(it.id) }
+                        ?: "openai-compatible"
+                    secretStore.putSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID, fallback)
+                    val fields = loadConfigFields(fallback, updated)
+                    _uiState.update {
+                        it.copy(
+                            customConfigs = updated,
+                            selectedProviderId = fallback,
+                            customConfigName = fields.customConfigName,
+                            baseUrl = fields.baseUrl,
+                            apiKey = fields.apiKey,
+                            model = fields.model,
+                            compatibility = fields.compatibility,
+                            extraHeadersJson = json.encodeToString(fields.compatibility.headers),
+                            extraBodyJson = json.encodeToString(JsonObject.serializer(), fields.compatibility.extraBody),
+                            availableModels = emptyList(),
+                            isLoading = false,
+                            info = "自定义配置已删除。",
+                        )
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            customConfigs = updated,
+                            isLoading = false,
+                            info = "自定义配置已删除。",
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, error = "删除自定义配置失败：${e.message}") }
             }
         }
     }
@@ -694,19 +852,19 @@ class SettingsViewModel(
 
     private fun providerConfigFromState(state: SettingsUiState): ProviderConfig {
         val advanced = compatibilitySettingsFromState(state)
-        val compatible = ProviderConfigPersistence.hasCustomOpenAiSettings(state.selectedProviderId)
+        val useAdvanced = ProviderConfigPersistence.hasAdvancedSettings(state.selectedProviderId)
         return ProviderConfig(
-            providerType = state.selectedProviderId,
+            providerType = ProviderConfigPersistence.adapterIdFor(state.selectedProviderId),
             baseUrl = state.baseUrl,
             apiKey = state.apiKey.ifBlank { null },
             model = state.model.ifBlank { null },
-            headers = if (compatible) advanced.headers else emptyMap(),
-            options = if (compatible) advanced.toOptions() else JsonObject(emptyMap()),
+            headers = if (useAdvanced) advanced.headers else emptyMap(),
+            options = if (useAdvanced) advanced.toOptions() else JsonObject(emptyMap()),
         )
     }
 
     private fun compatibilitySettingsFromState(state: SettingsUiState): OpenAiCompatibilitySettings {
-        if (!ProviderConfigPersistence.hasCustomOpenAiSettings(state.selectedProviderId)) return state.compatibility
+        if (!ProviderConfigPersistence.hasAdvancedSettings(state.selectedProviderId)) return state.compatibility
         val headerObject = parseJsonObject(state.extraHeadersJson, "附加 Headers")
         val headers = headerObject.mapValues { (name, value) ->
             (value as? JsonPrimitive)?.contentOrNull
