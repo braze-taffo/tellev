@@ -15,11 +15,17 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -151,6 +157,23 @@ class FileStDataStoreTest {
         assertEquals(true, entry.selective)
         assertEquals(50, entry.insertionOrder)
         assertEquals(3, entry.depth)
+    }
+
+    @Test
+    fun `storage emits world persona and chat changes after successful writes`() = runBlocking {
+        val worldChange = async(start = CoroutineStart.UNDISPATCHED) { store.worldBookChanges.first() }
+        store.saveWorldBook(WorldBook("flow-world", "Flow World", emptyList()))
+        assertEquals("flow-world", worldChange.await())
+
+        val personaChange = async(start = CoroutineStart.UNDISPATCHED) { store.personaChanges.first() }
+        store.savePersona(app.tellev.core.model.Persona("flow-persona", "Mira", ""))
+        assertEquals("flow-persona", personaChange.await())
+
+        val chatChange = async(start = CoroutineStart.UNDISPATCHED) { store.chatChanges.first() }
+        store.saveChatSession(
+            ChatSession("flow-chat", "Flow Chat", "alice", null, emptyList()),
+        )
+        assertEquals("flow-chat", chatChange.await())
     }
 
     @Test
@@ -439,6 +462,45 @@ class FileStDataStoreTest {
         assertEquals("Hello there!", loaded.messages[0].content)
     }
 
+    @Test
+    fun `chat jsonl edit preserves header and unknown message fields`() = runBlocking {
+        val chatDir = layout.chats.resolve("alice")
+        chatDir.createDirectories()
+        chatDir.resolve("lossless.jsonl").writeText(
+            """
+            {"user_name":"Mira","character_name":"Alice","custom_header":{"keep":true},"chat_metadata":{"title":"Imported","custom_meta":7}}
+            {"name":"Alice","is_user":false,"is_system":false,"send_date":"2025-01-01T00:00:00Z","mes":"Before","force_avatar":"User Avatars/alice.png","reasoning":"private chain","tool_calls":[{"id":"call-1"}],"attachments":[{"url":"https://example.invalid/file","name":"raw"}],"vendor_extension":{"nested":true},"extra":{"display":"keep"}}
+            """.trimIndent(),
+        )
+
+        val imported = store.readChatSession("lossless")
+        store.saveChatSession(
+            imported.copy(
+                messages = imported.messages.mapIndexed { index, message ->
+                    if (index == 0) message.copy(content = "After") else message
+                },
+            ),
+        )
+
+        val lines = chatDir.resolve("lossless.jsonl").readText().lineSequence().toList()
+        val header = FileStDataStore.defaultJson.parseToJsonElement(lines[0]).jsonObject
+        val message = FileStDataStore.defaultJson.parseToJsonElement(lines[1]).jsonObject
+        assertEquals("Mira", header["user_name"]?.jsonPrimitive?.content)
+        assertEquals("Alice", header["character_name"]?.jsonPrimitive?.content)
+        assertEquals("true", header["custom_header"]?.jsonObject?.get("keep")?.jsonPrimitive?.content)
+        assertEquals("After", message["mes"]?.jsonPrimitive?.content)
+        assertEquals("User Avatars/alice.png", message["force_avatar"]?.jsonPrimitive?.content)
+        assertEquals("private chain", message["reasoning"]?.jsonPrimitive?.content)
+        assertEquals("call-1", message["tool_calls"]?.jsonArray?.first()?.jsonObject?.get("id")?.jsonPrimitive?.content)
+        assertEquals("raw", message["attachments"]?.jsonArray?.first()?.jsonObject?.get("name")?.jsonPrimitive?.content)
+        assertEquals("true", message["vendor_extension"]?.jsonObject?.get("nested")?.jsonPrimitive?.content)
+        assertEquals("keep", message["extra"]?.jsonObject?.get("display")?.jsonPrimitive?.content)
+
+        val roundTripped = store.readChatSession("lossless")
+        assertEquals("After", roundTripped.messages.single().content)
+        assertEquals("private chain", roundTripped.messages.single().raw["reasoning"]?.jsonPrimitive?.content)
+    }
+
     // ---- Group Parsing Tests ----
 
     @Test
@@ -564,7 +626,28 @@ class FileStDataStoreTest {
         assertEquals("default", preset.name)
         assertEquals(0.7, preset.temperature ?: -1.0, 0.0001)
         assertEquals(1.0, preset.topP ?: -1.0, 0.0001)
-        assertEquals(300, preset.maxTokens)
+        assertNull(preset.maxContextTokens)
+        assertNull(preset.maxCompletionTokens)
+        assertNull(preset.maxTokens)
+    }
+
+    @Test
+    fun `bootstrap removes only legacy limits from tellev openai default`() = runBlocking {
+        val path = store.layout.openAiSettings.resolve("default.json")
+        val raw = FileStDataStore.defaultJson.parseToJsonElement(path.toFile().readText()).jsonObject
+        path.toFile().writeText(
+            JsonObject(raw.toMutableMap().apply {
+                put("openai_max_context", JsonPrimitive(4096))
+                put("openai_max_tokens", JsonPrimitive(300))
+            }).toString(),
+        )
+
+        store.bootstrap()
+
+        val migrated = requireNotNull(store.readPreset(PresetCategory.OpenAi, "default"))
+        assertNull(migrated.maxContextTokens)
+        assertNull(migrated.maxCompletionTokens)
+        assertNull(migrated.maxTokens)
     }
 
     @Test

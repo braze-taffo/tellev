@@ -64,7 +64,7 @@ class WebViewJsExtensionHost(
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
     private val commandTimeoutMs: Long = 10_000L,
     private val apiCallTimeoutMs: Long = 30_000L,
-    private val scriptReadyTimeoutMs: Long = 5_000L,
+    private val scriptReadyTimeoutMs: Long = DEFAULT_SCRIPT_READY_TIMEOUT_MS,
 ) : ExtensionHost {
 
     // ── state ──────────────────────────────────────────────────────────
@@ -803,14 +803,7 @@ class WebViewJsExtensionHost(
                     ?.takeIf { it.isNotBlank() }
                     ?.let { runCatching { json.parseToJsonElement(it).jsonObject }.getOrNull() }
                     ?: buildJsonObject { }
-                val result = _contextProvider?.generateText(options)
-                if (result != null) {
-                    return VirtualApiResponse(
-                        status = 200,
-                        headers = mapOf("Content-Type" to "application/json"),
-                        body = json.encodeToString(JsonObject.serializer(), result),
-                    )
-                }
+                return dispatchExtensionGeneration(_contextProvider, options, json)
             }
 
             return apiRouter.route(request)
@@ -1041,7 +1034,18 @@ class WebViewJsExtensionHost(
         @JavascriptInterface
         fun stGetAllVariables(): String {
             if (!hasStorageBridgeAccess("stGetAllVariables")) return "{}"
-            val vars = variableStore?.mergedObject() ?: buildJsonObject { }
+            // js-slash-runner's aggregate view includes the most recent
+            // message-scope variables. MVU cards keep stat_data there; leaving
+            // it out made front-end scripts see an empty state even though the
+            // prompt macro could read the message snapshot.
+            val latestMessageVariables = messageVariableBackend
+                ?.lastIndexWithVariables()
+                ?.takeIf { it >= 0 }
+                ?.let { messageVariableBackend?.messageVariables(it) }
+            val vars = buildJsonObject {
+                variableStore?.mergedObject()?.forEach { (key, value) -> put(key, value) }
+                latestMessageVariables?.forEach { (key, value) -> put(key, value) }
+            }
             return json.encodeToString(JsonObject.serializer(), vars)
         }
 
@@ -1480,6 +1484,17 @@ class WebViewJsExtensionHost(
             "window.addEventListener('error',function(e){if(!e||!e.message)return;try{if(e.error&&e.error.stack)tellevNative.log('error',String(e.error.stack));else if(e.filename)tellevNative.log('error',String(e.message)+' @'+e.filename+':'+e.lineno);tellevNative.extensionFailed(String(e.message));}catch(_e){}},true);" +
                 "window.addEventListener('unhandledrejection',function(e){try{var r=e&&e.reason;if(r&&r.stack)tellevNative.log('error',String(r.stack));tellevNative.extensionFailed(String((r&&r.message)||r||'Unhandled promise rejection'));}catch(_e){}},true);"
 
+        /**
+         * The readiness deadline includes downloading every script in the
+         * document head as well as any static imports in an extension module.
+         * Character-card modules commonly load Vue, Zod, YAML and MVU from a
+         * CDN; five seconds caused healthy modules to be destroyed while those
+         * dependencies were still downloading on a phone network.
+         *
+         * JavaScript errors still fail immediately through [EXTENSION_LOAD_GUARDS].
+         */
+        internal const val DEFAULT_SCRIPT_READY_TIMEOUT_MS: Long = 30_000L
+
         // The HTML is stored as a plain string (not a raw """...""") so
         // that the JS /* ... */ comments inside cannot be mistaken for
         // Kotlin block comments by the compiler.
@@ -1570,6 +1585,8 @@ class WebViewJsExtensionHost(
             "function _ejsLodash(){return{get:_ejsPathGet,set:function(o,p,v){return _ejsPathSet(o,p,v);},has:function(o,p){return _ejsPathGet(o,p,undefined)!==undefined;},unset:function(o,p){var parts=String(p||'').split('.').filter(Boolean);var cur=o;for(var i=0;i<parts.length-1;i++){if(cur==null)return o;cur=cur[parts[i]];}if(cur!=null)delete cur[parts[parts.length-1]];return o;},merge:function(target){target=target||{};for(var i=1;i<arguments.length;i++){var src=arguments[i]||{};for(var k in src){if(src[k]&&typeof src[k]==='object'&&!Array.isArray(src[k]))target[k]=this.merge(target[k]||{},src[k]);else target[k]=src[k];}}return target;},mergeWith:function(target){var args=[].slice.call(arguments);var customizer=args[args.length-1];target=target||{};for(var i=1;i<args.length-1;i++){var src=args[i]||{};for(var k in src){var cv=customizer?customizer(target[k],src[k],k,target,src):undefined;if(cv!==undefined)target[k]=cv;else if(src[k]&&typeof src[k]==='object'&&!Array.isArray(src[k]))target[k]=this.merge(target[k]||{},src[k]);else target[k]=src[k];}}return target;},cloneDeep:function(v){if(Array.isArray(v))return v.map(this.cloneDeep);if(v&&typeof v==='object'){var o={};for(var k in v)o[k]=this.cloneDeep(v[k]);return o;}return v;},find:function(arr,fn){if(!Array.isArray(arr))return undefined;for(var i=0;i<arr.length;i++){if(fn(arr[i],i,arr))return arr[i];}return undefined;},findLastIndex:function(arr,fn){if(!Array.isArray(arr))return -1;for(var i=arr.length-1;i>=0;i--){if(fn(arr[i],i,arr))return i;}return -1;},groupBy:function(arr,fn){var r={};if(!Array.isArray(arr))return r;arr.forEach(function(v,i){var k=fn(v,i,arr);(r[k]=r[k]||[]).push(v);});return r;},castArray:function(v){return Array.isArray(v)?v:[v];},compact:function(arr){return Array.isArray(arr)?arr.filter(Boolean):[];},clamp:function(n,lo,hi){return Math.max(lo,Math.min(hi,n));},escapeRegExp:function(s){return String(s||'').replace(/[.*+?^\${}()|[\\]\\\\]/g,'\\\\\$&');},defaults:function(o){for(var i=1;i<arguments.length;i++){var s=arguments[i]||{};for(var k in s){if(o[k]===undefined)o[k]=s[k];}}return o;},isEqual:function(a,b){return JSON.stringify(a)===JSON.stringify(b);},isPlainObject:function(v){return v!==null&&typeof v==='object'&&!Array.isArray(v);},isArray:function(v){return Array.isArray(v);},isObject:function(v){return v!==null&&typeof v==='object';},isString:function(v){return typeof v==='string';},isFunction:function(v){return typeof v==='function';},random:function(n){return Math.floor(Math.random()*(n||1));},sum:function(arr){return Array.isArray(arr)?arr.reduce(function(a,b){return a+(+b||0);},0):0;},entries:function(o){var r=[];if(o&&typeof o==='object'){for(var k in o)r.push([k,o[k]]);}return r;}};}" +
             "function _ejsHelpers(ctx){var vars=_ejsVars();var helpers={SillyTavern:SillyTavern,TavernHelper:TavernHelper,getContext:_getContext,variables:vars,_:_ejsLodash(),getvar:function(k,d){var v=_ejsPathGet(_ejsLocalVars(),k,d);return v===undefined?'':v;},getchatvar:function(k,d){var v=_ejsPathGet(_ejsLocalVars(),k,d);return v===undefined?'':v;},getglobalvar:function(k,d){var v=_ejsPathGet(_ejsGlobalVars(),k,d);return v===undefined?'':v;},setvar:function(k,v){var lv=_ejsLocalVars();_ejsPathSet(lv,k,v);_ejsSaveLocalVars(lv);return'';},setchatvar:function(k,v){var lv=_ejsLocalVars();_ejsPathSet(lv,k,v);_ejsSaveLocalVars(lv);return'';},setglobalvar:function(k,v){var gv=_ejsGlobalVars();_ejsPathSet(gv,k,v);_ejsSaveGlobalVars(gv);return'';},incvar:function(k){var lv=_ejsLocalVars();var v=Number(_ejsPathGet(lv,k,0)||0)+1;_ejsPathSet(lv,k,v);_ejsSaveLocalVars(lv);return v;},decvar:function(k){var lv=_ejsLocalVars();var v=Number(_ejsPathGet(lv,k,0)||0)-1;_ejsPathSet(lv,k,v);_ejsSaveLocalVars(lv);return v;},print:function(){return Array.prototype.join.call(arguments,'');},getGlobalVar:function(k,d){var v=_ejsPathGet(_ejsGlobalVars(),k,d);return v===undefined?'':v;},setGlobalVar:function(k,v){var gv=_ejsGlobalVars();_ejsPathSet(gv,k,v);_ejsSaveGlobalVars(gv);return'';},incGlobalVar:function(k){var gv=_ejsGlobalVars();var v=Number(_ejsPathGet(gv,k,0)||0)+1;_ejsPathSet(gv,k,v);_ejsSaveGlobalVars(gv);return v;},decGlobalVar:function(k){var gv=_ejsGlobalVars();var v=Number(_ejsPathGet(gv,k,0)||0)-1;_ejsPathSet(gv,k,v);_ejsSaveGlobalVars(gv);return v;}};return helpers;}" +            "function _ejsCompile(code){var src=\"var __out='';var print=function(){__out+=Array.prototype.join.call(arguments,'');};\";var re=/<%([=-]?)([\\s\\S]*?)%>/g;var cursor=0;var m;function addText(t){if(t)src+='__out+='+JSON.stringify(t)+';';}while((m=re.exec(String(code||'')))!==null){addText(String(code||'').slice(cursor,m.index));var marker=m[1];var body=String(m[2]||'').trim();if(body.charAt(0)==='_')body=body.slice(1).trim();if(body.charAt(body.length-1)==='_')body=body.slice(0,-1).trim();if(marker==='='||marker==='-'){src+='__out+=(('+body+')==null?\\'\\':String('+body+'));';}else{src+=body+'\\n';}cursor=m.index+m[0].length;}addText(String(code||'').slice(cursor));src+='return __out;';return new Function('ctx','helpers',\"return (async function(){with(helpers){with(ctx||{}){\"+src+\"}}}).call(ctx);\");}" +
             "function _ejsPrepareContext(additional){var c=_getContext();var vars=_ejsVars();var env={context:c,SillyTavern:SillyTavern,TavernHelper:TavernHelper,variables:vars,vars:vars,name1:c.name1||'User',user:c.name1||'User',userName:c.name1||'User',name2:c.name2||'Character',char:c.name2||'Character',charName:c.name2||'Character',chat:c.chat||[],characters:c.characters||[],groups:c.groups||[],chatId:c.chatId||'',characterId:c.characterId||'',groupId:c.groupId||'',lastUserMessage:(function(){var m=c.chat||[];for(var i=m.length-1;i>=0;i--){if(m[i].is_user)return m[i].mes||'';}return'';})(),lastCharMessage:(function(){var m=c.chat||[];for(var i=m.length-1;i>=0;i--){if(!m[i].is_user&&!m[i].is_system)return m[i].mes||'';}return'';})(),assistantName:c.name2||'Character',charAvatar:'',userAvatar:''};var helpers=_ejsHelpers(env);for(var k in helpers)if(env[k]===undefined)env[k]=helpers[k];if(additional){for(var ak in additional)env[ak]=additional[ak];}return env;}" +            "var EjsTemplate={evaltemplate:function(code,context,options){try{return Promise.resolve(_ejsCompile(code)(context||_ejsPrepareContext({}),_ejsHelpers(context||{})));}catch(e){return Promise.reject(e);}},evalTemplate:function(code,context,options){return EjsTemplate.evaltemplate(code,context,options);},prepareContext:function(additional_context,last_message_id){return Promise.resolve(_ejsPrepareContext(additional_context||{}));},getSyntaxErrorInfo:function(code,lineCount){try{_ejsCompile(code);return Promise.resolve('');}catch(e){return Promise.resolve(String(e&&e.message?e.message:e));}},allVariables:function(end_message_id){return _ejsVars();},getFeatures:function(){return Object.assign({},_ejsFeatures);},setFeatures:function(features){_ejsFeatures=Object.assign({},_ejsFeatures,features||{});},resetFeatures:function(){_ejsFeatures=Object.assign({},_ejsDefaultFeatures);}};" +
+            "TavernHelper.generateRaw=function(opts){opts=opts||{};return window.Tellev.apiCall('POST','/api/backends/chat-completions/generate',opts).then(function(r){if(r.status<200||r.status>=300){var e=new Error((r.body&&r.body.error)||'Generation failed');e.status=r.status;e.code=r.body&&r.body.code;throw e;}return r.body||{};});};" +
+            "TavernHelper.generate=function(opts){return TavernHelper.generateRaw(opts).then(function(body){return body&&body.text?body.text:'';});};" +
             "function _isApiPath(u){var p=u.split('?')[0];if(p.indexOf('/')===0)return true;if(p.indexOf('extensions.tellev.local')>=0)return true;return false;}" +
             "var _originalFetch=window.fetch.bind(window);" +
             "window.fetch=function(input,init){try{var u=typeof input==='string'?input:((input&&input.url)||'');if(_isApiPath(u)){var p=u.split('extensions.tellev.local')[1]||u;var m=(init&&init.method)||'GET';var b=init&&init.body;var bo=null;if(b!==undefined&&b!==null){if(typeof b==='string'){try{bo=JSON.parse(b);}catch(e){bo=b;}}else{bo=b;}}return window.Tellev.apiCall(m,p,bo).then(function(r){var bt=(r.body!==undefined&&r.body!==null)?(typeof r.body==='string'?r.body:JSON.stringify(r.body)):'';return new Response(bt,{status:r.status,headers:{'Content-Type':'application/json'}});});}if(u&&u.indexOf('https:')===0){return _originalFetch(input,init);}}catch(e){return Promise.reject(e);}return Promise.reject(new Error('Network access is not permitted for extensions'));};" +
@@ -1587,3 +1604,61 @@ class WebViewJsExtensionHost(
             "\n</script>\n__EXTENSION_SCRIPT__\n</body></html>"
     }
 }
+
+internal suspend fun dispatchExtensionGeneration(
+    contextProvider: ExtensionContextProvider?,
+    options: JsonObject,
+    json: Json = Json,
+): VirtualApiResponse {
+    val provider = contextProvider ?: return extensionGenerationError(
+        json = json,
+        status = 503,
+        code = "chat_context_unavailable",
+        message = "No active chat context is available",
+    )
+    val result = try {
+        provider.generateText(options)
+    } catch (error: IllegalStateException) {
+        return extensionGenerationError(
+            json = json,
+            status = 409,
+            code = "chat_context_incomplete",
+            message = error.message ?: "The active chat cannot generate text",
+        )
+    } catch (error: Exception) {
+        return extensionGenerationError(
+            json = json,
+            status = 502,
+            code = "provider_generation_failed",
+            message = error.message ?: "Provider generation failed",
+        )
+    } ?: return extensionGenerationError(
+        json = json,
+        status = 503,
+        code = "generation_unavailable",
+        message = "Text generation is unavailable in the active context",
+    )
+    return VirtualApiResponse(
+        status = 200,
+        headers = mapOf("Content-Type" to "application/json"),
+        body = json.encodeToString(JsonObject.serializer(), result),
+    )
+}
+
+private fun extensionGenerationError(
+    json: Json,
+    status: Int,
+    code: String,
+    message: String,
+): VirtualApiResponse = VirtualApiResponse(
+    status = status,
+    headers = mapOf("Content-Type" to "application/json"),
+    body = json.encodeToString(
+        JsonObject.serializer(),
+        buildJsonObject {
+            put("error", message)
+            put("code", code)
+            put("status", status)
+        },
+    ),
+)

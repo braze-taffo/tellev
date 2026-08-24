@@ -514,7 +514,14 @@ fun CharacterDetailScreen(
                     .padding(padding),
                 contentAlignment = Alignment.Center,
             ) {
-                CircularProgressIndicator()
+                if (state.selectionError == null) {
+                    CircularProgressIndicator()
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(state.selectionError.orEmpty(), color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = onBack) { Text("返回角色列表") }
+                    }
+                }
             }
         } else {
             val worldBooks = state.worldBooks

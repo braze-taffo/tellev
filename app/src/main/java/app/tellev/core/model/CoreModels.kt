@@ -52,6 +52,8 @@ data class ChatMessage(
     val swipes: List<String> = emptyList(),
     val attachments: List<Attachment> = emptyList(),
     val metadata: JsonObject = buildJsonObject { },
+    /** Complete SillyTavern JSONL message object used for lossless round-trips. */
+    val raw: JsonObject = buildJsonObject { },
     // ── ST-Prompt-Template extension arrays (preserved for round-trip) ──
     // Per-swipe variable snapshots, evaluation flags, and init flags.
     // Defaults are empty so legacy jsonl without these fields still parses.
@@ -68,6 +70,8 @@ data class ChatSession(
     val groupId: String?,
     val messages: List<ChatMessage>,
     val metadata: JsonObject = buildJsonObject { },
+    /** Complete SillyTavern JSONL header object used for lossless round-trips. */
+    val rawHeader: JsonObject = buildJsonObject { },
 )
 
 @Serializable

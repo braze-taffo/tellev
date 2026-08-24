@@ -277,6 +277,32 @@ class OpenAiCompatibleAdapterTest {
     }
 
     @Test
+    fun `negative SillyTavern seed sentinel is omitted`() = runBlocking {
+        var capturedBody = ""
+        val client = client { chain ->
+            capturedBody = Buffer().also { chain.request().body?.writeTo(it) }.readUtf8()
+            response(
+                chain,
+                200,
+                "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n" +
+                    "data: [DONE]\n",
+                "text/event-stream",
+            )
+        }
+
+        OpenAiCompatibleAdapter(client = client).streamGenerate(
+            config(model = "custom-model"),
+            generateRequest(
+                stream = true,
+                preset = GenerationPreset("p", "p", "openai-compatible", seed = -1),
+            ),
+        ).toList()
+
+        val payload = Json.parseToJsonElement(capturedBody).jsonObject
+        assertNull(payload["seed"])
+    }
+
+    @Test
     fun `stream reassembles tool call deltas`() = runBlocking {
         val client = client { chain ->
             response(

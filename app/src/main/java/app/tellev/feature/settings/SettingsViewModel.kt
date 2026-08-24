@@ -15,6 +15,8 @@ import app.tellev.core.provider.CustomProviderConfig
 import app.tellev.core.provider.ProviderDefaults
 import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.provider.ProviderStatus
+import app.tellev.core.provider.ProviderCatalog
+import app.tellev.core.provider.supportsChatGeneration
 import app.tellev.core.provider.OpenAiCompatibilitySettings
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.StDataStore
@@ -104,15 +106,25 @@ class SettingsViewModel(
                 ProviderConfigPersistence.migrateLegacyOpenAiCompatible(secretStore)
                 val customConfigs = ProviderConfigPersistence.listCustomConfigs(secretStore)
 
-                val providers = providerRegistry.all()
+                val providers = providerRegistry.chatAdapters()
                 val presets = dataStore.listPresets()
                 val selectedPresetNames = PresetCategory.entries.mapNotNull { category ->
                     dataStore.readSelectedPresetName(category)?.let { category to it }
                 }.toMap()
                 val personas = dataStore.listPersonas()
                 val secretIds = secretStore.listSecretIds()
-                val selectedId = secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
+                val storedSelectedId = secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
                     ?: _uiState.value.selectedProviderId
+                val selectedId = if (
+                    providerRegistry.find(ProviderConfigPersistence.adapterIdFor(storedSelectedId))
+                        ?.supportsChatGeneration == true
+                ) {
+                    storedSelectedId
+                } else {
+                    ProviderCatalog.OPENAI_COMPATIBLE.also {
+                        secretStore.putSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID, it)
+                    }
+                }
 
                 val fields = loadConfigFields(selectedId, customConfigs)
 
@@ -180,12 +192,24 @@ class SettingsViewModel(
         )
     }
 
-    fun selectProvider(id: String) {
+    fun selectProvider(id: String) = loadProvider(id, activate = false)
+
+    /**
+     * Switches the active generation configuration without rewriting any of
+     * its editable fields. This is used by the first-level quick switcher, so
+     * the next chat generation sees the new selection immediately.
+     */
+    fun activateProvider(id: String) = loadProvider(id, activate = true)
+
+    private fun loadProvider(id: String, activate: Boolean) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, selectedProviderId = id, providerStatus = null) }
             try {
                 val customConfigs = ProviderConfigPersistence.listCustomConfigs(secretStore)
                 val fields = loadConfigFields(id, customConfigs)
+                if (activate) {
+                    secretStore.putSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID, id)
+                }
                 _uiState.update {
                     it.copy(
                         customConfigs = customConfigs,
@@ -198,6 +222,7 @@ class SettingsViewModel(
                         extraBodyJson = json.encodeToString(JsonObject.serializer(), fields.compatibility.extraBody),
                         isLoading = false,
                         availableModels = emptyList(),
+                        info = if (activate) "已切换到“${providerDisplayName(id, customConfigs)}”。" else it.info,
                     )
                 }
             } catch (e: Exception) {
@@ -210,6 +235,14 @@ class SettingsViewModel(
             }
         }
     }
+
+    private fun providerDisplayName(id: String, customConfigs: List<CustomProviderConfig>): String =
+        if (ProviderConfigPersistence.isCustomConfigId(id)) {
+            customConfigs.firstOrNull { it.id == ProviderConfigPersistence.customIdFrom(id) }?.name
+                ?: "自定义配置"
+        } else {
+            providerRegistry.find(id)?.displayName ?: id
+        }
 
     fun updateBaseUrl(url: String) {
         _uiState.update { it.copy(baseUrl = url) }

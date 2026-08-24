@@ -294,7 +294,10 @@ class OpenAiCompatibleAdapter(
             }
             request.preset.presencePenalty?.let { put("presence_penalty", JsonPrimitive(it)) }
             request.preset.frequencyPenalty?.let { put("frequency_penalty", JsonPrimitive(it)) }
-            request.preset.seed?.let { put("seed", JsonPrimitive(it)) }
+            // SillyTavern presets use -1 as the sentinel for a random seed.
+            // OpenAI-compatible APIs generally accept only unsigned/non-negative
+            // integers, so the sentinel means that the field must be omitted.
+            request.preset.seed?.takeIf { it >= 0 }?.let { put("seed", JsonPrimitive(it)) }
             val maxTokens = request.prompt.maxTokens
                 ?: request.preset.maxCompletionTokens
                 ?: request.preset.maxTokens

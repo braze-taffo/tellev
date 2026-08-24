@@ -555,7 +555,6 @@ fun WorldBookDetailScreen(
             if (book != null) {
                 ExtendedFloatingActionButton(
                     onClick = {
-                        viewModel.addEntry(book.id)
                         onEditEntry("new")
                     },
                     icon = { Icon(Icons.Default.Add, contentDescription = "新建条目") },
@@ -604,7 +603,14 @@ fun WorldBookDetailScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    CircularProgressIndicator()
+                    if (state.selectionError == null) {
+                        CircularProgressIndicator()
+                    } else {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(state.selectionError.orEmpty(), color = MaterialTheme.colorScheme.error)
+                            TextButton(onClick = onBack) { Text("返回世界书列表") }
+                        }
+                    }
                 }
             } else if (state.filteredEntries.isEmpty()) {
                 Box(
@@ -887,8 +893,7 @@ fun WorldBookEntryEditScreen(
                     IconButton(
                         onClick = {
                             if (entry != null && bookId != null) {
-                                viewModel.saveEntry(bookId, buildUpdatedEntry(entry))
-                                onBack()
+                                if (viewModel.saveEntry(bookId, buildUpdatedEntry(entry))) onBack()
                             }
                         },
                     ) {
@@ -909,7 +914,14 @@ fun WorldBookEntryEditScreen(
                     .padding(padding),
                 contentAlignment = Alignment.Center,
             ) {
-                CircularProgressIndicator()
+                if (state.selectionError == null) {
+                    CircularProgressIndicator()
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(state.selectionError.orEmpty(), color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = onBack) { Text("返回世界书") }
+                    }
+                }
             }
         } else {
             Column(

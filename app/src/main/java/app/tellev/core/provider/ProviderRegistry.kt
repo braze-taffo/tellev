@@ -7,7 +7,10 @@ class ProviderRegistry(
 
     fun all(): List<ProviderAdapter> = byId.values.sortedBy { it.displayName }
 
+    fun chatAdapters(): List<ProviderAdapter> = all().filter { it.supportsChatGeneration }
+
+    fun find(id: String): ProviderAdapter? = byId[id]
+
     fun require(id: String): ProviderAdapter =
         byId[id] ?: error("Provider adapter not registered: $id")
 }
-

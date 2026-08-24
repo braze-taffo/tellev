@@ -97,7 +97,9 @@ class GeminiAdapter(
                 request.preset.topK?.let { put("topK", JsonPrimitive(it)) }
                 (request.prompt.maxTokens ?: request.preset.maxCompletionTokens ?: request.preset.maxTokens)
                     ?.let { put("maxOutputTokens", JsonPrimitive(it)) }
-                request.preset.seed?.let { put("seed", JsonPrimitive(it)) }
+                // SillyTavern's -1 means "choose a random seed". Gemini expects
+                // a non-negative integer, which is equivalent to omitting it.
+                request.preset.seed?.takeIf { it >= 0 }?.let { put("seed", JsonPrimitive(it)) }
                 request.preset.presencePenalty?.let { put("presencePenalty", JsonPrimitive(it)) }
                 request.preset.frequencyPenalty?.let { put("frequencyPenalty", JsonPrimitive(it)) }
                 if (request.preset.stop.isNotEmpty()) {

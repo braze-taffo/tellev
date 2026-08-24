@@ -16,6 +16,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -176,6 +177,9 @@ class DefaultPromptEngine(
         val maxContextTokens = request.preset.maxContextTokens
             ?: extractMaxContextTokens(request.metadata)
             ?: DEFAULT_MAX_CONTEXT_TOKENS
+        val maxCompletionTokens = request.preset.maxCompletionTokens
+            ?: request.preset.maxTokens
+            ?: extractMaxResponseTokens(request.metadata)
         val worldInfoTokenBudget = maxContextTokens
             ?.let { ((it.toLong() * 25L) / 100L).toInt() }
             ?.coerceAtLeast(1)
@@ -266,13 +270,23 @@ class DefaultPromptEngine(
         // the group variant listing the members.
         val groupNames = groupMemberNamesList(request.metadata)
         val newChatMarker = if (groupNames.size > 1) {
-            macroEngine.expand("[Start a new group chat. Group members: {{group}}]", macroContext)
+            request.preset.raw["new_group_chat_prompt"]?.jsonPrimitive?.contentOrNull
+                ?: "[Start a new group chat. Group members: {{group}}]"
         } else {
-            "[Start a new Chat]"
+            request.preset.raw["new_chat_prompt"]?.jsonPrimitive?.contentOrNull
+                ?: "[Start a new Chat]"
         }
         val rawMessages = buildList {
             add(PromptMessage(role = MessageRole.System, content = systemPrompt, channel = CHANNEL_MAIN))
-            add(PromptMessage(role = MessageRole.System, content = newChatMarker, channel = CHANNEL_MARKER))
+            if (newChatMarker.isNotBlank()) {
+                add(
+                    PromptMessage(
+                        role = MessageRole.System,
+                        content = macroEngine.expand(newChatMarker, macroContext),
+                        channel = CHANNEL_MARKER,
+                    ),
+                )
+            }
             visibleHistory.forEachIndexed { index, message ->
                 val expandedContent = macroEngine.expand(
                     message.swipes.getOrNull(message.swipeIndex) ?: message.content,
@@ -401,7 +415,7 @@ class DefaultPromptEngine(
             worldInfo = emptyList(),
             characterDescription = "",
             messages = templatedMessages.drop(1), // Drop system message, fitToBudget adds its own
-            budget = (maxContextTokens - (request.preset.maxCompletionTokens ?: request.preset.maxTokens).orElse(0) - injectionTokens)
+            budget = (maxContextTokens - maxCompletionTokens.orElse(0) - injectionTokens)
                 .coerceAtLeast(0),
         )
         // fitToBudget rebuilds the head system message from plain text, which
@@ -421,7 +435,7 @@ class DefaultPromptEngine(
         val instructPresetObj = request.metadata["instructPreset"] as? JsonObject
         val instructPreset = instructPresetObj?.let { InstructMode.loadPreset(it) }
 
-        val finalMessages = if (instructPreset != null) {
+        val finalMessages = (if (instructPreset != null) {
             val instructText = InstructMode.applyInstruct(
                 messages = withInjections,
                 preset = instructPreset,
@@ -434,7 +448,7 @@ class DefaultPromptEngine(
             listOf(PromptMessage(role = MessageRole.User, content = instructText))
         } else {
             applyNamesBehavior(withInjections, request.metadata)
-        }
+        }).filter { it.content.isNotBlank() }
 
         // 11. Build stop sequences
         val stopSequences = buildStopSequences(request.preset.stop, instructPreset, contextPreset)
@@ -445,7 +459,7 @@ class DefaultPromptEngine(
         return PromptBuildResult(
             messages = finalMessages,
             stop = stopSequences,
-            maxTokens = request.preset.maxCompletionTokens ?: request.preset.maxTokens,
+            maxTokens = maxCompletionTokens,
             providerType = request.providerType,
             diagnostics = PromptDiagnostics(
                 activatedWorldEntryIds = activatedEntries.map { it.id },
@@ -504,6 +518,7 @@ class DefaultPromptEngine(
         val messageVariables = visible
             .lastOrNull { it.variables.getOrNull(it.swipeIndex) != null }
             ?.let { it.variables[it.swipeIndex] }
+            ?: TavernInitVariables.extractMessageVariables(request.worldBooks)
 
         return MacroContext(
             characterName = request.character.name,

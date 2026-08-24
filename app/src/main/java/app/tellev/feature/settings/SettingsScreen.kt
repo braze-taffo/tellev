@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.ui.draw.clip
@@ -13,7 +14,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import app.tellev.core.model.Persona
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -83,15 +83,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import app.tellev.R
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.PresetCategory
 import app.tellev.core.provider.ProviderCatalog
@@ -108,6 +105,9 @@ import kotlin.math.roundToInt
 fun SettingsScreen(
     viewModel: SettingsViewModel,
     updateViewModel: UpdateViewModel,
+    onOpenProviderSettings: () -> Unit,
+    providerDetailsOnly: Boolean = false,
+    onBack: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -191,7 +191,14 @@ fun SettingsScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("设置") },
+                title = { Text(if (providerDetailsOnly) "模型服务配置" else "设置") },
+                navigationIcon = {
+                    if (providerDetailsOnly) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                 ),
@@ -216,14 +223,21 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
             ) {
-                // Provider Configuration Section
-                item(key = "provider_header") {
-                    SectionHeader(
-                        icon = Icons.Default.Settings,
-                        title = "模型服务配置",
-                    )
+                if (!providerDetailsOnly) {
+                    item(key = "provider_quick_switch") {
+                        ProviderQuickSwitchCard(
+                            state = state,
+                            onSelect = viewModel::activateProvider,
+                            onManage = onOpenProviderSettings,
+                        )
+                    }
+
+                    item(key = "provider_quick_divider") {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    }
                 }
 
+                if (providerDetailsOnly) {
                 item(key = "provider_selector") {
                     val isCustom = ProviderConfigPersistence.isCustomConfigId(state.selectedProviderId)
                     val selectedLabel = if (isCustom) {
@@ -493,6 +507,9 @@ fun SettingsScreen(
                     }
                 }
 
+                }
+
+                if (!providerDetailsOnly) {
                 item(key = "divider_1") {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 }
@@ -789,7 +806,7 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Text(
-                                text = "tellev 名称、图标、作者信息和收款码仅用于官方版本展示，未经授权不得用于冒充官方版本或误导性商业分发。",
+                                text = "tellev 名称、图标和作者信息仅用于官方版本展示，未经授权不得用于冒充官方版本或误导性商业分发。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -809,24 +826,6 @@ fun SettingsScreen(
                             ) {
                                 Text("打开作者 B 站主页")
                             }
-                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                            Text(
-                                text = "支持作者",
-                                style = MaterialTheme.typography.labelLarge,
-                            )
-                            Text(
-                                text = "如果这个项目帮到了你，可以通过微信或支付宝自愿打赏。打赏不影响本软件的 AGPL-3.0 开源许可。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            DonationQrImage(
-                                label = "支付宝",
-                                imageResId = R.drawable.donate_alipay,
-                            )
-                            DonationQrImage(
-                                label = "微信",
-                                imageResId = R.drawable.donate_wechat,
-                            )
                         }
                     }
                 }
@@ -834,12 +833,13 @@ fun SettingsScreen(
                 item(key = "bottom_spacer") {
                     Spacer(modifier = Modifier.height(16.dp))
                 }
+                }
             }
         }
     }
 
     // Preset creation dialog
-    if (showPresetDialog) {
+    if (!providerDetailsOnly && showPresetDialog) {
         PresetCreationDialog(
             providers = state.providers.map { it.id to it.displayName },
             onDismiss = { showPresetDialog = false },
@@ -850,7 +850,7 @@ fun SettingsScreen(
         )
     }
 
-    editingPreset?.let { preset ->
+    if (!providerDetailsOnly) editingPreset?.let { preset ->
         PresetEditDialog(
             preset = preset,
             onDismiss = { editingPreset = null },
@@ -871,7 +871,7 @@ fun SettingsScreen(
 
     // Preset import: after a JSON file is picked, ask the user which ST preset
     // category it belongs to before writing it to the matching directory.
-    pendingPresetImportUri?.let { uri ->
+    if (!providerDetailsOnly) pendingPresetImportUri?.let { uri ->
         val fileName = remember(uri) { UriUtils.resolveDisplayName(context, uri) }
             ?: uri.lastPathSegment
             ?: "preset.json"
@@ -886,7 +886,7 @@ fun SettingsScreen(
     }
 
     // Add secret dialog
-    if (showAddSecretDialog) {
+    if (!providerDetailsOnly && showAddSecretDialog) {
         AddSecretDialog(
             onDismiss = { showAddSecretDialog = false },
             onSave = { key, value ->
@@ -897,7 +897,7 @@ fun SettingsScreen(
     }
 
     // Persona edit dialog
-    if (showPersonaDialog) {
+    if (!providerDetailsOnly && showPersonaDialog) {
         PersonaEditDialog(
             existing = editingPersona,
             onDismiss = {
@@ -918,7 +918,7 @@ fun SettingsScreen(
     }
 
     // Export confirmation dialog
-    if (showExportDialog) {
+    if (!providerDetailsOnly && showExportDialog) {
         AlertDialog(
             onDismissRequest = { showExportDialog = false },
             title = { Text("导出备份") },
@@ -942,7 +942,7 @@ fun SettingsScreen(
     }
 
     // Import confirmation dialog
-    if (showImportDialog) {
+    if (!providerDetailsOnly && showImportDialog) {
         AlertDialog(
             onDismissRequest = { showImportDialog = false },
             title = { Text("导入备份") },
@@ -997,6 +997,123 @@ fun SettingsScreen(
                 }
             },
         )
+    }
+}
+
+internal data class ProviderSwitchOption(
+    val id: String,
+    val label: String,
+)
+
+internal fun providerSwitchOptions(state: SettingsUiState): List<ProviderSwitchOption> {
+    val builtIns = state.providers
+        .filter { provider ->
+            provider.id != ProviderCatalog.OPENAI_COMPATIBLE || state.customConfigs.isEmpty()
+        }
+        .map { ProviderSwitchOption(it.id, it.displayName) }
+    val custom = state.customConfigs.map {
+        ProviderSwitchOption(ProviderConfigPersistence.selectedIdFor(it.id), it.name)
+    }
+    return builtIns + custom
+}
+
+internal fun selectedProviderLabel(state: SettingsUiState): String {
+    val id = state.selectedProviderId
+    return if (ProviderConfigPersistence.isCustomConfigId(id)) {
+        state.customConfigs.firstOrNull {
+            it.id == ProviderConfigPersistence.customIdFrom(id)
+        }?.name ?: "自定义配置"
+    } else {
+        state.providers.firstOrNull { it.id == id }?.displayName ?: id
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProviderQuickSwitchCard(
+    state: SettingsUiState,
+    onSelect: (String) -> Unit,
+    onManage: () -> Unit,
+) {
+    val options = remember(state.providers, state.customConfigs) { providerSwitchOptions(state) }
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader(icon = Icons.Default.Settings, title = "模型服务")
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            ),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = "当前使用",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = selectedProviderLabel(state),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = state.model.ifBlank { "尚未指定模型" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+
+                ExposedDropdownMenuBox(
+                    expanded = expanded,
+                    onExpandedChange = { expanded = it },
+                ) {
+                    OutlinedTextField(
+                        value = selectedProviderLabel(state),
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("快速切换配置") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                        supportingText = { Text("选择后立即用于下一次生成") },
+                    )
+                    ExposedDropdownMenu(
+                        expanded = expanded,
+                        onDismissRequest = { expanded = false },
+                    ) {
+                        options.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label) },
+                                trailingIcon = {
+                                    if (option.id == state.selectedProviderId) {
+                                        Text("当前", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                },
+                                onClick = {
+                                    expanded = false
+                                    if (option.id != state.selectedProviderId) onSelect(option.id)
+                                },
+                            )
+                        }
+                    }
+                }
+
+                FilledTonalButton(
+                    onClick = onManage,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("管理模型服务配置")
+                }
+            }
+        }
     }
 }
 
@@ -1136,28 +1253,6 @@ private fun CompatibilityAdvancedDialog(
     )
 }
 
-
-@Composable
-private fun DonationQrImage(
-    label: String,
-    imageResId: Int,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Image(
-            painter = painterResource(imageResId),
-            contentDescription = "$label 收款码",
-            contentScale = ContentScale.Fit,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(360.dp),
-        )
-    }
-}
 
 @Composable
 private fun UpdateStatus(

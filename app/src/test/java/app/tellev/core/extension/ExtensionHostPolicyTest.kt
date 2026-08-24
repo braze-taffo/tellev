@@ -45,4 +45,9 @@ class ExtensionHostPolicyTest {
         assertTrue(guards.contains("unhandledrejection"))
         assertTrue(guards.contains("extensionFailed"))
     }
+
+    @Test
+    fun `remote character modules have enough time to report ready`() {
+        assertTrue(WebViewJsExtensionHost.DEFAULT_SCRIPT_READY_TIMEOUT_MS >= 30_000L)
+    }
 }

@@ -1000,8 +1000,19 @@ class VirtualApiRouter(
     private fun sessionToStChatArray(session: ChatSession): JsonArray = buildJsonArray {
         add(
             buildJsonObject {
-                put("user_name", session.metadata["userName"]?.jsonPrimitive?.content ?: "User")
-                put("character_name", session.metadata["characterName"]?.jsonPrimitive?.content ?: "")
+                for ((key, value) in session.rawHeader) put(key, value)
+                put(
+                    "user_name",
+                    session.rawHeader["user_name"]?.jsonPrimitive?.content
+                        ?: session.metadata["userName"]?.jsonPrimitive?.content
+                        ?: "User",
+                )
+                put(
+                    "character_name",
+                    session.rawHeader["character_name"]?.jsonPrimitive?.content
+                        ?: session.metadata["characterName"]?.jsonPrimitive?.content
+                        ?: "",
+                )
                 put("create_date", session.metadata["create_date"]?.jsonPrimitive?.content ?: "")
                 put("chat_metadata", session.metadata)
             },
@@ -1009,6 +1020,7 @@ class VirtualApiRouter(
         session.messages.forEach { msg ->
             add(
                 buildJsonObject {
+                    for ((key, value) in msg.raw) put(key, value)
                     put("name", msg.name)
                     put("mes", msg.swipes.getOrNull(msg.swipeIndex) ?: msg.content)
                     put("is_user", msg.role == MessageRole.User)
@@ -1061,7 +1073,13 @@ class VirtualApiRouter(
         val messages = stChatArrayToMessages(chatArray, chatId)
         val header = chatArray.firstOrNull() as? JsonObject
         val metadata = (header?.get("chat_metadata") as? JsonObject) ?: session.metadata
-        dataStore.saveChatSession(session.copy(messages = messages, metadata = metadata))
+        dataStore.saveChatSession(
+            session.copy(
+                messages = messages,
+                metadata = metadata,
+                rawHeader = header ?: session.rawHeader,
+            ),
+        )
         return jsonResponse(200, buildJsonObject { put("ok", true) })
     }
 
@@ -1097,6 +1115,7 @@ class VirtualApiRouter(
                 swipeIndex = swipeId,
                 swipes = swipes,
                 metadata = obj["extra"] as? JsonObject ?: buildJsonObject { },
+                raw = obj,
                 variables = runCatching {
                     obj["variables"]?.jsonArray?.mapNotNull { it as? JsonObject } ?: emptyList()
                 }.getOrDefault(emptyList()),

@@ -4,6 +4,8 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
 import java.security.KeyStore
 import java.util.Base64
@@ -18,6 +20,8 @@ class AndroidKeystoreSecretStore(
 ) : SecretStore {
     private val appContext = context.applicationContext
     private val prefs = appContext.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+    private val mutableChanges = MutableSharedFlow<String>(extraBufferCapacity = 64)
+    override val changes = mutableChanges.asSharedFlow()
 
     override suspend fun putSecret(id: String, value: String): Unit = withContext(Dispatchers.IO) {
         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -25,6 +29,7 @@ class AndroidKeystoreSecretStore(
         val cipherText = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
         val payload = encoder.encodeToString(cipher.iv) + ":" + encoder.encodeToString(cipherText)
         prefs.edit().putString(id, payload).apply()
+        mutableChanges.tryEmit(id)
     }
 
     override suspend fun readSecret(id: String): String? = withContext(Dispatchers.IO) {
@@ -40,6 +45,7 @@ class AndroidKeystoreSecretStore(
 
     override suspend fun deleteSecret(id: String): Unit = withContext(Dispatchers.IO) {
         prefs.edit().remove(id).apply()
+        mutableChanges.tryEmit(id)
     }
 
     override suspend fun listSecretIds(): List<String> = withContext(Dispatchers.IO) {
@@ -73,4 +79,3 @@ class AndroidKeystoreSecretStore(
         val decoder: Base64.Decoder = Base64.getDecoder()
     }
 }
-

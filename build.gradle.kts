@@ -9,19 +9,26 @@ tasks.register("dependencyReport") {
     group = "reporting"
     description = "Generate dependency report for release"
     doLast {
-        val report = StringBuilder()
-        report.appendLine("# tellev Dependency Report")
-        report.appendLine("Generated: ${java.time.LocalDate.now()}")
-        report.appendLine()
+        val dependencies = sortedSetOf<String>()
         subprojects {
-            configurations.filter { it.isCanBeResolved }.forEach { config ->
-                config.resolvedConfiguration.firstLevelModuleDependencies.forEach { dep ->
-                    report.appendLine("- ${dep.moduleGroup}:${dep.moduleName}:${dep.moduleVersion}")
+            configurations
+                .filter {
+                    it.isCanBeResolved &&
+                        (it.name.endsWith("CompileClasspath") || it.name.endsWith("RuntimeClasspath"))
                 }
-            }
+                .forEach { config ->
+                    config.resolvedConfiguration.lenientConfiguration.firstLevelModuleDependencies.forEach { dep ->
+                        dependencies += "${dep.moduleGroup}:${dep.moduleName}:${dep.moduleVersion}"
+                    }
+                }
+        }
+        val report = buildString {
+            appendLine("# tellev Dependency Report")
+            appendLine("Generated: ${java.time.LocalDate.now()}")
+            appendLine()
+            dependencies.forEach { appendLine("- $it") }
         }
         file("DEPENDENCIES.md").writeText(report.toString())
         println("Dependency report written to DEPENDENCIES.md")
     }
 }
-

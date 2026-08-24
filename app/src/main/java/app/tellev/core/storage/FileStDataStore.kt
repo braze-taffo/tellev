@@ -71,12 +71,19 @@ class FileStDataStore(
     override val characterChanges = mutableCharacterChanges.asSharedFlow()
     private val mutablePresetChanges = MutableSharedFlow<PresetCategory>(extraBufferCapacity = 32)
     override val presetChanges = mutablePresetChanges.asSharedFlow()
+    private val mutableWorldBookChanges = MutableSharedFlow<String>(extraBufferCapacity = 32)
+    override val worldBookChanges = mutableWorldBookChanges.asSharedFlow()
+    private val mutablePersonaChanges = MutableSharedFlow<String>(extraBufferCapacity = 32)
+    override val personaChanges = mutablePersonaChanges.asSharedFlow()
+    private val mutableChatChanges = MutableSharedFlow<String>(extraBufferCapacity = 64)
+    override val chatChanges = mutableChatChanges.asSharedFlow()
 
 
     override suspend fun bootstrap(): Unit = withContext(Dispatchers.IO) {
         layout.allDirectories.forEach { it.createDirectories() }
         migrateLegacyRegexActivation()
         ensureDefaultPreset()
+        migrateLegacyDefaultPresetLimits()
         ensureDefaultPersona()
         rebuildEmbeddedCharacterAssets()
     }
@@ -219,8 +226,20 @@ class FileStDataStore(
 
         // Write ST JSONL header line
         val header = buildJsonObject {
-            put("user_name", "unused")
-            put("character_name", "unused")
+            for ((key, value) in session.rawHeader) put(key, value)
+            put(
+                "user_name",
+                (session.rawHeader["user_name"] as? JsonPrimitive)?.content
+                    ?: (session.metadata["userName"] as? JsonPrimitive)?.content
+                    ?: "User",
+            )
+            put(
+                "character_name",
+                (session.rawHeader["character_name"] as? JsonPrimitive)?.content
+                    ?: (session.metadata["characterName"] as? JsonPrimitive)?.content
+                    ?: session.characterId
+                    ?: "Character",
+            )
             putJsonObject("chat_metadata") {
                 // Preserve the full original chat_metadata (variables, model_class,
                 // api, extension data, ...) read at parse time into session.metadata,
@@ -237,54 +256,51 @@ class FileStDataStore(
 
         // Write each message in ST JSONL format
         for (message in session.messages) {
-            val line = buildJsonObject {
-                put("name", message.name)
-                put("is_user", message.role == MessageRole.User)
-                put("is_system", message.role == MessageRole.System)
-                put("send_date", formatMillisToIso(message.createdAtMillis))
-                put("mes", message.content)
-
-                if (message.swipes.isNotEmpty()) {
-                    put("swipes", kotlinx.serialization.json.JsonArray(
-                        message.swipes.map { kotlinx.serialization.json.JsonPrimitive(it) }
-                    ))
-                    put("swipe_id", message.swipeIndex)
-                }
-
-                put("extra", message.metadata)
-
-                // Preserve ST-Prompt-Template per-swipe arrays so template
-                // evaluation state survives a save → reload round-trip.
-                if (message.variables.isNotEmpty()) {
-                    put("variables", JsonArray(message.variables))
-                }
-                if (message.isEjsProcessed.isNotEmpty()) {
-                    putJsonArray("is_ejs_processed") {
-                        message.isEjsProcessed.forEach { add(JsonPrimitive(it)) }
-                    }
-                }
-                if (message.variablesInitialized.isNotEmpty()) {
-                    putJsonArray("variables_initialized") {
-                        message.variablesInitialized.forEach { add(JsonPrimitive(it)) }
-                    }
-                }
-
-                // Vision attachments (base64 in metadata). Persisted so history round-trips.
-                if (message.attachments.isNotEmpty()) {
-                    put(
-                        "attachments",
-                        kotlinx.serialization.json.JsonArray(
-                            message.attachments.map {
-                                json.encodeToJsonElement(Attachment.serializer(), it)
-                            },
-                        ),
-                    )
-                }
+            val merged = message.raw.toMutableMap()
+            merged["name"] = JsonPrimitive(message.name)
+            merged["is_user"] = JsonPrimitive(message.role == MessageRole.User)
+            merged["is_system"] = JsonPrimitive(message.role == MessageRole.System)
+            if (message.isHidden || merged.containsKey("is_hidden")) {
+                merged["is_hidden"] = JsonPrimitive(message.isHidden)
             }
+            if (message.role == MessageRole.Tool || message.role == MessageRole.Assistant) {
+                merged["role"] = JsonPrimitive(message.role.name.lowercase())
+            }
+            merged["send_date"] = JsonPrimitive(formatMillisToIso(message.createdAtMillis))
+            merged["mes"] = JsonPrimitive(message.content)
+            merged["extra"] = message.metadata
+
+            if (message.swipes.isNotEmpty()) {
+                merged["swipes"] = JsonArray(message.swipes.map(::JsonPrimitive))
+                merged["swipe_id"] = JsonPrimitive(message.swipeIndex)
+            } else {
+                merged.remove("swipes")
+                merged.remove("swipe_id")
+            }
+
+            if (message.variables.isNotEmpty()) merged["variables"] = JsonArray(message.variables)
+            else merged.remove("variables")
+            if (message.isEjsProcessed.isNotEmpty()) {
+                merged["is_ejs_processed"] = JsonArray(message.isEjsProcessed.map(::JsonPrimitive))
+            } else merged.remove("is_ejs_processed")
+            if (message.variablesInitialized.isNotEmpty()) {
+                merged["variables_initialized"] = JsonArray(message.variablesInitialized.map(::JsonPrimitive))
+            } else merged.remove("variables_initialized")
+
+            if (message.attachments.isNotEmpty()) {
+                merged["attachments"] = JsonArray(
+                    message.attachments.map { json.encodeToJsonElement(Attachment.serializer(), it) },
+                )
+            } else if (!message.raw.containsKey("attachments")) {
+                merged.remove("attachments")
+            }
+
+            val line = JsonObject(merged)
             lines.add(compactJson.encodeToString(JsonObject.serializer(), line))
         }
 
         parent.resolve("${session.id}.jsonl").writeText(lines.joinToString("\n"))
+        mutableChatChanges.tryEmit(session.id)
     }
 
     override suspend fun appendMessage(sessionId: String, message: ChatMessage): Unit = withContext(Dispatchers.IO) {
@@ -372,6 +388,7 @@ class FileStDataStore(
         }
 
         layout.worlds.resolve("${book.id}.json").writeText(json.encodeToString(JsonObject.serializer(), output))
+        mutableWorldBookChanges.tryEmit(book.id)
     }
 
     override suspend fun importWorldBook(
@@ -411,6 +428,7 @@ class FileStDataStore(
         } else {
             saveDisabledWorldIds(disabled)
         }
+        mutableWorldBookChanges.tryEmit(id)
     }
 
     override suspend fun readDisabledWorldIds(): Set<String> = withContext(Dispatchers.IO) {
@@ -429,6 +447,7 @@ class FileStDataStore(
             }
         }
         layout.worldInfoActivation.writeText(json.encodeToString(JsonObject.serializer(), output))
+        mutableWorldBookChanges.tryEmit("*")
     }
 
     /**
@@ -705,10 +724,12 @@ class FileStDataStore(
     override suspend fun savePersona(persona: Persona): Unit = withContext(Dispatchers.IO) {
         layout.user.createDirectories()
         layout.user.resolve("${persona.id}.json").writeText(json.encodeToString(persona))
+        mutablePersonaChanges.tryEmit(persona.id)
     }
 
     override suspend fun deletePersona(id: String): Unit = withContext(Dispatchers.IO) {
         layout.user.resolve("$id.json").deleteIfExists()
+        mutablePersonaChanges.tryEmit(id)
     }
 
     // A fresh install has no persona, which makes {{user}} fall back to "User".
@@ -918,6 +939,31 @@ class FileStDataStore(
         }
     }
 
+    /**
+     * Builds before 1.4.3 created every user with a hard-coded 4096-token
+     * context and 300-token response. Those values override the model-aware
+     * runtime defaults, so large character books can overflow their 25% world
+     * info budget before even one entry is admitted and normal story replies
+     * are cut off after a few paragraphs. Remove only the exact legacy values
+     * from tellev's own `default.json`; imported/named presets remain untouched.
+     */
+    private fun migrateLegacyDefaultPresetLimits() {
+        val path = layout.openAiSettings.resolve("default.json")
+        if (!path.exists()) return
+        val raw = runCatching { json.parseToJsonElement(path.readText()) as? JsonObject }
+            .getOrNull() ?: return
+        if (raw["name"]?.jsonPrimitive?.content != "默认聊天") return
+        if (raw.intValue("openai_max_context") != LEGACY_DEFAULT_CONTEXT_TOKENS) return
+        if (raw.intValue("openai_max_tokens") != LEGACY_DEFAULT_COMPLETION_TOKENS) return
+
+        val migrated = raw.toMutableMap().apply {
+            remove("openai_max_context")
+            remove("openai_max_tokens")
+        }
+        path.writeText(json.encodeToString(JsonObject.serializer(), JsonObject(migrated)))
+        mutablePresetChanges.tryEmit(PresetCategory.OpenAi)
+    }
+
 
     /**
      * Build a non-empty default preset that mirrors SillyTavern's built-in
@@ -929,9 +975,6 @@ class FileStDataStore(
         put("name", "默认聊天")
         put("temperature", 0.7)
         put("top_p", 1.0)
-        put("openai_max_tokens", 300)
-        put("openai_max_context", 4096)
-
         val identifiers = listOf(
             "main" to "Main Prompt",
             "worldInfoBefore" to "World Info (before)",
@@ -1242,6 +1285,7 @@ class FileStDataStore(
             groupId = groupId,
             messages = messages,
             metadata = chatMetadata,
+            rawHeader = if (headerParsed) firstObj ?: buildJsonObject { } else buildJsonObject { },
         )
     }
 
@@ -1261,11 +1305,17 @@ class FileStDataStore(
 
         val isUser = obj["is_user"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
         val isSystem = obj["is_system"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+        val explicitRole = obj["role"]?.jsonPrimitive?.content?.lowercase()
+        val isHidden = obj["is_hidden"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
         val name = obj["name"]?.jsonPrimitive?.content ?: if (isUser) "You" else "Character"
         val content = obj["mes"]?.jsonPrimitive?.content ?: obj["content"]?.jsonPrimitive?.content ?: ""
         val sendDate = obj["send_date"]?.jsonPrimitive?.content
 
         val role = when {
+            explicitRole == "tool" -> MessageRole.Tool
+            explicitRole == "assistant" -> MessageRole.Assistant
+            explicitRole == "system" -> MessageRole.System
+            explicitRole == "user" -> MessageRole.User
             isSystem -> MessageRole.System
             isUser -> MessageRole.User
             else -> MessageRole.Character
@@ -1310,10 +1360,12 @@ class FileStDataStore(
             name = name,
             content = content,
             createdAtMillis = createdAtMillis,
+            isHidden = isHidden,
             swipeIndex = swipeId,
             swipes = swipes,
             attachments = attachments,
             metadata = extra,
+            raw = obj,
             variables = variables,
             isEjsProcessed = isEjsProcessed,
             variablesInitialized = variablesInitialized,
@@ -1476,6 +1528,8 @@ class FileStDataStore(
             .firstOrNull()
 
     companion object {
+        private const val LEGACY_DEFAULT_CONTEXT_TOKENS = 4_096
+        private const val LEGACY_DEFAULT_COMPLETION_TOKENS = 300
         private val supportedCharacterExtensions = setOf("png", "webp", "json")
 
         val defaultJson: Json = Json {

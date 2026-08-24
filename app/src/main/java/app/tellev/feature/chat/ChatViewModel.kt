@@ -20,19 +20,20 @@ import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.Persona
-import app.tellev.core.model.PresetCategory
 import app.tellev.core.model.WorldBook
 import app.tellev.core.prompt.PromptBuildRequest
 import app.tellev.core.prompt.PromptBuildResult
 import app.tellev.core.prompt.PromptEngine
+import app.tellev.core.prompt.TavernInitVariables
 import app.tellev.core.prompt.PromptTemplateVariableUpdates
 import app.tellev.core.provider.GenerateChunk
 import app.tellev.core.provider.GenerateRequest
+import app.tellev.core.provider.GenerationRuntimeResolver
 import app.tellev.core.provider.ProviderConfig
 import app.tellev.core.provider.ProviderConfigPersistence
 import app.tellev.core.provider.ProviderCatalog
-import app.tellev.core.provider.ProviderDefaults
 import app.tellev.core.provider.ProviderRegistry
+import app.tellev.core.provider.presetCategoryForProvider
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.StDataStore
 import kotlinx.coroutines.CancellationException
@@ -93,6 +94,7 @@ class ChatViewModel(
 
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
+    private val runtimeResolver = GenerationRuntimeResolver(dataStore, providerRegistry, secretStore)
 
     private var generationJob: Job? = null
     private var activeRegeneration: ActiveRegeneration? = null
@@ -151,11 +153,17 @@ class ChatViewModel(
         })
         observeCharacterChanges()
         observePresetChanges()
+        observeWorldBookChanges()
+        observePersonaChanges()
+        observeProviderChanges()
+        observeChatChanges()
         loadInitialData()
     }
     private fun observeCharacterChanges() {
         viewModelScope.launch {
             dataStore.characterChanges.collect { characterId ->
+                runCatching { dataStore.listCharacters() }
+                    .onSuccess { characters -> _uiState.update { it.copy(characters = characters) } }
                 val selected = _uiState.value.selectedCharacter
                 if (selected?.id != characterId) return@collect
                 runCatching { dataStore.readCharacter(characterId) }
@@ -194,6 +202,66 @@ class ChatViewModel(
         }
     }
 
+    private fun observeWorldBookChanges() {
+        viewModelScope.launch {
+            dataStore.worldBookChanges.collect {
+                refreshRuntimeState("重新读取世界书失败")
+            }
+        }
+    }
+
+    private fun observePersonaChanges() {
+        viewModelScope.launch {
+            dataStore.personaChanges.collect {
+                refreshRuntimeState("重新读取用户设定失败")
+            }
+        }
+    }
+
+    private fun observeProviderChanges() {
+        viewModelScope.launch {
+            secretStore.changes.collect {
+                refreshRuntimeState("重新读取服务商配置失败")
+            }
+        }
+    }
+
+    private fun observeChatChanges() {
+        viewModelScope.launch {
+            dataStore.chatChanges.collect { sessionId ->
+                val state = _uiState.value
+                if (state.currentSession?.id != sessionId || state.isGenerating) return@collect
+                runCatching { dataStore.readChatSession(sessionId) }
+                    .onSuccess { refreshed ->
+                        _uiState.update {
+                            if (it.currentSession?.id != sessionId || it.isGenerating) it
+                            else it.copy(currentSession = refreshed, messages = refreshed.messages)
+                        }
+                    }
+            }
+        }
+    }
+
+    private suspend fun refreshRuntimeState(errorPrefix: String) {
+        val selectedPersonaId = _uiState.value.selectedPersona?.id
+        runCatching { runtimeResolver.resolve(selectedPersonaId) }
+            .onSuccess { runtime ->
+                _uiState.update {
+                    it.copy(
+                        selectedProvider = runtime.selectedProviderId,
+                        providerConfig = runtime.providerConfig,
+                        presets = runtime.presets,
+                        selectedPreset = runtime.preset,
+                        personas = runtime.personas,
+                        selectedPersona = runtime.persona,
+                        worldBooks = runtime.worldBooks,
+                        disabledWorldIds = runtime.disabledWorldIds,
+                    )
+                }
+            }
+            .onFailure { error -> _uiState.update { it.copy(error = "$errorPrefix：${error.message}") } }
+    }
+
 
     private fun loadInitialData() {
         viewModelScope.launch {
@@ -202,40 +270,19 @@ class ChatViewModel(
                 dataStore.bootstrap()
 
                 val characters = dataStore.listCharacters()
-                val personas = dataStore.listPersonas()
-                val worldBooks = dataStore.listWorldBooks()
-                val disabledWorldIds = dataStore.readDisabledWorldIds()
-                val allPresets = dataStore.listPresets()
-                val defaultPersona = personas.firstOrNull()
-
-                val selectedProvider = secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
-                    ?: ProviderCatalog.OPENAI_COMPATIBLE
-                val presetCategory = presetCategoryForProvider(selectedProvider)
-                val presets = allPresets.filter { it.category == presetCategory }
-                val selectedPresetName = dataStore.readSelectedPresetName(presetCategory)
-                val selectedNamedPreset = presets.firstOrNull { it.id == selectedPresetName } ?: presets.firstOrNull()
-                val workingPreset = if (selectedNamedPreset?.id == selectedPresetName) {
-                    dataStore.readPreset(presetCategory, "in_use")
-                } else {
-                    null
-                }
-                val defaultPreset = workingPreset?.copy(
-                    id = selectedNamedPreset!!.id,
-                    name = selectedNamedPreset.name,
-                ) ?: selectedNamedPreset
-                val providerConfig = loadProviderConfig(selectedProvider)
+                val runtime = runtimeResolver.resolve()
 
                 _uiState.update {
                     it.copy(
                         characters = characters,
-                        personas = personas,
-                        worldBooks = worldBooks,
-                        disabledWorldIds = disabledWorldIds,
-                        presets = presets,
-                        selectedPreset = defaultPreset,
-                        selectedPersona = defaultPersona,
-                        selectedProvider = selectedProvider,
-                        providerConfig = providerConfig,
+                        personas = runtime.personas,
+                        worldBooks = runtime.worldBooks,
+                        disabledWorldIds = runtime.disabledWorldIds,
+                        presets = runtime.presets,
+                        selectedPreset = runtime.preset,
+                        selectedPersona = runtime.persona,
+                        selectedProvider = runtime.selectedProviderId,
+                        providerConfig = runtime.providerConfig,
                         isLoading = false,
                     )
                 }
@@ -355,12 +402,6 @@ class ChatViewModel(
             _uiState.update { it.copy(error = "当前没有可用会话") }
             return false
         }
-        val preset = state.selectedPreset
-        if (preset == null) {
-            _uiState.update { it.copy(error = "没有可用预设，请在设置中创建或重新启动应用") }
-            return false
-        }
-
         val regenerationIndex = regenerationMessageId?.let { messageId ->
             state.messages.indexOfFirst { it.id == messageId }
         }
@@ -384,28 +425,59 @@ class ChatViewModel(
 
         viewModelScope.launch {
             try {
-                val selectedProvider = secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
-                    ?: state.selectedProvider
-                val config = loadProviderConfig(selectedProvider)
+                val runtime = runtimeResolver.resolve(state.selectedPersona?.id)
+                val config = runtime.providerConfig
+                val preset = runtime.preset
+                val runtimeState = state.copy(
+                    selectedProvider = runtime.selectedProviderId,
+                    providerConfig = config,
+                    presets = runtime.presets,
+                    selectedPreset = preset,
+                    personas = runtime.personas,
+                    selectedPersona = runtime.persona,
+                    worldBooks = runtime.worldBooks,
+                    disabledWorldIds = runtime.disabledWorldIds,
+                )
                 _uiState.update {
                     it.copy(
-                        selectedProvider = selectedProvider,
+                        selectedProvider = runtime.selectedProviderId,
                         providerConfig = config,
+                        presets = runtime.presets,
+                        selectedPreset = preset,
+                        personas = runtime.personas,
+                        selectedPersona = runtime.persona,
+                        worldBooks = runtime.worldBooks,
+                        disabledWorldIds = runtime.disabledWorldIds,
                     )
+                }
+
+                val initializedSession = session.withTavernInitVariables(
+                    character = character,
+                    worldBooks = runtime.activeWorldBooks,
+                )
+                if (initializedSession != session) {
+                    dataStore.saveChatSession(initializedSession)
+                    _uiState.update {
+                        it.copy(
+                            currentSession = initializedSession,
+                            messages = initializedSession.messages,
+                        )
+                    }
                 }
 
                 val inputMessage = regenerationInput ?: ChatMessage(
                     id = generateMessageId(),
                     role = messageRole,
-                    name = if (messageRole == MessageRole.System) "System" else state.selectedPersona?.name ?: "你",
+                    name = if (messageRole == MessageRole.System) "System" else runtime.persona?.name ?: "你",
                     content = messageText,
                     createdAtMillis = System.currentTimeMillis(),
                     attachments = attachments,
                 )
 
                 val isRegeneration = regenerationMessageId != null
-                val updatedMessages = if (isRegeneration) state.messages else state.messages + inputMessage
-                val updatedSession = session.copy(messages = updatedMessages)
+                val baseSessionMessages = initializedSession.messages
+                val updatedMessages = if (isRegeneration) baseSessionMessages else baseSessionMessages + inputMessage
+                val updatedSession = initializedSession.copy(messages = updatedMessages)
 
                 if (!isRegeneration) {
                     dataStore.saveChatSession(updatedSession)
@@ -459,7 +531,7 @@ class ChatViewModel(
 
                 val promptRequest = PromptBuildRequest(
                     character = character,
-                    persona = state.selectedPersona,
+                    persona = runtime.persona,
                     messages = if (isRegeneration) {
                         updatedMessages.take(regenerationInputIndex!!)
                     } else if (messageRole == MessageRole.User) {
@@ -467,7 +539,7 @@ class ChatViewModel(
                     } else {
                         updatedMessages
                     },
-                    worldBooks = worldBooksForCharacter(state, character, dataStore.readDisabledWorldIds()),
+                    worldBooks = runtime.activeWorldBooks,
                     preset = preset,
                     userInput = when {
                         isRegeneration -> inputMessage.content
@@ -475,7 +547,7 @@ class ChatViewModel(
                         else -> ""
                     },
                     providerType = config.providerType,
-                    metadata = buildPromptMetadata(state, config, preset, updatedSession),
+                    metadata = buildPromptMetadata(runtimeState, config, preset, updatedSession),
                 )
 
                 val promptResult = buildPromptWithSessionScope(promptRequest, updatedSession)
@@ -1162,12 +1234,31 @@ class ChatViewModel(
         val state = _uiState.value
         val character = state.selectedCharacter
             ?: throw IllegalStateException("No character is selected")
-        val preset = state.selectedPreset
-            ?: throw IllegalStateException("No generation preset is selected")
-
-        val selectedProvider = secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
-            ?: state.selectedProvider
-        val config = loadProviderConfig(selectedProvider)
+        val runtime = runtimeResolver.resolve(state.selectedPersona?.id)
+        val preset = runtime.preset
+        val config = runtime.providerConfig
+        val runtimeState = state.copy(
+            selectedProvider = runtime.selectedProviderId,
+            providerConfig = config,
+            presets = runtime.presets,
+            selectedPreset = preset,
+            personas = runtime.personas,
+            selectedPersona = runtime.persona,
+            worldBooks = runtime.worldBooks,
+            disabledWorldIds = runtime.disabledWorldIds,
+        )
+        _uiState.update { current ->
+            current.copy(
+                selectedProvider = runtime.selectedProviderId,
+                providerConfig = config,
+                presets = runtime.presets,
+                selectedPreset = preset,
+                personas = runtime.personas,
+                selectedPersona = runtime.persona,
+                worldBooks = runtime.worldBooks,
+                disabledWorldIds = runtime.disabledWorldIds,
+            )
+        }
         val userInput = options.stringOption("user_input", "userInput", "prompt").orEmpty()
         val shouldStream = options.booleanOption("should_stream", "shouldStream", "stream") ?: false
         val generationId = options.stringOption("generation_id", "generationId")
@@ -1178,13 +1269,13 @@ class ChatViewModel(
 
             val promptRequest = PromptBuildRequest(
                 character = character,
-                persona = state.selectedPersona,
+                persona = runtime.persona,
                 messages = state.messages,
-                worldBooks = worldBooksForCharacter(state, character, dataStore.readDisabledWorldIds()),
+                worldBooks = runtime.activeWorldBooks,
                 preset = preset,
                 userInput = userInput,
                 providerType = config.providerType,
-                metadata = buildPromptMetadata(state, config, preset, state.currentSession),
+                metadata = buildPromptMetadata(runtimeState, config, preset, state.currentSession),
             )
             val promptResult = buildPromptWithSessionScope(promptRequest, state.currentSession)
             persistPromptTemplateVariableUpdates(
@@ -1371,9 +1462,14 @@ class ChatViewModel(
             preset.maxContextTokens ?: defaultContextTokens(config.providerType, config.model),
         ))
         config.model?.takeIf { it.isNotBlank() }?.let { put("modelName", JsonPrimitive(it)) }
-        (preset.maxCompletionTokens ?: preset.maxTokens)?.let {
-            put("maxResponseTokens", JsonPrimitive(it))
-        }
+        put(
+            "maxResponseTokens",
+            JsonPrimitive(
+                preset.maxCompletionTokens
+                    ?: preset.maxTokens
+                    ?: defaultResponseTokens(config.providerType, config.model),
+            ),
+        )
         val groupId = session?.groupId
         if (!groupId.isNullOrBlank()) {
             val group = dataStore.listGroups().firstOrNull { it.id == groupId }
@@ -1772,10 +1868,49 @@ class ChatViewModel(
             characterId = character.id,
             groupId = null,
             messages = firstMessage,
+            rawHeader = buildJsonObject {
+                put("user_name", _uiState.value.selectedPersona?.name ?: "User")
+                put("character_name", character.name)
+            },
         )
 
-        dataStore.saveChatSession(session)
-        return session
+        val initialized = session.withTavernInitVariables(
+            character = character,
+            worldBooks = listOfNotNull(character.characterBook),
+        )
+        dataStore.saveChatSession(initialized)
+        return initialized
+    }
+
+    private fun ChatSession.withTavernInitVariables(
+        character: CharacterCard,
+        worldBooks: List<WorldBook>,
+    ): ChatSession {
+        if (messages.any { message ->
+                message.variables.getOrNull(message.swipeIndex)?.containsKey("stat_data") == true
+            }
+        ) {
+            return this
+        }
+        val initial = TavernInitVariables.extractMessageVariables(
+            if (worldBooks.isNotEmpty()) worldBooks else listOfNotNull(character.characterBook),
+        ) ?: return this
+        if (messages.isEmpty()) return this
+
+        val targetIndex = messages.indexOfFirst {
+            it.role == MessageRole.Character || it.role == MessageRole.Assistant
+        }.takeIf { it >= 0 } ?: 0
+        val updatedMessages = messages.toMutableList()
+        val message = updatedMessages[targetIndex]
+        val swipeCount = message.swipes.ifEmpty { listOf(message.content) }.size
+            .coerceAtLeast(message.swipeIndex + 1)
+        val variables = MutableList(swipeCount) { initial }
+        val initialized = MutableList(swipeCount) { true }
+        updatedMessages[targetIndex] = message.copy(
+            variables = variables,
+            variablesInitialized = initialized,
+        )
+        return copy(messages = updatedMessages)
     }
 
     private fun CharacterCard.initialGreetings(): List<String> =
@@ -1806,35 +1941,18 @@ class ChatViewModel(
         return copy(messages = listOf(upgradedFirst) + messages.drop(1))
     }
 
-    private fun presetCategoryForProvider(providerType: String): PresetCategory = when (providerType) {
-        ProviderCatalog.TEXTGEN_WEBUI, ProviderCatalog.OLLAMA, ProviderCatalog.LLAMA_CPP ->
-            PresetCategory.TextGen
-        ProviderCatalog.KOBOLD, ProviderCatalog.KOBOLDCPP, ProviderCatalog.HORDE ->
-            PresetCategory.Kobold
-        ProviderCatalog.NOVELAI -> PresetCategory.NovelAi
-        else -> PresetCategory.OpenAi
-    }
-
     private fun defaultContextTokens(providerType: String, model: String?): Int = when {
-        providerType == ProviderCatalog.DEEPSEEK &&
-            model.orEmpty().startsWith("deepseek-v4", ignoreCase = true) -> 1_000_000
-        providerType == ProviderCatalog.DEEPSEEK -> 65_536
+        model.orEmpty().startsWith("deepseek-v4", ignoreCase = true) -> 1_000_000
+        providerType == ProviderCatalog.DEEPSEEK ||
+            model.orEmpty().startsWith("deepseek", ignoreCase = true) -> 65_536
         else -> 8_192
     }
 
-    private suspend fun loadProviderConfig(providerType: String): ProviderConfig {
-        return ProviderConfigPersistence.loadProviderConfig(secretStore, providerType)
-    }
-
-    private fun worldBooksForCharacter(
-        state: ChatUiState,
-        character: CharacterCard,
-        disabledIds: Set<String>,
-    ): List<WorldBook> {
-        // Embedded character books are written into worlds/ at import time, so
-        // state.worldBooks already contains them. Filter to only active books;
-        // worlds absent from the disabled set are active (default on).
-        return state.worldBooks.filter { it.id !in disabledIds }
+    private fun defaultResponseTokens(providerType: String, model: String?): Int = when {
+        model.orEmpty().startsWith("deepseek-v4", ignoreCase = true) -> 32_000
+        providerType == ProviderCatalog.DEEPSEEK ||
+            model.orEmpty().startsWith("deepseek", ignoreCase = true) -> 8_192
+        else -> 4_096
     }
 
     private fun generateMessageId(): String = "msg-${UUID.randomUUID()}"

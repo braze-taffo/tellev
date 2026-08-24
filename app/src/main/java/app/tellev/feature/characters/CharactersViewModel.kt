@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -25,6 +27,7 @@ data class CharactersUiState(
     // when a character is opened, for the binding picker in the detail screen).
     val worldBooks: List<WorldBook> = emptyList(),
     val isLoading: Boolean = false,
+    val selectionError: String? = null,
     val error: String? = null,
     val info: String? = null,
 )
@@ -42,11 +45,14 @@ class CharactersViewModel(
 
     init {
         loadCharacters()
+        viewModelScope.launch {
+            importedCardSignal.drop(1).collect { loadCharacters() }
+        }
     }
 
     fun loadCharacters() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
+            _uiState.update { it.copy(isLoading = true, error = null, selectionError = null) }
             try {
                 val characters = dataStore.listCharacters()
                 val query = _uiState.value.searchQuery
@@ -81,7 +87,7 @@ class CharactersViewModel(
 
     fun selectCharacter(id: String) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
+            _uiState.update { it.copy(isLoading = true, error = null, selectionError = null) }
             try {
                 val character = dataStore.readCharacter(id)
                 // Load the world-book list alongside the card so the detail
@@ -92,12 +98,15 @@ class CharactersViewModel(
                         selectedCharacter = character,
                         worldBooks = worldBooks,
                         isLoading = false,
+                        selectionError = null,
                     )
                 }
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
                         isLoading = false,
+                        selectedCharacter = null,
+                        selectionError = "找不到角色“$id”或角色卡无法读取。",
                         error = "加载角色失败：${e.message}",
                     )
                 }

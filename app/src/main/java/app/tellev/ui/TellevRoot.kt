@@ -8,21 +8,15 @@ import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -145,31 +139,6 @@ fun TellevRoot() {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
-    // Restart prompt: triggered when a character card is imported (either from
-    // the in-app importer or from an external share/open intent). The lists in
-    // each tab are one-shot snapshots loaded in the ViewModels' init blocks,
-    // so a restart (activity recreation) is needed to pick up the new card and
-    // any embedded world book.
-    val importedCardSignal by graph.importedCardSignal.collectAsState()
-    var lastHandledSignal by remember { mutableLongStateOf(0L) }
-    var showRestartPrompt by remember { mutableStateOf(false) }
-    if (importedCardSignal > lastHandledSignal) {
-        lastHandledSignal = importedCardSignal
-        showRestartPrompt = true
-    }
-    if (showRestartPrompt) {
-        AlertDialog(
-            onDismissRequest = { showRestartPrompt = false },
-            title = { Text("需要重启应用") },
-            text = { Text("角色卡已导入。请重启应用以在角色和世界书界面加载新的角色卡。") },
-            confirmButton = {
-                TextButton(onClick = { showRestartPrompt = false }) {
-                    Text("我知道了")
-                }
-            },
-        )
-    }
-
     // Determine which bottom tab is selected based on current destination
     val currentTab = TellevTab.entries.find { tab ->
         currentDestination?.hierarchy?.any { it.route?.startsWith(tab.route) == true } == true
@@ -243,7 +212,11 @@ fun TellevRoot() {
                     arguments = listOf(
                         navArgument("characterId") { type = NavType.StringType },
                     ),
-                ) {
+                ) { backStackEntry ->
+                    val characterId = backStackEntry.arguments?.getString("characterId").orEmpty()
+                    LaunchedEffect(characterId) {
+                        if (characterId.isNotBlank()) charactersViewModel.selectCharacter(characterId)
+                    }
                     CharacterDetailScreen(
                         viewModel = charactersViewModel,
                         onBack = { navController.popBackStack() },
@@ -270,16 +243,16 @@ fun TellevRoot() {
                     arguments = listOf(
                         navArgument("bookId") { type = NavType.StringType },
                     ),
-                ) {
+                ) { backStackEntry ->
+                    val bookId = backStackEntry.arguments?.getString("bookId").orEmpty()
+                    LaunchedEffect(bookId) {
+                        if (bookId.isNotBlank()) worldViewModel.selectBook(bookId)
+                    }
                     WorldBookDetailScreen(
                         viewModel = worldViewModel,
                         onBack = { navController.popBackStack() },
                         onEditEntry = { entryId ->
-                            if (entryId == "new") {
-                                navController.navigate("world/book/${worldViewModel.uiState.value.selectedBook?.id}/entry/new")
-                            } else {
-                                navController.navigate("world/book/${worldViewModel.uiState.value.selectedBook?.id}/entry/$entryId")
-                            }
+                            navController.navigate("world/book/$bookId/entry/$entryId")
                         },
                     )
                 }
@@ -289,7 +262,14 @@ fun TellevRoot() {
                         navArgument("bookId") { type = NavType.StringType },
                         navArgument("entryId") { type = NavType.StringType },
                     ),
-                ) {
+                ) { backStackEntry ->
+                    val bookId = backStackEntry.arguments?.getString("bookId").orEmpty()
+                    val entryId = backStackEntry.arguments?.getString("entryId").orEmpty()
+                    LaunchedEffect(bookId, entryId) {
+                        if (bookId.isNotBlank() && entryId.isNotBlank()) {
+                            worldViewModel.openEntry(bookId, entryId)
+                        }
+                    }
                     WorldBookEntryEditScreen(
                         viewModel = worldViewModel,
                         onBack = { navController.popBackStack() },
@@ -307,6 +287,18 @@ fun TellevRoot() {
                 SettingsScreen(
                     viewModel = settingsViewModel,
                     updateViewModel = updateViewModel,
+                    onOpenProviderSettings = {
+                        navController.navigate("settings/providers")
+                    },
+                )
+            }
+            composable("settings/providers") {
+                SettingsScreen(
+                    viewModel = settingsViewModel,
+                    updateViewModel = updateViewModel,
+                    onOpenProviderSettings = {},
+                    providerDetailsOnly = true,
+                    onBack = { navController.popBackStack() },
                 )
             }
         }

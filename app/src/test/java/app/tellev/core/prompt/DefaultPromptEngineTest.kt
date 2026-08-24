@@ -60,6 +60,46 @@ class DefaultPromptEngineTest {
     }
 
     @Test
+    fun `initvar entry backs format message variable macro on a new chat`() {
+        val result = DefaultPromptEngine().build(
+            PromptBuildRequest(
+                character = CharacterCard(id = "alice", name = "Alice"),
+                persona = null,
+                messages = emptyList(),
+                worldBooks = listOf(
+                    WorldBook(
+                        id = "world",
+                        name = "World",
+                        entries = listOf(
+                            WorldBookEntry(
+                                id = "init",
+                                keys = emptyList(),
+                                content = "世界:\n  当前时间: 未知\n主角:\n  生命: 100",
+                                enabled = false,
+                                comment = "[initvar] 初始",
+                            ),
+                            WorldBookEntry(
+                                id = "state",
+                                keys = emptyList(),
+                                content = "<status_current_variables>\n{{format_message_variable::stat_data}}\n</status_current_variables>",
+                                constant = true,
+                            ),
+                        ),
+                    ),
+                ),
+                preset = GenerationPreset(id = "default", name = "Default", providerType = "openai-compatible"),
+                userInput = "Hello",
+                providerType = "openai-compatible",
+            ),
+        )
+
+        val prompt = result.messages.joinToString("\n") { it.content }
+        assertTrue(prompt.contains("当前时间: 未知"))
+        assertTrue(prompt.contains("生命: 100"))
+        assertFalse(prompt.contains("<status_current_variables>\nnull"))
+    }
+
+    @Test
     fun buildProcessesPromptTemplateExpressions() {
         val result = DefaultPromptEngine().build(
             PromptBuildRequest(
@@ -936,6 +976,25 @@ class DefaultPromptEngineTest {
         val markerIdx = contents.indexOf("[Start a new Chat]")
         assertTrue(markerIdx > 0)
         assertEquals("chat message 1", contents[markerIdx + 1])
+    }
+
+    @Test
+    fun `preset can explicitly disable new chat marker and blank messages are omitted`() {
+        val preset = GenerationPreset(
+            id = "custom",
+            name = "Custom",
+            providerType = "openai-compatible",
+            prompts = listOf(
+                PresetPrompt(identifier = "empty", name = "Empty", role = "system", content = "\n\n", enabled = true, order = 0),
+                PresetPrompt(identifier = "chatHistory", name = "Chat History", role = "user", content = "", enabled = true, order = 1),
+            ),
+            raw = buildJsonObject { put("new_chat_prompt", "") },
+        )
+        val result = buildWith(preset = preset, messages = chatMessages(2))
+
+        assertFalse(result.messages.any { it.content == "[Start a new Chat]" })
+        assertFalse(result.messages.any { it.content.isBlank() })
+        assertTrue(result.messages.any { it.content == "chat message 1" })
     }
 
     @Test

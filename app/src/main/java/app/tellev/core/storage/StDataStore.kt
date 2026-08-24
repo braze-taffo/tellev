@@ -22,6 +22,12 @@ interface StDataStore {
         get() = emptyFlow()
     val presetChanges: Flow<PresetCategory>
         get() = emptyFlow()
+    val worldBookChanges: Flow<String>
+        get() = emptyFlow()
+    val personaChanges: Flow<String>
+        get() = emptyFlow()
+    val chatChanges: Flow<String>
+        get() = emptyFlow()
 
 
     suspend fun bootstrap()

@@ -32,6 +32,10 @@ enum class ProviderCapability {
     Vision,
 }
 
+/** Whether this adapter can produce a normal assistant message in chat. */
+val ProviderAdapter.supportsChatGeneration: Boolean
+    get() = ProviderCapability.Chat in capabilities || ProviderCapability.Text in capabilities
+
 @Serializable
 data class ProviderConfig(
     val providerType: String,
