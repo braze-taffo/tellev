@@ -9,6 +9,7 @@ import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.Persona
 import app.tellev.core.model.PresetCategory
 import app.tellev.core.provider.ProviderAdapter
+import app.tellev.core.provider.BetaRelayConfig
 import app.tellev.core.provider.ProviderConfig
 import app.tellev.core.provider.ProviderConfigPersistence
 import app.tellev.core.provider.CustomProviderConfig
@@ -41,7 +42,8 @@ enum class ThemeMode {
 
 data class SettingsUiState(
     val providers: List<ProviderAdapter> = emptyList(),
-    val selectedProviderId: String = "openai-compatible",
+    val selectedProviderId: String = ProviderDefaults.selectedProviderId(),
+    val isManagedProvider: Boolean = false,
     // User-defined named OpenAI-compatible endpoints. The selectedProviderId may
     // be `custom:{id}` to address one of these.
     val customConfigs: List<CustomProviderConfig> = emptyList(),
@@ -132,6 +134,7 @@ class SettingsViewModel(
                     it.copy(
                         providers = providers,
                         selectedProviderId = selectedId,
+                        isManagedProvider = fields.isManaged,
                         customConfigs = customConfigs,
                         customConfigName = fields.customConfigName,
                         presets = presets,
@@ -159,6 +162,7 @@ class SettingsViewModel(
     }
 
     private data class ConfigFields(
+        val isManaged: Boolean,
         val customConfigName: String,
         val baseUrl: String,
         val apiKey: String,
@@ -171,9 +175,20 @@ class SettingsViewModel(
         selectedId: String,
         customConfigs: List<CustomProviderConfig>,
     ): ConfigFields {
+        if (ProviderConfigPersistence.isManagedConfigId(selectedId)) {
+            return ConfigFields(
+                isManaged = true,
+                customConfigName = "",
+                baseUrl = "",
+                apiKey = "",
+                model = BetaRelayConfig.DISPLAY_NAME,
+                compatibility = OpenAiCompatibilitySettings(),
+            )
+        }
         if (ProviderConfigPersistence.isCustomConfigId(selectedId)) {
             val config = customConfigs.firstOrNull { it.id == ProviderConfigPersistence.customIdFrom(selectedId) }
             return ConfigFields(
+                isManaged = false,
                 customConfigName = config?.name ?: "",
                 baseUrl = config?.baseUrl ?: "",
                 apiKey = config?.apiKey ?: "",
@@ -182,6 +197,7 @@ class SettingsViewModel(
             )
         }
         return ConfigFields(
+            isManaged = false,
             customConfigName = "",
             baseUrl = secretStore.readSecret("provider-$selectedId-baseurl")
                 ?: ProviderDefaults.baseUrl(selectedId),
@@ -213,6 +229,7 @@ class SettingsViewModel(
                 _uiState.update {
                     it.copy(
                         customConfigs = customConfigs,
+                        isManagedProvider = fields.isManaged,
                         customConfigName = fields.customConfigName,
                         baseUrl = fields.baseUrl,
                         apiKey = fields.apiKey,
@@ -329,7 +346,14 @@ class SettingsViewModel(
                 val providerId = state.selectedProviderId
                 secretStore.putSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID, providerId)
 
-                if (ProviderConfigPersistence.isCustomConfigId(providerId)) {
+                if (ProviderConfigPersistence.isManagedConfigId(providerId)) {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            info = "免费测试通道已启用。",
+                        )
+                    }
+                } else if (ProviderConfigPersistence.isCustomConfigId(providerId)) {
                     val rawId = ProviderConfigPersistence.customIdFrom(providerId)
                     val advanced = compatibilitySettingsFromState(state)
                     val configs = ProviderConfigPersistence.listCustomConfigs(secretStore)
@@ -419,6 +443,7 @@ class SettingsViewModel(
                     it.copy(
                         customConfigs = updated,
                         selectedProviderId = selectedId,
+                        isManagedProvider = false,
                         customConfigName = name,
                         baseUrl = "",
                         apiKey = "",
@@ -450,13 +475,14 @@ class SettingsViewModel(
                 if (wasSelected) {
                     val fallback = updated.firstOrNull()
                         ?.let { ProviderConfigPersistence.selectedIdFor(it.id) }
-                        ?: "openai-compatible"
+                        ?: ProviderDefaults.selectedProviderId()
                     secretStore.putSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID, fallback)
                     val fields = loadConfigFields(fallback, updated)
                     _uiState.update {
                         it.copy(
                             customConfigs = updated,
                             selectedProviderId = fallback,
+                            isManagedProvider = fields.isManaged,
                             customConfigName = fields.customConfigName,
                             baseUrl = fields.baseUrl,
                             apiKey = fields.apiKey,
@@ -884,6 +910,9 @@ class SettingsViewModel(
     }
 
     private fun providerConfigFromState(state: SettingsUiState): ProviderConfig {
+        if (ProviderConfigPersistence.isManagedConfigId(state.selectedProviderId)) {
+            return BetaRelayConfig.providerConfig()
+        }
         val advanced = compatibilitySettingsFromState(state)
         val useAdvanced = ProviderConfigPersistence.hasAdvancedSettings(state.selectedProviderId)
         return ProviderConfig(

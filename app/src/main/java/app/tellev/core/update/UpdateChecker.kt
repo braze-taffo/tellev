@@ -5,6 +5,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -97,8 +98,17 @@ class UpdateChecker(
      */
     fun parseReleaseJson(body: String): UpdateInfo {
         val root = json.parseToJsonElement(body).jsonObject
+        require(root["draft"]?.jsonPrimitive?.booleanOrNull != true) {
+            "草稿版本不能用于应用更新"
+        }
+        require(root["prerelease"]?.jsonPrimitive?.booleanOrNull != true) {
+            "预发布版本不能用于正式更新"
+        }
         val tag = root["tag_name"]?.jsonPrimitive?.contentOrNull
             ?: error("缺少 tag_name")
+        require(!PRE_RELEASE_TAG.containsMatchIn(tag)) {
+            "预发布标签不能用于正式更新"
+        }
         val assets = root["assets"]?.jsonArray
             ?: error("缺少 assets")
         val apk = assets.firstOrNull { entry ->
@@ -128,28 +138,41 @@ class UpdateChecker(
         compareVersions(currentVersion, latest.version) < 0
 
     /**
-     * Compares two semver-ish strings. Leading `v` is stripped, only leading
-     * numeric dot-groups are considered, and missing segments default to 0,
-     * so `1.4` == `1.4.0` and `1.4.10` > `1.4.9`.
+     * Compares two semver-ish strings. Leading `v` is stripped, leading
+     * numeric dot-groups are compared, missing segments default to 0, and a
+     * prerelease is older than the stable build with the same core version.
+     * Thus `1.4` == `1.4.0`, `1.4.10` > `1.4.9`, and
+     * `1.5.0-beta.1` < `1.5.0`.
      */
     fun compareVersions(a: String, b: String): Int {
         val pa = parseSemver(a)
         val pb = parseSemver(b)
-        val len = maxOf(pa.size, pb.size)
+        val len = maxOf(pa.numbers.size, pb.numbers.size)
         for (i in 0 until len) {
-            val x = pa.getOrElse(i) { 0 }
-            val y = pb.getOrElse(i) { 0 }
+            val x = pa.numbers.getOrElse(i) { 0 }
+            val y = pb.numbers.getOrElse(i) { 0 }
             if (x != y) return x.compareTo(y)
         }
-        return 0
+        return when {
+            pa.isPrerelease && !pb.isPrerelease -> -1
+            !pa.isPrerelease && pb.isPrerelease -> 1
+            else -> 0
+        }
     }
 
-    private fun parseSemver(version: String): List<Int> {
+    private fun parseSemver(version: String): ParsedVersion {
         val cleaned = version.trim().removePrefix("v").removePrefix("V")
         val match = Regex("""^(\d+(\.\d+){0,3})""").find(cleaned)
         val core = match?.groupValues?.get(1) ?: cleaned
-        return core.split('.').mapNotNull { it.toIntOrNull() }.ifEmpty { listOf(0) }
+        val numbers = core.split('.').mapNotNull { it.toIntOrNull() }.ifEmpty { listOf(0) }
+        val suffix = cleaned.removePrefix(match?.value.orEmpty())
+        return ParsedVersion(numbers, isPrerelease = suffix.startsWith("-"))
     }
+
+    private data class ParsedVersion(
+        val numbers: List<Int>,
+        val isPrerelease: Boolean,
+    )
 
     /**
      * Streams the APK for [info] to [target], trying [mirrors] in order until
@@ -227,6 +250,11 @@ class UpdateChecker(
     }
 
     companion object {
+        private val PRE_RELEASE_TAG = Regex(
+            """(^|[-_.])(alpha|beta|rc)([-_.0-9]|$)""",
+            RegexOption.IGNORE_CASE,
+        )
+
         /**
          * Ordered mirror list: direct first, then community proxies that also
          * front api.github.com and release-asset downloads for users in China.

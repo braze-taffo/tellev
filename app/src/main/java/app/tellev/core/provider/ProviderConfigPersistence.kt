@@ -124,6 +124,10 @@ object ProviderConfigPersistence {
     fun hasAdvancedSettings(selectedId: String): Boolean =
         isCustomConfigId(selectedId) || hasCustomOpenAiSettings(selectedId)
 
+    /** Managed configs are compiled into a dedicated build and must never be exposed or edited in UI state. */
+    fun isManagedConfigId(selectedId: String): Boolean =
+        selectedId == ProviderCatalog.BETA_RELAY && BetaRelayConfig.enabled
+
     suspend fun loadAdvanced(secretStore: SecretStore, providerId: String): OpenAiCompatibilitySettings {
         // DeepSeek has a fixed profile. Never let an older saved compatibility
         // document change its paths, authentication headers or request body.
@@ -144,6 +148,8 @@ object ProviderConfigPersistence {
     }
 
     suspend fun loadProviderConfig(secretStore: SecretStore, providerId: String): ProviderConfig {
+        if (isManagedConfigId(providerId)) return BetaRelayConfig.providerConfig()
+
         // A custom: id selects one of the user's named OpenAI-compatible configs.
         if (isCustomConfigId(providerId)) {
             val config = listCustomConfigs(secretStore)
@@ -193,7 +199,8 @@ object ProviderConfigPersistence {
         if (secretStore.readSecret(CUSTOM_CONFIGS_SECRET_ID) != null) return null
 
         val currentSelected = secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
-        val wasOpenAiCompatible = currentSelected == null || currentSelected == ProviderCatalog.OPENAI_COMPATIBLE
+            ?: ProviderDefaults.selectedProviderId()
+        val wasOpenAiCompatible = currentSelected == ProviderCatalog.OPENAI_COMPATIBLE
 
         val legacyBaseUrl = secretStore.readSecret("provider-${ProviderCatalog.OPENAI_COMPATIBLE}-baseurl")
         val legacyApiKey = secretStore.readSecret("provider-${ProviderCatalog.OPENAI_COMPATIBLE}-apikey")

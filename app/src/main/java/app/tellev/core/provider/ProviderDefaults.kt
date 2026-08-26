@@ -3,7 +3,11 @@ package app.tellev.core.provider
 object ProviderDefaults {
     const val SELECTED_PROVIDER_SECRET_ID = "provider-selected-id"
 
+    fun selectedProviderId(): String =
+        if (BetaRelayConfig.enabled) ProviderCatalog.BETA_RELAY else ProviderCatalog.OPENAI_COMPATIBLE
+
     fun baseUrl(providerType: String): String = when (providerType) {
+        ProviderCatalog.BETA_RELAY -> BetaRelayConfig.providerConfig().baseUrl
         ProviderCatalog.OPENAI_COMPATIBLE -> "https://api.openai.com"
         ProviderCatalog.ANTHROPIC -> "https://api.anthropic.com"
         ProviderCatalog.GEMINI -> "https://generativelanguage.googleapis.com"
@@ -26,6 +30,7 @@ object ProviderDefaults {
     }
 
     fun model(providerType: String): String = when (providerType) {
+        ProviderCatalog.BETA_RELAY -> BetaRelayConfig.providerConfig().model.orEmpty()
         ProviderCatalog.DEEPSEEK -> "deepseek-v4-flash"
         else -> ""
     }

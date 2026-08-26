@@ -18,6 +18,16 @@ val localProps = Properties().apply {
     }
 }
 
+fun localOrProjectProperty(name: String): String =
+    (project.findProperty(name) as String?) ?: localProps.getProperty(name).orEmpty()
+
+fun buildConfigString(value: String): String =
+    "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+val betaRelayBaseUrl = localOrProjectProperty("tellevBetaRelayBaseUrl")
+val betaRelayApiKey = localOrProjectProperty("tellevBetaRelayApiKey")
+val betaRelayModel = localOrProjectProperty("tellevBetaRelayModel")
+
 android {
     namespace = "app.tellev"
     compileSdk = 36
@@ -30,6 +40,11 @@ android {
         versionName = "1.5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("boolean", "TELLEV_BETA_RELAY_ENABLED", "false")
+        buildConfigField("String", "TELLEV_BETA_RELAY_BASE_URL", "\"\"")
+        buildConfigField("String", "TELLEV_BETA_RELAY_API_KEY", "\"\"")
+        buildConfigField("String", "TELLEV_BETA_RELAY_MODEL", "\"\"")
     }
 
     // ── Release signing ────────────────────────────────────────────────
@@ -74,6 +89,17 @@ android {
             )
             signingConfig = signingConfigs.findByName("release")
         }
+        create("beta") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".beta"
+            versionNameSuffix = "-beta.1"
+            resValue("string", "app_name", "tellev Beta")
+            buildConfigField("boolean", "TELLEV_BETA_RELAY_ENABLED", "true")
+            buildConfigField("String", "TELLEV_BETA_RELAY_BASE_URL", buildConfigString(betaRelayBaseUrl))
+            buildConfigField("String", "TELLEV_BETA_RELAY_API_KEY", buildConfigString(betaRelayApiKey))
+            buildConfigField("String", "TELLEV_BETA_RELAY_MODEL", buildConfigString(betaRelayModel))
+            matchingFallbacks += listOf("release")
+        }
     }
 
     compileOptions {
@@ -89,7 +115,28 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
+}
+
+val validateBetaRelayConfig = tasks.register("validateBetaRelayConfig") {
+    doLast {
+        val missing = buildList {
+            if (betaRelayBaseUrl.isBlank()) add("tellevBetaRelayBaseUrl")
+            if (betaRelayApiKey.isBlank()) add("tellevBetaRelayApiKey")
+            if (betaRelayModel.isBlank()) add("tellevBetaRelayModel")
+        }
+        require(missing.isEmpty()) {
+            "Beta relay configuration is missing from local.properties: ${missing.joinToString()}"
+        }
+        require(betaRelayBaseUrl.startsWith("http://")) {
+            "tellevBetaRelayBaseUrl must be an http:// URL for this domainless beta relay"
+        }
+    }
+}
+
+tasks.matching { it.name == "preBetaBuild" }.configureEach {
+    dependsOn(validateBetaRelayConfig)
 }
 
 dependencies {

@@ -27,12 +27,12 @@ class GenerationRuntimeResolver(
 ) {
     suspend fun resolve(selectedPersonaId: String? = null): GenerationRuntimeSnapshot {
         val storedProviderId = secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
-            ?: ProviderCatalog.OPENAI_COMPATIBLE
+            ?: ProviderDefaults.selectedProviderId()
         val adapterId = ProviderConfigPersistence.adapterIdFor(storedProviderId)
         val selectedProviderId = if (providerRegistry.find(adapterId)?.supportsChatGeneration == true) {
             storedProviderId
         } else {
-            ProviderCatalog.OPENAI_COMPATIBLE.also {
+            ProviderDefaults.selectedProviderId().also {
                 secretStore.putSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID, it)
             }
         }

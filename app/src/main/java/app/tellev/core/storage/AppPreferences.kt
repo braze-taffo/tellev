@@ -18,7 +18,12 @@ class AppPreferences(
         get() = prefs.getLong(KEY_LAST_CHECK, 0L)
         set(value) = prefs.edit().putLong(KEY_LAST_CHECK, value).apply()
 
+    var betaRelayNoticeAccepted: Boolean
+        get() = prefs.getBoolean(KEY_BETA_RELAY_NOTICE_ACCEPTED, false)
+        set(value) = prefs.edit().putBoolean(KEY_BETA_RELAY_NOTICE_ACCEPTED, value).apply()
+
     private companion object {
         const val KEY_LAST_CHECK = "last_update_check_ms"
+        const val KEY_BETA_RELAY_NOTICE_ACCEPTED = "beta_relay_notice_accepted"
     }
 }

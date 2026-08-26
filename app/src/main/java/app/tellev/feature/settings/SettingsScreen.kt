@@ -339,38 +339,60 @@ fun SettingsScreen(
                     }
                 }
 
+                if (state.isManagedProvider) {
+                    item(key = "provider_managed_notice") {
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text("免费测试通道", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    "接口与认证已由此测试版内置，无需填写配置。测试结束后该通道可能随时关闭。",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                        }
+                    }
+                }
+
                 item(key = "provider_base_url") {
-                    OutlinedTextField(
-                        value = state.baseUrl,
-                        onValueChange = { viewModel.updateBaseUrl(it) },
-                        label = { Text("接口地址") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        placeholder = { Text("https://api.example.com") },
-                    )
+                    if (!state.isManagedProvider) {
+                        OutlinedTextField(
+                            value = state.baseUrl,
+                            onValueChange = { viewModel.updateBaseUrl(it) },
+                            label = { Text("接口地址") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            placeholder = { Text("https://api.example.com") },
+                        )
+                    }
                 }
 
                 item(key = "provider_api_key") {
-                    OutlinedTextField(
-                        value = state.apiKey,
-                        onValueChange = { viewModel.updateApiKey(it) },
-                        label = { Text("API 密钥") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        visualTransformation = if (apiKeyVisible) VisualTransformation.None
-                        else PasswordVisualTransformation(),
-                        trailingIcon = {
-                            IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
-                                Icon(
-                                    if (apiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = if (apiKeyVisible) "隐藏 API 密钥" else "显示 API 密钥",
-                                )
-                            }
-                        },
-                    )
+                    if (!state.isManagedProvider) {
+                        OutlinedTextField(
+                            value = state.apiKey,
+                            onValueChange = { viewModel.updateApiKey(it) },
+                            label = { Text("API 密钥") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            visualTransformation = if (apiKeyVisible) VisualTransformation.None
+                            else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                                    Icon(
+                                        if (apiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (apiKeyVisible) "隐藏 API 密钥" else "显示 API 密钥",
+                                    )
+                                }
+                            },
+                        )
+                    }
                 }
 
                 item(key = "provider_model") {
+                    if (!state.isManagedProvider) {
                     var modelMenuExpanded by remember { mutableStateOf(false) }
                     val availableModels = remember(state.availableModels) {
                         state.availableModels.distinct()
@@ -434,6 +456,7 @@ fun SettingsScreen(
                             }
                         }
                     }
+                    }
                 }
 
                 if (ProviderConfigPersistence.hasAdvancedSettings(state.selectedProviderId)) {
@@ -450,31 +473,61 @@ fun SettingsScreen(
                 }
 
                 item(key = "provider_actions") {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedButton(
-                            onClick = { viewModel.testConnection() },
-                            modifier = Modifier.weight(1f),
-                            enabled = !state.isTesting,
+                    if (state.isManagedProvider) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            if (state.isTesting) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
+                            OutlinedButton(
+                                onClick = { viewModel.testConnection() },
+                                modifier = Modifier.weight(1f),
+                                enabled = !state.isTesting,
+                            ) {
+                                if (state.isTesting) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                }
+                                Text(if (state.isTesting) "测试中..." else "测试连接")
                             }
-                            Text(if (state.isTesting) "测试中..." else "测试连接")
+                            FilledTonalButton(
+                                onClick = { viewModel.saveProviderConfig() },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("设为当前通道")
+                            }
                         }
-                        FilledTonalButton(
-                            onClick = { viewModel.saveProviderConfig() },
-                            modifier = Modifier.weight(1f),
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("保存")
+                            OutlinedButton(
+                                onClick = { viewModel.testConnection() },
+                                modifier = Modifier.weight(1f),
+                                enabled = !state.isTesting,
+                            ) {
+                                if (state.isTesting) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                }
+                                Text(if (state.isTesting) "测试中..." else "测试连接")
+                            }
+                            FilledTonalButton(
+                                onClick = { viewModel.saveProviderConfig() },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("保存")
+                            }
                         }
                     }
                 }

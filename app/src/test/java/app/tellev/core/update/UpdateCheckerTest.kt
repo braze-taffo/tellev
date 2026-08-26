@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class UpdateCheckerTest {
@@ -44,6 +45,12 @@ class UpdateCheckerTest {
         assertEquals(0, checker.compareVersions("1.4", "1.4.0"))
         assertEquals(0, checker.compareVersions("1.4.0.0", "1.4"))
         assertTrue(checker.isUpdateAvailable("1.4", info("1.4.1")))
+    }
+
+    @Test
+    fun `stable release updates the same core beta version`() {
+        assertTrue(checker.isUpdateAvailable("1.5.0-beta.1", info("1.5.0")))
+        assertFalse(checker.isUpdateAvailable("1.5.0", info("1.5.0-beta.1")))
     }
 
     @Test
@@ -105,6 +112,47 @@ class UpdateCheckerTest {
         assertEquals("1.5.0", info.version)
         assertTrue(info.apkUrl.endsWith("app-release.apk"))
         assertNull(info.sha256)
+    }
+
+    @Test
+    fun `parse rejects prerelease and draft releases`() {
+        fun release(flags: String) = """
+            {
+              "tag_name": "v1.5.0-beta.1",
+              $flags,
+              "assets": [{
+                "name": "tellev-1.5.0-beta.1.apk",
+                "browser_download_url": "https://example.test/tellev-beta.apk",
+                "size": 1
+              }]
+            }
+        """.trimIndent()
+
+        assertThrows(IllegalArgumentException::class.java) {
+            checker.parseReleaseJson(release("\"prerelease\": true"))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            checker.parseReleaseJson(release("\"draft\": true"))
+        }
+    }
+
+    @Test
+    fun `parse rejects beta tag even if release flag was set incorrectly`() {
+        val json = """
+            {
+              "tag_name": "v1.5.0-beta.1",
+              "prerelease": false,
+              "assets": [{
+                "name": "tellev-1.5.0-beta.1.apk",
+                "browser_download_url": "https://example.test/tellev-beta.apk",
+                "size": 1
+              }]
+            }
+        """.trimIndent()
+
+        assertThrows(IllegalArgumentException::class.java) {
+            checker.parseReleaseJson(json)
+        }
     }
 
     private fun info(version: String) = UpdateInfo(

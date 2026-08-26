@@ -15,6 +15,7 @@ import app.tellev.core.prompt.MacroEngine
 import app.tellev.core.prompt.PromptEngine
 import app.tellev.core.provider.AnthropicAdapter
 import app.tellev.core.provider.AzureAdapter
+import app.tellev.core.provider.BetaRelayConfig
 import app.tellev.core.provider.GeminiAdapter
 import app.tellev.core.provider.GoogleTranslateAdapter
 import app.tellev.core.provider.HordeAdapter
@@ -100,7 +101,21 @@ class TellevGraph private constructor(
                 .build()
 
             val providerRegistry = ProviderRegistry(
-                adapters = listOf(
+                adapters = buildList {
+                    if (BetaRelayConfig.enabled) {
+                        val betaConfig = BetaRelayConfig.providerConfig()
+                        add(
+                            OpenAiCompatibleAdapter(
+                                client = deepSeekClient,
+                                providerId = ProviderCatalog.BETA_RELAY,
+                                providerDisplayName = BetaRelayConfig.DISPLAY_NAME,
+                                defaultModel = betaConfig.model,
+                                supportsModelListing = false,
+                                includeUsageByDefault = true,
+                            ),
+                        )
+                    }
+                    addAll(listOf(
                     OpenAiCompatibleAdapter(),
                     OpenAiCompatibleAdapter(
                         client = deepSeekClient,
@@ -132,7 +147,8 @@ class TellevGraph private constructor(
                     OpenAiImageAdapter(),
                     OpenAiSpeechAdapter(),
                     GoogleTranslateAdapter(),
-                ),
+                    ))
+                },
             )
 
             val dataStore = FileStDataStore(layout)

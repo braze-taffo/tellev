@@ -1,6 +1,7 @@
 package app.tellev.core.provider
 
 object ProviderCatalog {
+    const val BETA_RELAY = "tellev-beta-relay"
     const val OPENAI_COMPATIBLE = "openai-compatible"
     const val ANTHROPIC = "anthropic"
     const val GEMINI = "gemini"
