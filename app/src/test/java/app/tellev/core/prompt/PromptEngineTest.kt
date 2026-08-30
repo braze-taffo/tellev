@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -307,6 +308,111 @@ class PromptEngineTest {
         assertTrue(
             "post_history_instructions should be near the end of the message list",
             lastFew.any { it.content.contains("Stay in character") },
+        )
+    }
+
+    @Test
+    fun `names_behavior COMPLETION keeps ascii names and sanitizes cjk names`() {
+        // ST openai.js:948-951 + PromptManager.js:1349-1351: COMPLETION sets
+        // the name field on every named message, sanitizing invalid
+        // characters to `_` instead of dropping the name.
+        val cjkMessages = listOf(
+            ChatMessage(id = "m0", role = MessageRole.User, name = "Bob", content = "Hello there.", createdAtMillis = 1),
+            ChatMessage(id = "m1", role = MessageRole.Character, name = "小明", content = "Hi Bob.", createdAtMillis = 2),
+        )
+        val result = engine.build(namesBehaviorRequest(1, messagesOverride = cjkMessages))
+
+        val cjk = result.messages.first { it.content.contains("Hi Bob.") }
+        assertEquals("__", cjk.name)
+        val ascii = result.messages.first { it.content.contains("Hello there.") }
+        assertEquals("Bob", ascii.name)
+        // COMPLETION never prefixes content.
+        assertTrue(result.messages.none { it.content.startsWith("小明: ") })
+    }
+
+    @Test
+    fun `names_behavior COMPLETION does not prefix content in group chats`() {
+        // ST openai.js:599-600: the COMPLETION case breaks out of the content
+        // prefix switch, even in groups.
+        val result = engine.build(namesBehaviorRequest(1, groupMembers = listOf("Alice", "Carol")))
+
+        val assistantHistory = result.messages.filter {
+            it.role == MessageRole.Assistant && it.content.contains("Message number")
+        }
+        assertTrue(assistantHistory.isNotEmpty())
+        assertTrue(assistantHistory.all { it.name == "Alice" })
+        assertTrue(assistantHistory.none { it.content.startsWith("Alice: ") })
+    }
+
+    @Test
+    fun `names_behavior CONTENT prefixes all named messages including user`() {
+        // ST openai.js:594-596: CONTENT prepends `Name: ` to every
+        // non-narrator message (user included) and never sets the name field.
+        val result = engine.build(namesBehaviorRequest(2))
+
+        assertTrue(result.messages.all { it.name == null })
+        val assistantHistory = result.messages.first { it.content.contains("Message number 1") }
+        assertTrue(assistantHistory.content.startsWith("Alice: "))
+        val userHistory = result.messages.first { it.content.contains("Message number 0") }
+        assertTrue(userHistory.content.startsWith("Bob: "))
+        val userInput = result.messages.first { it.content.contains("Let us explore the forest.") }
+        assertTrue(userInput.content.startsWith("Bob: "))
+    }
+
+    @Test
+    fun `names_behavior DEFAULT prefixes only group assistant messages`() {
+        // ST openai.js:589-592: DEFAULT prefixes only group messages whose
+        // name differs from the user's.
+        val grouped = engine.build(namesBehaviorRequest(0, groupMembers = listOf("Alice", "Carol")))
+        val groupAssistant = grouped.messages.first { it.content.contains("Message number 1") }
+        assertTrue(groupAssistant.content.startsWith("Alice: "))
+        val groupUser = grouped.messages.first { it.content.contains("Message number 0") }
+        assertFalse(groupUser.content.startsWith("Bob: "))
+
+        val single = engine.build(namesBehaviorRequest(0))
+        val singleAssistant = single.messages.first { it.content.contains("Message number 1") }
+        assertFalse(singleAssistant.content.startsWith("Alice: "))
+        assertTrue(single.messages.all { it.name == null })
+    }
+
+    @Test
+    fun `names_behavior NONE drops names without any prefix`() {
+        // ST openai.js:587-588: NONE leaves content untouched and sets no
+        // name field.
+        val result = engine.build(namesBehaviorRequest(-1))
+
+        assertTrue(result.messages.all { it.name == null })
+        val chatOnly = result.messages.filter {
+            it.content.contains("Message number") || it.content.contains("Let us explore the forest.")
+        }
+        assertTrue(chatOnly.none { it.content.startsWith("Alice: ") || it.content.startsWith("Bob: ") })
+    }
+
+    private fun namesBehaviorRequest(
+        namesBehavior: Int,
+        groupMembers: List<String>? = null,
+        messagesOverride: List<ChatMessage>? = null,
+    ): PromptBuildRequest {
+        val metadata = buildJsonObject {
+            put("maxContextTokens", 8192)
+            groupMembers?.let { members ->
+                put(
+                    "groupMembers",
+                    kotlinx.serialization.json.JsonArray(
+                        members.map { kotlinx.serialization.json.JsonPrimitive(it) },
+                    ),
+                )
+            }
+        }
+        return baseRequest(metadata).copy(
+            preset = GenerationPreset(
+                id = "preset1",
+                name = "P",
+                providerType = "openai",
+                maxTokens = 256,
+                raw = buildJsonObject { put("names_behavior", namesBehavior) },
+            ),
+            messages = messagesOverride ?: messages(),
         )
     }
 

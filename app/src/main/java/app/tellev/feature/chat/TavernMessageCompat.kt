@@ -1,6 +1,7 @@
 package app.tellev.feature.chat
 
 import app.tellev.core.model.WorldBookEntry
+import app.tellev.core.model.ChatMessage
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -35,6 +36,18 @@ internal data class TavernMessageSlashAction(
     val setInputText: String? = null,
     val deleteMessageIndex: Int? = null,
 )
+
+internal fun setTavernMessageSwipe(
+    message: ChatMessage,
+    content: String,
+    requestedSwipe: Int?,
+): ChatMessage {
+    val swipes = message.swipes.ifEmpty { listOf(message.content) }.toMutableList()
+    val swipeIndex = requestedSwipe?.coerceAtLeast(0) ?: message.swipeIndex
+    while (swipes.size <= swipeIndex) swipes.add(content)
+    swipes[swipeIndex] = content
+    return message.copy(content = content, swipes = swipes, swipeIndex = swipeIndex.coerceIn(0, swipes.lastIndex))
+}
 
 internal fun parseTavernMessageSlashCommand(script: String): TavernMessageSlashAction {
     val trimmed = script.trim()
@@ -168,6 +181,12 @@ internal fun tavernMessageCompatScript(): String = """
       window.getLorebooks = function() { return request('getLorebooks', {}); };
       window.createLorebook = function(name) { return request('createLorebook', { name: String(name || '') }); };
       window.createLorebookEntry = function(name, entry) { return request('createLorebookEntry', { name: String(name || ''), entry: entry || {} }); };
+      window.getChatMessages = function(messageId, options) {
+        return request('getChatMessages', { messageId: messageId, options: options || {} });
+      };
+      window.setChatMessage = function(message, messageId, options) {
+        return request('setChatMessage', { message: String(message == null ? '' : message), messageId: messageId, options: options || {} });
+      };
       window.TavernHelper = window.TavernHelper || {};
       window.TavernHelper.getVariables = variables;
       window.TavernHelper.getAllVariables = variables;
@@ -175,6 +194,8 @@ internal fun tavernMessageCompatScript(): String = """
       window.TavernHelper.getLorebooks = window.getLorebooks;
       window.TavernHelper.createLorebook = window.createLorebook;
       window.TavernHelper.createLorebookEntry = window.createLorebookEntry;
+      window.TavernHelper.getChatMessages = window.getChatMessages;
+      window.TavernHelper.setChatMessage = window.setChatMessage;
       window.SillyTavern = window.SillyTavern || { getContext: function(){ return {}; } };
       if (!window._) {
         function pathParts(path) { return Array.isArray(path) ? path : String(path || '').replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean); }

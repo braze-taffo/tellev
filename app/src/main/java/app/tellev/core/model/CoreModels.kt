@@ -156,6 +156,10 @@ data class GenerationPreset(
     val temperature: Double? = null,
     val topP: Double? = null,
     val topK: Int? = null,
+    val topA: Double? = null,
+    val minP: Double? = null,
+    val repetitionPenalty: Double? = null,
+    val repetitionPenaltyRange: Int? = null,
     val maxTokens: Int? = null,
     val maxContextTokens: Int? = null,
     val maxCompletionTokens: Int? = null,
@@ -167,6 +171,15 @@ data class GenerationPreset(
     val extensions: JsonObject = buildJsonObject { },
     val stop: List<String> = emptyList(),
     val raw: JsonObject = buildJsonObject { },
+)
+
+/** Result of importing a raw ST preset. Routing fields are preserved but never applied. */
+data class PresetImportResult(
+    val preset: GenerationPreset,
+    val inferredCategory: PresetCategory,
+    val appliedFields: Set<String>,
+    val preservedFields: Set<String>,
+    val warnings: List<String> = emptyList(),
 )
 
 @Serializable

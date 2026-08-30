@@ -168,7 +168,7 @@ class KoboldCppAdapter(
 
     private fun buildPayload(config: ProviderConfig, request: GenerateRequest): JsonObject =
         buildJsonObject {
-            put("model", JsonPrimitive(config.model ?: request.preset.id))
+            put("model", JsonPrimitive(config.model ?: "koboldcpp"))
             put("stream", JsonPrimitive(request.stream))
             request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
             request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }

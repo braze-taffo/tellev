@@ -13,6 +13,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
@@ -300,6 +301,45 @@ class OpenAiCompatibleAdapterTest {
 
         val payload = Json.parseToJsonElement(capturedBody).jsonObject
         assertNull(payload["seed"])
+    }
+
+    @Test
+    fun `effective preset sampling is sent while preset routing model is ignored`() = runBlocking {
+        var capturedBody = ""
+        val client = client { chain ->
+            capturedBody = Buffer().also { chain.request().body?.writeTo(it) }.readUtf8()
+            response(chain, 200, """{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}""")
+        }
+        val preset = GenerationPreset(
+            id = "preset-file-not-a-model",
+            name = "capture",
+            providerType = ProviderCatalog.OPENAI_COMPATIBLE,
+            temperature = 0.65,
+            topP = 0.5,
+            presencePenalty = 0.2,
+            frequencyPenalty = 0.3,
+            seed = 7,
+            stop = listOf("STOP"),
+            raw = buildJsonObject {
+                put("openai_model", JsonPrimitive("must-not-apply"))
+                put("custom_url", JsonPrimitive("https://must-not-apply.test"))
+            },
+        )
+
+        OpenAiCompatibleAdapter(client = client).streamGenerate(
+            config(model = "configured-model"),
+            generateRequest(stream = false, preset = preset),
+        ).toList()
+
+        val payload = Json.parseToJsonElement(capturedBody).jsonObject
+        assertEquals("configured-model", payload["model"]?.jsonPrimitive?.content)
+        assertEquals("0.65", payload["temperature"]?.jsonPrimitive?.content)
+        assertEquals("0.5", payload["top_p"]?.jsonPrimitive?.content)
+        assertEquals("0.2", payload["presence_penalty"]?.jsonPrimitive?.content)
+        assertEquals("0.3", payload["frequency_penalty"]?.jsonPrimitive?.content)
+        assertEquals("7", payload["seed"]?.jsonPrimitive?.content)
+        assertEquals("STOP", payload["stop"]?.jsonArray?.single()?.jsonPrimitive?.content)
+        assertEquals("77", payload["max_tokens"]?.jsonPrimitive?.content)
     }
 
     @Test

@@ -1,6 +1,8 @@
 package app.tellev.core.regex
 
 import app.tellev.core.model.CharacterCard
+import app.tellev.core.model.ChatMessage
+import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageRole
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -8,14 +10,35 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonPrimitive
 
 object CharacterRegexApplier {
+    private const val NORMAL_PROCESSING_VERSION = 1
+    private const val NORMAL_PROCESSING_KEY = "tellev_regex_normal_versions"
     private const val USER_INPUT = 1
     private const val AI_OUTPUT = 2
     private const val WORLD_INFO = 5
 
-    private enum class Mode { Display, Prompt }
+    enum class RegexPhase { Normal, Display, Prompt }
+
+    data class RegexExecutionContext(
+        val character: CharacterCard?,
+        val preset: GenerationPreset? = null,
+        val role: MessageRole,
+        val userName: String = "User",
+        /** Distance from the newest visible, non-system message. */
+        val depth: Int = 0,
+        val isEdit: Boolean = false,
+        val phase: RegexPhase,
+        val globalScripts: JsonArray = JsonArray(emptyList()),
+        val onDiagnostic: ((RegexDiagnostic) -> Unit)? = null,
+    )
+
+    data class RegexDiagnostic(
+        val scriptName: String,
+        val message: String,
+    )
 
     /** A regex script's stable identifier, display name, and card-owned switch state. */
     data class RegexScriptSummary(
@@ -23,6 +46,20 @@ object CharacterRegexApplier {
         val name: String,
         val enabled: Boolean,
     )
+
+    fun isNormalProcessed(message: ChatMessage): Boolean =
+        (message.metadata[NORMAL_PROCESSING_KEY] as? JsonArray)
+            ?.getOrNull(message.swipeIndex)
+            ?.jsonPrimitive?.intOrNull == NORMAL_PROCESSING_VERSION
+
+    fun markNormalProcessed(message: ChatMessage): ChatMessage {
+        val versions = ((message.metadata[NORMAL_PROCESSING_KEY] as? JsonArray)?.toMutableList()
+            ?: mutableListOf()).apply {
+            while (size <= message.swipeIndex) add(JsonNull)
+            this[message.swipeIndex] = JsonPrimitive(NORMAL_PROCESSING_VERSION)
+        }
+        return message.copy(metadata = JsonObject(message.metadata + (NORMAL_PROCESSING_KEY to JsonArray(versions))))
+    }
 
     /**
      * Summarize the scripts in a `regex_scripts` array into stable
@@ -44,7 +81,23 @@ object CharacterRegexApplier {
         userName: String = "User",
         depth: Int = 0,
         isEdit: Boolean = false,
-    ): String = apply(text, role, character, userName, Mode.Display, depth, isEdit)
+        preset: GenerationPreset? = null,
+        includeNormal: Boolean = true,
+    ): String {
+        val context = RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Display)
+        val normalized = if (includeNormal) apply(text, context.copy(phase = RegexPhase.Normal)) else text
+        return apply(normalized, context)
+    }
+
+    fun applyNormal(
+        text: String,
+        role: MessageRole,
+        character: CharacterCard?,
+        preset: GenerationPreset? = null,
+        userName: String = "User",
+        depth: Int = 0,
+        isEdit: Boolean = false,
+    ): String = apply(text, RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Normal))
 
     fun applyForPrompt(
         text: String,
@@ -53,14 +106,25 @@ object CharacterRegexApplier {
         userName: String = "User",
         depth: Int,
         isEdit: Boolean = false,
-    ): String = apply(text, role, character, userName, Mode.Prompt, depth, isEdit)
+        preset: GenerationPreset? = null,
+        includeNormal: Boolean = true,
+    ): String {
+        val context = RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Prompt)
+        val normalized = if (includeNormal) apply(text, context.copy(phase = RegexPhase.Normal)) else text
+        return apply(normalized, context)
+    }
 
     fun applyWorldInfoForPrompt(
         text: String,
         character: CharacterCard?,
         userName: String = "User",
         depth: Int = 0,
-    ): String = apply(text, MessageRole.System, character, userName, Mode.Prompt, depth, false, WORLD_INFO)
+        preset: GenerationPreset? = null,
+    ): String = apply(
+        text,
+        RegexExecutionContext(character, preset, MessageRole.System, userName, depth, false, RegexPhase.Prompt),
+        WORLD_INFO,
+    )
 
     /** Persist the authoritative switch in the character card itself. */
     fun withScriptEnabled(card: CharacterCard, scriptId: String, enabled: Boolean): CharacterCard {
@@ -86,56 +150,69 @@ object CharacterRegexApplier {
         return card.copy(raw = patchedRaw)
     }
 
-    private fun apply(
+    fun apply(
         text: String,
-        role: MessageRole,
-        character: CharacterCard?,
-        userName: String,
-        mode: Mode,
-        depth: Int,
-        isEdit: Boolean,
+        context: RegexExecutionContext,
         forcedPlacement: Int? = null,
     ): String {
-        if (text.isBlank() || character == null) return text
-        val placement = forcedPlacement ?: when (role) {
+        if (text.isBlank()) return text
+        val placement = forcedPlacement ?: when (context.role) {
             MessageRole.User -> USER_INPUT
             MessageRole.Character, MessageRole.Assistant -> AI_OUTPUT
             else -> return text
         }
-        val scripts = character.raw.cardDataObject()
-            .objectValue("extensions")
+        val cardScripts = context.character?.raw?.cardDataObject()
+            ?.objectValue("extensions")
             ?.arrayValue("regex_scripts")
-            ?: return text
+            ?: JsonArray(emptyList())
+        val presetScripts = context.preset?.extensions?.arrayValue("regex_scripts")
+            ?: JsonArray(emptyList())
+        // Matches ST's effective order and makes conflicts deterministic.
+        val scripts = context.globalScripts + cardScripts + presetScripts
+        val characterName = context.character?.name.orEmpty().ifBlank { "Character" }
 
         return scripts.fold(text) { current, scriptElement ->
             val script = scriptElement as? JsonObject ?: return@fold current
             if (script.booleanValue("disabled") == true) return@fold current
             if (!script.intArray("placement").contains(placement)) return@fold current
-            if (isEdit && script.booleanValue("runOnEdit") != true) return@fold current
+            if (context.isEdit && script.booleanValue("runOnEdit") != true) return@fold current
             val minDepth = script.intValue("minDepth")
             val maxDepth = script.intValue("maxDepth")
-            if (minDepth != null && depth < minDepth) return@fold current
-            if (maxDepth != null && maxDepth >= 0 && depth > maxDepth) return@fold current
+            if (minDepth != null && context.depth < minDepth) return@fold current
+            if (maxDepth != null && maxDepth >= 0 && context.depth > maxDepth) return@fold current
 
             val markdownOnly = script.booleanValue("markdownOnly") == true
             val promptOnly = script.booleanValue("promptOnly") == true
-            val appliesInMode = when (mode) {
-                Mode.Display -> markdownOnly || (!markdownOnly && !promptOnly)
-                Mode.Prompt -> promptOnly || (!markdownOnly && !promptOnly)
+            val appliesInMode = when (context.phase) {
+                RegexPhase.Normal -> !markdownOnly && !promptOnly
+                RegexPhase.Display -> markdownOnly
+                RegexPhase.Prompt -> promptOnly
             }
             if (!appliesInMode) return@fold current
-            runScript(script, current, character.name, userName)
+            runScript(script, current, characterName, context.userName, context.onDiagnostic)
         }
     }
 
-    private fun runScript(script: JsonObject, input: String, characterName: String, userName: String): String {
+    private fun runScript(
+        script: JsonObject,
+        input: String,
+        characterName: String,
+        userName: String,
+        onDiagnostic: ((RegexDiagnostic) -> Unit)?,
+    ): String {
         val rawSource = script.stringValue("findRegex") ?: return input
         val source = when (script.intValue("substituteRegex") ?: 0) {
             1 -> substituteMacros(rawSource, characterName, userName, escaped = false)
             2 -> substituteMacros(rawSource, characterName, userName, escaped = true)
             else -> rawSource
         }
-        val regex = parseJavascriptRegex(source) ?: return input
+        val regex = parseJavascriptRegex(source) ?: run {
+            onDiagnostic?.invoke(RegexDiagnostic(
+                scriptName = script.stringValue("scriptName").orEmpty().ifBlank { rawSource },
+                message = "无效或不兼容的正则表达式/flag，已跳过该规则",
+            ))
+            return input
+        }
         val flags = javascriptFlags(source)
         val replacement = substituteMacros(
             script.stringValue("replaceString").orEmpty(),
@@ -167,7 +244,13 @@ object CharacterRegexApplier {
                     input.replaceRange(first.range, replacer(first))
                 }
             }
-        }.getOrDefault(input)
+        }.getOrElse { error ->
+            onDiagnostic?.invoke(RegexDiagnostic(
+                scriptName = script.stringValue("scriptName").orEmpty().ifBlank { rawSource },
+                message = error.message ?: "正则替换失败，已跳过该规则",
+            ))
+            input
+        }
     }
 
     private fun javascriptFlags(source: String): String {
@@ -226,6 +309,11 @@ object CharacterRegexApplier {
         } else {
             trimmed to ""
         }
+
+        // A malformed/unknown JavaScript flag invalidates only this script.
+        // Kotlin cannot emulate every new JS regex feature, but accepting the
+        // standard flags here keeps diagnostics deterministic and isolated.
+        if (flags.any { it !in "dgimsuvy" } || flags.toSet().size != flags.length) return null
 
         val options = buildSet {
             if ('i' in flags) add(RegexOption.IGNORE_CASE)

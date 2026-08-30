@@ -1,6 +1,12 @@
 package app.tellev.core.regex
 
 import app.tellev.core.model.MessageRole
+import app.tellev.core.model.GenerationPreset
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.JsonPrimitive
 import app.tellev.core.storage.CharacterImporter
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonObject
@@ -195,6 +201,69 @@ class CharacterRegexApplierTest {
 
         assertEquals("[x]x", CharacterRegexApplier.applyForDisplay("xx", MessageRole.Character, card("/(x)/")))
         assertEquals("[x][x]", CharacterRegexApplier.applyForDisplay("xx", MessageRole.Character, card("/(x)/g")))
+    }
+
+    @Test
+    fun `normal display and prompt phases merge card before preset`() {
+        val card = CharacterImporter().importFromJson(
+            """{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"C","extensions":{"regex_scripts":[
+              {"findRegex":"/x/g","replaceString":"card","placement":[2]},
+              {"findRegex":"/SHOW/g","replaceString":"<details>shown</details>","placement":[2],"markdownOnly":true}
+            ]}}}""",
+        )
+        val preset = GenerationPreset(
+            id = "p", name = "p", providerType = "openai",
+            extensions = buildJsonObject { putJsonArray("regex_scripts") {
+                add(buildJsonObject {
+                    put("findRegex", "/card/g"); put("replaceString", "preset")
+                    put("placement", buildJsonArray { add(JsonPrimitive(2)) })
+                })
+                add(buildJsonObject {
+                    put("findRegex", "/SECRET/g"); put("replaceString", "")
+                    put("placement", buildJsonArray { add(JsonPrimitive(2)) }); put("promptOnly", true)
+                })
+            } },
+        )
+
+        assertEquals("preset", CharacterRegexApplier.applyNormal("x", MessageRole.Character, card, preset))
+        assertEquals(
+            "<details>shown</details>",
+            CharacterRegexApplier.applyForDisplay("SHOW", MessageRole.Character, card, preset = preset, includeNormal = false),
+        )
+        assertEquals(
+            "",
+            CharacterRegexApplier.applyForPrompt("SECRET", MessageRole.Character, card, depth = 0, preset = preset, includeNormal = false),
+        )
+    }
+
+    @Test
+    fun `edit skips normal scripts unless runOnEdit is true`() {
+        val card = CharacterImporter().importFromJson(
+            """{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"C","extensions":{"regex_scripts":[
+              {"findRegex":"/a/g","replaceString":"b","placement":[2]},
+              {"findRegex":"/b/g","replaceString":"c","placement":[2],"runOnEdit":true}
+            ]}}}""",
+        )
+        assertEquals("a", CharacterRegexApplier.applyNormal("a", MessageRole.Character, card, isEdit = true))
+        assertEquals("c", CharacterRegexApplier.applyNormal("b", MessageRole.Character, card, isEdit = true))
+    }
+
+    @Test
+    fun `world info prompt path runs only promptOnly scripts like SillyTavern`() {
+        // Regression guard locking in the ST 1.18 semantics found during the
+        // adversarial review: world-info entries are fetched with isPrompt=true
+        // (world-info.js:5086), and the regex engine only runs normal scripts
+        // when neither isMarkdown nor isPrompt is set (regex engine.js:348-354).
+        // So on WI text, only promptOnly scripts may run; unflagged (normal)
+        // scripts must NOT touch world-info content.
+        val card = CharacterImporter().importFromJson(
+            """{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"C","extensions":{"regex_scripts":[
+              {"findRegex":"/ALPHA/g","replaceString":"beta","placement":[5],"promptOnly":true},
+              {"findRegex":"/GAMMA/g","replaceString":"delta","placement":[5]}
+            ]}}}""",
+        )
+
+        assertEquals("beta and GAMMA", CharacterRegexApplier.applyWorldInfoForPrompt("ALPHA and GAMMA", card))
     }
 
 

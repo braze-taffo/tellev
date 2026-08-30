@@ -624,19 +624,23 @@ class FileStDataStoreTest {
         assertNotNull(defaultPreset)
         val preset = requireNotNull(defaultPreset)
         assertEquals("default", preset.name)
-        assertEquals(0.7, preset.temperature ?: -1.0, 0.0001)
+        assertEquals(1.0, preset.temperature ?: -1.0, 0.0001)
         assertEquals(1.0, preset.topP ?: -1.0, 0.0001)
-        assertNull(preset.maxContextTokens)
-        assertNull(preset.maxCompletionTokens)
-        assertNull(preset.maxTokens)
+        assertEquals(1_000_000, preset.maxContextTokens)
+        assertEquals(131_072, preset.maxCompletionTokens)
+        assertEquals(131_072, preset.maxTokens)
+        assertEquals("claude-sonnet-4-5", preset.raw["claude_model"]?.jsonPrimitive?.content)
+        assertEquals(2, preset.raw["prompt_order"]?.jsonArray?.size)
+        assertEquals(false, preset.raw["squash_system_messages"]?.jsonPrimitive?.content?.toBoolean())
     }
 
     @Test
-    fun `bootstrap removes only legacy limits from tellev openai default`() = runBlocking {
+    fun `bootstrap upgrades legacy low limits in tellev openai default`() = runBlocking {
         val path = store.layout.openAiSettings.resolve("default.json")
         val raw = FileStDataStore.defaultJson.parseToJsonElement(path.toFile().readText()).jsonObject
         path.toFile().writeText(
             JsonObject(raw.toMutableMap().apply {
+                put("name", JsonPrimitive("默认聊天"))
                 put("openai_max_context", JsonPrimitive(4096))
                 put("openai_max_tokens", JsonPrimitive(300))
             }).toString(),
@@ -645,9 +649,50 @@ class FileStDataStoreTest {
         store.bootstrap()
 
         val migrated = requireNotNull(store.readPreset(PresetCategory.OpenAi, "default"))
-        assertNull(migrated.maxContextTokens)
-        assertNull(migrated.maxCompletionTokens)
-        assertNull(migrated.maxTokens)
+        assertEquals(1_000_000, migrated.maxContextTokens)
+        assertEquals(131_072, migrated.maxCompletionTokens)
+        assertEquals(131_072, migrated.maxTokens)
+    }
+
+    @Test
+    fun `bootstrap upgrades selected default working copy limits`() = runBlocking {
+        store.selectPreset(PresetCategory.OpenAi, "default")
+        val lowLimits = JsonObject(
+            FileStDataStore.defaultJson
+                .parseToJsonElement(store.layout.openAiSettings.resolve("default.json").toFile().readText())
+                .jsonObject
+                .toMutableMap()
+                .apply {
+                    put("openai_max_context", JsonPrimitive(4095))
+                    put("openai_max_tokens", JsonPrimitive(300))
+                },
+        ).toString()
+        store.layout.openAiSettings.resolve("default.json").toFile().writeText(lowLimits)
+        store.layout.openAiSettings.resolve("in_use.json").toFile().writeText(lowLimits)
+
+        store.bootstrap()
+
+        val working = requireNotNull(store.readPreset(PresetCategory.OpenAi, "in_use"))
+        assertEquals(1_000_000, working.maxContextTokens)
+        assertEquals(131_072, working.maxCompletionTokens)
+    }
+
+    @Test
+    fun `bootstrap preserves explicitly larger limits in default preset`() = runBlocking {
+        val path = store.layout.openAiSettings.resolve("default.json")
+        val raw = FileStDataStore.defaultJson.parseToJsonElement(path.toFile().readText()).jsonObject
+        path.toFile().writeText(
+            JsonObject(raw.toMutableMap().apply {
+                put("openai_max_context", JsonPrimitive(65_536))
+                put("openai_max_tokens", JsonPrimitive(8_192))
+            }).toString(),
+        )
+
+        store.bootstrap()
+
+        val migrated = requireNotNull(store.readPreset(PresetCategory.OpenAi, "default"))
+        assertEquals(65_536, migrated.maxContextTokens)
+        assertEquals(8_192, migrated.maxCompletionTokens)
     }
 
     @Test
@@ -658,6 +703,10 @@ class FileStDataStoreTest {
             .toSet()
 
         assertEquals(PresetCategory.entries.toSet(), defaultCategories)
+        store.listPresets().filter { it.id == "default" }.forEach { preset ->
+            assertEquals(1_000_000, preset.maxContextTokens)
+            assertEquals(131_072, preset.maxCompletionTokens)
+        }
     }
 
     @Test
@@ -679,7 +728,7 @@ class FileStDataStoreTest {
               ]
             }
         """.trimIndent()
-        val imported = store.importPreset(raw.toByteArray(), "openai", "ordered.json")
+        val imported = store.importPreset(raw.toByteArray(), "openai", "ordered.json").preset
 
         assertEquals(listOf("main", "chatHistory"), imported.prompts.map { it.identifier })
         assertEquals(listOf(false, true), imported.prompts.map { it.enabled })
@@ -755,7 +804,7 @@ class FileStDataStoreTest {
             {"name":"My ST Preset","temperature":0.8,"top_p":0.95,"max_tokens":1024,
              "stop":["\n\nUser:","\n\nAssistant:"],"prompt_prefix":"extra ST field"}
         """.trimIndent()
-        val imported = store.importPreset(raw.toByteArray(), "openai", "my-st-preset.json")
+        val imported = store.importPreset(raw.toByteArray(), "openai", "my-st-preset.json").preset
 
         assertEquals("my-st-preset", imported.id)
         assertEquals("my-st-preset", imported.name)
@@ -765,6 +814,11 @@ class FileStDataStoreTest {
         assertEquals(listOf("\n\nUser:", "\n\nAssistant:"), imported.stop)
         // Provider-specific fields survive in raw because bytes are written verbatim.
         assertEquals("extra ST field", imported.raw["prompt_prefix"]?.jsonPrimitive?.content)
+        assertEquals(imported.id, store.readSelectedPresetName(PresetCategory.OpenAi))
+        assertEquals(
+            raw,
+            layout.openAiSettings.resolve("in_use.json").readText(),
+        )
 
         // listPresets() must surface the same preset (round-trip via the on-disk file).
         val listed = store.listPresets().first { it.id == imported.id }
@@ -777,7 +831,7 @@ class FileStDataStoreTest {
     @Test
     fun `importPreset falls back to file stem when name field is missing`() = runBlocking {
         val raw = """{"temperature":0.7}"""
-        val imported = store.importPreset(raw.toByteArray(), "openai", "anonymous.json")
+        val imported = store.importPreset(raw.toByteArray(), "openai", "anonymous.json").preset
 
         assertEquals("anonymous", imported.name)
     }
@@ -785,7 +839,7 @@ class FileStDataStoreTest {
     @Test
     fun `importPreset into textgen category routes to TextGen WebUI Settings directory`() = runBlocking {
         val raw = """{"name":"Llama Preset","temperature":0.7}"""
-        val imported = store.importPreset(raw.toByteArray(), "textgen", "llama.json")
+        val imported = store.importPreset(raw.toByteArray(), "textgen", "llama.json").preset
 
         assertTrue(layout.textGenSettings.resolve("${imported.id}.json").exists())
         assertTrue(!layout.openAiSettings.resolve("${imported.id}.json").exists())

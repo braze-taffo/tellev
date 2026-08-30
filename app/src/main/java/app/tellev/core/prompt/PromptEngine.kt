@@ -20,7 +20,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
-private const val DEFAULT_MAX_CONTEXT_TOKENS = 8192
+private const val DEFAULT_MAX_CONTEXT_TOKENS = 1_000_000
+private const val DEFAULT_MAX_COMPLETION_TOKENS = 128 * 1_024
 
 /** [PromptMessage.channel] of the main/system prompt — anchor for BEFORE_PROMPT/IN_PROMPT injections. */
 internal const val CHANNEL_MAIN = "main"
@@ -180,6 +181,7 @@ class DefaultPromptEngine(
         val maxCompletionTokens = request.preset.maxCompletionTokens
             ?: request.preset.maxTokens
             ?: extractMaxResponseTokens(request.metadata)
+            ?: DEFAULT_MAX_COMPLETION_TOKENS
         val worldInfoTokenBudget = maxContextTokens
             ?.let { ((it.toLong() * 25L) / 100L).toInt() }
             ?.coerceAtLeast(1)
@@ -214,6 +216,7 @@ class DefaultPromptEngine(
                             text = macroEngine.expand(it.content, macroContext),
                             character = request.character,
                             userName = request.persona?.name ?: "User",
+                            preset = request.preset,
                         ),
                         raw = it.raw,
                     ),
@@ -234,6 +237,7 @@ class DefaultPromptEngine(
                     text = macroEngine.expand(entry.content, macroContext),
                     character = request.character,
                     userName = request.persona?.name ?: "User",
+                    preset = request.preset,
                 ),
                 raw = entry.raw,
                 bookId = book.id,
@@ -304,7 +308,11 @@ class DefaultPromptEngine(
                             role = message.role,
                             character = request.character,
                             userName = request.persona?.name ?: "User",
-                            depth = visibleHistory.lastIndex - index,
+                            depth = visibleHistory.drop(index + 1).count {
+                                it.role != MessageRole.System && it.role != MessageRole.Tool && !it.isHidden
+                            },
+                            preset = request.preset,
+                            includeNormal = !CharacterRegexApplier.isNormalProcessed(message),
                         ),
                         channel = CHANNEL_CHAT,
                     ),
@@ -324,6 +332,9 @@ class DefaultPromptEngine(
                         character = request.character,
                         userName = request.persona?.name ?: "User",
                         depth = 0,
+                        preset = request.preset,
+                        includeNormal = request.metadata["userInputNormalProcessed"]
+                            ?.jsonPrimitive?.booleanOrNull != true,
                     ),
                     channel = CHANNEL_CHAT,
                 ),
@@ -435,7 +446,7 @@ class DefaultPromptEngine(
         val instructPresetObj = request.metadata["instructPreset"] as? JsonObject
         val instructPreset = instructPresetObj?.let { InstructMode.loadPreset(it) }
 
-        val finalMessages = (if (instructPreset != null) {
+        val namesApplied = (if (instructPreset != null) {
             val instructText = InstructMode.applyInstruct(
                 messages = withInjections,
                 preset = instructPreset,
@@ -447,8 +458,16 @@ class DefaultPromptEngine(
             // completion-style APIs
             listOf(PromptMessage(role = MessageRole.User, content = instructText))
         } else {
-            applyNamesBehavior(withInjections, request.metadata)
+            applyNamesBehavior(withInjections, request.metadata, request.preset)
         }).filter { it.content.isNotBlank() }
+        val squashed = if (request.preset.raw["squash_system_messages"]
+                ?.jsonPrimitive?.booleanOrNull == true
+        ) squashAdjacentSystemMessages(namesApplied) else namesApplied
+        val assistantPrefill = request.preset.raw["assistant_prefill"]
+            ?.jsonPrimitive?.contentOrNull.orEmpty()
+            .let { macroEngine.expand(it, macroContext) }
+        val finalMessages = if (assistantPrefill.isBlank() || instructPreset != null) squashed
+            else squashed + PromptMessage(MessageRole.Assistant, content = assistantPrefill)
 
         // 11. Build stop sequences
         val stopSequences = buildStopSequences(request.preset.stop, instructPreset, contextPreset)
@@ -471,34 +490,59 @@ class DefaultPromptEngine(
     }
 
     /**
-     * SillyTavern's `names_behavior` default (`NONE`/0, openai.js:495) does not
-     * put a `name` field on chat-completion messages at all; it only prefixes
-     * `Name: ` to the content in group chats or when a force_avatar is set
-     * (openai.js:586-604). tellev attached `name` to every message, so the
-     * request differed from ST's for the same card and preset — and a CJK
-     * character name produced `"name": "小明"`, which fails the OpenAI
-     * `^[a-zA-Z0-9_-]+$` rule and makes strict endpoints reject the request
-     * outright.
+     * SillyTavern's `names_behavior` (openai.js:204-209, 586-603, 948-951;
+     * PromptManager.js:1343-1351; mirrored by js-slash-runner
+     * generateRaw.ts:243) has four values:
+     *
+     *  - NONE(-1): no `name` field, no content prefix.
+     *  - DEFAULT(0): prefix `Name: ` only for group-chat messages whose name
+     *    differs from the user's (openai.js:590; the force_avatar branch has
+     *    no tellev counterpart).
+     *  - COMPLETION(1): set the `name` field on every named message,
+     *    sanitizing invalid characters to `_` (PromptManager.sanitizeName:
+     *    `[^a-zA-Z0-9_]` -> `_`, capped at 64 chars) instead of dropping the
+     *    name — a CJK name like 小明 becomes `__`, never a raw value that
+     *    fails OpenAI's name rule.
+     *  - CONTENT(2): prefix `Name: ` to the content of every named message,
+     *    including user messages, and never set the `name` field
+     *    (openai.js:594-596).
      *
      * The name is still carried internally up to this point because group
      * ordering and instruct formatting need it.
      */
+    private fun sanitizeCompletionName(name: String): String =
+        name.replace(Regex("[^a-zA-Z0-9_]"), "_").take(64)
+
     private fun applyNamesBehavior(
         messages: List<PromptMessage>,
         metadata: JsonObject,
+        preset: GenerationPreset,
     ): List<PromptMessage> {
         val isGroup = groupMemberNamesList(metadata).size > 1
+        val namesBehavior = preset.raw["names_behavior"]?.jsonPrimitive?.intOrNull ?: 0
         return messages.map { message ->
             val name = message.name
             when {
                 name.isNullOrBlank() -> message.copy(name = null)
-                isGroup && message.role == MessageRole.Assistant &&
-                    !message.content.startsWith("$name: ") ->
-                    message.copy(name = null, content = "$name: ${message.content}")
+                namesBehavior == 1 -> message.copy(name = sanitizeCompletionName(name))
+                namesBehavior == 2 ->
+                    if (message.content.startsWith("$name: ")) message.copy(name = null)
+                    else message.copy(name = null, content = "$name: ${message.content}")
+                namesBehavior == 0 && isGroup && message.role == MessageRole.Assistant ->
+                    if (message.content.startsWith("$name: ")) message.copy(name = null)
+                    else message.copy(name = null, content = "$name: ${message.content}")
                 else -> message.copy(name = null)
             }
         }
     }
+
+    private fun squashAdjacentSystemMessages(messages: List<PromptMessage>): List<PromptMessage> =
+        messages.fold(emptyList()) { out, message ->
+            val previous = out.lastOrNull()
+            if (message.role == MessageRole.System && previous?.role == MessageRole.System) {
+                out.dropLast(1) + previous.copy(content = previous.content + "\n\n" + message.content)
+            } else out + message
+        }
 
     private fun buildMacroContext(request: PromptBuildRequest): MacroContext {
         val visible = request.messages.filterNot { it.isHidden }
@@ -530,14 +574,19 @@ class DefaultPromptEngine(
             firstMessage = request.character.firstMessage,
             lastMessage = lastMessage,
             groupMemberNames = groupMemberNames,
-            maxPromptTokens = request.preset.maxCompletionTokens ?: request.preset.maxTokens ?: 0,
+            maxPromptTokens = request.preset.maxCompletionTokens
+                ?: request.preset.maxTokens
+                ?: DEFAULT_MAX_COMPLETION_TOKENS,
             maxContextTokens = request.preset.maxContextTokens
                 ?: extractMaxContextTokens(request.metadata)
                 ?: DEFAULT_MAX_CONTEXT_TOKENS,
             // ── Step 5 gap-fill: SillyTavern macro parity ──
             personaDescription = request.persona?.description.orEmpty(),
             modelName = extractModelName(request.metadata, request.providerType),
-            maxResponseTokens = extractMaxResponseTokens(request.metadata) ?: request.preset.maxCompletionTokens ?: request.preset.maxTokens ?: 0,
+            maxResponseTokens = extractMaxResponseTokens(request.metadata)
+                ?: request.preset.maxCompletionTokens
+                ?: request.preset.maxTokens
+                ?: DEFAULT_MAX_COMPLETION_TOKENS,
             inputText = request.userInput,
             lastUserMessage = lastUserMessage,
             lastCharMessage = lastCharMessage,

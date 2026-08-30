@@ -9,6 +9,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import app.tellev.core.model.ChatMessage
+import app.tellev.core.model.MessageRole
 
 class TavernMessageCompatTest {
     @Test
@@ -122,10 +124,40 @@ class TavernMessageCompatTest {
             "window.getLorebooks",
             "window.createLorebook",
             "window.createLorebookEntry",
+            "window.getChatMessages",
+            "window.setChatMessage",
+            "window.TavernHelper.getChatMessages",
+            "window.TavernHelper.setChatMessage",
             "window.errorCatched",
             "window.$",
             "window._",
         ).forEach { symbol -> assertTrue("missing $symbol", script.contains(symbol)) }
+    }
+
+    @Test
+    fun `host html uses theme colors auto contrast and details resize`() {
+        val wrapped = wrapTavernHtml("<body style='color:white'>hello<details><summary>x</summary>y</details></body>", "#FAFAFA", "#111111")
+
+        assertTrue(wrapped.contains("color: #111111"))
+        assertFalse(wrapped.contains("color: #f7f7f7"))
+        assertTrue(wrapped.contains("tellev-auto-contrast"))
+        assertTrue(wrapped.contains("#000000"))
+        assertTrue(wrapped.contains("#ffffff"))
+        assertTrue(tavernResizeScript().contains("document.addEventListener('toggle'"))
+    }
+
+    @Test
+    fun `setChatMessage switches welcome message to requested alternate swipe`() {
+        val welcome = ChatMessage(
+            id = "0", role = MessageRole.Character, name = "道渊", content = "欢迎页",
+            createdAtMillis = 0, swipes = listOf("欢迎页", "[重塑仙缘]"), swipeIndex = 0,
+        )
+
+        val updated = setTavernMessageSwipe(welcome, "[重塑仙缘]", requestedSwipe = 1)
+
+        assertEquals(1, updated.swipeIndex)
+        assertEquals("[重塑仙缘]", updated.content)
+        assertEquals(listOf("欢迎页", "[重塑仙缘]"), updated.swipes)
     }
 
     @Test

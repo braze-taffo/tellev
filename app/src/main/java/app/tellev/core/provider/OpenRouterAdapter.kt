@@ -74,7 +74,7 @@ class OpenRouterAdapter(
 
     override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> = flow {
         val payload = buildJsonObject {
-            put("model", JsonPrimitive(config.model ?: request.preset.id))
+            put("model", JsonPrimitive(config.model ?: "openai/gpt-4o-mini"))
             put("stream", JsonPrimitive(request.stream))
             request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
             request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
