@@ -98,12 +98,17 @@ class ProviderConfigPersistenceTest {
     }
 
     @Test
-    fun `migration creates starter config for brand-new user defaulting to openai-compatible`() = runBlocking {
+    fun `migration handles brand-new user according to build default`() = runBlocking {
         val s = store()
         // No secrets at all -> fresh install.
         val result = ProviderConfigPersistence.migrateLegacyOpenAiCompatible(s)
-        assertEquals(ProviderConfigPersistence.selectedIdFor("cust_default"), result?.newSelectedId)
-        assertEquals(1, ProviderConfigPersistence.listCustomConfigs(s).size)
+        if (ProviderDefaults.selectedProviderId() == ProviderCatalog.OPENAI_COMPATIBLE) {
+            assertEquals(ProviderConfigPersistence.selectedIdFor("cust_default"), result?.newSelectedId)
+            assertEquals(1, ProviderConfigPersistence.listCustomConfigs(s).size)
+        } else {
+            assertNull(result)
+            assertTrue(ProviderConfigPersistence.listCustomConfigs(s).isEmpty())
+        }
     }
 
     @Test

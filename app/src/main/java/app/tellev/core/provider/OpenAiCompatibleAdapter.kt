@@ -279,7 +279,7 @@ class OpenAiCompatibleAdapter(
         if (providerId == ProviderCatalog.DEEPSEEK) {
             buildDeepSeekPayload(config, request)
         } else buildJsonObject {
-            put("model", JsonPrimitive(config.model ?: defaultModel ?: request.preset.id))
+            put("model", JsonPrimitive(config.model ?: defaultModel ?: error("当前服务商未配置模型")))
             put("stream", JsonPrimitive(request.stream))
             val includeUsage = config.optionBoolean("includeUsage") ?: includeUsageByDefault
             if (request.stream && includeUsage) {

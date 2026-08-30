@@ -97,9 +97,11 @@ class KoboldAdapter(
             request.preset.topK?.let { put("top_k", JsonPrimitive(it)) }
 
             // Repetition penalty from raw preset or defaults
-            val repPen = request.preset.raw["repetition_penalty"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: 1.1
+            val repPen = request.preset.repetitionPenalty
+                ?: request.preset.raw["repetition_penalty"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: 1.1
             put("rep_pen", JsonPrimitive(repPen))
-            val repPenRange = request.preset.raw["repetition_penalty_range"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 256
+            val repPenRange = request.preset.repetitionPenaltyRange
+                ?: request.preset.raw["repetition_penalty_range"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 256
             put("rep_pen_range", JsonPrimitive(repPenRange))
 
             val stopSeqs = (request.preset.stop + request.prompt.stop).distinct()

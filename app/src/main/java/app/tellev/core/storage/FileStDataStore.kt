@@ -8,6 +8,7 @@ import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.PresetCategory
 import app.tellev.core.model.PresetPrompt
+import app.tellev.core.model.PresetImportResult
 import app.tellev.core.model.GroupChat
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.Persona
@@ -83,7 +84,8 @@ class FileStDataStore(
         layout.allDirectories.forEach { it.createDirectories() }
         migrateLegacyRegexActivation()
         ensureDefaultPreset()
-        migrateLegacyDefaultPresetLimits()
+        migrateHandwrittenOpenAiDefaultPreset()
+        migrateDefaultPresetLimits()
         ensureDefaultPersona()
         rebuildEmbeddedCharacterAssets()
     }
@@ -555,6 +557,10 @@ class FileStDataStore(
         preset.temperature?.let { merged["temperature"] = JsonPrimitive(it) }
         preset.topP?.let { merged["top_p"] = JsonPrimitive(it) }
         preset.topK?.let { merged["top_k"] = JsonPrimitive(it) }
+        preset.topA?.let { merged["top_a"] = JsonPrimitive(it) }
+        preset.minP?.let { merged["min_p"] = JsonPrimitive(it) }
+        preset.repetitionPenalty?.let { merged["repetition_penalty"] = JsonPrimitive(it) }
+        preset.repetitionPenaltyRange?.let { merged["repetition_penalty_range"] = JsonPrimitive(it) }
         preset.presencePenalty?.let { merged["presence_penalty"] = JsonPrimitive(it) }
         preset.frequencyPenalty?.let { merged["frequency_penalty"] = JsonPrimitive(it) }
         preset.seed?.let { merged["seed"] = JsonPrimitive(it) }
@@ -617,7 +623,7 @@ class FileStDataStore(
         jsonBytes: ByteArray,
         providerCategory: String,
         sourceFileName: String,
-    ): GenerationPreset = withContext(Dispatchers.IO) {
+    ): PresetImportResult = withContext(Dispatchers.IO) {
         val rawJsonString = jsonBytes.decodeToString()
         val parsed = runCatching { json.parseToJsonElement(rawJsonString) }.getOrNull()
         val rawObj = parsed as? JsonObject
@@ -636,7 +642,29 @@ class FileStDataStore(
         while (parent.resolve("$id.json").exists()) id = "$baseStem-${suffix++}"
         val destination = parent.resolve("$id.json")
         destination.outputStream().use { it.write(jsonBytes) }
-        parsePreset(destination, rawObj, category).also { mutablePresetChanges.tryEmit(category) }
+        // Import is an activation operation: the exact imported bytes become the
+        // working copy and the selection file is updated before observers fire.
+        destination.copyTo(parent.resolve("in_use.json"), overwrite = true)
+        val statePath = layout.root.resolve("preset-selection.json")
+        val current = if (statePath.exists()) {
+            runCatching { json.parseToJsonElement(statePath.readText()) as? JsonObject }.getOrNull()
+        } else null
+        val selection = current.orEmpty().toMutableMap()
+        selection[category.name.lowercase()] = JsonPrimitive(id)
+        statePath.writeText(json.encodeToString(JsonObject.serializer(), JsonObject(selection)))
+
+        val preset = parsePreset(destination, rawObj, category)
+        val applied = rawObj.keys.intersect(APPLIED_PRESET_FIELDS)
+        val routing = rawObj.keys.intersect(ROUTING_PRESET_FIELDS)
+        PresetImportResult(
+            preset = preset,
+            inferredCategory = category,
+            appliedFields = applied,
+            preservedFields = rawObj.keys - applied,
+            warnings = buildList {
+                if (routing.isNotEmpty()) add("服务商、接口和模型字段已保留但不会应用：${routing.sorted().joinToString()}")
+            },
+        ).also { mutablePresetChanges.tryEmit(category) }
     }
 
     override suspend fun readWorldInfoSettings(): WorldInfoSettings = withContext(Dispatchers.IO) {
@@ -935,32 +963,67 @@ class FileStDataStore(
         directory.createDirectories()
         val path = directory.resolve("default.json")
         if (!path.exists()) {
-            path.writeText(json.encodeToString(JsonObject.serializer(), defaultPresetRaw()))
+            path.writeText(json.encodeToString(JsonObject.serializer(), defaultPresetRaw(category)))
         }
     }
 
     /**
-     * Builds before 1.4.3 created every user with a hard-coded 4096-token
-     * context and 300-token response. Those values override the model-aware
-     * runtime defaults, so large character books can overflow their 25% world
-     * info budget before even one entry is admitted and normal story replies
-     * are cut off after a few paragraphs. Remove only the exact legacy values
-     * from tellev's own `default.json`; imported/named presets remain untouched.
+     * Upgrade only tellev's built-in `default.json` files and the selected
+     * default working copy. Imported/named presets are intentionally left
+     * untouched: users may have chosen model-specific limits there and are
+     * prompted once after updating to review their active preset.
      */
-    private fun migrateLegacyDefaultPresetLimits() {
-        val path = layout.openAiSettings.resolve("default.json")
-        if (!path.exists()) return
+    private suspend fun migrateDefaultPresetLimits() {
+        presetDirectoriesWithCategories().forEach { (category, directory) ->
+            var changed = upgradeDefaultPresetLimits(directory.resolve("default.json"))
+            if (runCatching { readSelectedPresetName(category) }.getOrNull() == "default") {
+                changed = upgradeDefaultPresetLimits(directory.resolve("in_use.json")) || changed
+            }
+            if (changed) mutablePresetChanges.tryEmit(category)
+        }
+    }
+
+    private fun upgradeDefaultPresetLimits(path: Path): Boolean {
+        if (!path.exists()) return false
         val raw = runCatching { json.parseToJsonElement(path.readText()) as? JsonObject }
-            .getOrNull() ?: return
-        if (raw["name"]?.jsonPrimitive?.content != "默认聊天") return
-        if (raw.intValue("openai_max_context") != LEGACY_DEFAULT_CONTEXT_TOKENS) return
-        if (raw.intValue("openai_max_tokens") != LEGACY_DEFAULT_COMPLETION_TOKENS) return
+            .getOrNull() ?: return false
+        val contextTokens = raw.intValue("openai_max_context")
+            ?: raw.intValue("max_context")
+            ?: raw.intValue("context_length")
+        val completionTokens = raw.intValue("openai_max_tokens")
+            ?: raw.intValue("max_tokens")
+            ?: raw.intValue("maxTokens")
+            ?: raw.intValue("max_new_tokens")
+        val upgradeContext = contextTokens == null || contextTokens <= LEGACY_LOW_CONTEXT_TOKENS
+        val upgradeCompletion = completionTokens == null || completionTokens <= LEGACY_LOW_COMPLETION_TOKENS
+        if (!upgradeContext && !upgradeCompletion) return false
 
         val migrated = raw.toMutableMap().apply {
-            remove("openai_max_context")
-            remove("openai_max_tokens")
+            if (upgradeContext) put("openai_max_context", JsonPrimitive(DEFAULT_CONTEXT_TOKENS))
+            if (upgradeCompletion) put("openai_max_tokens", JsonPrimitive(DEFAULT_COMPLETION_TOKENS))
         }
         path.writeText(json.encodeToString(JsonObject.serializer(), JsonObject(migrated)))
+        return true
+    }
+
+    /** Upgrade only tellev's untouched pre-1.18 handwritten default. */
+    private suspend fun migrateHandwrittenOpenAiDefaultPreset() {
+        val path = layout.openAiSettings.resolve("default.json")
+        if (!path.exists()) return
+        val raw = runCatching { json.parseToJsonElement(path.readText()) as? JsonObject }.getOrNull() ?: return
+        if (raw["name"]?.jsonPrimitive?.content != "默认聊天") return
+        if (raw.doubleValue("temperature") != 0.7 || raw.doubleValue("top_p") != 1.0) return
+        val identifiers = parsePresetPrompts(raw["prompts"]).map { it.identifier }.toSet()
+        val legacyIdentifiers = setOf(
+            "main", "worldInfoBefore", "charDescription", "charPersonality", "scenario",
+            "personaDescription", "dialogueExamples", "worldInfoAfter", "chatHistory", "jailbreak",
+        )
+        if (identifiers != legacyIdentifiers) return
+        val canonical = defaultPresetRaw(PresetCategory.OpenAi)
+        path.writeText(json.encodeToString(JsonObject.serializer(), canonical))
+        if (runCatching { readSelectedPresetName(PresetCategory.OpenAi) }.getOrNull() == "default") {
+            path.copyTo(layout.openAiSettings.resolve("in_use.json"), overwrite = true)
+        }
         mutablePresetChanges.tryEmit(PresetCategory.OpenAi)
     }
 
@@ -971,53 +1034,30 @@ class FileStDataStore(
      * "You are X." system prompt, breaking character-card prompt injections
      * that rely on named slots (e.g. TavernHelper scripts).
      */
-    private fun defaultPresetRaw(): JsonObject = buildJsonObject {
+    private fun defaultPresetRaw(category: PresetCategory): JsonObject {
+        if (category != PresetCategory.OpenAi) return legacyDefaultPresetRaw()
+        // Locked ST baseline with tellev's safer token limits. Routing fields
+        // remain in raw for export but are never read by runtime/provider code.
+        return json.parseToJsonElement(ST_1_18_OPENAI_DEFAULT_JSON).jsonObject
+    }
+
+    private fun legacyDefaultPresetRaw(): JsonObject = buildJsonObject {
         put("name", "默认聊天")
         put("temperature", 0.7)
         put("top_p", 1.0)
-        val identifiers = listOf(
-            "main" to "Main Prompt",
-            "worldInfoBefore" to "World Info (before)",
-            "charDescription" to "Character Description",
-            "charPersonality" to "Character Personality",
-            "scenario" to "Scenario",
-            "personaDescription" to "Persona Description",
-            "dialogueExamples" to "Dialogue Examples",
-            "worldInfoAfter" to "World Info (after)",
-            "chatHistory" to "Chat History",
-            // ST's Default.json ships a jailbreak slot, and that is where a
-            // card's data.post_history_instructions lands. Without it, a
-            // fresh install silently dropped the PHI of every modern card
-            // (the prompt-manager path only emits slots the preset declares).
-            "jailbreak" to "Post-History Instructions",
-        )
+        put("openai_max_context", DEFAULT_CONTEXT_TOKENS)
+        put("openai_max_tokens", DEFAULT_COMPLETION_TOKENS)
+        val identifiers = listOf("main", "worldInfoBefore", "charDescription", "charPersonality", "scenario", "personaDescription", "dialogueExamples", "worldInfoAfter", "chatHistory", "jailbreak")
         putJsonArray("prompts") {
-            identifiers.forEachIndexed { index, (id, name) ->
-                addJsonObject {
-                    put("identifier", id)
-                    put("name", name)
-                    put("role", if (id == "chatHistory") "user" else "system")
-                    put("content", "")
-                    put("enabled", true)
-                    put("relative", id == "chatHistory")
-                    put("depth", 0)
-                    put("order", index)
-                }
-            }
+            identifiers.forEachIndexed { index, identifier -> addJsonObject {
+                put("identifier", identifier); put("name", identifier); put("role", "system")
+                put("content", ""); put("enabled", true); put("relative", identifier == "chatHistory"); put("order", index)
+            } }
         }
-        putJsonArray("prompt_order") {
-            addJsonObject {
-                put("character_id", 100001)
-                putJsonArray("order") {
-                    identifiers.forEach { (id, _) ->
-                        addJsonObject {
-                            put("identifier", id)
-                            put("enabled", true)
-                        }
-                    }
-                }
-            }
-        }
+        putJsonArray("prompt_order") { addJsonObject {
+            put("character_id", 100001)
+            putJsonArray("order") { identifiers.forEach { identifier -> addJsonObject { put("identifier", identifier); put("enabled", true) } } }
+        } }
     }
 
     private fun presetCategory(value: String): PresetCategory = when (value.lowercase()) {
@@ -1054,9 +1094,16 @@ class FileStDataStore(
             name = path.nameWithoutExtension,
             providerType = resolvePresetDirectory(category).name,
             category = category,
-            temperature = raw.doubleValue("temperature") ?: raw.doubleValue("temp_openai"),
+            temperature = raw.doubleValue("temperature") ?: raw.doubleValue("temp")
+                ?: raw.doubleValue("temp_openai"),
             topP = raw.doubleValue("top_p") ?: raw.doubleValue("topP"),
             topK = raw.intValue("top_k") ?: raw.intValue("topK"),
+            topA = raw.doubleValue("top_a") ?: raw.doubleValue("topA"),
+            minP = raw.doubleValue("min_p") ?: raw.doubleValue("minP"),
+            repetitionPenalty = raw.doubleValue("repetition_penalty")
+                ?: raw.doubleValue("rep_pen"),
+            repetitionPenaltyRange = raw.intValue("repetition_penalty_range")
+                ?: raw.intValue("rep_pen_range"),
             maxTokens = completionTokens,
             maxContextTokens = raw.intValue("openai_max_context")
                 ?: raw.intValue("max_context")
@@ -1528,8 +1575,23 @@ class FileStDataStore(
             .firstOrNull()
 
     companion object {
-        private const val LEGACY_DEFAULT_CONTEXT_TOKENS = 4_096
-        private const val LEGACY_DEFAULT_COMPLETION_TOKENS = 300
+        private val ROUTING_PRESET_FIELDS = setOf(
+            "chat_completion_source", "openai_model", "claude_model", "openrouter_model",
+            "custom_model", "custom_url", "reverse_proxy", "proxy_password", "api_key", "model",
+        )
+        private val APPLIED_PRESET_FIELDS = setOf(
+            "temperature", "temp", "temp_openai", "top_p", "topP", "top_k", "topK", "top_a",
+            "topA", "min_p", "minP", "repetition_penalty", "rep_pen", "repetition_penalty_range",
+            "rep_pen_range", "presence_penalty", "frequency_penalty", "seed", "stop",
+            "openai_max_context", "max_context", "context_length", "openai_max_tokens", "max_tokens",
+            "maxTokens", "max_new_tokens", "prompts", "prompts_unused", "promptsUnused", "prompt_order",
+            "extensions", "names_behavior", "new_chat_prompt", "new_example_chat_prompt",
+            "squash_system_messages", "assistant_prefill",
+        )
+        private const val DEFAULT_CONTEXT_TOKENS = 1_000_000
+        private const val DEFAULT_COMPLETION_TOKENS = 128 * 1_024
+        private const val LEGACY_LOW_CONTEXT_TOKENS = 4_096
+        private const val LEGACY_LOW_COMPLETION_TOKENS = 300
         private val supportedCharacterExtensions = setOf("png", "webp", "json")
 
         val defaultJson: Json = Json {

@@ -69,9 +69,10 @@ class GenerationRuntimeResolverTest {
 
         val result = GenerationRuntimeResolver(store, registry, secrets).resolve()
 
-        assertEquals(ProviderCatalog.OPENAI_COMPATIBLE, result.selectedProviderId)
+        val expectedFallback = ProviderDefaults.selectedProviderId()
+        assertEquals(expectedFallback, result.selectedProviderId)
         assertEquals(
-            ProviderCatalog.OPENAI_COMPATIBLE,
+            expectedFallback,
             secrets.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID),
         )
         assertEquals("keep-me", secrets.readSecret("provider-$imageId-apikey"))

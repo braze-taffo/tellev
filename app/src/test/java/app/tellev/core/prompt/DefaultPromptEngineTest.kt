@@ -604,7 +604,7 @@ class DefaultPromptEngineTest {
     }
 
     @Test
-    fun `missing context setting uses safe default for world info budget`() {
+    fun `missing context setting uses one million token default for world info budget`() {
         val oversizedLore = WorldBookEntry(
             id = "oversized",
             keys = emptyList(),
@@ -627,8 +627,8 @@ class DefaultPromptEngineTest {
             ),
         )
 
-        assertTrue(result.diagnostics.activatedWorldEntryIds.isEmpty())
-        assertTrue((result.diagnostics.estimatedTokenCount ?: Int.MAX_VALUE) < 8192)
+        assertTrue(result.diagnostics.activatedWorldEntryIds.contains("oversized"))
+        assertTrue((result.diagnostics.estimatedTokenCount ?: Int.MAX_VALUE) < 1_000_000)
     }
 
     // ── ST injection-parity regression tests ────────────────────────────────

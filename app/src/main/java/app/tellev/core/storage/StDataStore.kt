@@ -7,6 +7,7 @@ import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.GroupChat
 import app.tellev.core.model.PresetCategory
+import app.tellev.core.model.PresetImportResult
 import app.tellev.core.model.Persona
 import app.tellev.core.model.PromptSettings
 import app.tellev.core.model.WorldBook
@@ -89,7 +90,7 @@ interface StDataStore {
         jsonBytes: ByteArray,
         providerCategory: String,
         sourceFileName: String,
-    ): GenerationPreset
+    ): PresetImportResult
 
     // World-info scan settings (ST world_info_recursive / world_info_max_recursion_steps /
     // world_info_depth equivalents), persisted next to the ST data layout.

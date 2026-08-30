@@ -34,6 +34,7 @@ import app.tellev.core.provider.ProviderConfigPersistence
 import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.provider.presetCategoryForProvider
+import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.StDataStore
 import kotlinx.coroutines.CancellationException
@@ -386,6 +387,7 @@ class ChatViewModel(
         attachments: List<Attachment>,
         messageRole: MessageRole,
         regenerationMessageId: String? = null,
+        regexIsEdit: Boolean = false,
     ): Boolean {
         val messageText = text.trim()
         if (regenerationMessageId == null && messageText.isBlank() && attachments.isEmpty()) return false
@@ -465,14 +467,22 @@ class ChatViewModel(
                     }
                 }
 
-                val inputMessage = regenerationInput ?: ChatMessage(
+                val inputMessage = regenerationInput ?: CharacterRegexApplier.markNormalProcessed(ChatMessage(
                     id = generateMessageId(),
                     role = messageRole,
                     name = if (messageRole == MessageRole.System) "System" else runtime.persona?.name ?: "你",
-                    content = messageText,
+                    content = CharacterRegexApplier.applyNormal(
+                        text = messageText,
+                        role = messageRole,
+                        character = character,
+                        preset = preset,
+                        userName = runtime.persona?.name ?: "User",
+                        depth = 0,
+                        isEdit = regexIsEdit,
+                    ),
                     createdAtMillis = System.currentTimeMillis(),
                     attachments = attachments,
-                )
+                ))
 
                 val isRegeneration = regenerationMessageId != null
                 val baseSessionMessages = initializedSession.messages
@@ -543,11 +553,14 @@ class ChatViewModel(
                     preset = preset,
                     userInput = when {
                         isRegeneration -> inputMessage.content
-                        messageRole == MessageRole.User -> messageText
+                        messageRole == MessageRole.User -> inputMessage.content
                         else -> ""
                     },
                     providerType = config.providerType,
-                    metadata = buildPromptMetadata(runtimeState, config, preset, updatedSession),
+                    metadata = JsonObject(buildPromptMetadata(runtimeState, config, preset, updatedSession) +
+                        ("userInputNormalProcessed" to JsonPrimitive(
+                            CharacterRegexApplier.isNormalProcessed(inputMessage),
+                        ))),
                 )
 
                 val promptResult = buildPromptWithSessionScope(promptRequest, updatedSession)
@@ -594,7 +607,15 @@ class ChatViewModel(
                             _uiState.update { it.copy(streamingText = accumulatedText) }
                         }
                         is GenerateChunk.Completed -> {
-                            val finalText = chunk.text.ifBlank { accumulatedText }
+                            val rawFinalText = chunk.text.ifBlank { accumulatedText }
+                            val finalText = CharacterRegexApplier.applyNormal(
+                                text = rawFinalText,
+                                role = MessageRole.Character,
+                                character = character,
+                                preset = preset,
+                                userName = runtime.persona?.name ?: "User",
+                                depth = 0,
+                            )
                             val latestState = _uiState.value
                             val latestSession = latestState.currentSession
                             val baseMessages = if (latestSession?.id == updatedSession.id) {
@@ -608,11 +629,12 @@ class ChatViewModel(
                             } ?: -1
                             val finalMessages = if (regeneration != null && regeneratedIndex >= 0) {
                                 baseMessages.toMutableList().also { messages ->
-                                    messages[regeneratedIndex] = messages[regeneratedIndex]
-                                        .withRegeneratedSwipe(finalText)
+                                    messages[regeneratedIndex] = CharacterRegexApplier.markNormalProcessed(
+                                        messages[regeneratedIndex].withRegeneratedSwipe(finalText),
+                                    )
                                 }
                             } else {
-                                baseMessages + ChatMessage(
+                                baseMessages + CharacterRegexApplier.markNormalProcessed(ChatMessage(
                                     id = generateMessageId(),
                                     role = MessageRole.Character,
                                     name = character.name,
@@ -620,7 +642,7 @@ class ChatViewModel(
                                     createdAtMillis = System.currentTimeMillis(),
                                     swipes = listOf(finalText),
                                     swipeIndex = 0,
-                                )
+                                ))
                             }
                             val finalSession = (latestSession?.takeIf { it.id == updatedSession.id } ?: updatedSession)
                                 .copy(messages = finalMessages)
@@ -745,23 +767,32 @@ class ChatViewModel(
         if (messageIndex !in messages.indices) return
         val message = messages[messageIndex]
 
+        val processedContent = CharacterRegexApplier.applyNormal(
+            text = newContent,
+            role = message.role,
+            character = state.selectedCharacter,
+            preset = state.selectedPreset,
+            userName = state.selectedPersona?.name ?: "User",
+            depth = visibleRegexDepth(state.messages, messageIndex),
+            isEdit = true,
+        )
         val updatedSwipes = if (message.swipes.isNotEmpty()) {
             message.swipes.toMutableList().also {
                 if (message.swipeIndex in it.indices) {
-                    it[message.swipeIndex] = newContent
+                    it[message.swipeIndex] = processedContent
                 } else {
-                    it.add(newContent)
+                    it.add(processedContent)
                 }
             }
         } else {
-            listOf(newContent)
+            listOf(processedContent)
         }
 
-        val updatedMessage = message.copy(
-            content = newContent,
+        val updatedMessage = CharacterRegexApplier.markNormalProcessed(message.copy(
+            content = processedContent,
             swipes = updatedSwipes,
             swipeIndex = if (message.swipes.isEmpty()) 0 else message.swipeIndex,
-        )
+        ))
         messages[messageIndex] = updatedMessage
 
         val session = state.currentSession ?: return
@@ -782,7 +813,12 @@ class ChatViewModel(
                 emitStEvent(StEventCatalog.MESSAGE_UPDATED, messageIndex)
                 emitRenderedEventForMessage(messageIndex, updatedMessage, "edit")
             }
-            sendMessage(newContent, message.attachments)
+            sendMessageWithRole(
+                text = newContent,
+                attachments = message.attachments,
+                messageRole = MessageRole.User,
+                regexIsEdit = true,
+            )
             return
         }
 
@@ -827,12 +863,21 @@ class ChatViewModel(
         val regeneration = activeRegeneration
         activeRegeneration = null
         if (state.streamingText.isNotEmpty()) {
+            val processedPartial = CharacterRegexApplier.applyNormal(
+                text = state.streamingText,
+                role = MessageRole.Character,
+                character = state.selectedCharacter,
+                preset = state.selectedPreset,
+                userName = state.selectedPersona?.name ?: "User",
+                depth = 0,
+            )
             if (regeneration != null) {
                 val targetIndex = state.messages.indexOfFirst { it.id == regeneration.messageId }
                 if (targetIndex >= 0) {
                     val updatedMessages = state.messages.toMutableList().also { messages ->
-                        messages[targetIndex] = messages[targetIndex]
-                            .withRegeneratedSwipe(state.streamingText)
+                        messages[targetIndex] = CharacterRegexApplier.markNormalProcessed(
+                            messages[targetIndex].withRegeneratedSwipe(processedPartial),
+                        )
                     }
                     val session = state.currentSession
                     if (session != null) {
@@ -857,16 +902,16 @@ class ChatViewModel(
                 }
             }
             val character = state.selectedCharacter
-            val partialMessage = ChatMessage(
+            val partialMessage = CharacterRegexApplier.markNormalProcessed(ChatMessage(
                 id = generateMessageId(),
                 role = MessageRole.Character,
                 name = character?.name ?: "助手",
-                content = state.streamingText,
+                content = processedPartial,
                 createdAtMillis = System.currentTimeMillis(),
-                swipes = listOf(state.streamingText),
+                swipes = listOf(processedPartial),
                 swipeIndex = 0,
                 metadata = buildJsonObject { put("interrupted", true) },
-            )
+            ))
             val updatedMessages = state.messages + partialMessage
             val session = state.currentSession
 
@@ -1012,6 +1057,39 @@ class ChatViewModel(
             runCatching {
                 val payload = (Json.parseToJsonElement(payloadJson) as? JsonObject) ?: buildJsonObject { }
                 when (operation) {
+                    "getChatMessages" -> {
+                        val state = _uiState.value
+                        val requested = payload["messageId"]?.jsonPrimitive?.content?.toIntOrNull()
+                        buildJsonArray {
+                            state.messages.forEachIndexed { index, message ->
+                                if (requested == null || requested == index) add(message.toTavernJson(index))
+                            }
+                        }
+                    }
+                    "setChatMessage" -> {
+                        val index = payload["messageId"]?.jsonPrimitive?.content?.toIntOrNull()
+                            ?: error("消息索引无效")
+                        val content = payload["message"]?.jsonPrimitive?.content.orEmpty()
+                        val options = payload["options"] as? JsonObject ?: buildJsonObject { }
+                        val state = _uiState.value
+                        val session = state.currentSession ?: error("当前没有会话")
+                        require(index in state.messages.indices) { "消息不存在：$index" }
+                        val messages = state.messages.toMutableList()
+                        val original = messages[index]
+                        val requestedSwipe = options["swipe_id"]?.jsonPrimitive?.content?.toIntOrNull()
+                        val updated = setTavernMessageSwipe(original, content, requestedSwipe)
+                        messages[index] = updated
+                        val updatedSession = session.copy(messages = messages)
+                        // Update state first, then persist the freshest session
+                        // snapshot: saving from a pre-suspension snapshot could
+                        // clobber concurrent writes during the IO gap.
+                        _uiState.update { it.copy(messages = messages, currentSession = updatedSession) }
+                        dataStore.saveChatSession(_uiState.value.currentSession ?: updatedSession)
+                        emitStEvent(StEventCatalog.MESSAGE_SWIPED, index)
+                        emitStEvent(StEventCatalog.MESSAGE_UPDATED, index)
+                        emitRenderedEventForMessage(index, updated, "swipe")
+                        buildJsonObject { put("ok", true); put("message_id", index); put("swipe_id", updated.swipeIndex) }
+                    }
                     "getLorebooks" -> kotlinx.serialization.json.buildJsonArray {
                         dataStore.listWorldBooks().forEach { add(JsonPrimitive(it.name)) }
                     }
@@ -1459,7 +1537,7 @@ class ChatViewModel(
             instructPreset?.let { put("instructPreset", it) }
         }
         put("maxContextTokens", JsonPrimitive(
-            preset.maxContextTokens ?: defaultContextTokens(config.providerType, config.model),
+            preset.maxContextTokens ?: defaultContextTokens(),
         ))
         config.model?.takeIf { it.isNotBlank() }?.let { put("modelName", JsonPrimitive(it)) }
         put(
@@ -1467,7 +1545,7 @@ class ChatViewModel(
             JsonPrimitive(
                 preset.maxCompletionTokens
                     ?: preset.maxTokens
-                    ?: defaultResponseTokens(config.providerType, config.model),
+                    ?: defaultResponseTokens(),
             ),
         )
         val groupId = session?.groupId
@@ -1718,7 +1796,7 @@ class ChatViewModel(
             put(
                 "maxContext",
                 state.selectedPreset?.maxContextTokens
-                    ?: defaultContextTokens(state.providerConfig?.providerType ?: ProviderConfigPersistence.adapterIdFor(state.selectedProvider), state.providerConfig?.model),
+                    ?: defaultContextTokens(),
             )
             put("lastMessageId", state.messages.lastIndex)
             put("chatMetadata", session?.metadata ?: buildJsonObject { })
@@ -1941,19 +2019,9 @@ class ChatViewModel(
         return copy(messages = listOf(upgradedFirst) + messages.drop(1))
     }
 
-    private fun defaultContextTokens(providerType: String, model: String?): Int = when {
-        model.orEmpty().startsWith("deepseek-v4", ignoreCase = true) -> 1_000_000
-        providerType == ProviderCatalog.DEEPSEEK ||
-            model.orEmpty().startsWith("deepseek", ignoreCase = true) -> 65_536
-        else -> 8_192
-    }
+    private fun defaultContextTokens(): Int = 1_000_000
 
-    private fun defaultResponseTokens(providerType: String, model: String?): Int = when {
-        model.orEmpty().startsWith("deepseek-v4", ignoreCase = true) -> 32_000
-        providerType == ProviderCatalog.DEEPSEEK ||
-            model.orEmpty().startsWith("deepseek", ignoreCase = true) -> 8_192
-        else -> 4_096
-    }
+    private fun defaultResponseTokens(): Int = 128 * 1_024
 
     private fun generateMessageId(): String = "msg-${UUID.randomUUID()}"
     private fun generateSessionId(): String = "sess-${UUID.randomUUID()}"
@@ -1999,6 +2067,11 @@ internal fun canRegenerateResponse(messages: List<ChatMessage>, messageIndex: In
     if (message.role != MessageRole.Character && message.role != MessageRole.Assistant) return false
     return messages.take(messageIndex).any { it.role == MessageRole.User }
 }
+
+internal fun visibleRegexDepth(messages: List<ChatMessage>, messageIndex: Int): Int =
+    messages.drop(messageIndex + 1).count {
+        !it.isHidden && it.role != MessageRole.System && it.role != MessageRole.Tool
+    }
 
 internal fun ChatMessage.withRegeneratedSwipe(newContent: String): ChatMessage {
     val previousSwipes = swipes.ifEmpty { listOf(content) }

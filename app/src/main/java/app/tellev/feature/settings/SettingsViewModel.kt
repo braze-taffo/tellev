@@ -684,13 +684,19 @@ class SettingsViewModel(
                 val fileName = UriUtils.resolveDisplayName(context, uri)
                     ?: uri.lastPathSegment
                     ?: "preset.json"
-                val imported = dataStore.importPreset(bytes, providerCategory, fileName)
+                val result = dataStore.importPreset(bytes, providerCategory, fileName)
+                val imported = result.preset
                 val presets = dataStore.listPresets()
                 _uiState.update {
                     it.copy(
                         presets = presets,
+                        selectedPresetNames = it.selectedPresetNames + (result.inferredCategory to imported.id),
                         isLoading = false,
-                        info = "预设「${imported.name}」已导入。",
+                        info = buildString {
+                            append("预设「${imported.name}」已导入并启用")
+                            if (result.warnings.isNotEmpty()) append("；${result.warnings.joinToString("；")}")
+                            append('。')
+                        },
                     )
                 }
             } catch (e: Exception) {

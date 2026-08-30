@@ -159,10 +159,15 @@ class TextGenAdapter(
 
     private fun buildPayload(config: ProviderConfig, request: GenerateRequest): JsonObject =
         buildJsonObject {
-            put("model", JsonPrimitive(config.model ?: request.preset.id))
+            put("model", JsonPrimitive(config.model ?: "text-generation-webui"))
             put("stream", JsonPrimitive(request.stream))
             request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
             request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
+            request.preset.topK?.let { put("top_k", JsonPrimitive(it)) }
+            request.preset.minP?.let { put("min_p", JsonPrimitive(it)) }
+            request.preset.topA?.let { put("top_a", JsonPrimitive(it)) }
+            request.preset.repetitionPenalty?.let { put("repetition_penalty", JsonPrimitive(it)) }
+            request.preset.repetitionPenaltyRange?.let { put("repetition_penalty_range", JsonPrimitive(it)) }
             val maxTokens = request.prompt.maxTokens ?: request.preset.maxTokens
             maxTokens?.let { put("max_tokens", JsonPrimitive(it)) }
 

@@ -86,10 +86,12 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight.Companion.Bold
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.viewinterop.AndroidView
 import app.tellev.core.model.Attachment
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.ChatMessage
+import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageRole
 import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.util.UriUtils
@@ -442,8 +444,9 @@ private fun ChatContentScreen(
                     ChatBubble(
                         message = message,
                         character = state.selectedCharacter,
+                        preset = state.selectedPreset,
                         userName = state.selectedPersona?.name ?: "User",
-                        depth = state.messages.lastIndex - index,
+                        depth = visibleRegexDepth(state.messages, index),
                         htmlPanelMaxHeight = htmlPanelMaxHeight,
                         tavernRuntime = TavernMessageRuntime(
                             messageIndex = index,
@@ -478,6 +481,18 @@ private fun ChatContentScreen(
                     StreamingBubble(
                         text = state.streamingText,
                         characterName = state.selectedCharacter?.name ?: "助手",
+                        character = state.selectedCharacter,
+                        preset = state.selectedPreset,
+                        userName = state.selectedPersona?.name ?: "User",
+                        availableMaxHeight = htmlPanelMaxHeight,
+                        tavernRuntime = TavernMessageRuntime(
+                            messageIndex = state.messages.size,
+                            variablesJson = viewModel::tavernMessageVariablesJson,
+                            request = { operation, payload, callback ->
+                                viewModel.handleTavernMessageRequest(operation, payload, { inputText = it }, callback)
+                            },
+                        ),
+                        onHtmlBoundaryDrag = { delta -> scope.launch { listState.scrollBy(delta) } },
                     )
                 }
             }
@@ -530,6 +545,7 @@ private fun ChatContentScreen(
 private fun ChatBubble(
     message: ChatMessage,
     character: CharacterCard?,
+    preset: GenerationPreset?,
     userName: String,
     depth: Int,
     htmlPanelMaxHeight: Dp,
@@ -614,6 +630,8 @@ private fun ChatBubble(
             character,
             userName = userName,
             depth = depth,
+            preset = preset,
+            includeNormal = !CharacterRegexApplier.isNormalProcessed(message),
         )
         val renderSegments = TavernRenderParser.parse(displayText)
         val hasFrontend = renderSegments.any { it is TavernRenderSegment.Frontend }
@@ -896,6 +914,11 @@ private fun TavernHtmlPanel(
     tavernRuntime: TavernMessageRuntime,
     onBoundaryDrag: (Float) -> Unit,
 ) {
+    val themeSurface = MaterialTheme.colorScheme.surface.toCssHex()
+    val themeOnSurface = MaterialTheme.colorScheme.onSurface.toCssHex()
+    val wrappedHtml = remember(html, themeSurface, themeOnSurface) {
+        wrapTavernHtml(html, themeSurface, themeOnSurface)
+    }
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
     val maxPanelHeight = remember(configuration.screenHeightDp, availableMaxHeight) {
@@ -1006,12 +1029,12 @@ private fun TavernHtmlPanel(
         update = { webView ->
             val bridge = webView.tag as? TavernMessageBridge
             bridge?.updateRuntime(tavernRuntime)
-            if (bridge?.shouldLoad(html) != false) {
+            if (bridge?.shouldLoad(wrappedHtml) != false) {
                 webView.stopLoading()
                 webView.scrollTo(0, 0)
                 webView.loadDataWithBaseURL(
                     "https://message.tellev.local/",
-                    wrapTavernHtml(html),
+                    wrappedHtml,
                     "text/html",
                     "UTF-8",
                     null,
@@ -1035,7 +1058,12 @@ private fun String.isLargeTavernFrontend(): Boolean =
         contains("swiper", ignoreCase = true) ||
         contains("carousel", ignoreCase = true)
 
-private fun wrapTavernHtml(html: String): String {
+private fun androidx.compose.ui.graphics.Color.toCssHex(): String =
+    "#%06X".format(0xFFFFFF and toArgb())
+
+private fun jsonStringLiteral(value: String): String = JsonPrimitive(value).toString()
+
+internal fun wrapTavernHtml(html: String, themeSurface: String, themeOnSurface: String): String {
     val hostHead = """
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
         ${tavernMessageCompatScript()}
@@ -1046,7 +1074,7 @@ private fun wrapTavernHtml(html: String): String {
                 margin: 0;
                 padding: 0;
                 background: transparent;
-                color: #f7f7f7;
+                color: $themeOnSurface;
                 overflow-x: hidden;
             }
             * {
@@ -1058,6 +1086,7 @@ private fun wrapTavernHtml(html: String): String {
                 overflow-x: hidden !important;
             }
         </style>
+        ${tavernAutoContrastScript(themeSurface, themeOnSurface)}
     """.trimIndent()
 
     if (html.contains("<html", ignoreCase = true)) {
@@ -1085,7 +1114,65 @@ private fun wrapTavernHtml(html: String): String {
     """.trimIndent()
 }
 
-private fun tavernResizeScript(): String = """
+private fun tavernAutoContrastScript(themeSurface: String, themeOnSurface: String): String = """
+    <script id="tellev-auto-contrast">
+    (function() {
+        var themeSurface = ${jsonStringLiteral(themeSurface)};
+        var themeText = ${jsonStringLiteral(themeOnSurface)};
+        function rgba(value) {
+            var hex = String(value || '').trim().match(/^#([0-9a-f]{6})$/i);
+            if (hex) {
+                var number = parseInt(hex[1], 16);
+                return {r:(number>>16)&255, g:(number>>8)&255, b:number&255, a:1};
+            }
+            var match = String(value || '').match(/[\d.]+/g);
+            if (!match || match.length < 3) return null;
+            return {r:+match[0], g:+match[1], b:+match[2], a:match.length > 3 ? +match[3] : 1};
+        }
+        function transparent(value) { var c=rgba(value); return !c || c.a < 0.02; }
+        function lum(c) {
+            function f(v) { v/=255; return v <= .03928 ? v/12.92 : Math.pow((v+.055)/1.055,2.4); }
+            return .2126*f(c.r)+.7152*f(c.g)+.0722*f(c.b);
+        }
+        function contrast(a,b) { var x=lum(a), y=lum(b); return (Math.max(x,y)+.05)/(Math.min(x,y)+.05); }
+        function representativeText() {
+            var nodes = document.body ? document.body.querySelectorAll('*') : [];
+            for (var i=0;i<nodes.length;i++) {
+                var node=nodes[i], style=getComputedStyle(node);
+                if (style.display !== 'none' && style.visibility !== 'hidden' && (node.textContent||'').trim()) return style.color;
+            }
+            return document.body ? getComputedStyle(document.body).color : themeText;
+        }
+        function hasAuthoredCanvas() {
+            var roots=[document.documentElement, document.body];
+            if (document.body) roots=roots.concat(Array.prototype.slice.call(document.body.children || []));
+            return roots.some(function(node) { return node && !transparent(getComputedStyle(node).backgroundColor); });
+        }
+        function applyContrast() {
+            if (!document.documentElement || !document.body || hasAuthoredCanvas()) return;
+            var text=rgba(representativeText()) || rgba(themeText);
+            // Black/white fallbacks guarantee that at least one candidate is
+            // >= 4.5:1 for every opaque text colour.
+            var candidates=[themeSurface,'#000000','#ffffff'];
+            var best=candidates[0], score=-1;
+            candidates.forEach(function(candidate) {
+                var value=contrast(text,rgba(candidate));
+                if (value>score) { score=value; best=candidate; }
+            });
+            document.documentElement.style.setProperty('background-color', best, 'important');
+            document.documentElement.dataset.tellevAutoBackground=best;
+        }
+        function install() {
+            applyContrast();
+            if (window.MutationObserver) new MutationObserver(applyContrast).observe(document.documentElement,{attributes:true,childList:true,subtree:true,attributeFilter:['class','style']});
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded',install); else install();
+        window.addEventListener('load',applyContrast);
+    })();
+    </script>
+""".trimIndent()
+
+internal fun tavernResizeScript(): String = """
     (function() {
         function pageHeight() {
             var body = document.body || {};
@@ -1107,6 +1194,10 @@ private fun tavernResizeScript(): String = """
             window.__tellevResizeInstalled = true;
             window.addEventListener('load', postHeight);
             window.addEventListener('resize', postHeight);
+            document.addEventListener('toggle', function() {
+                requestAnimationFrame(postHeight);
+                setTimeout(postHeight, 80);
+            }, true);
             if (window.ResizeObserver) {
                 var observer = new ResizeObserver(postHeight);
                 observer.observe(document.documentElement);
@@ -1159,7 +1250,23 @@ private fun HtmlSwipeControls(
 private fun StreamingBubble(
     text: String,
     characterName: String,
+    character: CharacterCard?,
+    preset: GenerationPreset?,
+    userName: String,
+    availableMaxHeight: Dp,
+    tavernRuntime: TavernMessageRuntime,
+    onHtmlBoundaryDrag: (Float) -> Unit,
 ) {
+    val displayText = CharacterRegexApplier.applyForDisplay(
+        text = text,
+        role = MessageRole.Character,
+        character = character,
+        preset = preset,
+        userName = userName,
+        depth = 0,
+        includeNormal = true,
+    )
+    val segments = TavernRenderParser.parse(displayText)
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.Start,
@@ -1182,14 +1289,13 @@ private fun StreamingBubble(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
             ),
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                SelectionContainer {
-                    Text(
-                        text = text,
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                }
-            }
+            TavernMessageContent(
+                segments = segments,
+                availableMaxHeight = availableMaxHeight,
+                isUser = false,
+                tavernRuntime = tavernRuntime,
+                onHtmlBoundaryDrag = onHtmlBoundaryDrag,
+            )
         }
     }
 }

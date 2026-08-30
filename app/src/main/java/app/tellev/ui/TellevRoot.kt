@@ -19,9 +19,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -128,10 +130,12 @@ fun TellevRoot() {
             BuildConfig.TELLEV_BETA_RELAY_ENABLED && !graph.appPreferences.betaRelayNoticeAccepted,
         )
     }
-    val currentVersion = remember(activityContext) {
-        activityContext.packageManager
-            .getPackageInfo(activityContext.packageName, 0).versionName ?: "0.0.0"
+    val packageInfo = remember(activityContext) {
+        activityContext.packageManager.getPackageInfo(activityContext.packageName, 0)
     }
+    val currentVersion = packageInfo.versionName ?: "0.0.0"
+    var showPresetLimitUpgradeNotice by rememberSaveable { mutableStateOf(false) }
+    var presetFocusRequest by rememberSaveable { mutableIntStateOf(0) }
     val updateViewModel: UpdateViewModel = viewModel(
         factory = UpdateViewModelFactory(
             appContext = activityContext.applicationContext,
@@ -145,6 +149,12 @@ fun TellevRoot() {
     // once per day. The result surfaces in the 关于 card on the Settings tab.
     LaunchedEffect(Unit) {
         updateViewModel.maybeAutoCheck()
+    }
+    LaunchedEffect(packageInfo.firstInstallTime, packageInfo.lastUpdateTime) {
+        showPresetLimitUpgradeNotice = graph.appPreferences.shouldShowPresetLimitUpgradeNotice(
+            firstInstallTime = packageInfo.firstInstallTime,
+            lastUpdateTime = packageInfo.lastUpdateTime,
+        )
     }
 
     if (showBetaRelayNotice) {
@@ -325,6 +335,7 @@ fun TellevRoot() {
                 SettingsScreen(
                     viewModel = settingsViewModel,
                     updateViewModel = updateViewModel,
+                    presetFocusRequest = presetFocusRequest,
                     onOpenProviderSettings = {
                         navController.navigate("settings/providers")
                     },
@@ -340,5 +351,39 @@ fun TellevRoot() {
                 )
             }
         }
+    }
+
+    if (showPresetLimitUpgradeNotice && !showBetaRelayNotice) {
+        fun closeNotice() {
+            graph.appPreferences.markPresetLimitUpgradeNoticeHandled()
+            showPresetLimitUpgradeNotice = false
+        }
+        AlertDialog(
+            onDismissRequest = ::closeNotice,
+            title = { Text("请检查当前生成预设") },
+            text = {
+                Text(
+                    "旧版默认预设的上下文上限仅 4096、输出上限仅 300，可能造成世界书和回复被严重截断。" +
+                        "新版内置默认值已调整为 1,000,000 / 131,072；导入或自行修改过的预设不会被强制覆盖，" +
+                        "请前往“设置 → 生成预设”切换或检查当前预设。",
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = ::closeNotice) { Text("稍后") }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        closeNotice()
+                        presetFocusRequest += 1
+                        navController.navigate(TellevTab.Settings.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                ) { Text("去设置预设") }
+            },
+        )
     }
 }

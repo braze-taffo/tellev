@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -95,6 +96,7 @@ import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.ProviderConfigPersistence
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
 import app.tellev.feature.update.UpdateUiState
 import app.tellev.feature.update.UpdateViewModel
 import app.tellev.util.UriUtils
@@ -107,12 +109,14 @@ fun SettingsScreen(
     updateViewModel: UpdateViewModel,
     onOpenProviderSettings: () -> Unit,
     providerDetailsOnly: Boolean = false,
+    presetFocusRequest: Int = 0,
     onBack: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
     val updateState by updateViewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val listState = rememberLazyListState()
     val context = LocalContext.current
     val versionName = remember(context) {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "未知"
@@ -187,6 +191,12 @@ fun SettingsScreen(
         }
     }
 
+    LaunchedEffect(presetFocusRequest, state.isLoading, providerDetailsOnly) {
+        if (presetFocusRequest > 0 && !state.isLoading && !providerDetailsOnly) {
+            listState.animateScrollToItem(3)
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -217,6 +227,7 @@ fun SettingsScreen(
             }
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
@@ -930,6 +941,12 @@ fun SettingsScreen(
             ?: "preset.json"
         PresetImportCategoryDialog(
             fileName = fileName,
+            initialCategory = when (selectedPresetCategory) {
+                PresetCategory.OpenAi -> "openai"
+                PresetCategory.TextGen -> "textgen"
+                PresetCategory.Kobold -> "kobold"
+                PresetCategory.NovelAi -> "novelai"
+            },
             onDismiss = { pendingPresetImportUri = null },
             onConfirm = { category ->
                 viewModel.importPreset(context, uri, category)
@@ -1079,6 +1096,23 @@ internal fun selectedProviderLabel(state: SettingsUiState): String {
     } else {
         state.providers.firstOrNull { it.id == id }?.displayName ?: id
     }
+}
+
+internal fun effectiveUnsupportedPresetFields(preset: GenerationPreset): Set<String> {
+    val applied = setOf(
+        "name", "temperature", "temp", "temp_openai", "top_p", "topP", "top_k", "topK",
+        "top_a", "topA", "min_p", "minP", "repetition_penalty", "rep_pen",
+        "repetition_penalty_range", "rep_pen_range", "presence_penalty", "frequency_penalty",
+        "seed", "stop", "openai_max_context", "max_context", "context_length",
+        "openai_max_tokens", "max_tokens", "maxTokens", "max_new_tokens", "prompts",
+        "prompts_unused", "promptsUnused", "prompt_order", "extensions", "names_behavior",
+        "new_chat_prompt", "new_example_chat_prompt", "squash_system_messages", "assistant_prefill",
+    )
+    val routing = setOf(
+        "chat_completion_source", "openai_model", "claude_model", "openrouter_model",
+        "custom_model", "custom_url", "reverse_proxy", "proxy_password", "api_key", "model",
+    )
+    return preset.raw.keys - applied - routing
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1547,6 +1581,13 @@ private fun PresetCard(
                     )
                 }
             }
+            val regexCount = (preset.extensions["regex_scripts"] as? JsonArray)?.size ?: 0
+            val unsupportedCount = effectiveUnsupportedPresetFields(preset).size
+            Text(
+                text = "有效摘要：${preset.category.name.lowercase()} · 提示词 ${preset.prompts.count { it.enabled }} · 正则 $regexCount · 未支持 $unsupportedCount",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             Spacer(modifier = Modifier.height(4.dp))
 
@@ -1662,6 +1703,31 @@ private fun PresetEditDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                val regexCount = (preset.extensions["regex_scripts"] as? JsonArray)?.size ?: 0
+                val preservedRoutingFields = preset.raw.keys.intersect(setOf(
+                    "chat_completion_source", "openai_model", "claude_model", "openrouter_model",
+                    "custom_model", "custom_url", "reverse_proxy", "proxy_password", "api_key", "model",
+                ))
+                val unsupportedFields = effectiveUnsupportedPresetFields(preset)
+                Text(
+                    text = "当前实际使用：${preset.category.name.lowercase()}；采样参数 ${listOfNotNull(preset.temperature, preset.topP, preset.topK).size} 项；启用提示词 ${preset.prompts.count { it.enabled }} 条；正则 $regexCount 条。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (preservedRoutingFields.isNotEmpty()) {
+                    Text(
+                        text = "已保留、未应用：${preservedRoutingFields.sorted().joinToString()}（预设不会切换服务商、接口、密钥或模型）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
+                if (unsupportedFields.isNotEmpty()) {
+                    Text(
+                        text = "尚未进入运行链路：${unsupportedFields.sorted().joinToString(limit = 16, truncated = "…")}。字段仍会原样保留和导出。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 OutlinedTextField(
                     value = targetName,
                     onValueChange = { targetName = it },
@@ -1992,6 +2058,7 @@ private fun PresetCreationDialog(
 @Composable
 private fun PresetImportCategoryDialog(
     fileName: String,
+    initialCategory: String,
     onDismiss: () -> Unit,
     onConfirm: (providerCategory: String) -> Unit,
 ) {
@@ -2005,7 +2072,9 @@ private fun PresetImportCategoryDialog(
             "novelai" to "NovelAI",
         )
     }
-    var selectedCategory by remember { mutableStateOf(categories.first().first) }
+    var selectedCategory by remember(initialCategory) {
+        mutableStateOf(initialCategory.takeIf { candidate -> categories.any { it.first == candidate } } ?: "openai")
+    }
     var expanded by remember { mutableStateOf(false) }
 
     AlertDialog(

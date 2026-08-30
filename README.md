@@ -2,14 +2,23 @@
 
 tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是在手机上提供更贴近原生应用体验的角色管理、聊天、世界书、扩展和模型服务配置能力，同时尽量保持与 SillyTavern 数据格式和使用习惯兼容。
 
-> 公开版本以 GitHub Releases 中发布的 APK 为准。当前版本 **v1.5.0**。
+> 此分支当前测试构建为 **v1.5.1-beta.1**；公开正式版以 GitHub Releases 中发布的 APK 为准。
+
+## v1.5.1 更新
+
+- 生成上限修复：所有内置默认预设及缺省运行时回退统一调整为 1,000,000 上下文、131,072（128 Ki）最大输出；升级时自动修复仍为 4095/4096 与 300 的默认预设及当前工作副本。首次从旧版升级进入应用时会提示检查当前预设，并可直接跳到「设置 → 生成预设」。
+- 预设兼容：OpenAI 默认预设锁定并对齐 SillyTavern 1.18.0；导入预设后立即启用，支持更多采样参数、预设正则、`names_behavior`、相邻 system 消息合并和 assistant prefill。服务商、接口、密钥与模型等路由字段只保留、不越权应用。
+- 正则链路：按 Normal / Display / Prompt 三阶段执行角色卡与预设正则，覆盖发送、编辑、生成、停止、swipe、世界书和流式显示，并记录处理版本以避免重复替换。
+- 消息渲染：流式回复同步支持 Markdown 与 TavernHelper HTML 片段；HTML 面板跟随应用主题自动选择高对比背景，并改善折叠内容展开后的高度同步。
+- TavernHelper 兼容：消息脚本新增 `getChatMessages()` / `setChatMessage()`，可读取消息并安全更新指定 swipe。
+- Provider 修复：预设不再被误当作模型名；补齐 TextGen / Kobold 的采样参数映射，缺少必需模型配置时给出明确错误。
 
 ## 主要功能
 
 ### 原生 UI
 
 - 纯原生 Android / Jetpack Compose + Material 3 界面，非 WebView 套壳
-- 聊天：流式生成、停止生成、重试、swipes、编辑、删除、收藏、附件（图像下采样为 base64，不落盘）、推理块（reasoning）渲染、TavernHelper 风格的 HTML 片段渲染、Markdown 渲染（commonmark + GFM 表格，AI 消息按需走 WebView）
+- 聊天：流式生成、停止生成、重试、swipes、编辑、删除、收藏、附件（图像下采样为 base64，不落盘）、推理块（reasoning）渲染、TavernHelper 风格的 HTML 片段渲染、Markdown 渲染（commonmark + GFM 表格，AI 消息按需走 WebView）；流式回复同样实时套用正则与富文本渲染
 - 角色：列表、标签、导入、编辑、复制、导出、删除（含关联变体与内嵌世界书清理）
 - 世界书：条目管理、搜索、激活预览、常驻/排他激活，以及 ST 对齐的高级特性——8 种注入位置、4 种选择性逻辑（AND/NOT）、概率触发、递归扫描、正则/全词/大小写匹配、@depth 注入
 - 人格（Persona）：列表、创建/编辑/删除、运行时切换
@@ -30,6 +39,8 @@ tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是
 
 适配器规范化处理：状态检查、模型列表、流式分块、取消、可重试错误、provider 特定预设字段。
 
+SillyTavern JSON 预设可按 OpenAI / TextGen / Kobold / NovelAI 类别导入，导入后自动成为当前预设。采样参数、提示词顺序、预设正则等受支持字段会进入运行链路；服务商、接口、密钥和模型字段仅原样保留，避免预设意外切换连接配置。设置页会区分已应用、仅保留和暂未支持的字段。
+
 ### 提示词引擎
 
 `DefaultPromptEngine` 已实现 SillyTavern 风格的提示词组装：
@@ -44,12 +55,15 @@ tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是
 - Token 预算感知的上下文裁剪
 - ST-Prompt-Template 兼容的 EJS 模板处理（`<%= ... %>` / `<% ... %>`）
 - 扩展注入提示（`injectPrompts`，支持 BEFORE_PROMPT / IN_PROMPT / IN_CHAT depth）
+- OpenAI 预设行为：`names_behavior`、`squash_system_messages` 与 `assistant_prefill`
+- 角色卡与预设正则按 Normal / Display / Prompt 阶段执行，支持 depth、`runOnEdit` 与宏替换，并避免同一 swipe 的 Normal 规则重复运行
 
 ### 数据兼容
 
 - 角色卡导入/导出：JSON、PNG、WebP、CHARX、BYAF 元数据解析与写入
 - SillyTavern chat JSONL 解析为类型化 `ChatMessage`，保留未知字段
 - 世界书解析：条目标志、优先级、depth、order、选择性关键字
+- SillyTavern 预设导入/导出：保留未知字段和连接路由字段，运行时只应用明确支持的生成字段
 - ZIP 备份导入/导出，含路径遍历防护
 - 数据根目录镜像 SillyTavern 的 `USER_DIRECTORY_TEMPLATE`：`context.filesDir/st-data/`
 
@@ -60,7 +74,7 @@ tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是
 - 每个扩展运行在独立沙盒 WebView，提供 `tellevNative` 桥接
 - 兼容 shim 暴露：`SillyTavern`、`getContext`、`eventSource`、`event_types`、`TavernHelper`、`executeSlashCommandsWithOptions`、`executeSlashCommands`、`fetch` 覆写
 - 事件总线：108 个 ST 事件常量 + tellev 扩展事件
-- `TavernHelper` API：约 140 个方法（generate、角色/世界书/预设/人格 CRUD、注入提示、regex、变量、slash 命令等）
+- `TavernHelper` API：约 140 个方法（generate、角色/世界书/预设/人格 CRUD、注入提示、regex、变量、消息读取/更新、slash 命令等）
 - Slash 命令引擎：200+ ST 内建命令，支持管道 `|`、命名参数、引号字符串
 - 虚拟 `/api/` 路由：`/api/characters/edit`、`/api/chats/get`、`/api/settings/get`、`/api/secrets/write` 等兼容端点
 - 每扩展设置、能力令牌、权限门控与异步请求/授予流程
@@ -94,7 +108,7 @@ tellev 的扩展运行环境是 SillyTavern / 酒馆助手兼容层的一个**�
 
 - 应用名：`tellev`
 - 包名：`app.tellev`
-- 当前版本：1.5.0（versionCode 17）
+- 当前测试版本：1.5.1-beta.1（versionCode 18）
 - 最低系统：Android 12 / API 31
 - 目标/编译 SDK：API 36
 - UI：Kotlin + Jetpack Compose + Material 3
@@ -204,3 +218,5 @@ SillyTavern 项目地址：
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [docs/AI_TASKS.md](docs/AI_TASKS.md)
+- [docs/RELEASE_1.5.1.md](docs/RELEASE_1.5.1.md)
+- [docs/BETA_1.5.1.md](docs/BETA_1.5.1.md)
