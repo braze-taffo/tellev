@@ -1,8 +1,15 @@
 package app.tellev.ui
 
 import android.app.Activity
+import android.widget.Toast
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Extension
@@ -11,6 +18,7 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -24,10 +32,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -41,6 +55,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.tellev.LocalTellevGraph
 import app.tellev.BuildConfig
+import app.tellev.R
 import app.tellev.feature.about.AboutScreen
 import app.tellev.feature.characters.CharacterDetailScreen
 import app.tellev.feature.characters.CharactersListScreen
@@ -137,6 +152,7 @@ fun TellevRoot() {
     }
     val currentVersion = packageInfo.versionName ?: "0.0.0"
     var showPresetLimitUpgradeNotice by rememberSaveable { mutableStateOf(false) }
+    var showQqGroupNotice by rememberSaveable { mutableStateOf(false) }
     var presetFocusRequest by rememberSaveable { mutableIntStateOf(0) }
     val updateViewModel: UpdateViewModel = viewModel(
         factory = UpdateViewModelFactory(
@@ -154,6 +170,12 @@ fun TellevRoot() {
     }
     LaunchedEffect(packageInfo.firstInstallTime, packageInfo.lastUpdateTime) {
         showPresetLimitUpgradeNotice = graph.appPreferences.shouldShowPresetLimitUpgradeNotice(
+            firstInstallTime = packageInfo.firstInstallTime,
+            lastUpdateTime = packageInfo.lastUpdateTime,
+        )
+    }
+    LaunchedEffect(packageInfo.firstInstallTime, packageInfo.lastUpdateTime) {
+        showQqGroupNotice = graph.appPreferences.shouldShowQqGroupNotice(
             firstInstallTime = packageInfo.firstInstallTime,
             lastUpdateTime = packageInfo.lastUpdateTime,
         )
@@ -385,6 +407,58 @@ fun TellevRoot() {
                         }
                     },
                 ) { Text("去设置预设") }
+            },
+        )
+    }
+
+    // Queued after the beta-relay and preset-limit notices so at most one
+    // dialog is up at a time.
+    if (showQqGroupNotice && !showBetaRelayNotice && !showPresetLimitUpgradeNotice) {
+        val clipboard = LocalClipboardManager.current
+        fun closeNotice() {
+            graph.appPreferences.markQqGroupNoticeHandled()
+            showQqGroupNotice = false
+        }
+        AlertDialog(
+            onDismissRequest = ::closeNotice,
+            title = { Text("加入 QQ 交流群") },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Image(
+                        painter = painterResource(R.drawable.qq_group_qrcode),
+                        contentDescription = "QQ 群二维码",
+                        modifier = Modifier
+                            .size(216.dp)
+                            .clip(RoundedCornerShape(12.dp)),
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "tellev酒馆交流群",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = "群号：754350480",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "扫码或搜索群号加入，反馈问题、交流玩法。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = ::closeNotice) { Text("我知道了") }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        clipboard.setText(AnnotatedString("754350480"))
+                        Toast.makeText(activityContext, "已复制群号", Toast.LENGTH_SHORT).show()
+                        closeNotice()
+                    },
+                ) { Text("复制群号") }
             },
         )
     }

@@ -6,16 +6,16 @@ import org.junit.Test
 
 class AppPreferencesTest {
     @Test
-    fun `preset limit notice appears once after an app update`() {
+    fun `one-shot notices appear once after an app update`() {
         assertTrue(
-            shouldShowPresetLimitUpgradeNotice(
+            shouldShowOnceAfterUpdate(
                 alreadyHandled = false,
                 firstInstallTime = 1_000L,
                 lastUpdateTime = 2_000L,
             ),
         )
         assertFalse(
-            shouldShowPresetLimitUpgradeNotice(
+            shouldShowOnceAfterUpdate(
                 alreadyHandled = true,
                 firstInstallTime = 1_000L,
                 lastUpdateTime = 2_000L,
@@ -24,9 +24,9 @@ class AppPreferencesTest {
     }
 
     @Test
-    fun `preset limit notice stays hidden on a clean install`() {
+    fun `one-shot notices stay hidden on a clean install`() {
         assertFalse(
-            shouldShowPresetLimitUpgradeNotice(
+            shouldShowOnceAfterUpdate(
                 alreadyHandled = false,
                 firstInstallTime = 1_000L,
                 lastUpdateTime = 1_000L,

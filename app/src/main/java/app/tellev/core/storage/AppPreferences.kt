@@ -35,7 +35,7 @@ class AppPreferences(
         lastUpdateTime: Long,
     ): Boolean {
         val alreadyHandled = prefs.getBoolean(KEY_PRESET_LIMIT_NOTICE_HANDLED, false)
-        val shouldShow = shouldShowPresetLimitUpgradeNotice(
+        val shouldShow = shouldShowOnceAfterUpdate(
             alreadyHandled = alreadyHandled,
             firstInstallTime = firstInstallTime,
             lastUpdateTime = lastUpdateTime,
@@ -48,10 +48,34 @@ class AppPreferences(
         prefs.edit().putBoolean(KEY_PRESET_LIMIT_NOTICE_HANDLED, true).apply()
     }
 
+    /**
+     * One-time QQ group notice: shown the first launch after an app update
+     * (same once-after-update semantics as the preset-limit notice above).
+     * Fresh installs skip it; they can find the group in 设置 → 关于.
+     */
+    fun shouldShowQqGroupNotice(
+        firstInstallTime: Long,
+        lastUpdateTime: Long,
+    ): Boolean {
+        val alreadyHandled = prefs.getBoolean(KEY_QQ_GROUP_NOTICE_HANDLED, false)
+        val shouldShow = shouldShowOnceAfterUpdate(
+            alreadyHandled = alreadyHandled,
+            firstInstallTime = firstInstallTime,
+            lastUpdateTime = lastUpdateTime,
+        )
+        if (!shouldShow && !alreadyHandled) markQqGroupNoticeHandled()
+        return shouldShow
+    }
+
+    fun markQqGroupNoticeHandled() {
+        prefs.edit().putBoolean(KEY_QQ_GROUP_NOTICE_HANDLED, true).apply()
+    }
+
     private companion object {
         const val KEY_LAST_CHECK = "last_update_check_ms"
         const val KEY_BETA_RELAY_NOTICE_ACCEPTED = "beta_relay_notice_accepted"
         const val KEY_PRESET_LIMIT_NOTICE_HANDLED = "preset_limits_1_5_1_notice_handled"
+        const val KEY_QQ_GROUP_NOTICE_HANDLED = "qq_group_notice_handled"
         const val KEY_THEME_MODE = "theme_mode"
 
         /** Literal "System" — the ThemeMode.System enum name, kept as a
@@ -60,7 +84,10 @@ class AppPreferences(
     }
 }
 
-internal fun shouldShowPresetLimitUpgradeNotice(
+/** True when the app has been updated since install and this one-shot
+ *  notice has not been shown/marked yet. Fresh installs (equal timestamps)
+ *  never trigger it. */
+internal fun shouldShowOnceAfterUpdate(
     alreadyHandled: Boolean,
     firstInstallTime: Long,
     lastUpdateTime: Long,
