@@ -38,6 +38,7 @@ import app.tellev.core.storage.FileStDataStore
 import app.tellev.core.storage.StDataStore
 import app.tellev.core.storage.StDirectoryLayout
 import app.tellev.core.update.UpdateChecker
+import app.tellev.ui.theme.parseThemeMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -60,6 +61,13 @@ class TellevGraph private constructor(
     val updateChecker: UpdateChecker,
 ) {
     val importedCardSignal = MutableStateFlow(0L)
+
+    /**
+     * Current theme preference, mirrored into a StateFlow so MainActivity
+     * can recompose TellevTheme without reaching into SettingsViewModel.
+     * Seeded from AppPreferences and updated by SettingsViewModel.setThemeMode.
+     */
+    val themeModeFlow = MutableStateFlow(parseThemeMode(appPreferences.themeModeName))
 
     /**
      * Persist updated compat-module settings and push them to every

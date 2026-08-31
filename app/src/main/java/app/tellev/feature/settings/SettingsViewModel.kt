@@ -19,7 +19,10 @@ import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.supportsChatGeneration
 import app.tellev.core.provider.OpenAiCompatibilitySettings
 import app.tellev.core.security.SecretStore
+import app.tellev.core.storage.AppPreferences
 import app.tellev.core.storage.StDataStore
+import app.tellev.ui.theme.ThemeMode
+import app.tellev.ui.theme.parseThemeMode
 import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,10 +37,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import java.util.UUID
-
-enum class ThemeMode {
-    Light, Dark, System,
-}
 
 data class SettingsUiState(
     val providers: List<ProviderAdapter> = emptyList(),
@@ -69,6 +68,8 @@ class SettingsViewModel(
     private val dataStore: StDataStore,
     private val providerRegistry: ProviderRegistry,
     private val secretStore: SecretStore,
+    private val appPreferences: AppPreferences,
+    private val themeModeFlow: MutableStateFlow<ThemeMode>,
 ) : ViewModel() {
 
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
@@ -138,6 +139,7 @@ class SettingsViewModel(
                         selectedPresetNames = selectedPresetNames,
                         personas = personas,
                         secretIds = secretIds,
+                        themeMode = parseThemeMode(appPreferences.themeModeName),
                         baseUrl = fields.baseUrl,
                         apiKey = fields.apiKey,
                         model = fields.model,
@@ -804,6 +806,8 @@ class SettingsViewModel(
     }
 
     fun setThemeMode(mode: ThemeMode) {
+        appPreferences.themeModeName = mode.name
+        themeModeFlow.value = mode
         _uiState.update {
             it.copy(
                 themeMode = mode,
@@ -937,6 +941,8 @@ class SettingsViewModelFactory(
     private val dataStore: StDataStore,
     private val providerRegistry: ProviderRegistry,
     private val secretStore: SecretStore,
+    private val appPreferences: AppPreferences,
+    private val themeModeFlow: MutableStateFlow<ThemeMode>,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -945,6 +951,8 @@ class SettingsViewModelFactory(
                 dataStore = dataStore,
                 providerRegistry = providerRegistry,
                 secretStore = secretStore,
+                appPreferences = appPreferences,
+                themeModeFlow = themeModeFlow,
             ) as T
         }
         throw IllegalArgumentException("未知 ViewModel 类型：${modelClass.name}")

@@ -39,3 +39,19 @@ fun TellevTheme(
     )
 }
 
+/** App-wide theme preference; persisted as its name in AppPreferences. */
+enum class ThemeMode {
+    Light, Dark, System,
+}
+
+fun ThemeMode.isDarkTheme(systemInDark: Boolean): Boolean = when (this) {
+    ThemeMode.Light -> false
+    ThemeMode.Dark -> true
+    ThemeMode.System -> systemInDark
+}
+
+/** Tolerant parse for values read from storage; unknown names fall back to System. */
+fun parseThemeMode(name: String?): ThemeMode =
+    if (name == null) ThemeMode.System
+    else runCatching { ThemeMode.valueOf(name) }.getOrDefault(ThemeMode.System)
+

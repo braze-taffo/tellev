@@ -99,6 +99,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonArray
 import app.tellev.feature.update.UpdateUiState
 import app.tellev.feature.update.UpdateViewModel
+import app.tellev.ui.theme.ThemeMode
 import app.tellev.util.UriUtils
 import kotlin.math.roundToInt
 

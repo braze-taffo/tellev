@@ -109,6 +109,8 @@ fun TellevRoot() {
             dataStore = graph.dataStore,
             providerRegistry = graph.providerRegistry,
             secretStore = graph.secretStore,
+            appPreferences = graph.appPreferences,
+            themeModeFlow = graph.themeModeFlow,
         ),
     )
 

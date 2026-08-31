@@ -17,6 +17,15 @@ class AppPreferences(
         get() = prefs.getLong(KEY_LAST_CHECK, 0L)
         set(value) = prefs.edit().putLong(KEY_LAST_CHECK, value).apply()
 
+    /**
+     * Theme preference stored as the enum name so the storage layer stays
+     * independent of the UI-layer ThemeMode type; callers parse with
+     * [app.tellev.ui.theme.parseThemeMode].
+     */
+    var themeModeName: String
+        get() = prefs.getString(KEY_THEME_MODE, DEFAULT_THEME_MODE) ?: DEFAULT_THEME_MODE
+        set(value) = prefs.edit().putString(KEY_THEME_MODE, value).apply()
+
     fun shouldShowPresetLimitUpgradeNotice(
         firstInstallTime: Long,
         lastUpdateTime: Long,
@@ -40,6 +49,11 @@ class AppPreferences(
     private companion object {
         const val KEY_LAST_CHECK = "last_update_check_ms"
         const val KEY_PRESET_LIMIT_NOTICE_HANDLED = "preset_limits_1_5_1_notice_handled"
+        const val KEY_THEME_MODE = "theme_mode"
+
+        /** Literal "System" — the ThemeMode.System enum name, kept as a
+         *  string so this layer does not depend on the UI enum. */
+        const val DEFAULT_THEME_MODE = "System"
     }
 }
 
