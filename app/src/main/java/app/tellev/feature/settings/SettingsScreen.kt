@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
@@ -33,6 +34,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
@@ -41,6 +43,7 @@ import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
@@ -52,6 +55,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -637,7 +641,7 @@ fun SettingsScreen(
                     }
                 } else {
                     items(visiblePresets, key = { "preset_${it.category.name}_${it.id}" }) { preset ->
-                        PresetCard(
+                        PresetListItem(
                             preset = preset,
                             selected = state.selectedPresetNames[preset.category] == preset.id,
                             onSelect = { viewModel.selectPreset(preset) },
@@ -1526,7 +1530,7 @@ private fun ThemeOption(
 }
 
 @Composable
-private fun PresetCard(
+private fun PresetListItem(
     preset: GenerationPreset,
     selected: Boolean,
     onSelect: () -> Unit,
@@ -1534,105 +1538,82 @@ private fun PresetCard(
     onDelete: () -> Unit,
     onEdit: () -> Unit,
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .clickable(onClick = onEdit)
+                .padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = preset.name,
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    Text(
-                        text = preset.providerType,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                IconButton(
-                    onClick = onEdit,
-                    modifier = Modifier.size(32.dp),
-                ) {
-                    Icon(
-                        Icons.Default.Edit,
-                        contentDescription = "查看或编辑",
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.size(32.dp),
-                ) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "删除",
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.error,
-                    )
-                }
-            }
-            val regexCount = (preset.extensions["regex_scripts"] as? JsonArray)?.size ?: 0
-            val unsupportedCount = effectiveUnsupportedPresetFields(preset).size
             Text(
-                text = "有效摘要：${preset.category.name.lowercase()} · 提示词 ${preset.prompts.count { it.enabled }} · 正则 $regexCount · 未支持 $unsupportedCount",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = preset.name,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            TextButton(onClick = onExport, modifier = Modifier.align(Alignment.End)) {
-                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("导出")
-            }
-
             if (selected) {
-                FilledTonalButton(
-                    onClick = {},
-                    enabled = false,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("当前使用") }
-            } else {
-                OutlinedButton(
-                    onClick = onSelect,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("设为当前") }
+                Icon(
+                    Icons.Default.CheckCircle,
+                    contentDescription = "当前使用",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
             }
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                if (preset.temperature != null) {
-                    Text(
-                        text = "温度：${"%.2f".format(preset.temperature)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Box {
+                IconButton(
+                    onClick = { menuOpen = true },
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "更多操作",
+                        modifier = Modifier.size(20.dp),
                     )
                 }
-                if (preset.topP != null) {
-                    Text(
-                        text = "Top-P: ${"%.2f".format(preset.topP)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(if (selected) "设为当前（已是当前）" else "设为当前") },
+                        enabled = !selected,
+                        onClick = {
+                            menuOpen = false
+                            onSelect()
+                        },
                     )
-                }
-                if (preset.maxTokens != null) {
-                    Text(
-                        text = "最大：${preset.maxTokens}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    DropdownMenuItem(
+                        text = { Text("导出") },
+                        leadingIcon = {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                        },
+                        onClick = {
+                            menuOpen = false
+                            onExport()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                        },
+                        onClick = {
+                            menuOpen = false
+                            onDelete()
+                        },
                     )
                 }
             }
