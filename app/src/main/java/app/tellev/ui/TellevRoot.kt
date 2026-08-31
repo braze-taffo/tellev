@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -156,10 +157,11 @@ fun TellevRoot() {
         ),
     )
 
-    // Silently check GitHub for a newer release on launch, rate-limited to
-    // once per day. The result surfaces in the 关于 card on the Settings tab.
+    // Check GitHub for a newer release on every cold start (guarded to once
+    // per process). A found update pops a dialog; the 关于 card on the
+    // Settings tab keeps showing the persistent status.
     LaunchedEffect(Unit) {
-        updateViewModel.maybeAutoCheck()
+        updateViewModel.checkOnLaunch()
     }
     LaunchedEffect(packageInfo.firstInstallTime, packageInfo.lastUpdateTime) {
         showPresetLimitUpgradeNotice = graph.appPreferences.shouldShowPresetLimitUpgradeNotice(
@@ -167,11 +169,8 @@ fun TellevRoot() {
             lastUpdateTime = packageInfo.lastUpdateTime,
         )
     }
-    LaunchedEffect(packageInfo.firstInstallTime, packageInfo.lastUpdateTime) {
-        showQqGroupNotice = graph.appPreferences.shouldShowQqGroupNotice(
-            firstInstallTime = packageInfo.firstInstallTime,
-            lastUpdateTime = packageInfo.lastUpdateTime,
-        )
+    LaunchedEffect(Unit) {
+        showQqGroupNotice = graph.appPreferences.shouldShowQqGroupNotice()
     }
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -425,6 +424,62 @@ fun TellevRoot() {
                         closeNotice()
                     },
                 ) { Text("复制群号") }
+            },
+        )
+    }
+
+    // New-version dialog: queued after the notices above so only one dialog
+    // shows at a time. Dismissal is per-version and per-process — the next
+    // cold start re-checks and re-prompts until the user updates.
+    val updateState by updateViewModel.uiState.collectAsState()
+    var dismissedUpdateVersion by rememberSaveable { mutableStateOf<String?>(null) }
+    val pendingUpdate = updateState.pendingUpdate
+    if (
+        pendingUpdate != null &&
+        dismissedUpdateVersion != pendingUpdate.version &&
+        !showPresetLimitUpgradeNotice && !showQqGroupNotice
+    ) {
+        AlertDialog(
+            onDismissRequest = { dismissedUpdateVersion = pendingUpdate.version },
+            title = { Text("发现新版本") },
+            text = {
+                Column {
+                    Text(
+                        text = "新版本 ${pendingUpdate.tagName} 已发布，当前版本 v$currentVersion。",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    if (pendingUpdate.apkSize > 0) {
+                        Text(
+                            text = "安装包约 ${"%.1f".format(pendingUpdate.apkSize / 1024f / 1024f)} MB",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (pendingUpdate.releaseNotes.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = pendingUpdate.releaseNotes,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 8,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { dismissedUpdateVersion = pendingUpdate.version }) {
+                    Text("稍后")
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        dismissedUpdateVersion = pendingUpdate.version
+                        updateViewModel.downloadAndInstall()
+                        Toast.makeText(activityContext, "开始下载新版本…", Toast.LENGTH_SHORT).show()
+                    },
+                ) { Text("立即更新") }
             },
         )
     }
