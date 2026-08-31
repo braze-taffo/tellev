@@ -1,6 +1,7 @@
 package app.tellev.feature.settings
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -89,8 +90,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -129,6 +132,7 @@ fun SettingsScreen(
     var editingPreset by remember { mutableStateOf<GenerationPreset?>(null) }
     var selectedPresetCategory by remember { mutableStateOf(PresetCategory.OpenAi) }
     val uriHandler = LocalUriHandler.current
+    val clipboardManager = LocalClipboardManager.current
     val bilibiliProfileUrl = "https://space.bilibili.com/499259948"
 
     var showPresetDialog by remember { mutableStateOf(false) }
@@ -841,6 +845,20 @@ fun SettingsScreen(
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Text("打开作者 B 站主页")
+                            }
+                            Text(
+                                text = "QQ 交流群：tellev酒馆交流群",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            OutlinedButton(
+                                onClick = {
+                                    clipboardManager.setText(AnnotatedString("754350480"))
+                                    Toast.makeText(context, "已复制群号 754350480", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("复制 QQ 群号：754350480")
                             }
                         }
                     }
