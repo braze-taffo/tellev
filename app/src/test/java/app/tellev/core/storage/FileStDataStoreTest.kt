@@ -463,6 +463,32 @@ class FileStDataStoreTest {
     }
 
     @Test
+    fun `saveChatSession preserves custom chat_metadata keys like background`() = runBlocking {
+        val session = ChatSession(
+            id = "bg_session",
+            title = "Background session",
+            characterId = "char_bg",
+            groupId = null,
+            messages = emptyList(),
+            metadata = buildJsonObject {
+                put("background", "backgrounds/bg_session.png")
+                put("note", "custom metadata survives round-trips")
+            },
+        )
+        store.saveChatSession(session)
+
+        val reloaded = store.readChatSession("bg_session")
+        assertEquals(
+            "backgrounds/bg_session.png",
+            reloaded.metadata["background"]?.jsonPrimitive?.content,
+        )
+        assertEquals(
+            "custom metadata survives round-trips",
+            reloaded.metadata["note"]?.jsonPrimitive?.content,
+        )
+    }
+
+    @Test
     fun `chat jsonl edit preserves header and unknown message fields`() = runBlocking {
         val chatDir = layout.chats.resolve("alice")
         chatDir.createDirectories()

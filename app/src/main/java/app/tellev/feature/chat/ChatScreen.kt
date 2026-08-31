@@ -282,6 +282,29 @@ private fun ChatContentScreen(
         }
     }
 
+    val backgroundPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri: Uri? ->
+        uri?.let {
+            scope.launch {
+                try {
+                    val bytes = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(it)?.readBytes()
+                    }
+                    if (bytes != null) {
+                        viewModel.setChatBackground(bytes)
+                    }
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(
+                        context,
+                        "读取图片失败：${e.message}",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
+    }
+
     // 用户是否正停在列表底部（或非常接近底部）。流式输出时只在"停在底部"
     // 的情况下才自动下拉，避免用户上滑阅读历史消息时被每个 token 拽回底部。
     // 容差为 2：刚追加流式气泡时新 item 还没进入视口，此时不应被判定为"已上滑"。
@@ -366,6 +389,22 @@ private fun ChatContentScreen(
                         expanded = showMoreMenu,
                         onDismissRequest = { showMoreMenu = false },
                     ) {
+                        DropdownMenuItem(
+                            text = { Text("聊天背景…") },
+                            onClick = {
+                                backgroundPickerLauncher.launch("image/*")
+                                showMoreMenu = false
+                            },
+                        )
+                        if (state.chatBackgroundFile != null) {
+                            DropdownMenuItem(
+                                text = { Text("清除背景") },
+                                onClick = {
+                                    viewModel.clearChatBackground()
+                                    showMoreMenu = false
+                                },
+                            )
+                        }
                         if (state.presets.isNotEmpty()) {
                             state.presets.forEach { preset ->
                                 DropdownMenuItem(
@@ -422,6 +461,22 @@ private fun ChatContentScreen(
                 .fillMaxWidth(),
         ) {
             val htmlPanelMaxHeight = if (maxHeight > 112.dp) maxHeight - 112.dp else maxHeight
+
+            // Per-session background: full-bleed image with a surface-tinted
+            // scrim so bubbles of both roles keep readable contrast.
+            state.chatBackgroundFile?.let { file ->
+                AsyncImage(
+                    model = file,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.35f)),
+                )
+            }
 
             LazyColumn(
                 state = listState,

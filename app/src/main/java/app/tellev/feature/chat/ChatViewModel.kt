@@ -38,6 +38,7 @@ import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.StDataStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,6 +47,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import app.tellev.util.decodeImageAsPng
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -68,6 +71,9 @@ data class ChatUiState(
     // JSON cards fall back to the initials badge on decode failure.
     val characterAvatarFile: java.io.File? = null,
     val currentSession: ChatSession? = null,
+    // Per-session chat background: chat_metadata["background"] resolved to a
+    // file under st-data/backgrounds. Null = plain surface color.
+    val chatBackgroundFile: java.io.File? = null,
     val messages: List<ChatMessage> = emptyList(),
     val isGenerating: Boolean = false,
     val streamingText: String = "",
@@ -241,7 +247,11 @@ class ChatViewModel(
                     .onSuccess { refreshed ->
                         _uiState.update {
                             if (it.currentSession?.id != sessionId || it.isGenerating) it
-                            else it.copy(currentSession = refreshed, messages = refreshed.messages)
+                            else it.copy(
+                                currentSession = refreshed,
+                                messages = refreshed.messages,
+                                chatBackgroundFile = chatBackgroundFileFor(refreshed),
+                            )
                         }
                     }
             }
@@ -364,6 +374,7 @@ class ChatViewModel(
                         characterAvatarFile = characterCardFile(character.id),
                         currentSession = session,
                         messages = session.messages,
+                        chatBackgroundFile = chatBackgroundFileFor(session),
                         sessions = allSessions,
                         disabledWorldIds = disabledWorldIds,
                         isLoading = false,
@@ -975,6 +986,7 @@ class ChatViewModel(
                     it.copy(
                         currentSession = newSession,
                         messages = newSession.messages,
+                        chatBackgroundFile = null,
                         sessions = sessions,
                     )
                 }
@@ -996,6 +1008,7 @@ class ChatViewModel(
                     it.copy(
                         currentSession = session,
                         messages = session.messages,
+                        chatBackgroundFile = chatBackgroundFileFor(session),
                     )
                 }
                 emitChatChanged(session)
@@ -1006,6 +1019,76 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * Sets a per-session chat background (SillyTavern chat_metadata.background
+     * semantics). The picked image is copied into st-data/backgrounds as a
+     * downsampled PNG — content URIs from the photo picker are not reliably
+     * readable after a restart, an owned file is.
+     */
+    fun setChatBackground(imageBytes: ByteArray) {
+        viewModelScope.launch {
+            try {
+                val pngBytes = withContext(Dispatchers.IO) { decodeImageAsPng(imageBytes) }
+                    ?: error("无法解析图片")
+                val session = _uiState.value.currentSession ?: error("当前没有可用会话")
+                val rel = "backgrounds/${session.id}.png"
+                withContext(Dispatchers.IO) {
+                    val dir = dataStore.layout.backgrounds.toFile()
+                    dir.mkdirs()
+                    java.io.File(dir, "${session.id}.png").writeBytes(pngBytes)
+                }
+                val updated = session.copy(
+                    metadata = buildJsonObject {
+                        session.metadata.forEach { (key, value) -> put(key, value) }
+                        put("background", rel)
+                    },
+                )
+                dataStore.saveChatSession(updated)
+                _uiState.update {
+                    if (it.currentSession?.id != updated.id) it
+                    else it.copy(currentSession = updated, chatBackgroundFile = dataStore.layout.root.resolve(rel).toFile())
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "设置聊天背景失败：${e.message}") }
+            }
+        }
+    }
+
+    fun clearChatBackground() {
+        viewModelScope.launch {
+            try {
+                val session = _uiState.value.currentSession ?: return@launch
+                val rel = session.metadata.stringOption("background")
+                val updated = session.copy(
+                    metadata = buildJsonObject {
+                        session.metadata.forEach { (key, value) ->
+                            if (key != "background") put(key, value)
+                        }
+                    },
+                )
+                dataStore.saveChatSession(updated)
+                _uiState.update {
+                    if (it.currentSession?.id != updated.id) it
+                    else it.copy(currentSession = updated, chatBackgroundFile = null)
+                }
+                if (rel != null) {
+                    withContext(Dispatchers.IO) {
+                        dataStore.layout.root.resolve(rel).toFile().takeIf { it.exists() }?.delete()
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "清除聊天背景失败：${e.message}") }
+            }
+        }
+    }
+
+    /** Resolves chat_metadata["background"] (stored relative to the st-data
+     *  root) into an existing file, or null when the session has none. */
+    private fun chatBackgroundFileFor(session: ChatSession?): java.io.File? {
+        val rel = session?.metadata?.stringOption("background") ?: return null
+        return dataStore.layout.root.resolve(rel).toFile().takeIf { it.exists() }
     }
 
     fun updateProviderConfig(config: ProviderConfig) {
@@ -1222,6 +1305,7 @@ class ChatViewModel(
                 selectedCharacter = null,
                 characterAvatarFile = null,
                 currentSession = null,
+                chatBackgroundFile = null,
                 messages = emptyList(),
                 sessions = emptyList(),
             )
