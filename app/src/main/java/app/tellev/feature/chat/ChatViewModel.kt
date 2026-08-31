@@ -63,6 +63,10 @@ import java.util.UUID
 data class ChatUiState(
     val characters: List<CharacterSummary> = emptyList(),
     val selectedCharacter: CharacterCard? = null,
+    // The selected character's card file (PNG/WebP/JSON): the card image is
+    // the avatar. Null when no character is selected or the card file is gone;
+    // JSON cards fall back to the initials badge on decode failure.
+    val characterAvatarFile: java.io.File? = null,
     val currentSession: ChatSession? = null,
     val messages: List<ChatMessage> = emptyList(),
     val isGenerating: Boolean = false,
@@ -172,6 +176,7 @@ class ChatViewModel(
                         _uiState.update {
                             it.copy(
                                 selectedCharacter = refreshed,
+                                characterAvatarFile = characterCardFile(refreshed.id),
                             )
                         }
                         reloadCharacterTavernHelperScripts(refreshed)
@@ -356,6 +361,7 @@ class ChatViewModel(
                 _uiState.update {
                     it.copy(
                         selectedCharacter = character,
+                        characterAvatarFile = characterCardFile(character.id),
                         currentSession = session,
                         messages = session.messages,
                         sessions = allSessions,
@@ -1202,10 +1208,19 @@ class ChatViewModel(
         _uiState.update { it.copy(worldBooks = worlds) }
     }
 
+    /** Resolves the character's card file in the store, mirroring the
+     *  png/webp/json variant lookup FileStDataStore uses. */
+    private fun characterCardFile(characterId: String): java.io.File? =
+        listOf("png", "webp", "json").firstNotNullOfOrNull { extension ->
+            dataStore.layout.characters.resolve("$characterId.$extension").toFile()
+                .takeIf { it.exists() }
+        }
+
     fun deselectCharacter() {
         _uiState.update {
             it.copy(
                 selectedCharacter = null,
+                characterAvatarFile = null,
                 currentSession = null,
                 messages = emptyList(),
                 sessions = emptyList(),

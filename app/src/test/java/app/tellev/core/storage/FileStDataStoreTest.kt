@@ -929,6 +929,61 @@ class FileStDataStoreTest {
 
 
     @Test
+    fun `replaceCharacterAvatar keeps card data and removes old variants`() = runBlocking {
+        val id = "avatar_char"
+        store.saveCharacter(
+            CharacterCard(
+                id = id,
+                name = "Before",
+                description = "keep me",
+                firstMessage = "hello there",
+            ),
+        )
+        assertTrue(layout.characters.resolve("$id.json").exists())
+
+        val newAvatar = PngCardParser.createMinimalPng()
+        store.replaceCharacterAvatar(id, newAvatar)
+
+        val reloaded = store.readCharacter(id)
+        assertEquals("Before", reloaded.name)
+        assertEquals("keep me", reloaded.description)
+        assertEquals("hello there", reloaded.firstMessage)
+
+        // The card now lives inside the new PNG; the JSON variant is gone.
+        val pngBytes = layout.characters.resolve("$id.png").toFile().readBytes()
+        val embedded = PngCardParser.extractCardJson(pngBytes) ?: error("new PNG has no embedded card")
+        assertEquals("Before", embedded["data"]!!.jsonObject["name"]!!.jsonPrimitive.content)
+        assertTrue(!layout.characters.resolve("$id.json").exists())
+    }
+
+    @Test
+    fun `replaceCharacterAvatar also upgrades a webp card`() = runBlocking {
+        val id = "webp_char"
+        val cardJson = """
+        {
+            "spec": "chara_card_v2",
+            "data": { "name": "Webp Char", "description": "from webp" }
+        }
+        """.trimIndent()
+        // Minimal RIFF container: "RIFF" + payload size + "WEBP", no chunks.
+        val minimalWebp = byteArrayOf(
+            0x52, 0x49, 0x46, 0x46, // "RIFF"
+            4, 0, 0, 0,             // payload size = 4 ("WEBP")
+            0x57, 0x45, 0x42, 0x50, // "WEBP"
+        )
+        val webp = WebpCardParser.embedCardJson(minimalWebp, cardJson)
+        layout.characters.createDirectories()
+        layout.characters.resolve("$id.webp").toFile().writeBytes(webp)
+        assertEquals("Webp Char", store.readCharacter(id).name)
+
+        store.replaceCharacterAvatar(id, PngCardParser.createMinimalPng())
+
+        assertEquals("Webp Char", store.readCharacter(id).name)
+        assertTrue(layout.characters.resolve("$id.png").exists())
+        assertTrue(!layout.characters.resolve("$id.webp").exists())
+    }
+
+    @Test
     fun `readCharacter parses V2 JSON character`() = runBlocking {
         val v2Json = this::class.java.classLoader
             .getResourceAsStream("fixtures/character_v2.json")
