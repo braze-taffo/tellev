@@ -138,6 +138,7 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
         if (state.selectedCharacter == null) {
             CharacterPickerScreen(
                 characters = state.characters,
+                avatarFiles = state.characterAvatarFiles,
                 isLoading = state.isLoading,
                 onCharacterSelected = { viewModel.selectCharacter(it) },
                 modifier = Modifier.padding(padding),
@@ -155,6 +156,7 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
 @Composable
 private fun CharacterPickerScreen(
     characters: List<app.tellev.core.model.CharacterSummary>,
+    avatarFiles: Map<String, java.io.File?>,
     isLoading: Boolean,
     onCharacterSelected: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -214,19 +216,11 @@ private fun CharacterPickerScreen(
                             modifier = Modifier.padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primaryContainer),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    text = character.name.firstOrNull()?.uppercase() ?: "?",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                )
-                            }
+                            CharacterAvatar(
+                                file = avatarFiles[character.id],
+                                fallbackText = character.name,
+                                modifier = Modifier.size(48.dp),
+                            )
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(

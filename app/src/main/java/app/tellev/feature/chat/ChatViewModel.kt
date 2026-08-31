@@ -65,6 +65,8 @@ import java.util.UUID
 
 data class ChatUiState(
     val characters: List<CharacterSummary> = emptyList(),
+    // Card file per character id for the character picker list (card = avatar).
+    val characterAvatarFiles: Map<String, java.io.File?> = emptyMap(),
     val selectedCharacter: CharacterCard? = null,
     // The selected character's card file (PNG/WebP/JSON): the card image is
     // the avatar. Null when no character is selected or the card file is gone;
@@ -174,7 +176,14 @@ class ChatViewModel(
         viewModelScope.launch {
             dataStore.characterChanges.collect { characterId ->
                 runCatching { dataStore.listCharacters() }
-                    .onSuccess { characters -> _uiState.update { it.copy(characters = characters) } }
+                    .onSuccess { characters ->
+                        _uiState.update {
+                            it.copy(
+                                characters = characters,
+                                characterAvatarFiles = avatarFilesFor(characters),
+                            )
+                        }
+                    }
                 val selected = _uiState.value.selectedCharacter
                 if (selected?.id != characterId) return@collect
                 runCatching { dataStore.readCharacter(characterId) }
@@ -291,6 +300,7 @@ class ChatViewModel(
                 _uiState.update {
                     it.copy(
                         characters = characters,
+                        characterAvatarFiles = avatarFilesFor(characters),
                         personas = runtime.personas,
                         worldBooks = runtime.worldBooks,
                         disabledWorldIds = runtime.disabledWorldIds,
@@ -1298,6 +1308,9 @@ class ChatViewModel(
             dataStore.layout.characters.resolve("$characterId.$extension").toFile()
                 .takeIf { it.exists() }
         }
+
+    private fun avatarFilesFor(characters: List<CharacterSummary>): Map<String, java.io.File?> =
+        characters.associate { it.id to characterCardFile(it.id) }
 
     fun deselectCharacter() {
         _uiState.update {
