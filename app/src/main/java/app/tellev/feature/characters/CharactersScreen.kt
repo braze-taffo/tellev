@@ -84,6 +84,7 @@ import androidx.compose.ui.unit.dp
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterWorldBinding
 import app.tellev.core.model.WorldBook
+import app.tellev.ui.CharacterAvatar
 import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -251,6 +252,7 @@ fun CharactersListScreen(
                         ) { character ->
                             CharacterListItem(
                                 character = character,
+                                avatarFile = state.avatarFiles[character.id],
                                 onClick = { onCharacterClick(character.id) },
                                 onDuplicate = { viewModel.duplicateCharacter(character.id) },
                                 onDelete = { viewModel.deleteCharacter(character.id) },
@@ -275,6 +277,7 @@ fun CharactersListScreen(
 @Composable
 private fun CharacterListItem(
     character: app.tellev.core.model.CharacterSummary,
+    avatarFile: java.io.File?,
     onClick: () -> Unit,
     onDuplicate: () -> Unit,
     onDelete: () -> Unit,
@@ -300,20 +303,11 @@ private fun CharacterListItem(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = character.name.firstOrNull()?.uppercase() ?: "?",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
+            CharacterAvatar(
+                file = avatarFile,
+                fallbackText = character.name,
+                modifier = Modifier.size(48.dp),
+            )
 
             Spacer(modifier = Modifier.width(12.dp))
 
@@ -433,6 +427,27 @@ fun CharacterDetailScreen(
     val state by viewModel.uiState.collectAsState()
     val character = state.selectedCharacter
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val avatarPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri: Uri? ->
+        uri?.let {
+            scope.launch {
+                try {
+                    val bytes = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(it)?.readBytes()
+                    }
+                    if (bytes != null) {
+                        viewModel.setCharacterAvatar(bytes)
+                    }
+                } catch (e: Exception) {
+                    snackbarHostState.showSnackbar("读取图片失败：${e.message}")
+                }
+            }
+        }
+    }
 
     var name by remember(character?.id) { mutableStateOf(character?.name ?: "") }
     var description by remember(character?.id) { mutableStateOf(character?.description ?: "") }
@@ -536,24 +551,18 @@ fun CharacterDetailScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                // Avatar placeholder
+                // Avatar: the card image itself; tap to replace it.
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(
+                    CharacterAvatar(
+                        file = state.avatarFiles[character.id],
+                        fallbackText = name,
                         modifier = Modifier
                             .size(72.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primaryContainer),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = name.firstOrNull()?.uppercase() ?: "?",
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
+                            .clickable { avatarPicker.launch("image/*") },
+                        fallbackTextStyle = MaterialTheme.typography.headlineMedium,
+                    )
                     Spacer(modifier = Modifier.width(16.dp))
                     Column {
                         Text(
@@ -566,6 +575,9 @@ fun CharacterDetailScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         )
+                        TextButton(onClick = { avatarPicker.launch("image/*") }) {
+                            Text("更换头像")
+                        }
                     }
                 }
 

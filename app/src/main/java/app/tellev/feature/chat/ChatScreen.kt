@@ -94,6 +94,7 @@ import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageRole
 import app.tellev.core.regex.CharacterRegexApplier
+import app.tellev.ui.CharacterAvatar
 import app.tellev.util.UriUtils
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -444,6 +445,7 @@ private fun ChatContentScreen(
                     ChatBubble(
                         message = message,
                         character = state.selectedCharacter,
+                        characterAvatar = state.characterAvatarFile,
                         preset = state.selectedPreset,
                         userName = state.selectedPersona?.name ?: "User",
                         depth = visibleRegexDepth(state.messages, index),
@@ -545,6 +547,7 @@ private fun ChatContentScreen(
 private fun ChatBubble(
     message: ChatMessage,
     character: CharacterCard?,
+    characterAvatar: java.io.File?,
     preset: GenerationPreset?,
     userName: String,
     depth: Int,
@@ -570,11 +573,18 @@ private fun ChatBubble(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (!isUser) {
+                CharacterAvatar(
+                    file = characterAvatar,
+                    fallbackText = message.name,
+                    modifier = Modifier.size(24.dp),
+                    fallbackTextStyle = MaterialTheme.typography.labelMedium,
+                )
+                Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = message.name,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+                    modifier = Modifier.padding(bottom = 2.dp),
                 )
             }
             Spacer(modifier = Modifier.weight(1f))

@@ -41,6 +41,17 @@ interface StDataStore {
         saveCharacter(card)
     }
 
+    /**
+     * Replaces a character card's avatar image while keeping all card data
+     * (description, greetings, embedded book, ...). [pngBytes] must be an
+     * encoded PNG (see app.tellev.util.decodeImageAsPng); the card is saved
+     * as <id>.png and any webp/json variants of the same id are removed
+     * only after the new file is written.
+     */
+    suspend fun replaceCharacterAvatar(id: String, pngBytes: ByteArray) {
+        error("当前存储实现不支持更换角色头像：$id")
+    }
+
     suspend fun listChatSessions(characterId: String? = null, groupId: String? = null): List<ChatSession>
     suspend fun readChatSession(id: String): ChatSession
     suspend fun saveChatSession(session: ChatSession)

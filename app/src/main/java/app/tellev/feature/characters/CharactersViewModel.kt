@@ -15,7 +15,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import app.tellev.util.decodeImageAsPng
 import java.util.UUID
 
 data class CharactersUiState(
@@ -26,6 +29,9 @@ data class CharactersUiState(
     // World books available to bind to the selected character (loaded lazily
     // when a character is opened, for the binding picker in the detail screen).
     val worldBooks: List<WorldBook> = emptyList(),
+    // Card file per character id: the card PNG itself is the avatar. JSON
+    // cards (no embedded image) make the UI fall back to the initials badge.
+    val avatarFiles: Map<String, java.io.File> = emptyMap(),
     val isLoading: Boolean = false,
     val selectionError: String? = null,
     val error: String? = null,
@@ -57,10 +63,14 @@ class CharactersViewModel(
                 val characters = dataStore.listCharacters()
                 val query = _uiState.value.searchQuery
                 val filtered = filterCharacters(characters, query)
+                val avatarFiles = characters.associate { summary ->
+                    summary.id to dataStore.layout.root.resolve(summary.avatarRelativePath).toFile()
+                }
                 _uiState.update {
                     it.copy(
                         characters = characters,
                         filteredCharacters = filtered,
+                        avatarFiles = avatarFiles,
                         isLoading = false,
                     )
                 }
@@ -116,6 +126,40 @@ class CharactersViewModel(
 
     fun clearSelectedCharacter() {
         _uiState.update { it.copy(selectedCharacter = null, worldBooks = emptyList()) }
+    }
+
+    /**
+     * Replaces the selected character's avatar with the picked image. The
+     * image is downsampled and re-encoded as PNG, then the card (unchanged
+     * data included) is re-embedded into the new PNG by the data store.
+     */
+    fun setCharacterAvatar(imageBytes: ByteArray) {
+        val current = _uiState.value.selectedCharacter ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                val pngBytes = withContext(Dispatchers.IO) {
+                    decodeImageAsPng(imageBytes, maxEdge = 1024)
+                } ?: error("无法解析所选图片")
+                dataStore.replaceCharacterAvatar(current.id, pngBytes)
+                val reloaded = dataStore.readCharacter(current.id)
+                _uiState.update {
+                    it.copy(
+                        selectedCharacter = reloaded,
+                        isLoading = false,
+                        info = "头像已更新。",
+                    )
+                }
+                loadCharacters()
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        error = "更换头像失败：${e.message}",
+                    )
+                }
+            }
+        }
     }
 
     fun saveCharacter(card: CharacterCard) {

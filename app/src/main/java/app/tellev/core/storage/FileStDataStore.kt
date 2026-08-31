@@ -195,6 +195,21 @@ class FileStDataStore(
         mutableCharacterChanges.tryEmit(id)
     }
 
+    override suspend fun replaceCharacterAvatar(id: String, pngBytes: ByteArray): Unit = withContext(Dispatchers.IO) {
+        // Re-export the card unchanged and embed it into the new PNG so the
+        // avatar swap never touches card data, whatever the old format was.
+        val card = readCharacter(id)
+        val jsonString = CharacterExporter(json).exportToJson(card)
+        val embedded = PngCardParser.embedCardJson(pngBytes, jsonString)
+        layout.characters.createDirectories()
+        layout.characters.resolve("$id.png").outputStream().use { it.write(embedded) }
+        // Old-format variants (webp/json) are only dropped after the new PNG
+        // is durably on disk, so a failed write keeps the original card intact.
+        removeCharacterVariants(id, keepExtension = "png")
+        saveEmbeddedCharacterAssets(card)
+        mutableCharacterChanges.tryEmit(id)
+    }
+
     override suspend fun listChatSessions(characterId: String?, groupId: String?): List<ChatSession> = withContext(Dispatchers.IO) {
         val roots = buildList {
             if (characterId != null) add(layout.chats.resolve(characterId))
