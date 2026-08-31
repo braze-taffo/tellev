@@ -31,23 +31,29 @@ data class UpdateUiState(
 /**
  * Activity-scoped ViewModel that checks GitHub for a newer tellev release and,
  * when the user taps update, downloads the APK and hands it to the system
- * PackageInstaller. The check is silent and rate-limited to once per day via
- * [maybeAutoCheck]; [checkNow] bypasses the rate limit.
+ * PackageInstaller. The launch check runs once per cold start via
+ * [checkOnLaunch]; [checkNow] is the manual, unguarded entry point.
  */
 class UpdateViewModel(
     private val appContext: Context,
     private val checker: UpdateChecker,
     private val preferences: AppPreferences,
     private val currentVersion: String,
-    private val checkIntervalMs: Long = 24L * 60 * 60 * 1000,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(UpdateUiState())
     val uiState: StateFlow<UpdateUiState> = _uiState.asStateFlow()
 
-    /** Runs a check only if one hasn't happened within the rate-limit window. */
-    fun maybeAutoCheck() {
-        if (System.currentTimeMillis() - preferences.lastUpdateCheckEpochMs < checkIntervalMs) return
+    private var launchCheckDone = false
+
+    /**
+     * Checks once per process lifetime: survives config changes and
+     * recomposition (LaunchedEffect re-runs), re-checks on the next cold
+     * start so a pending update is surfaced on every app open.
+     */
+    fun checkOnLaunch() {
+        if (launchCheckDone) return
+        launchCheckDone = true
         checkNow()
     }
 

@@ -49,23 +49,12 @@ class AppPreferences(
     }
 
     /**
-     * One-time QQ group notice: shown the first launch after an app update
-     * (same once-after-update semantics as the preset-limit notice above).
-     * Fresh installs skip it; they can find the group in 设置 → 关于.
+     * QQ group notice: shown once on the very first launch, whether that is a
+     * fresh install or an update over an older version. The dialog closing
+     * marks it handled; afterwards the group stays listed in 设置 → 关于.
      */
-    fun shouldShowQqGroupNotice(
-        firstInstallTime: Long,
-        lastUpdateTime: Long,
-    ): Boolean {
-        val alreadyHandled = prefs.getBoolean(KEY_QQ_GROUP_NOTICE_HANDLED, false)
-        val shouldShow = shouldShowOnceAfterUpdate(
-            alreadyHandled = alreadyHandled,
-            firstInstallTime = firstInstallTime,
-            lastUpdateTime = lastUpdateTime,
-        )
-        if (!shouldShow && !alreadyHandled) markQqGroupNoticeHandled()
-        return shouldShow
-    }
+    fun shouldShowQqGroupNotice(): Boolean =
+        !prefs.getBoolean(KEY_QQ_GROUP_NOTICE_HANDLED, false)
 
     fun markQqGroupNoticeHandled() {
         prefs.edit().putBoolean(KEY_QQ_GROUP_NOTICE_HANDLED, true).apply()
