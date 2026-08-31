@@ -6,13 +6,17 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.lifecycle.lifecycleScope
 import app.tellev.core.model.CharacterSummary
 import app.tellev.core.storage.CharacterImporter
 import app.tellev.util.UriUtils
 import app.tellev.ui.TellevRoot
 import app.tellev.ui.theme.TellevTheme
+import app.tellev.ui.theme.isDarkTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -26,7 +30,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             CompositionLocalProvider(LocalTellevGraph provides graph) {
-                TellevTheme {
+                val themeMode by graph.themeModeFlow.collectAsState()
+                TellevTheme(darkTheme = themeMode.isDarkTheme(isSystemInDarkTheme())) {
                     TellevRoot()
                 }
             }
