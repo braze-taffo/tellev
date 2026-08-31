@@ -2,16 +2,15 @@
 
 tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是在手机上提供更贴近原生应用体验的角色管理、聊天、世界书、扩展和模型服务配置能力，同时尽量保持与 SillyTavern 数据格式和使用习惯兼容。
 
-> 此分支当前测试构建为 **v1.5.1-beta.1**；公开正式版以 GitHub Releases 中发布的 APK 为准。
+> 此分支当前测试构建为 **v1.5.2-beta.1**；公开正式版以 GitHub Releases 中发布的 APK 为准。
 
-## v1.5.1 更新
+## v1.5.2 更新
 
-- 生成上限修复：所有内置默认预设及缺省运行时回退统一调整为 1,000,000 上下文、131,072（128 Ki）最大输出；升级时自动修复仍为 4095/4096 与 300 的默认预设及当前工作副本。首次从旧版升级进入应用时会提示检查当前预设，并可直接跳到「设置 → 生成预设」。
-- 预设兼容：OpenAI 默认预设锁定并对齐 SillyTavern 1.18.0；导入预设后立即启用，支持更多采样参数、预设正则、`names_behavior`、相邻 system 消息合并和 assistant prefill。服务商、接口、密钥与模型等路由字段只保留、不越权应用。
-- 正则链路：按 Normal / Display / Prompt 三阶段执行角色卡与预设正则，覆盖发送、编辑、生成、停止、swipe、世界书和流式显示，并记录处理版本以避免重复替换。
-- 消息渲染：流式回复同步支持 Markdown 与 TavernHelper HTML 片段；HTML 面板跟随应用主题自动选择高对比背景，并改善折叠内容展开后的高度同步。
-- TavernHelper 兼容：消息脚本新增 `getChatMessages()` / `setChatMessage()`，可读取消息并安全更新指定 swipe。
-- Provider 修复：预设不再被误当作模型名；补齐 TextGen / Kobold 的采样参数映射，缺少必需模型配置时给出明确错误。
+- 外观体验：修复主题切换后未即时生效的问题；聊天背景改为按会话独立设置，并支持从设备选择图片。
+- 角色头像：角色列表和聊天页角色选择器显示角色卡头像，支持为角色选择、更换和持久化自定义头像。
+- 设置界面：生成预设列表改为紧凑单行布局，减少滚动并提升大量预设时的浏览效率。
+- 更新提醒：每次冷启动检查正式版更新，发现新版本后直接弹窗提示，同时保留设置页中的更新入口。
+- 社区入口：关于页和版本更新提示加入 QQ 交流群入口；新安装用户首次启动时也会看到群聊邀请。
 
 ## 主要功能
 
@@ -108,7 +107,7 @@ tellev 的扩展运行环境是 SillyTavern / 酒馆助手兼容层的一个**�
 
 - 应用名：`tellev`
 - 包名：`app.tellev`
-- 当前测试版本：1.5.1-beta.1（versionCode 18）
+- 当前测试版本：1.5.2-beta.1（versionCode 19）
 - 最低系统：Android 12 / API 31
 - 目标/编译 SDK：API 36
 - UI：Kotlin + Jetpack Compose + Material 3
@@ -218,5 +217,5 @@ SillyTavern 项目地址：
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [docs/AI_TASKS.md](docs/AI_TASKS.md)
-- [docs/RELEASE_1.5.1.md](docs/RELEASE_1.5.1.md)
-- [docs/BETA_1.5.1.md](docs/BETA_1.5.1.md)
+- [docs/RELEASE_1.5.2.md](docs/RELEASE_1.5.2.md)
+- [docs/BETA_1.5.2.md](docs/BETA_1.5.2.md)
