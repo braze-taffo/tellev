@@ -135,14 +135,15 @@ class TavernMessageCompatTest {
     }
 
     @Test
-    fun `host html uses theme colors auto contrast and details resize`() {
-        val wrapped = wrapTavernHtml("<body style='color:white'>hello<details><summary>x</summary>y</details></body>", "#FAFAFA", "#111111")
+    fun `host html uses theme colors keeps canvas transparent and details resize`() {
+        val wrapped = wrapTavernHtml("<body style='color:white'>hello<details><summary>x</summary>y</details></body>", "#111111")
 
         assertTrue(wrapped.contains("color: #111111"))
         assertFalse(wrapped.contains("color: #f7f7f7"))
-        assertTrue(wrapped.contains("tellev-auto-contrast"))
-        assertTrue(wrapped.contains("#000000"))
-        assertTrue(wrapped.contains("#ffffff"))
+        // The auto-contrast script that painted an opaque canvas was removed:
+        // WebView panels must stay transparent so the bubble background shows.
+        assertFalse(wrapped.contains("tellev-auto-contrast"))
+        assertTrue(wrapped.contains("background: transparent"))
         assertTrue(tavernResizeScript().contains("document.addEventListener('toggle'"))
     }
 

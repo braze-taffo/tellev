@@ -759,6 +759,9 @@ private fun ChatBubble(
                 highlightDialogue = message.role != MessageRole.System,
                 modifier = Modifier
                     .fillMaxWidth()
+                    // 半透明气泡：背景图透出 40%，前端卡片分支保持无底板。
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
                     .then(dragModifier),
                 tavernRuntime = tavernRuntime,
                 onHtmlBoundaryDrag = onHtmlBoundaryDrag,
@@ -979,10 +982,9 @@ private fun TavernHtmlPanel(
     tavernRuntime: TavernMessageRuntime,
     onBoundaryDrag: (Float) -> Unit,
 ) {
-    val themeSurface = MaterialTheme.colorScheme.surface.toCssHex()
     val themeOnSurface = MaterialTheme.colorScheme.onSurface.toCssHex()
-    val wrappedHtml = remember(html, themeSurface, themeOnSurface, dialogueQuoteColor) {
-        wrapTavernHtml(html, themeSurface, themeOnSurface, dialogueQuoteColor)
+    val wrappedHtml = remember(html, themeOnSurface, dialogueQuoteColor) {
+        wrapTavernHtml(html, themeOnSurface, dialogueQuoteColor)
     }
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
@@ -1126,11 +1128,8 @@ private fun String.isLargeTavernFrontend(): Boolean =
 private fun androidx.compose.ui.graphics.Color.toCssHex(): String =
     "#%06X".format(0xFFFFFF and toArgb())
 
-private fun jsonStringLiteral(value: String): String = JsonPrimitive(value).toString()
-
 internal fun wrapTavernHtml(
     html: String,
-    themeSurface: String,
     themeOnSurface: String,
     dialogueQuoteColor: String? = null,
 ): String {
@@ -1160,7 +1159,6 @@ internal fun wrapTavernHtml(
             }
             $dialogueQuoteCss
         </style>
-        ${tavernAutoContrastScript(themeSurface, themeOnSurface)}
     """.trimIndent()
 
     if (html.contains("<html", ignoreCase = true)) {
@@ -1187,64 +1185,6 @@ internal fun wrapTavernHtml(
         </html>
     """.trimIndent()
 }
-
-private fun tavernAutoContrastScript(themeSurface: String, themeOnSurface: String): String = """
-    <script id="tellev-auto-contrast">
-    (function() {
-        var themeSurface = ${jsonStringLiteral(themeSurface)};
-        var themeText = ${jsonStringLiteral(themeOnSurface)};
-        function rgba(value) {
-            var hex = String(value || '').trim().match(/^#([0-9a-f]{6})$/i);
-            if (hex) {
-                var number = parseInt(hex[1], 16);
-                return {r:(number>>16)&255, g:(number>>8)&255, b:number&255, a:1};
-            }
-            var match = String(value || '').match(/[\d.]+/g);
-            if (!match || match.length < 3) return null;
-            return {r:+match[0], g:+match[1], b:+match[2], a:match.length > 3 ? +match[3] : 1};
-        }
-        function transparent(value) { var c=rgba(value); return !c || c.a < 0.02; }
-        function lum(c) {
-            function f(v) { v/=255; return v <= .03928 ? v/12.92 : Math.pow((v+.055)/1.055,2.4); }
-            return .2126*f(c.r)+.7152*f(c.g)+.0722*f(c.b);
-        }
-        function contrast(a,b) { var x=lum(a), y=lum(b); return (Math.max(x,y)+.05)/(Math.min(x,y)+.05); }
-        function representativeText() {
-            var nodes = document.body ? document.body.querySelectorAll('*') : [];
-            for (var i=0;i<nodes.length;i++) {
-                var node=nodes[i], style=getComputedStyle(node);
-                if (style.display !== 'none' && style.visibility !== 'hidden' && (node.textContent||'').trim()) return style.color;
-            }
-            return document.body ? getComputedStyle(document.body).color : themeText;
-        }
-        function hasAuthoredCanvas() {
-            var roots=[document.documentElement, document.body];
-            if (document.body) roots=roots.concat(Array.prototype.slice.call(document.body.children || []));
-            return roots.some(function(node) { return node && !transparent(getComputedStyle(node).backgroundColor); });
-        }
-        function applyContrast() {
-            if (!document.documentElement || !document.body || hasAuthoredCanvas()) return;
-            var text=rgba(representativeText()) || rgba(themeText);
-            // Black/white fallbacks guarantee that at least one candidate is
-            // >= 4.5:1 for every opaque text colour.
-            var candidates=[themeSurface,'#000000','#ffffff'];
-            var best=candidates[0], score=-1;
-            candidates.forEach(function(candidate) {
-                var value=contrast(text,rgba(candidate));
-                if (value>score) { score=value; best=candidate; }
-            });
-            document.documentElement.style.setProperty('background-color', best, 'important');
-            document.documentElement.dataset.tellevAutoBackground=best;
-        }
-        function install() {
-            applyContrast();
-            if (window.MutationObserver) new MutationObserver(applyContrast).observe(document.documentElement,{attributes:true,childList:true,subtree:true,attributeFilter:['class','style']});
-        }
-        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded',install); else install();
-        window.addEventListener('load',applyContrast);
-    })();
-    </script>
-""".trimIndent()
 
 internal fun tavernResizeScript(): String = """
     (function() {

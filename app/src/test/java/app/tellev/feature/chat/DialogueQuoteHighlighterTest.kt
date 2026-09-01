@@ -49,7 +49,7 @@ class DialogueQuoteHighlighterTest {
     fun `markdown wrapper preserves delimiters and emits q tags`() {
         val wrapped = DialogueQuoteHighlighter.wrapForMarkdown("Before **“hello”** after")
         val rendered = MarkdownRenderer.render("Before **“hello”** after", highlightDialogue = true)
-        val host = wrapTavernHtml(rendered, "#ffffff", "#111111", "#123456")
+        val host = wrapTavernHtml(rendered, "#111111", "#123456")
 
         assertEquals("Before **<q>“hello”</q>** after", wrapped)
         assertTrue(rendered.contains("<q>“hello”</q>"))
