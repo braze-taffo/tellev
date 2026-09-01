@@ -31,7 +31,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             CompositionLocalProvider(LocalTellevGraph provides graph) {
                 val themeMode by graph.themeModeFlow.collectAsState()
-                TellevTheme(darkTheme = themeMode.isDarkTheme(isSystemInDarkTheme())) {
+                val themeAccent by graph.themeAccentFlow.collectAsState()
+                TellevTheme(
+                    darkTheme = themeMode.isDarkTheme(isSystemInDarkTheme()),
+                    accent = themeAccent,
+                ) {
                     TellevRoot()
                 }
             }

@@ -127,6 +127,7 @@ fun TellevRoot() {
             secretStore = graph.secretStore,
             appPreferences = graph.appPreferences,
             themeModeFlow = graph.themeModeFlow,
+            themeAccentFlow = graph.themeAccentFlow,
         ),
     )
 

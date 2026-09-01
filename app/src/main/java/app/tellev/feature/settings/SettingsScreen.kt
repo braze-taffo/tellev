@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -116,7 +117,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonArray
 import app.tellev.feature.update.UpdateUiState
 import app.tellev.feature.update.UpdateViewModel
+import app.tellev.ui.theme.ThemeAccent
 import app.tellev.ui.theme.ThemeMode
+import app.tellev.ui.theme.lightColors
 import app.tellev.util.UriUtils
 import kotlin.math.roundToInt
 
@@ -745,6 +748,32 @@ fun SettingsScreen(
                             label = "跟随系统",
                             selected = state.themeMode == ThemeMode.System,
                             onClick = { viewModel.setThemeMode(ThemeMode.System) },
+                        )
+                    }
+                }
+
+                item(key = "accent_label") {
+                    Text(
+                        text = "主题色",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, top = 8.dp),
+                    )
+                }
+
+                item(key = "accent_options") {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        AccentOption(
+                            accent = ThemeAccent.Warm,
+                            label = "暖橘",
+                            selected = state.themeAccent == ThemeAccent.Warm,
+                            onClick = { viewModel.setThemeAccent(ThemeAccent.Warm) },
+                        )
+                        AccentOption(
+                            accent = ThemeAccent.Classic,
+                            label = "经典蓝紫",
+                            selected = state.themeAccent == ThemeAccent.Classic,
+                            onClick = { viewModel.setThemeAccent(ThemeAccent.Classic) },
                         )
                     }
                 }
@@ -1495,6 +1524,61 @@ private fun ThemeOption(
                 modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+        }
+    }
+}
+
+/** Like [ThemeOption] but shows a two-dot swatch (primary + container) of the
+ *  palette instead of an icon, so the choice is visible at a glance. */
+@Composable
+private fun AccentOption(
+    accent: ThemeAccent,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val scheme = accent.lightColors()
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RadioButton(
+                selected = selected,
+                onClick = onClick,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Box(modifier = Modifier.width(30.dp)) {
+                Box(
+                    modifier = Modifier
+                        .size(16.dp)
+                        .align(Alignment.CenterStart)
+                        .clip(CircleShape)
+                        .background(scheme.primaryContainer)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+                )
+                Box(
+                    modifier = Modifier
+                        .size(16.dp)
+                        .align(Alignment.CenterEnd)
+                        .clip(CircleShape)
+                        .background(scheme.primary),
+                )
+            }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = label,

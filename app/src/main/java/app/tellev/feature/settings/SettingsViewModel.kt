@@ -21,7 +21,9 @@ import app.tellev.core.provider.OpenAiCompatibilitySettings
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.AppPreferences
 import app.tellev.core.storage.StDataStore
+import app.tellev.ui.theme.ThemeAccent
 import app.tellev.ui.theme.ThemeMode
+import app.tellev.ui.theme.parseThemeAccent
 import app.tellev.ui.theme.parseThemeMode
 import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +60,7 @@ data class SettingsUiState(
     val personas: List<Persona> = emptyList(),
     val secretIds: List<String> = emptyList(),
     val themeMode: ThemeMode = ThemeMode.System,
+    val themeAccent: ThemeAccent = ThemeAccent.Warm,
     val isLoading: Boolean = false,
     val error: String? = null,
     val info: String? = null,
@@ -70,6 +73,7 @@ class SettingsViewModel(
     private val secretStore: SecretStore,
     private val appPreferences: AppPreferences,
     private val themeModeFlow: MutableStateFlow<ThemeMode>,
+    private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
 ) : ViewModel() {
 
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
@@ -140,6 +144,7 @@ class SettingsViewModel(
                         personas = personas,
                         secretIds = secretIds,
                         themeMode = parseThemeMode(appPreferences.themeModeName),
+                        themeAccent = parseThemeAccent(appPreferences.themeAccentName),
                         baseUrl = fields.baseUrl,
                         apiKey = fields.apiKey,
                         model = fields.model,
@@ -816,6 +821,17 @@ class SettingsViewModel(
         }
     }
 
+    fun setThemeAccent(accent: ThemeAccent) {
+        appPreferences.themeAccentName = accent.name
+        themeAccentFlow.value = accent
+        _uiState.update {
+            it.copy(
+                themeAccent = accent,
+                info = "主题色已切换为${accent.displayName()}。",
+            )
+        }
+    }
+
     fun exportBackup(context: Context, targetUri: Uri) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
@@ -943,6 +959,7 @@ class SettingsViewModelFactory(
     private val secretStore: SecretStore,
     private val appPreferences: AppPreferences,
     private val themeModeFlow: MutableStateFlow<ThemeMode>,
+    private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -953,6 +970,7 @@ class SettingsViewModelFactory(
                 secretStore = secretStore,
                 appPreferences = appPreferences,
                 themeModeFlow = themeModeFlow,
+                themeAccentFlow = themeAccentFlow,
             ) as T
         }
         throw IllegalArgumentException("未知 ViewModel 类型：${modelClass.name}")
@@ -963,4 +981,9 @@ private fun ThemeMode.displayName(): String = when (this) {
     ThemeMode.Light -> "浅色"
     ThemeMode.Dark -> "深色"
     ThemeMode.System -> "跟随系统"
+}
+
+private fun ThemeAccent.displayName(): String = when (this) {
+    ThemeAccent.Warm -> "暖橘"
+    ThemeAccent.Classic -> "经典蓝紫"
 }
