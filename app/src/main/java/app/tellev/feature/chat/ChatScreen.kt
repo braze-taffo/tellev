@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -84,6 +83,9 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight.Companion.Bold
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.toArgb
@@ -719,53 +721,27 @@ private fun ChatBubble(
                     onNext = onSwipeLeft,
                 )
             }
-            Card(
+            TavernMessageContent(
+                segments = renderSegments,
+                availableMaxHeight = htmlPanelMaxHeight,
+                isUser = isUser,
+                highlightDialogue = message.role != MessageRole.System,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(
-                    topStart = 12.dp,
-                    topEnd = 12.dp,
-                    bottomStart = 4.dp,
-                    bottomEnd = 12.dp,
-                ),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                ),
-            ) {
-                TavernMessageContent(
-                    segments = renderSegments,
-                    availableMaxHeight = htmlPanelMaxHeight,
-                    isUser = isUser,
-                    tavernRuntime = tavernRuntime,
-                    onHtmlBoundaryDrag = onHtmlBoundaryDrag,
-                )
-            }
+                tavernRuntime = tavernRuntime,
+                onHtmlBoundaryDrag = onHtmlBoundaryDrag,
+            )
         } else {
-            Card(
+            TavernMessageContent(
+                segments = renderSegments,
+                availableMaxHeight = htmlPanelMaxHeight,
+                isUser = isUser,
+                highlightDialogue = message.role != MessageRole.System,
                 modifier = Modifier
-                    .widthIn(max = 320.dp)
+                    .fillMaxWidth()
                     .then(dragModifier),
-                shape = RoundedCornerShape(
-                    topStart = 12.dp,
-                    topEnd = 12.dp,
-                    bottomStart = if (isUser) 12.dp else 4.dp,
-                    bottomEnd = if (isUser) 4.dp else 12.dp,
-                ),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isUser) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant
-                    },
-                ),
-            ) {
-                TavernMessageContent(
-                    segments = renderSegments,
-                    availableMaxHeight = htmlPanelMaxHeight,
-                    isUser = isUser,
-                    tavernRuntime = tavernRuntime,
-                    onHtmlBoundaryDrag = onHtmlBoundaryDrag,
-                )
-            }
+                tavernRuntime = tavernRuntime,
+                onHtmlBoundaryDrag = onHtmlBoundaryDrag,
+            )
         }
 
         if (message.swipes.size > 1 && (!hasFrontend || isUser)) {
@@ -782,10 +758,13 @@ private fun TavernMessageContent(
     segments: List<TavernRenderSegment>,
     availableMaxHeight: Dp,
     isUser: Boolean,
+    highlightDialogue: Boolean,
+    modifier: Modifier = Modifier,
     tavernRuntime: TavernMessageRuntime,
     onHtmlBoundaryDrag: (Float) -> Unit,
 ) {
-    Column {
+    val dialogueColor = MaterialTheme.colorScheme.primary
+    Column(modifier = modifier) {
         segments.forEachIndexed { index, segment ->
             when (segment) {
                 is TavernRenderSegment.Text -> {
@@ -795,15 +774,16 @@ private fun TavernMessageContent(
                     // the cheap native Text() to avoid spinning up a WebView per bubble.
                     if (!isUser && MarkdownRenderer.looksLikeMarkdown(text)) {
                         TavernHtmlPanel(
-                            html = MarkdownRenderer.render(text),
+                            html = MarkdownRenderer.render(text, highlightDialogue = highlightDialogue),
                             availableMaxHeight = availableMaxHeight,
+                            dialogueQuoteColor = if (highlightDialogue) dialogueColor.toCssHex() else null,
                             tavernRuntime = tavernRuntime,
                             onBoundaryDrag = onHtmlBoundaryDrag,
                         )
                     } else {
                         SelectionContainer {
                             Text(
-                                text = text,
+                                text = dialogueAnnotatedString(text, dialogueColor, highlightDialogue),
                                 style = MaterialTheme.typography.bodyLarge,
                                 modifier = Modifier.padding(
                                     start = 12.dp,
@@ -816,7 +796,7 @@ private fun TavernMessageContent(
                     }
                 }
                 is TavernRenderSegment.Reasoning -> {
-                    ReasoningBlock(content = segment.content)
+                    ReasoningBlock(content = segment.content, highlightDialogue = highlightDialogue)
                 }
                 is TavernRenderSegment.Frontend -> {
                     TavernHtmlPanel(
@@ -832,7 +812,7 @@ private fun TavernMessageContent(
 }
 
 @Composable
-private fun ReasoningBlock(content: String) {
+private fun ReasoningBlock(content: String, highlightDialogue: Boolean) {
     var expanded by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
@@ -865,7 +845,11 @@ private fun ReasoningBlock(content: String) {
         if (expanded) {
             SelectionContainer {
                 Text(
-                    text = content,
+                    text = dialogueAnnotatedString(
+                        content,
+                        MaterialTheme.colorScheme.primary,
+                        highlightDialogue,
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(
@@ -970,13 +954,14 @@ private class TavernMessageBridge(
 private fun TavernHtmlPanel(
     html: String,
     availableMaxHeight: Dp,
+    dialogueQuoteColor: String? = null,
     tavernRuntime: TavernMessageRuntime,
     onBoundaryDrag: (Float) -> Unit,
 ) {
     val themeSurface = MaterialTheme.colorScheme.surface.toCssHex()
     val themeOnSurface = MaterialTheme.colorScheme.onSurface.toCssHex()
-    val wrappedHtml = remember(html, themeSurface, themeOnSurface) {
-        wrapTavernHtml(html, themeSurface, themeOnSurface)
+    val wrappedHtml = remember(html, themeSurface, themeOnSurface, dialogueQuoteColor) {
+        wrapTavernHtml(html, themeSurface, themeOnSurface, dialogueQuoteColor)
     }
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
@@ -1122,7 +1107,15 @@ private fun androidx.compose.ui.graphics.Color.toCssHex(): String =
 
 private fun jsonStringLiteral(value: String): String = JsonPrimitive(value).toString()
 
-internal fun wrapTavernHtml(html: String, themeSurface: String, themeOnSurface: String): String {
+internal fun wrapTavernHtml(
+    html: String,
+    themeSurface: String,
+    themeOnSurface: String,
+    dialogueQuoteColor: String? = null,
+): String {
+    val dialogueQuoteCss = dialogueQuoteColor?.let { color ->
+        "q { color: $color; } q::before, q::after { content: none; }"
+    }.orEmpty()
     val hostHead = """
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
         ${tavernMessageCompatScript()}
@@ -1144,6 +1137,7 @@ internal fun wrapTavernHtml(html: String, themeSurface: String, themeOnSurface: 
                 overflow-y: auto !important;
                 overflow-x: hidden !important;
             }
+            $dialogueQuoteCss
         </style>
         ${tavernAutoContrastScript(themeSurface, themeOnSurface)}
     """.trimIndent()
@@ -1336,26 +1330,27 @@ private fun StreamingBubble(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
         )
-        Card(
-            modifier = Modifier.widthIn(max = 320.dp),
-            shape = RoundedCornerShape(
-                topStart = 12.dp,
-                topEnd = 12.dp,
-                bottomStart = 4.dp,
-                bottomEnd = 12.dp,
-            ),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            ),
-        ) {
-            TavernMessageContent(
-                segments = segments,
-                availableMaxHeight = availableMaxHeight,
-                isUser = false,
-                tavernRuntime = tavernRuntime,
-                onHtmlBoundaryDrag = onHtmlBoundaryDrag,
-            )
-        }
+        TavernMessageContent(
+            segments = segments,
+            availableMaxHeight = availableMaxHeight,
+            isUser = false,
+            highlightDialogue = true,
+            modifier = Modifier.fillMaxWidth(),
+            tavernRuntime = tavernRuntime,
+            onHtmlBoundaryDrag = onHtmlBoundaryDrag,
+        )
+    }
+}
+
+private fun dialogueAnnotatedString(
+    text: String,
+    color: androidx.compose.ui.graphics.Color,
+    enabled: Boolean,
+): AnnotatedString = buildAnnotatedString {
+    append(text)
+    if (!enabled) return@buildAnnotatedString
+    DialogueQuoteHighlighter.findRanges(text).forEach { range ->
+        addStyle(SpanStyle(color = color), range.first, range.last + 1)
     }
 }
 
