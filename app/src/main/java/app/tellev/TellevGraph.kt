@@ -126,6 +126,12 @@ class TellevGraph private constructor(
                         chatCompletionsPath = "/chat/completions",
                     ),
                     OpenAiCompatibleAdapter(
+                        providerId = ProviderCatalog.TELLEVCLICK,
+                        providerDisplayName = "tellevclick",
+                        modelsPath = "/models",
+                        chatCompletionsPath = "/chat/completions",
+                    ),
+                    OpenAiCompatibleAdapter(
                         providerId = ProviderCatalog.VOLCENGINE_CODING_PLAN,
                         providerDisplayName = "火山引擎 Coding Plan",
                         modelsPath = "/models",

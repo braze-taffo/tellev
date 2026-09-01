@@ -6,6 +6,7 @@ object ProviderCatalog {
     const val GEMINI = "gemini"
     const val OPENROUTER = "openrouter"
     const val DEEPSEEK = "deepseek"
+    const val TELLEVCLICK = "tellevclick"
     const val VOLCENGINE_CODING_PLAN = "volcengine-coding-plan"
     const val NOVELAI = "novelai"
     const val KOBOLD = "kobold"
@@ -34,6 +35,7 @@ object ProviderCatalog {
         GEMINI,
         OPENROUTER,
         DEEPSEEK,
+        TELLEVCLICK,
         VOLCENGINE_CODING_PLAN,
         NOVELAI,
         KOBOLD,

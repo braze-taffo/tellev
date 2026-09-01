@@ -48,6 +48,12 @@ data class OpenAiCompatibilitySettings(
                     supportsTools = true,
                     supportsReasoning = true,
                 )
+            } else if (providerId == ProviderCatalog.TELLEVCLICK) {
+                // Base URL already carries the /v1 version segment.
+                OpenAiCompatibilitySettings(
+                    modelsPath = "/models",
+                    chatCompletionsPath = "/chat/completions",
+                )
             } else {
                 OpenAiCompatibilitySettings()
             }
