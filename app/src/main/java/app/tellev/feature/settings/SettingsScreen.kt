@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.ui.draw.clip
@@ -25,11 +26,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -40,8 +44,10 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.MoreVert
@@ -74,6 +80,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -97,8 +104,11 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.PresetCategory
+import app.tellev.core.model.PresetPrompt
 import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.ProviderConfigPersistence
 import kotlinx.serialization.json.Json
@@ -1605,269 +1615,492 @@ private fun PresetEditDialog(
     var rawText by remember(preset) { mutableStateOf(preset.raw.toString()) }
     var validationError by remember(preset) { mutableStateOf<String?>(null) }
     var targetName by remember(preset) { mutableStateOf("") }
-    var prompts by remember(preset) { mutableStateOf(preset.prompts.sortedBy { it.order }) }
+    var promptEntries by remember(preset) { mutableStateOf(editablePresetPrompts(preset)) }
+    var expandedPromptIds by remember(preset) { mutableStateOf(emptySet<String>()) }
+    var generationExpanded by remember(preset) { mutableStateOf(false) }
+    var rawJsonExpanded by remember(preset) { mutableStateOf(false) }
+
+    val regexCount = (preset.extensions["regex_scripts"] as? JsonArray)?.size ?: 0
+    val preservedRoutingFields = preset.raw.keys.intersect(setOf(
+        "chat_completion_source", "openai_model", "claude_model", "openrouter_model",
+        "custom_model", "custom_url", "reverse_proxy", "proxy_password", "api_key", "model",
+    ))
+    val unsupportedFields = effectiveUnsupportedPresetFields(preset)
 
     fun editedPreset(): GenerationPreset? {
         val raw = runCatching { Json.parseToJsonElement(rawText) as? JsonObject }.getOrNull()
         if (raw == null) {
             validationError = "原始字段必须是有效的 JSON 对象"
+            rawJsonExpanded = true
             return null
         }
-        return preset.copy(
-            temperature = temperature.toDoubleOrNull(),
-            topP = topP.toDoubleOrNull(),
-            topK = topK.toIntOrNull(),
-            maxContextTokens = maxContext.toIntOrNull(),
-            maxCompletionTokens = maxCompletion.toIntOrNull(),
-            maxTokens = maxCompletion.toIntOrNull(),
-            prompts = prompts.mapIndexed { index, prompt -> prompt.copy(order = index) },
-            raw = raw,
+        return presetWithEditablePrompts(
+            preset = preset.copy(
+                temperature = temperature.toDoubleOrNull(),
+                topP = topP.toDoubleOrNull(),
+                topK = topK.toIntOrNull(),
+                maxContextTokens = maxContext.toIntOrNull(),
+                maxCompletionTokens = maxCompletion.toIntOrNull(),
+                maxTokens = maxCompletion.toIntOrNull(),
+                raw = raw,
+            ),
+            entries = promptEntries,
         )
     }
 
-    fun updatePrompt(index: Int, transform: (app.tellev.core.model.PresetPrompt) -> app.tellev.core.model.PresetPrompt) {
-        prompts = prompts.toMutableList().also { it[index] = transform(it[index]) }
+    fun updatePrompt(index: Int, transform: (EditablePresetPrompt) -> EditablePresetPrompt) {
+        promptEntries = promptEntries.toMutableList().also { it[index] = transform(it[index]) }
     }
 
     fun movePrompt(from: Int, to: Int) {
-        if (to !in prompts.indices) return
-        prompts = prompts.toMutableList().also { list ->
+        if (to !in promptEntries.indices) return
+        promptEntries = promptEntries.toMutableList().also { list ->
             val item = list.removeAt(from)
             list.add(to, item)
         }
     }
 
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("查看与编辑预设：${preset.name}") },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    text = "分类：${preset.category.name.lowercase()} · 文件：${preset.id}.json",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                val regexCount = (preset.extensions["regex_scripts"] as? JsonArray)?.size ?: 0
-                val preservedRoutingFields = preset.raw.keys.intersect(setOf(
-                    "chat_completion_source", "openai_model", "claude_model", "openrouter_model",
-                    "custom_model", "custom_url", "reverse_proxy", "proxy_password", "api_key", "model",
-                ))
-                val unsupportedFields = effectiveUnsupportedPresetFields(preset)
-                Text(
-                    text = "当前实际使用：${preset.category.name.lowercase()}；采样参数 ${listOfNotNull(preset.temperature, preset.topP, preset.topK).size} 项；启用提示词 ${preset.prompts.count { it.enabled }} 条；正则 $regexCount 条。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (preservedRoutingFields.isNotEmpty()) {
-                    Text(
-                        text = "已保留、未应用：${preservedRoutingFields.sorted().joinToString()}（预设不会切换服务商、接口、密钥或模型）",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.tertiary,
-                    )
-                }
-                if (unsupportedFields.isNotEmpty()) {
-                    Text(
-                        text = "尚未进入运行链路：${unsupportedFields.sorted().joinToString(limit = 16, truncated = "…")}。字段仍会原样保留和导出。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                OutlinedTextField(
-                    value = targetName,
-                    onValueChange = { targetName = it },
-                    label = { Text("另存为 / 重命名后的名称") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = temperature,
-                    onValueChange = { temperature = it },
-                    label = { Text("Temperature") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = topP,
-                    onValueChange = { topP = it },
-                    label = { Text("Top-P") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = topK,
-                    onValueChange = { topK = it },
-                    label = { Text("Top-K") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = maxContext,
-                    onValueChange = { maxContext = it.filter(Char::isDigit) },
-                    label = { Text("最大上下文 Token") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = maxCompletion,
-                    onValueChange = { maxCompletion = it.filter(Char::isDigit) },
-                    label = { Text("最大回复 Token") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = rawText,
-                    onValueChange = {
-                        rawText = it
-                        validationError = null
-                    },
-                    label = { Text("高级原始 JSON（未知字段会保留）") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 6,
-                    maxLines = 12,
-                    supportingText = {
-                        Text(validationError ?: "可直接查看或编辑供应商专有字段；保存前会校验 JSON 对象。")
-                    },
-                    isError = validationError != null,
-                )
-                if (prompts.isNotEmpty()) {
-                    Text("提示词顺序", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "长按提示词卡片并上下拖动，也可使用上移/下移按钮。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    prompts.forEachIndexed { index, prompt ->
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .pointerInput(prompt.identifier, index, prompts.size) {
-                                    var accumulatedY = 0f
-                                    val threshold = 72.dp.toPx()
-                                    detectDragGesturesAfterLongPress(
-                                        onDragEnd = { accumulatedY = 0f },
-                                        onDragCancel = { accumulatedY = 0f },
-                                        onDrag = { change, amount ->
-                                            change.consume()
-                                            accumulatedY += amount.y
-                                            when {
-                                                accumulatedY <= -threshold && index > 0 -> {
-                                                    movePrompt(index, index - 1)
-                                                    accumulatedY = 0f
-                                                }
-                                                accumulatedY >= threshold && index < prompts.lastIndex -> {
-                                                    movePrompt(index, index + 1)
-                                                    accumulatedY = 0f
-                                                }
-                                            }
-                                        },
-                                    )
-                                },
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(prompt.name.ifBlank { prompt.identifier }, modifier = Modifier.weight(1f))
-                                    Switch(
-                                        checked = prompt.enabled,
-                                        onCheckedChange = { enabled ->
-                                            updatePrompt(index) { it.copy(enabled = enabled) }
-                                        },
-                                    )
-                                }
-                                OutlinedTextField(
-                                    value = prompt.role,
-                                    onValueChange = { role -> updatePrompt(index) { it.copy(role = role) } },
-                                    label = { Text("Role") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true,
-                                )
-                                if (prompt.content.isNotEmpty() || prompt.identifier !in setOf(
-                                        "main", "worldInfoBefore", "worldInfoAfter", "charDescription",
-                                        "charPersonality", "scenario", "personaDescription", "dialogueExamples", "chatHistory",
-                                    )
-                                ) {
-                                    OutlinedTextField(
-                                        value = prompt.content,
-                                        onValueChange = { content -> updatePrompt(index) { it.copy(content = content) } },
-                                        label = { Text("Content") },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        minLines = 2,
-                                    )
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    Text("In-chat", modifier = Modifier.weight(1f))
-                                    Switch(
-                                        checked = prompt.relative,
-                                        onCheckedChange = { relative ->
-                                            updatePrompt(index) { it.copy(relative = relative) }
-                                        },
-                                    )
-                                    OutlinedTextField(
-                                        value = prompt.depth.toString(),
-                                        onValueChange = { value ->
-                                            value.filter(Char::isDigit).toIntOrNull()?.let { depth ->
-                                                updatePrompt(index) { it.copy(depth = depth) }
-                                            }
-                                        },
-                                        label = { Text("Depth") },
-                                        modifier = Modifier.width(96.dp),
-                                        singleLine = true,
-                                    )
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    TextButton(onClick = { movePrompt(index, index - 1) }, enabled = index > 0) {
-                                        Text("上移")
-                                    }
-                                    TextButton(
-                                        onClick = { movePrompt(index, index + 1) },
-                                        enabled = index < prompts.lastIndex,
-                                    ) { Text("下移") }
-                                }
-                            }
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding(),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(
+                                text = preset.name,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = "${preset.category.name.lowercase()} · ${preset.id}.json",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
-                    }
-                    if (preset.promptsUnused.isNotEmpty()) {
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, contentDescription = "关闭预设编辑器")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { editedPreset()?.let(onSave) }) {
+                            Icon(Icons.Default.Save, contentDescription = "保存预设")
+                        }
+                    },
+                )
+
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    item(key = "preset_summary") {
                         Text(
-                            "未使用提示词：${preset.promptsUnused.joinToString { it.name.ifBlank { it.identifier } }}",
+                            text = "启用 ${promptEntries.count { !it.isUnused && it.prompt.enabled }} 条提示词 · 正则 $regexCount 条",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+
+                    item(key = "generation_header") {
+                        PresetEditorSectionHeader(
+                            title = "生成参数",
+                            subtitle = "Temperature、Top-P、Token 上限及文件操作",
+                            expanded = generationExpanded,
+                            onClick = { generationExpanded = !generationExpanded },
+                        )
+                    }
+                    if (generationExpanded) {
+                        item(key = "generation_fields") {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                OutlinedTextField(
+                                    value = targetName,
+                                    onValueChange = { targetName = it },
+                                    label = { Text("另存为 / 重命名后的名称") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = temperature,
+                                        onValueChange = { temperature = it },
+                                        label = { Text("Temperature") },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true,
+                                    )
+                                    OutlinedTextField(
+                                        value = topP,
+                                        onValueChange = { topP = it },
+                                        label = { Text("Top-P") },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true,
+                                    )
+                                }
+                                OutlinedTextField(
+                                    value = topK,
+                                    onValueChange = { topK = it },
+                                    label = { Text("Top-K") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                )
+                                OutlinedTextField(
+                                    value = maxContext,
+                                    onValueChange = { maxContext = it.filter(Char::isDigit) },
+                                    label = { Text("最大上下文 Token") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                )
+                                OutlinedTextField(
+                                    value = maxCompletion,
+                                    onValueChange = { maxCompletion = it.filter(Char::isDigit) },
+                                    label = { Text("最大回复 Token") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                )
+                            }
+                        }
+                    }
+
+                    item(key = "raw_header") {
+                        PresetEditorSectionHeader(
+                            title = "高级原始 JSON",
+                            subtitle = "未知字段保持原样并随预设导出",
+                            expanded = rawJsonExpanded,
+                            onClick = { rawJsonExpanded = !rawJsonExpanded },
+                        )
+                    }
+                    if (rawJsonExpanded) {
+                        item(key = "raw_fields") {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (preservedRoutingFields.isNotEmpty()) {
+                                    Text(
+                                        text = "已保留、未应用：${preservedRoutingFields.sorted().joinToString()}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                    )
+                                }
+                                if (unsupportedFields.isNotEmpty()) {
+                                    Text(
+                                        text = "尚未进入运行链路：${unsupportedFields.sorted().joinToString(limit = 16, truncated = "…")}。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                OutlinedTextField(
+                                    value = rawText,
+                                    onValueChange = {
+                                        rawText = it
+                                        validationError = null
+                                    },
+                                    label = { Text("原始 JSON") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    minLines = 8,
+                                    maxLines = 18,
+                                    supportingText = {
+                                        Text(validationError ?: "保存前会校验 JSON 对象。")
+                                    },
+                                    isError = validationError != null,
+                                )
+                            }
+                        }
+                    }
+
+                    item(key = "prompts_title") {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("提示词顺序", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "点击展开；长按拖动手柄排序。未使用项可直接启用。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
+                    itemsIndexed(
+                        items = promptEntries,
+                        key = { _, entry -> entry.prompt.identifier },
+                    ) { index, entry ->
+                        val prompt = entry.prompt
+                        val expanded = prompt.identifier in expandedPromptIds
+                        val effectivelyEnabled = !entry.isUnused && prompt.enabled
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .animateContentSize(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (effectivelyEnabled) {
+                                    MaterialTheme.colorScheme.surfaceVariant
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                },
+                            ),
+                        ) {
+                            Column {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            expandedPromptIds = if (expanded) {
+                                                expandedPromptIds - prompt.identifier
+                                            } else {
+                                                expandedPromptIds + prompt.identifier
+                                            }
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        Icons.Default.DragHandle,
+                                        contentDescription = "长按拖动排序",
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .padding(6.dp)
+                                            .pointerInput(prompt.identifier, index, promptEntries.size) {
+                                                var accumulatedY = 0f
+                                                val threshold = 56.dp.toPx()
+                                                detectDragGesturesAfterLongPress(
+                                                    onDragEnd = { accumulatedY = 0f },
+                                                    onDragCancel = { accumulatedY = 0f },
+                                                    onDrag = { change, amount ->
+                                                        change.consume()
+                                                        accumulatedY += amount.y
+                                                        when {
+                                                            accumulatedY <= -threshold && index > 0 -> {
+                                                                movePrompt(index, index - 1)
+                                                                accumulatedY = 0f
+                                                            }
+                                                            accumulatedY >= threshold && index < promptEntries.lastIndex -> {
+                                                                movePrompt(index, index + 1)
+                                                                accumulatedY = 0f
+                                                            }
+                                                        }
+                                                    },
+                                                )
+                                            },
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = prompt.name.ifBlank { prompt.identifier },
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            color = if (effectivelyEnabled) {
+                                                MaterialTheme.colorScheme.onSurface
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                        )
+                                        Text(
+                                            text = buildString {
+                                                append(prompt.role.ifBlank { "system" })
+                                                if (prompt.relative) append(" · In-chat D:${prompt.depth}")
+                                                if (entry.isUnused) append(" · 未加入顺序")
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    Switch(
+                                        checked = effectivelyEnabled,
+                                        onCheckedChange = { enabled ->
+                                            updatePrompt(index) { current ->
+                                                current.copy(
+                                                    prompt = current.prompt.copy(enabled = enabled),
+                                                    isUnused = if (enabled) false else current.isUnused,
+                                                )
+                                            }
+                                        },
+                                    )
+                                    Icon(
+                                        if (expanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = if (expanded) "收起" else "展开",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+
+                                if (expanded) {
+                                    HorizontalDivider()
+                                    Column(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        OutlinedTextField(
+                                            value = prompt.role,
+                                            onValueChange = { role ->
+                                                updatePrompt(index) { current ->
+                                                    current.copy(prompt = current.prompt.copy(role = role))
+                                                }
+                                            },
+                                            label = { Text("Role") },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true,
+                                        )
+                                        if (prompt.content.isNotEmpty() || prompt.identifier !in BUILT_IN_PROMPT_SLOTS) {
+                                            OutlinedTextField(
+                                                value = prompt.content,
+                                                onValueChange = { content ->
+                                                    updatePrompt(index) { current ->
+                                                        current.copy(prompt = current.prompt.copy(content = content))
+                                                    }
+                                                },
+                                                label = { Text("Content") },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                minLines = 3,
+                                            )
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            Text("In-chat", modifier = Modifier.weight(1f))
+                                            Switch(
+                                                checked = prompt.relative,
+                                                onCheckedChange = { relative ->
+                                                    updatePrompt(index) { current ->
+                                                        current.copy(prompt = current.prompt.copy(relative = relative))
+                                                    }
+                                                },
+                                            )
+                                            OutlinedTextField(
+                                                value = prompt.depth.toString(),
+                                                onValueChange = { value ->
+                                                    value.filter(Char::isDigit).toIntOrNull()?.let { depth ->
+                                                        updatePrompt(index) { current ->
+                                                            current.copy(prompt = current.prompt.copy(depth = depth))
+                                                        }
+                                                    }
+                                                },
+                                                label = { Text("Depth") },
+                                                modifier = Modifier.width(96.dp),
+                                                singleLine = true,
+                                            )
+                                        }
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            TextButton(
+                                                onClick = { movePrompt(index, index - 1) },
+                                                enabled = index > 0,
+                                            ) { Text("上移") }
+                                            TextButton(
+                                                onClick = { movePrompt(index, index + 1) },
+                                                enabled = index < promptEntries.lastIndex,
+                                            ) { Text("下移") }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Surface(shadowElevation = 6.dp) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(onClick = onDismiss) { Text("取消") }
+                        TextButton(
+                            onClick = { editedPreset()?.let { onSaveAs(it, targetName) } },
+                            enabled = targetName.isNotBlank(),
+                        ) { Text("另存为") }
+                        TextButton(
+                            onClick = { editedPreset()?.let { onRename(it, targetName) } },
+                            enabled = targetName.isNotBlank(),
+                        ) { Text("重命名") }
+                        TextButton(onClick = { editedPreset()?.let(onSave) }) { Text("保存") }
+                    }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                editedPreset()?.let(onSave)
-            }) { Text("保存") }
-        },
-        dismissButton = {
-            Row {
-                TextButton(onClick = onDismiss) { Text("取消") }
-                TextButton(
-                    onClick = { editedPreset()?.let { onSaveAs(it, targetName) } },
-                    enabled = targetName.isNotBlank(),
-                ) { Text("另存为") }
-                TextButton(
-                    onClick = { editedPreset()?.let { onRename(it, targetName) } },
-                    enabled = targetName.isNotBlank(),
-                ) { Text("重命名") }
-            }
-        },
-    )
+        }
+    }
 }
+
+internal data class EditablePresetPrompt(
+    val prompt: PresetPrompt,
+    val isUnused: Boolean,
+)
+
+internal fun editablePresetPrompts(preset: GenerationPreset): List<EditablePresetPrompt> {
+    val active = preset.prompts.sortedBy { it.order }
+    val activeIds = active.mapTo(mutableSetOf()) { it.identifier }
+    return active.map { EditablePresetPrompt(it, isUnused = false) } +
+        preset.promptsUnused
+            .filterNot { it.identifier in activeIds }
+            .map { EditablePresetPrompt(it, isUnused = true) }
+}
+
+internal fun presetWithEditablePrompts(
+    preset: GenerationPreset,
+    entries: List<EditablePresetPrompt>,
+): GenerationPreset {
+    val active = entries.filterNot { it.isUnused }.mapIndexed { index, entry ->
+        entry.prompt.copy(order = index)
+    }
+    val unused = entries.filter { it.isUnused }.map { it.prompt }
+    return preset.copy(prompts = active, promptsUnused = unused)
+}
+
+@Composable
+private fun PresetEditorSectionHeader(
+    title: String,
+    subtitle: String,
+    expanded: Boolean,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                if (expanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = if (expanded) "收起" else "展开",
+            )
+        }
+    }
+}
+
+private val BUILT_IN_PROMPT_SLOTS = setOf(
+    "main",
+    "worldInfoBefore",
+    "worldInfoAfter",
+    "charDescription",
+    "charPersonality",
+    "scenario",
+    "personaDescription",
+    "dialogueExamples",
+    "chatHistory",
+)
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
