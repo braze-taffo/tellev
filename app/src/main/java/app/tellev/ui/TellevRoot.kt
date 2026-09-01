@@ -227,7 +227,10 @@ fun TellevRoot() {
         ) {
             // Chat tab - single screen
             composable(TellevTab.Chat.route) {
-                ChatScreen(viewModel = chatViewModel)
+                ChatScreen(
+                    viewModel = chatViewModel,
+                    bottomBarReserve = innerPadding.calculateBottomPadding(),
+                )
             }
 
             // Characters tab with sub-navigation

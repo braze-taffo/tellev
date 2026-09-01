@@ -24,7 +24,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -120,7 +120,11 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
+fun ChatScreen(
+    viewModel: ChatViewModel,
+    bottomBarReserve: Dp = 0.dp,
+    modifier: Modifier = Modifier,
+) {
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -149,6 +153,7 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
             ChatContentScreen(
                 state = state,
                 viewModel = viewModel,
+                bottomBarReserve = bottomBarReserve,
                 modifier = Modifier.padding(padding),
             )
         }
@@ -250,6 +255,7 @@ private fun CharacterPickerScreen(
 private fun ChatContentScreen(
     state: ChatUiState,
     viewModel: ChatViewModel,
+    bottomBarReserve: Dp,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -328,7 +334,15 @@ private fun ChatContentScreen(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize().imePadding()) {
+    // ime inset 是从窗口底部算起的，而根部 Scaffold 已经为底部导航栏预留了
+    // bottomBarReserve；直接 imePadding 会把导航栏高度再垫一遍，输入栏与键盘
+    // 之间出现一条导航栏高度的空白。这里只补超出导航栏的那部分。
+    val density = LocalDensity.current
+    val bottomBarReservePx = with(density) { bottomBarReserve.toPx() }
+    val imeExtraPx = maxOf(WindowInsets.ime.getBottom(density) - bottomBarReservePx, 0f)
+    val imeExtraPadding = with(density) { imeExtraPx.toDp() }
+
+    Column(modifier = modifier.fillMaxSize().padding(bottom = imeExtraPadding)) {
         TopAppBar(
             title = {
                 Column {
@@ -456,7 +470,14 @@ private fun ChatContentScreen(
                 .weight(1f)
                 .fillMaxWidth(),
         ) {
-            val htmlPanelMaxHeight = if (maxHeight > 112.dp) maxHeight - 112.dp else maxHeight
+            // 键盘弹出会压小列表可视高度；加回被压掉的部分得到与键盘收起时
+            // 一致的上限（用 px 相加，键盘动画期间逐帧严格相等），打字时
+            // WebView 面板（含卡片插图）才不会等比跳缩重排。
+            val panelViewportHeight = with(density) {
+                (constraints.maxHeight + imeExtraPx).toDp()
+            }
+            val htmlPanelMaxHeight =
+                if (panelViewportHeight > 112.dp) panelViewportHeight - 112.dp else panelViewportHeight
 
             // Per-session background: full-bleed image with a surface-tinted
             // scrim so bubbles of both roles keep readable contrast.
