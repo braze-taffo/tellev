@@ -30,7 +30,9 @@ private val ClassicDarkColors = darkColorScheme(
 
 // Warm terracotta palette anchored on #D97757. Unlike Classic, every
 // container/surface role the app reads is overridden so no Material3
-// baseline (purple) defaults can leak through.
+// baseline (purple) defaults can leak through. This includes the tonal
+// surface set (surfaceContainer and friends) which NavigationBar, menus
+// and dialogs resolve through in material3 1.3.x.
 private val WarmLightColors = lightColorScheme(
     primary = Color(0xFFD97757),
     onPrimary = Color.White,
@@ -38,7 +40,9 @@ private val WarmLightColors = lightColorScheme(
     onPrimaryContainer = Color(0xFF5B2313),
     secondary = Color(0xFF75564B),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFF1E1DA),
+    // One step deeper than the nav-bar surfaceContainer so the selected-tab
+    // indicator pill stays distinguishable on the warm bar.
+    secondaryContainer = Color(0xFFF1D9CC),
     onSecondaryContainer = Color(0xFF2A1710),
     tertiary = Color(0xFF9A5C1F),
     onTertiary = Color.White,
@@ -50,6 +54,13 @@ private val WarmLightColors = lightColorScheme(
     onSurface = Color(0xFF1D1B19),
     surfaceVariant = Color(0xFFEAE1D9),
     onSurfaceVariant = Color(0xFF544D46),
+    surfaceDim = Color(0xFFE9DAD0),
+    surfaceBright = Color(0xFFFEFAF7),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFFCF5EF),
+    surfaceContainer = Color(0xFFF7EDE5),
+    surfaceContainerHigh = Color(0xFFF1E5DB),
+    surfaceContainerHighest = Color(0xFFEBDCD1),
 )
 
 private val WarmDarkColors = darkColorScheme(
@@ -71,6 +82,13 @@ private val WarmDarkColors = darkColorScheme(
     onSurface = Color(0xFFE9E1DB),
     surfaceVariant = Color(0xFF322A26),
     onSurfaceVariant = Color(0xFFCDC2BA),
+    surfaceDim = Color(0xFF141111),
+    surfaceBright = Color(0xFF3C3430),
+    surfaceContainerLowest = Color(0xFF0F0C0B),
+    surfaceContainerLow = Color(0xFF1D1816),
+    surfaceContainer = Color(0xFF221C19),
+    surfaceContainerHigh = Color(0xFF2C2521),
+    surfaceContainerHighest = Color(0xFF362E2A),
 )
 
 @Composable
