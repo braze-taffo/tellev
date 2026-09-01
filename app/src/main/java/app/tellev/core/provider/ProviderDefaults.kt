@@ -13,6 +13,7 @@ object ProviderDefaults {
         ProviderCatalog.GEMINI -> "https://generativelanguage.googleapis.com"
         ProviderCatalog.OPENROUTER -> "https://openrouter.ai"
         ProviderCatalog.DEEPSEEK -> "https://api.deepseek.com"
+        ProviderCatalog.TELLEVCLICK -> "https://tellev.click/v1"
         ProviderCatalog.VOLCENGINE_CODING_PLAN -> "https://ark.cn-beijing.volces.com/api/v3"
         ProviderCatalog.OLLAMA -> "http://localhost:11434"
         ProviderCatalog.KOBOLD -> "http://localhost:5000"

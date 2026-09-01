@@ -1175,7 +1175,7 @@ class FileStDataStore(
 
     private fun resolvePresetDirectory(providerType: String): Path {
         return when (providerType.lowercase()) {
-            "openai", "openai compatible", "openai-compatible", "deepseek", "volcengine-coding-plan" -> layout.openAiSettings
+            "openai", "openai compatible", "openai-compatible", "deepseek", "tellevclick", "volcengine-coding-plan" -> layout.openAiSettings
             "textgen", "textgen-webui" -> layout.textGenSettings
             "kobold", "koboldai" -> layout.koboldAiSettings
             "novelai" -> layout.novelAiSettings

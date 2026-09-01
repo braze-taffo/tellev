@@ -39,6 +39,7 @@ import app.tellev.core.storage.FileStDataStore
 import app.tellev.core.storage.StDataStore
 import app.tellev.core.storage.StDirectoryLayout
 import app.tellev.core.update.UpdateChecker
+import app.tellev.ui.theme.parseThemeAccent
 import app.tellev.ui.theme.parseThemeMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -69,6 +70,12 @@ class TellevGraph private constructor(
      * Seeded from AppPreferences and updated by SettingsViewModel.setThemeMode.
      */
     val themeModeFlow = MutableStateFlow(parseThemeMode(appPreferences.themeModeName))
+
+    /**
+     * Current accent palette preference, mirrored the same way as
+     * [themeModeFlow] and updated by SettingsViewModel.setThemeAccent.
+     */
+    val themeAccentFlow = MutableStateFlow(parseThemeAccent(appPreferences.themeAccentName))
 
     /**
      * Persist updated compat-module settings and push them to every
@@ -118,7 +125,9 @@ class TellevGraph private constructor(
                                 providerId = ProviderCatalog.BETA_RELAY,
                                 providerDisplayName = BetaRelayConfig.DISPLAY_NAME,
                                 defaultModel = betaConfig.model,
-                                supportsModelListing = false,
+                                modelsPath = "/models",
+                                chatCompletionsPath = "/chat/completions",
+                                supportsModelListing = true,
                                 includeUsageByDefault = true,
                             ),
                         )
@@ -130,6 +139,12 @@ class TellevGraph private constructor(
                         providerId = ProviderCatalog.DEEPSEEK,
                         providerDisplayName = "DeepSeek",
                         defaultModel = "deepseek-v4-flash",
+                        modelsPath = "/models",
+                        chatCompletionsPath = "/chat/completions",
+                    ),
+                    OpenAiCompatibleAdapter(
+                        providerId = ProviderCatalog.TELLEVCLICK,
+                        providerDisplayName = "tellevclick",
                         modelsPath = "/models",
                         chatCompletionsPath = "/chat/completions",
                     ),

@@ -42,5 +42,8 @@ object MarkdownRenderer {
     fun looksLikeMarkdown(text: String): Boolean =
         text.length > 8 && feature.containsMatchIn(text)
 
-    fun render(markdown: String): String = renderer.render(parser.parse(markdown))
+    fun render(markdown: String, highlightDialogue: Boolean = false): String {
+        val source = if (highlightDialogue) DialogueQuoteHighlighter.wrapForMarkdown(markdown) else markdown
+        return renderer.render(parser.parse(source))
+    }
 }

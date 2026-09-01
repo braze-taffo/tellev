@@ -8,8 +8,8 @@ import androidx.lifecycle.viewModelScope
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.Persona
 import app.tellev.core.model.PresetCategory
-import app.tellev.core.provider.ProviderAdapter
 import app.tellev.core.provider.BetaRelayConfig
+import app.tellev.core.provider.ProviderAdapter
 import app.tellev.core.provider.ProviderConfig
 import app.tellev.core.provider.ProviderConfigPersistence
 import app.tellev.core.provider.CustomProviderConfig
@@ -22,7 +22,9 @@ import app.tellev.core.provider.OpenAiCompatibilitySettings
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.AppPreferences
 import app.tellev.core.storage.StDataStore
+import app.tellev.ui.theme.ThemeAccent
 import app.tellev.ui.theme.ThemeMode
+import app.tellev.ui.theme.parseThemeAccent
 import app.tellev.ui.theme.parseThemeMode
 import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
@@ -41,8 +43,7 @@ import java.util.UUID
 
 data class SettingsUiState(
     val providers: List<ProviderAdapter> = emptyList(),
-    val selectedProviderId: String = ProviderDefaults.selectedProviderId(),
-    val isManagedProvider: Boolean = false,
+    val selectedProviderId: String = "openai-compatible",
     // User-defined named OpenAI-compatible endpoints. The selectedProviderId may
     // be `custom:{id}` to address one of these.
     val customConfigs: List<CustomProviderConfig> = emptyList(),
@@ -60,6 +61,7 @@ data class SettingsUiState(
     val personas: List<Persona> = emptyList(),
     val secretIds: List<String> = emptyList(),
     val themeMode: ThemeMode = ThemeMode.System,
+    val themeAccent: ThemeAccent = ThemeAccent.Warm,
     val isLoading: Boolean = false,
     val error: String? = null,
     val info: String? = null,
@@ -72,6 +74,7 @@ class SettingsViewModel(
     private val secretStore: SecretStore,
     private val appPreferences: AppPreferences,
     private val themeModeFlow: MutableStateFlow<ThemeMode>,
+    private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
 ) : ViewModel() {
 
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
@@ -135,7 +138,6 @@ class SettingsViewModel(
                     it.copy(
                         providers = providers,
                         selectedProviderId = selectedId,
-                        isManagedProvider = fields.isManaged,
                         customConfigs = customConfigs,
                         customConfigName = fields.customConfigName,
                         presets = presets,
@@ -143,9 +145,15 @@ class SettingsViewModel(
                         personas = personas,
                         secretIds = secretIds,
                         themeMode = parseThemeMode(appPreferences.themeModeName),
+                        themeAccent = parseThemeAccent(appPreferences.themeAccentName),
                         baseUrl = fields.baseUrl,
                         apiKey = fields.apiKey,
                         model = fields.model,
+                        availableModels = if (ProviderConfigPersistence.isManagedConfigId(selectedId)) {
+                            BetaRelayConfig.knownModels
+                        } else {
+                            emptyList()
+                        },
                         compatibility = fields.compatibility,
                         extraHeadersJson = json.encodeToString(fields.compatibility.headers),
                         extraBodyJson = json.encodeToString(JsonObject.serializer(), fields.compatibility.extraBody),
@@ -164,7 +172,6 @@ class SettingsViewModel(
     }
 
     private data class ConfigFields(
-        val isManaged: Boolean,
         val customConfigName: String,
         val baseUrl: String,
         val apiKey: String,
@@ -179,18 +186,18 @@ class SettingsViewModel(
     ): ConfigFields {
         if (ProviderConfigPersistence.isManagedConfigId(selectedId)) {
             return ConfigFields(
-                isManaged = true,
                 customConfigName = "",
                 baseUrl = "",
                 apiKey = "",
-                model = BetaRelayConfig.DISPLAY_NAME,
-                compatibility = OpenAiCompatibilitySettings(),
+                model = secretStore.readSecret("provider-$selectedId-model")
+                    ?.takeIf { it in BetaRelayConfig.knownModels }
+                    ?: BetaRelayConfig.providerConfig().model.orEmpty(),
+                compatibility = OpenAiCompatibilitySettings.defaults(ProviderCatalog.TELLEVCLICK),
             )
         }
         if (ProviderConfigPersistence.isCustomConfigId(selectedId)) {
             val config = customConfigs.firstOrNull { it.id == ProviderConfigPersistence.customIdFrom(selectedId) }
             return ConfigFields(
-                isManaged = false,
                 customConfigName = config?.name ?: "",
                 baseUrl = config?.baseUrl ?: "",
                 apiKey = config?.apiKey ?: "",
@@ -199,7 +206,6 @@ class SettingsViewModel(
             )
         }
         return ConfigFields(
-            isManaged = false,
             customConfigName = "",
             baseUrl = secretStore.readSecret("provider-$selectedId-baseurl")
                 ?: ProviderDefaults.baseUrl(selectedId),
@@ -231,7 +237,6 @@ class SettingsViewModel(
                 _uiState.update {
                     it.copy(
                         customConfigs = customConfigs,
-                        isManagedProvider = fields.isManaged,
                         customConfigName = fields.customConfigName,
                         baseUrl = fields.baseUrl,
                         apiKey = fields.apiKey,
@@ -240,7 +245,11 @@ class SettingsViewModel(
                         extraHeadersJson = json.encodeToString(fields.compatibility.headers),
                         extraBodyJson = json.encodeToString(JsonObject.serializer(), fields.compatibility.extraBody),
                         isLoading = false,
-                        availableModels = emptyList(),
+                        availableModels = if (ProviderConfigPersistence.isManagedConfigId(id)) {
+                            BetaRelayConfig.knownModels
+                        } else {
+                            emptyList()
+                        },
                         info = if (activate) "已切换到“${providerDisplayName(id, customConfigs)}”。" else it.info,
                     )
                 }
@@ -349,10 +358,14 @@ class SettingsViewModel(
                 secretStore.putSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID, providerId)
 
                 if (ProviderConfigPersistence.isManagedConfigId(providerId)) {
+                    val model = state.model.takeIf { it in BetaRelayConfig.knownModels }
+                        ?: BetaRelayConfig.providerConfig().model.orEmpty()
+                    secretStore.putSecret("provider-$providerId-model", model)
                     _uiState.update {
                         it.copy(
+                            model = model,
                             isLoading = false,
-                            info = "免费测试通道已启用。",
+                            info = "内置测试通道的模型选择已保存。",
                         )
                     }
                 } else if (ProviderConfigPersistence.isCustomConfigId(providerId)) {
@@ -445,7 +458,6 @@ class SettingsViewModel(
                     it.copy(
                         customConfigs = updated,
                         selectedProviderId = selectedId,
-                        isManagedProvider = false,
                         customConfigName = name,
                         baseUrl = "",
                         apiKey = "",
@@ -477,14 +489,13 @@ class SettingsViewModel(
                 if (wasSelected) {
                     val fallback = updated.firstOrNull()
                         ?.let { ProviderConfigPersistence.selectedIdFor(it.id) }
-                        ?: ProviderDefaults.selectedProviderId()
+                        ?: "openai-compatible"
                     secretStore.putSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID, fallback)
                     val fields = loadConfigFields(fallback, updated)
                     _uiState.update {
                         it.copy(
                             customConfigs = updated,
                             selectedProviderId = fallback,
-                            isManagedProvider = fields.isManaged,
                             customConfigName = fields.customConfigName,
                             baseUrl = fields.baseUrl,
                             apiKey = fields.apiKey,
@@ -842,6 +853,17 @@ class SettingsViewModel(
         }
     }
 
+    fun setThemeAccent(accent: ThemeAccent) {
+        appPreferences.themeAccentName = accent.name
+        themeAccentFlow.value = accent
+        _uiState.update {
+            it.copy(
+                themeAccent = accent,
+                info = "主题色已切换为${accent.displayName()}。",
+            )
+        }
+    }
+
     fun exportBackup(context: Context, targetUri: Uri) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
@@ -921,7 +943,7 @@ class SettingsViewModel(
 
     private fun providerConfigFromState(state: SettingsUiState): ProviderConfig {
         if (ProviderConfigPersistence.isManagedConfigId(state.selectedProviderId)) {
-            return BetaRelayConfig.providerConfig()
+            return BetaRelayConfig.providerConfig(state.model)
         }
         val advanced = compatibilitySettingsFromState(state)
         val useAdvanced = ProviderConfigPersistence.hasAdvancedSettings(state.selectedProviderId)
@@ -972,6 +994,7 @@ class SettingsViewModelFactory(
     private val secretStore: SecretStore,
     private val appPreferences: AppPreferences,
     private val themeModeFlow: MutableStateFlow<ThemeMode>,
+    private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -982,6 +1005,7 @@ class SettingsViewModelFactory(
                 secretStore = secretStore,
                 appPreferences = appPreferences,
                 themeModeFlow = themeModeFlow,
+                themeAccentFlow = themeAccentFlow,
             ) as T
         }
         throw IllegalArgumentException("未知 ViewModel 类型：${modelClass.name}")
@@ -992,4 +1016,9 @@ private fun ThemeMode.displayName(): String = when (this) {
     ThemeMode.Light -> "浅色"
     ThemeMode.Dark -> "深色"
     ThemeMode.System -> "跟随系统"
+}
+
+private fun ThemeAccent.displayName(): String = when (this) {
+    ThemeAccent.Warm -> "暖橘"
+    ThemeAccent.Classic -> "经典蓝紫"
 }

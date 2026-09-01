@@ -2,15 +2,13 @@
 
 tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是在手机上提供更贴近原生应用体验的角色管理、聊天、世界书、扩展和模型服务配置能力，同时尽量保持与 SillyTavern 数据格式和使用习惯兼容。
 
-> 此分支当前测试构建为 **v1.5.2-beta.1**；公开正式版以 GitHub Releases 中发布的 APK 为准。
+> 此分支当前测试构建为 **v1.5.3-beta.1**；公开正式版以 GitHub Releases 中发布的 APK 为准。
 
-## v1.5.2 更新
+## v1.5.3 测试版更新
 
-- 外观体验：修复主题切换后未即时生效的问题；聊天背景改为按会话独立设置，并支持从设备选择图片。
-- 角色头像：角色列表和聊天页角色选择器显示角色卡头像，支持为角色选择、更换和持久化自定义头像。
-- 设置界面：生成预设列表改为紧凑单行布局，减少滚动并提升大量预设时的浏览效率。
-- 更新提醒：每次冷启动检查正式版更新，发现新版本后直接弹窗提示，同时保留设置页中的更新入口。
-- 社区入口：关于页和版本更新提示加入 QQ 交流群入口；新安装用户首次启动时也会看到群聊邀请。
+- 合并 v1.5.2 正式版后的 7 个后续提交，包括暖橘主题、聊天样式、输入栏和全屏预设编辑器更新。
+- 新增 `tellevclick` 预置服务商。
+- Beta 内置测试通道改用 `tellevclick` HTTPS 接口；认证值完全隐藏，可在 `claude-opus-5` 与 `deepseek-v4-pro` 之间选择模型。
 
 ## 主要功能
 
@@ -29,7 +27,7 @@ tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是
 
 内置 16+ 个 provider 适配器，统一实现 `ProviderAdapter`：
 
-- **OpenAI 兼容**：通用 OpenAI 兼容接口、DeepSeek、火山引擎 Coding Plan
+- **OpenAI 兼容**：通用 OpenAI 兼容接口、DeepSeek、tellevclick、火山引擎 Coding Plan
 - **聊天补全**：Anthropic、Gemini、OpenRouter、NovelAI、Azure OpenAI
 - **本地/自托管**：Ollama、Kobold、KoboldCpp、TextGen (ooba)、llama.cpp server、Horde
 - **图像生成**：Stable Diffusion 兼容 API、OpenAI 兼容图像 API
@@ -107,7 +105,7 @@ tellev 的扩展运行环境是 SillyTavern / 酒馆助手兼容层的一个**�
 
 - 应用名：`tellev`
 - 包名：`app.tellev`
-- 当前测试版本：1.5.2-beta.1（versionCode 19）
+- 当前测试版本：1.5.3-beta.1（versionCode 20）
 - 最低系统：Android 12 / API 31
 - 目标/编译 SDK：API 36
 - UI：Kotlin + Jetpack Compose + Material 3
@@ -218,4 +216,4 @@ SillyTavern 项目地址：
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [docs/AI_TASKS.md](docs/AI_TASKS.md)
 - [docs/RELEASE_1.5.2.md](docs/RELEASE_1.5.2.md)
-- [docs/BETA_1.5.2.md](docs/BETA_1.5.2.md)
+- [docs/BETA_1.5.3.md](docs/BETA_1.5.3.md)

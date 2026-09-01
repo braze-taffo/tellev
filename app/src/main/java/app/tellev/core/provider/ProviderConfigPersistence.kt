@@ -48,6 +48,12 @@ data class OpenAiCompatibilitySettings(
                     supportsTools = true,
                     supportsReasoning = true,
                 )
+            } else if (providerId == ProviderCatalog.TELLEVCLICK) {
+                // Base URL already carries the /v1 version segment.
+                OpenAiCompatibilitySettings(
+                    modelsPath = "/models",
+                    chatCompletionsPath = "/chat/completions",
+                )
             } else {
                 OpenAiCompatibilitySettings()
             }
@@ -148,7 +154,10 @@ object ProviderConfigPersistence {
     }
 
     suspend fun loadProviderConfig(secretStore: SecretStore, providerId: String): ProviderConfig {
-        if (isManagedConfigId(providerId)) return BetaRelayConfig.providerConfig()
+        if (isManagedConfigId(providerId)) {
+            val selectedModel = secretStore.readSecret("provider-$providerId-model")
+            return BetaRelayConfig.providerConfig(selectedModel)
+        }
 
         // A custom: id selects one of the user's named OpenAI-compatible configs.
         if (isCustomConfigId(providerId)) {

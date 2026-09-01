@@ -36,8 +36,8 @@ android {
         applicationId = "app.tellev"
         minSdk = 31
         targetSdk = 36
-        versionCode = 19
-        versionName = "1.5.2"
+        versionCode = 20
+        versionName = "1.5.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -129,8 +129,8 @@ val validateBetaRelayConfig = tasks.register("validateBetaRelayConfig") {
         require(missing.isEmpty()) {
             "Beta relay configuration is missing from local.properties: ${missing.joinToString()}"
         }
-        require(betaRelayBaseUrl.startsWith("http://")) {
-            "tellevBetaRelayBaseUrl must be an http:// URL for this domainless beta relay"
+        require(betaRelayBaseUrl.startsWith("https://")) {
+            "tellevBetaRelayBaseUrl must be an https:// URL"
         }
     }
 }

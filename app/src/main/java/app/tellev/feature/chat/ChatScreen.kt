@@ -24,12 +24,11 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -84,6 +83,9 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight.Companion.Bold
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.toArgb
@@ -118,7 +120,11 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
+fun ChatScreen(
+    viewModel: ChatViewModel,
+    bottomBarReserve: Dp = 0.dp,
+    modifier: Modifier = Modifier,
+) {
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -147,6 +153,7 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
             ChatContentScreen(
                 state = state,
                 viewModel = viewModel,
+                bottomBarReserve = bottomBarReserve,
                 modifier = Modifier.padding(padding),
             )
         }
@@ -248,6 +255,7 @@ private fun CharacterPickerScreen(
 private fun ChatContentScreen(
     state: ChatUiState,
     viewModel: ChatViewModel,
+    bottomBarReserve: Dp,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -326,7 +334,15 @@ private fun ChatContentScreen(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize().imePadding()) {
+    // ime inset 是从窗口底部算起的，而根部 Scaffold 已经为底部导航栏预留了
+    // bottomBarReserve；直接 imePadding 会把导航栏高度再垫一遍，输入栏与键盘
+    // 之间出现一条导航栏高度的空白。这里只补超出导航栏的那部分。
+    val density = LocalDensity.current
+    val bottomBarReservePx = with(density) { bottomBarReserve.toPx() }
+    val imeExtraPx = maxOf(WindowInsets.ime.getBottom(density) - bottomBarReservePx, 0f)
+    val imeExtraPadding = with(density) { imeExtraPx.toDp() }
+
+    Column(modifier = modifier.fillMaxSize().padding(bottom = imeExtraPadding)) {
         TopAppBar(
             title = {
                 Column {
@@ -454,7 +470,14 @@ private fun ChatContentScreen(
                 .weight(1f)
                 .fillMaxWidth(),
         ) {
-            val htmlPanelMaxHeight = if (maxHeight > 112.dp) maxHeight - 112.dp else maxHeight
+            // 键盘弹出会压小列表可视高度；加回被压掉的部分得到与键盘收起时
+            // 一致的上限（用 px 相加，键盘动画期间逐帧严格相等），打字时
+            // WebView 面板（含卡片插图）才不会等比跳缩重排。
+            val panelViewportHeight = with(density) {
+                (constraints.maxHeight + imeExtraPx).toDp()
+            }
+            val htmlPanelMaxHeight =
+                if (panelViewportHeight > 112.dp) panelViewportHeight - 112.dp else panelViewportHeight
 
             // Per-session background: full-bleed image with a surface-tinted
             // scrim so bubbles of both roles keep readable contrast.
@@ -719,53 +742,30 @@ private fun ChatBubble(
                     onNext = onSwipeLeft,
                 )
             }
-            Card(
+            TavernMessageContent(
+                segments = renderSegments,
+                availableMaxHeight = htmlPanelMaxHeight,
+                isUser = isUser,
+                highlightDialogue = message.role != MessageRole.System,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(
-                    topStart = 12.dp,
-                    topEnd = 12.dp,
-                    bottomStart = 4.dp,
-                    bottomEnd = 12.dp,
-                ),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                ),
-            ) {
-                TavernMessageContent(
-                    segments = renderSegments,
-                    availableMaxHeight = htmlPanelMaxHeight,
-                    isUser = isUser,
-                    tavernRuntime = tavernRuntime,
-                    onHtmlBoundaryDrag = onHtmlBoundaryDrag,
-                )
-            }
+                tavernRuntime = tavernRuntime,
+                onHtmlBoundaryDrag = onHtmlBoundaryDrag,
+            )
         } else {
-            Card(
+            TavernMessageContent(
+                segments = renderSegments,
+                availableMaxHeight = htmlPanelMaxHeight,
+                isUser = isUser,
+                highlightDialogue = message.role != MessageRole.System,
                 modifier = Modifier
-                    .widthIn(max = 320.dp)
+                    .fillMaxWidth()
+                    // 半透明气泡：背景图透出 40%，前端卡片分支保持无底板。
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
                     .then(dragModifier),
-                shape = RoundedCornerShape(
-                    topStart = 12.dp,
-                    topEnd = 12.dp,
-                    bottomStart = if (isUser) 12.dp else 4.dp,
-                    bottomEnd = if (isUser) 4.dp else 12.dp,
-                ),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isUser) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant
-                    },
-                ),
-            ) {
-                TavernMessageContent(
-                    segments = renderSegments,
-                    availableMaxHeight = htmlPanelMaxHeight,
-                    isUser = isUser,
-                    tavernRuntime = tavernRuntime,
-                    onHtmlBoundaryDrag = onHtmlBoundaryDrag,
-                )
-            }
+                tavernRuntime = tavernRuntime,
+                onHtmlBoundaryDrag = onHtmlBoundaryDrag,
+            )
         }
 
         if (message.swipes.size > 1 && (!hasFrontend || isUser)) {
@@ -782,10 +782,13 @@ private fun TavernMessageContent(
     segments: List<TavernRenderSegment>,
     availableMaxHeight: Dp,
     isUser: Boolean,
+    highlightDialogue: Boolean,
+    modifier: Modifier = Modifier,
     tavernRuntime: TavernMessageRuntime,
     onHtmlBoundaryDrag: (Float) -> Unit,
 ) {
-    Column {
+    val dialogueColor = MaterialTheme.colorScheme.primary
+    Column(modifier = modifier) {
         segments.forEachIndexed { index, segment ->
             when (segment) {
                 is TavernRenderSegment.Text -> {
@@ -795,15 +798,16 @@ private fun TavernMessageContent(
                     // the cheap native Text() to avoid spinning up a WebView per bubble.
                     if (!isUser && MarkdownRenderer.looksLikeMarkdown(text)) {
                         TavernHtmlPanel(
-                            html = MarkdownRenderer.render(text),
+                            html = MarkdownRenderer.render(text, highlightDialogue = highlightDialogue),
                             availableMaxHeight = availableMaxHeight,
+                            dialogueQuoteColor = if (highlightDialogue) dialogueColor.toCssHex() else null,
                             tavernRuntime = tavernRuntime,
                             onBoundaryDrag = onHtmlBoundaryDrag,
                         )
                     } else {
                         SelectionContainer {
                             Text(
-                                text = text,
+                                text = dialogueAnnotatedString(text, dialogueColor, highlightDialogue),
                                 style = MaterialTheme.typography.bodyLarge,
                                 modifier = Modifier.padding(
                                     start = 12.dp,
@@ -816,7 +820,7 @@ private fun TavernMessageContent(
                     }
                 }
                 is TavernRenderSegment.Reasoning -> {
-                    ReasoningBlock(content = segment.content)
+                    ReasoningBlock(content = segment.content, highlightDialogue = highlightDialogue)
                 }
                 is TavernRenderSegment.Frontend -> {
                     TavernHtmlPanel(
@@ -832,7 +836,7 @@ private fun TavernMessageContent(
 }
 
 @Composable
-private fun ReasoningBlock(content: String) {
+private fun ReasoningBlock(content: String, highlightDialogue: Boolean) {
     var expanded by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
@@ -865,7 +869,11 @@ private fun ReasoningBlock(content: String) {
         if (expanded) {
             SelectionContainer {
                 Text(
-                    text = content,
+                    text = dialogueAnnotatedString(
+                        content,
+                        MaterialTheme.colorScheme.primary,
+                        highlightDialogue,
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(
@@ -970,13 +978,13 @@ private class TavernMessageBridge(
 private fun TavernHtmlPanel(
     html: String,
     availableMaxHeight: Dp,
+    dialogueQuoteColor: String? = null,
     tavernRuntime: TavernMessageRuntime,
     onBoundaryDrag: (Float) -> Unit,
 ) {
-    val themeSurface = MaterialTheme.colorScheme.surface.toCssHex()
     val themeOnSurface = MaterialTheme.colorScheme.onSurface.toCssHex()
-    val wrappedHtml = remember(html, themeSurface, themeOnSurface) {
-        wrapTavernHtml(html, themeSurface, themeOnSurface)
+    val wrappedHtml = remember(html, themeOnSurface, dialogueQuoteColor) {
+        wrapTavernHtml(html, themeOnSurface, dialogueQuoteColor)
     }
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
@@ -1120,9 +1128,14 @@ private fun String.isLargeTavernFrontend(): Boolean =
 private fun androidx.compose.ui.graphics.Color.toCssHex(): String =
     "#%06X".format(0xFFFFFF and toArgb())
 
-private fun jsonStringLiteral(value: String): String = JsonPrimitive(value).toString()
-
-internal fun wrapTavernHtml(html: String, themeSurface: String, themeOnSurface: String): String {
+internal fun wrapTavernHtml(
+    html: String,
+    themeOnSurface: String,
+    dialogueQuoteColor: String? = null,
+): String {
+    val dialogueQuoteCss = dialogueQuoteColor?.let { color ->
+        "q { color: $color; } q::before, q::after { content: none; }"
+    }.orEmpty()
     val hostHead = """
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
         ${tavernMessageCompatScript()}
@@ -1144,8 +1157,8 @@ internal fun wrapTavernHtml(html: String, themeSurface: String, themeOnSurface: 
                 overflow-y: auto !important;
                 overflow-x: hidden !important;
             }
+            $dialogueQuoteCss
         </style>
-        ${tavernAutoContrastScript(themeSurface, themeOnSurface)}
     """.trimIndent()
 
     if (html.contains("<html", ignoreCase = true)) {
@@ -1172,64 +1185,6 @@ internal fun wrapTavernHtml(html: String, themeSurface: String, themeOnSurface: 
         </html>
     """.trimIndent()
 }
-
-private fun tavernAutoContrastScript(themeSurface: String, themeOnSurface: String): String = """
-    <script id="tellev-auto-contrast">
-    (function() {
-        var themeSurface = ${jsonStringLiteral(themeSurface)};
-        var themeText = ${jsonStringLiteral(themeOnSurface)};
-        function rgba(value) {
-            var hex = String(value || '').trim().match(/^#([0-9a-f]{6})$/i);
-            if (hex) {
-                var number = parseInt(hex[1], 16);
-                return {r:(number>>16)&255, g:(number>>8)&255, b:number&255, a:1};
-            }
-            var match = String(value || '').match(/[\d.]+/g);
-            if (!match || match.length < 3) return null;
-            return {r:+match[0], g:+match[1], b:+match[2], a:match.length > 3 ? +match[3] : 1};
-        }
-        function transparent(value) { var c=rgba(value); return !c || c.a < 0.02; }
-        function lum(c) {
-            function f(v) { v/=255; return v <= .03928 ? v/12.92 : Math.pow((v+.055)/1.055,2.4); }
-            return .2126*f(c.r)+.7152*f(c.g)+.0722*f(c.b);
-        }
-        function contrast(a,b) { var x=lum(a), y=lum(b); return (Math.max(x,y)+.05)/(Math.min(x,y)+.05); }
-        function representativeText() {
-            var nodes = document.body ? document.body.querySelectorAll('*') : [];
-            for (var i=0;i<nodes.length;i++) {
-                var node=nodes[i], style=getComputedStyle(node);
-                if (style.display !== 'none' && style.visibility !== 'hidden' && (node.textContent||'').trim()) return style.color;
-            }
-            return document.body ? getComputedStyle(document.body).color : themeText;
-        }
-        function hasAuthoredCanvas() {
-            var roots=[document.documentElement, document.body];
-            if (document.body) roots=roots.concat(Array.prototype.slice.call(document.body.children || []));
-            return roots.some(function(node) { return node && !transparent(getComputedStyle(node).backgroundColor); });
-        }
-        function applyContrast() {
-            if (!document.documentElement || !document.body || hasAuthoredCanvas()) return;
-            var text=rgba(representativeText()) || rgba(themeText);
-            // Black/white fallbacks guarantee that at least one candidate is
-            // >= 4.5:1 for every opaque text colour.
-            var candidates=[themeSurface,'#000000','#ffffff'];
-            var best=candidates[0], score=-1;
-            candidates.forEach(function(candidate) {
-                var value=contrast(text,rgba(candidate));
-                if (value>score) { score=value; best=candidate; }
-            });
-            document.documentElement.style.setProperty('background-color', best, 'important');
-            document.documentElement.dataset.tellevAutoBackground=best;
-        }
-        function install() {
-            applyContrast();
-            if (window.MutationObserver) new MutationObserver(applyContrast).observe(document.documentElement,{attributes:true,childList:true,subtree:true,attributeFilter:['class','style']});
-        }
-        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded',install); else install();
-        window.addEventListener('load',applyContrast);
-    })();
-    </script>
-""".trimIndent()
 
 internal fun tavernResizeScript(): String = """
     (function() {
@@ -1336,26 +1291,27 @@ private fun StreamingBubble(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
         )
-        Card(
-            modifier = Modifier.widthIn(max = 320.dp),
-            shape = RoundedCornerShape(
-                topStart = 12.dp,
-                topEnd = 12.dp,
-                bottomStart = 4.dp,
-                bottomEnd = 12.dp,
-            ),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            ),
-        ) {
-            TavernMessageContent(
-                segments = segments,
-                availableMaxHeight = availableMaxHeight,
-                isUser = false,
-                tavernRuntime = tavernRuntime,
-                onHtmlBoundaryDrag = onHtmlBoundaryDrag,
-            )
-        }
+        TavernMessageContent(
+            segments = segments,
+            availableMaxHeight = availableMaxHeight,
+            isUser = false,
+            highlightDialogue = true,
+            modifier = Modifier.fillMaxWidth(),
+            tavernRuntime = tavernRuntime,
+            onHtmlBoundaryDrag = onHtmlBoundaryDrag,
+        )
+    }
+}
+
+private fun dialogueAnnotatedString(
+    text: String,
+    color: androidx.compose.ui.graphics.Color,
+    enabled: Boolean,
+): AnnotatedString = buildAnnotatedString {
+    append(text)
+    if (!enabled) return@buildAnnotatedString
+    DialogueQuoteHighlighter.findRanges(text).forEach { range ->
+        addStyle(SpanStyle(color = color), range.first, range.last + 1)
     }
 }
 

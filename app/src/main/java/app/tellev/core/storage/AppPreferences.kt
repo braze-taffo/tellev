@@ -5,7 +5,7 @@ import android.content.Context
 /**
  * Lightweight app-level preferences backed by SharedPreferences, mirroring the
  * pattern in [app.tellev.core.security.AndroidKeystoreSecretStore]. Currently
- * tracks small app-wide migration, beta-consent, and update-check markers.
+ * tracks small app-wide migration and update-check markers.
  */
 class AppPreferences(
     context: Context,
@@ -17,10 +17,6 @@ class AppPreferences(
         get() = prefs.getLong(KEY_LAST_CHECK, 0L)
         set(value) = prefs.edit().putLong(KEY_LAST_CHECK, value).apply()
 
-    var betaRelayNoticeAccepted: Boolean
-        get() = prefs.getBoolean(KEY_BETA_RELAY_NOTICE_ACCEPTED, false)
-        set(value) = prefs.edit().putBoolean(KEY_BETA_RELAY_NOTICE_ACCEPTED, value).apply()
-
     /**
      * Theme preference stored as the enum name so the storage layer stays
      * independent of the UI-layer ThemeMode type; callers parse with
@@ -29,6 +25,16 @@ class AppPreferences(
     var themeModeName: String
         get() = prefs.getString(KEY_THEME_MODE, DEFAULT_THEME_MODE) ?: DEFAULT_THEME_MODE
         set(value) = prefs.edit().putString(KEY_THEME_MODE, value).apply()
+
+    /**
+     * Accent palette preference stored as the enum name so the storage layer
+     * stays independent of the UI-layer ThemeAccent type; callers parse with
+     * [app.tellev.ui.theme.parseThemeAccent]. Defaults to the Warm palette so
+     * existing installs (which have no stored value) pick up the new look.
+     */
+    var themeAccentName: String
+        get() = prefs.getString(KEY_THEME_ACCENT, DEFAULT_THEME_ACCENT) ?: DEFAULT_THEME_ACCENT
+        set(value) = prefs.edit().putString(KEY_THEME_ACCENT, value).apply()
 
     fun shouldShowPresetLimitUpgradeNotice(
         firstInstallTime: Long,
@@ -40,6 +46,8 @@ class AppPreferences(
             firstInstallTime = firstInstallTime,
             lastUpdateTime = lastUpdateTime,
         )
+        // A clean install already receives the corrected defaults. Mark it now
+        // so a later unrelated app update does not show this migration notice.
         if (!shouldShow && !alreadyHandled) markPresetLimitUpgradeNoticeHandled()
         return shouldShow
     }
@@ -62,14 +70,18 @@ class AppPreferences(
 
     private companion object {
         const val KEY_LAST_CHECK = "last_update_check_ms"
-        const val KEY_BETA_RELAY_NOTICE_ACCEPTED = "beta_relay_notice_accepted"
         const val KEY_PRESET_LIMIT_NOTICE_HANDLED = "preset_limits_1_5_1_notice_handled"
         const val KEY_QQ_GROUP_NOTICE_HANDLED = "qq_group_notice_handled"
         const val KEY_THEME_MODE = "theme_mode"
+        const val KEY_THEME_ACCENT = "theme_accent"
 
         /** Literal "System" — the ThemeMode.System enum name, kept as a
          *  string so this layer does not depend on the UI enum. */
         const val DEFAULT_THEME_MODE = "System"
+
+        /** Literal "Warm" — the ThemeAccent.Warm enum name; same rationale as
+         *  [DEFAULT_THEME_MODE]. */
+        const val DEFAULT_THEME_ACCENT = "Warm"
     }
 }
 

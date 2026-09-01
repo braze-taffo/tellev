@@ -1,6 +1,5 @@
 package app.tellev.ui
 
-import android.app.Activity
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Column
@@ -19,18 +18,18 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -55,7 +54,6 @@ import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.tellev.LocalTellevGraph
-import app.tellev.BuildConfig
 import app.tellev.R
 import app.tellev.feature.about.AboutScreen
 import app.tellev.feature.characters.CharacterDetailScreen
@@ -129,6 +127,7 @@ fun TellevRoot() {
             secretStore = graph.secretStore,
             appPreferences = graph.appPreferences,
             themeModeFlow = graph.themeModeFlow,
+            themeAccentFlow = graph.themeAccentFlow,
         ),
     )
 
@@ -143,11 +142,6 @@ fun TellevRoot() {
     )
 
     val activityContext = LocalContext.current
-    var showBetaRelayNotice by remember {
-        mutableStateOf(
-            BuildConfig.TELLEV_BETA_RELAY_ENABLED && !graph.appPreferences.betaRelayNoticeAccepted,
-        )
-    }
     val packageInfo = remember(activityContext) {
         activityContext.packageManager.getPackageInfo(activityContext.packageName, 0)
     }
@@ -178,33 +172,6 @@ fun TellevRoot() {
     }
     LaunchedEffect(Unit) {
         showQqGroupNotice = graph.appPreferences.shouldShowQqGroupNotice()
-    }
-
-    if (showBetaRelayNotice) {
-        AlertDialog(
-            onDismissRequest = {},
-            title = { Text("测试通道安全说明") },
-            text = {
-                Text(
-                    "本测试版提供免费的 DeepSeek V4 Pro 通道。连接使用明文 HTTP，传输内容可能被网络中的第三方读取或篡改。请勿输入账号、密码、真实身份等敏感信息。不同意请退出测试版。",
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        graph.appPreferences.betaRelayNoticeAccepted = true
-                        showBetaRelayNotice = false
-                    },
-                ) {
-                    Text("同意并继续")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { (activityContext as? Activity)?.finish() }) {
-                    Text("退出")
-                }
-            },
-        )
     }
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -261,7 +228,10 @@ fun TellevRoot() {
         ) {
             // Chat tab - single screen
             composable(TellevTab.Chat.route) {
-                ChatScreen(viewModel = chatViewModel)
+                ChatScreen(
+                    viewModel = chatViewModel,
+                    bottomBarReserve = innerPadding.calculateBottomPadding(),
+                )
             }
 
             // Characters tab with sub-navigation
@@ -376,7 +346,7 @@ fun TellevRoot() {
         }
     }
 
-    if (showPresetLimitUpgradeNotice && !showBetaRelayNotice) {
+    if (showPresetLimitUpgradeNotice) {
         fun closeNotice() {
             graph.appPreferences.markPresetLimitUpgradeNoticeHandled()
             showPresetLimitUpgradeNotice = false
@@ -412,7 +382,7 @@ fun TellevRoot() {
 
     // Queued after the beta-relay and preset-limit notices so at most one
     // dialog is up at a time.
-    if (showQqGroupNotice && !showBetaRelayNotice && !showPresetLimitUpgradeNotice) {
+    if (showQqGroupNotice && !showPresetLimitUpgradeNotice) {
         val clipboard = LocalClipboardManager.current
         fun closeNotice() {
             graph.appPreferences.markQqGroupNoticeHandled()
@@ -471,7 +441,7 @@ fun TellevRoot() {
     if (
         pendingUpdate != null &&
         dismissedUpdateVersion != pendingUpdate.version &&
-        !showBetaRelayNotice && !showPresetLimitUpgradeNotice && !showQqGroupNotice
+        !showPresetLimitUpgradeNotice && !showQqGroupNotice
     ) {
         AlertDialog(
             onDismissRequest = { dismissedUpdateVersion = pendingUpdate.version },
