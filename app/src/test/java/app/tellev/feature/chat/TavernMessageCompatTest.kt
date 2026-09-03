@@ -148,6 +148,22 @@ class TavernMessageCompatTest {
     }
 
     @Test
+    fun `resize script breaks viewport feedback loop and throttles posts`() {
+        val script = tavernResizeScript()
+
+        // doc.clientHeight 是视口高度：参与 max 会形成
+        // panelHeight 变大 → 视口变大 → 高度变大的正反馈。
+        // （注释里会提到它，断言表达式形态不存在即可。）
+        assertFalse(script.contains("doc.clientHeight || 0"))
+        // 节流：rAF + debounce，同一帧多次触发只 post 一次。
+        assertTrue(script.contains("requestAnimationFrame"))
+        assertTrue(script.contains("setTimeout(postHeightNow, 150)"))
+        // 差值门限：1px 级抖动不进主线程消息队列。
+        assertTrue(script.contains("lastPostedHeight"))
+        assertTrue(script.contains("Math.abs(h - lastPostedHeight) < 2"))
+    }
+
+    @Test
     fun `setChatMessage switches welcome message to requested alternate swipe`() {
         val welcome = ChatMessage(
             id = "0", role = MessageRole.Character, name = "道渊", content = "欢迎页",

@@ -36,6 +36,15 @@ class AppPreferences(
         get() = prefs.getString(KEY_THEME_ACCENT, DEFAULT_THEME_ACCENT) ?: DEFAULT_THEME_ACCENT
         set(value) = prefs.edit().putString(KEY_THEME_ACCENT, value).apply()
 
+    /**
+     * Chat bubble opacity (1 = opaque, 0 = fully transparent). Stored as a
+     * float so Settings can expose it as a slider; defaults to the legacy
+     * hardcoded bubble alpha so existing installs see no visual change.
+     */
+    var chatBubbleAlpha: Float
+        get() = prefs.getFloat(KEY_CHAT_BUBBLE_ALPHA, DEFAULT_CHAT_BUBBLE_ALPHA)
+        set(value) = prefs.edit().putFloat(KEY_CHAT_BUBBLE_ALPHA, value).apply()
+
     fun shouldShowPresetLimitUpgradeNotice(
         firstInstallTime: Long,
         lastUpdateTime: Long,
@@ -74,6 +83,7 @@ class AppPreferences(
         const val KEY_QQ_GROUP_NOTICE_HANDLED = "qq_group_notice_handled"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_THEME_ACCENT = "theme_accent"
+        const val KEY_CHAT_BUBBLE_ALPHA = "chat_bubble_alpha"
 
         /** Literal "System" — the ThemeMode.System enum name, kept as a
          *  string so this layer does not depend on the UI enum. */
@@ -82,6 +92,10 @@ class AppPreferences(
         /** Literal "Warm" — the ThemeAccent.Warm enum name; same rationale as
          *  [DEFAULT_THEME_MODE]. */
         const val DEFAULT_THEME_ACCENT = "Warm"
+
+        /** Legacy hardcoded bubble alpha in ChatScreen; keep as default so
+         *  existing installs see no visual change. */
+        const val DEFAULT_CHAT_BUBBLE_ALPHA = 0.6f
     }
 }
 

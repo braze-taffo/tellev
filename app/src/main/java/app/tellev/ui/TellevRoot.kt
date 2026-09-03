@@ -128,6 +128,7 @@ fun TellevRoot() {
             appPreferences = graph.appPreferences,
             themeModeFlow = graph.themeModeFlow,
             themeAccentFlow = graph.themeAccentFlow,
+            chatBubbleAlphaFlow = graph.chatBubbleAlphaFlow,
         ),
     )
 
@@ -228,9 +229,11 @@ fun TellevRoot() {
         ) {
             // Chat tab - single screen
             composable(TellevTab.Chat.route) {
+                val bubbleAlpha by graph.chatBubbleAlphaFlow.collectAsState()
                 ChatScreen(
                     viewModel = chatViewModel,
                     bottomBarReserve = innerPadding.calculateBottomPadding(),
+                    bubbleAlpha = bubbleAlpha,
                 )
             }
 

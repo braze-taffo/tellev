@@ -2,14 +2,13 @@
 
 tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是在手机上提供更贴近原生应用体验的角色管理、聊天、世界书、扩展和模型服务配置能力，同时尽量保持与 SillyTavern 数据格式和使用习惯兼容。
 
-> 公开版本以 GitHub Releases 中发布的 APK 为准。当前版本 **v1.5.3**。
+> 公开版本以 GitHub Releases 中发布的 APK 为准。当前版本 **v1.5.4**。
 
-## v1.5.3 更新
+## v1.5.4 更新
 
-- 主题焕新：新增暖橘配色，并可在设置中切换回经典蓝紫主题。
-- 聊天体验：对白引号跟随主题色高亮，消息使用半透明气泡；修复打字时输入栏悬空和卡片插图跳缩。
-- 预设编辑：生成预设详情升级为全屏编辑器，浏览和调整复杂预设更方便。
-- 模型服务：新增预置 `tellevclick` 服务商，预填 OpenAI 兼容接口地址。
+- 性能与稳定性：优化大型角色卡和长聊天记录的加载、扩展上下文生成与事件分发，降低首屏卡顿和 ANR 风险。
+- 动态卡片：修复 HTML 卡片高度反馈循环及频繁尺寸回调导致的界面卡顿。
+- 外观调节：设置页新增聊天气泡不透明度滑块，并同步应用到消息、思考块和输入区域。
 
 ## 主要功能
 
@@ -106,7 +105,7 @@ tellev 的扩展运行环境是 SillyTavern / 酒馆助手兼容层的一个**�
 
 - 应用名：`tellev`
 - 包名：`app.tellev`
-- 当前版本：1.5.3（versionCode 20）
+- 当前版本：1.5.4（versionCode 21）
 - 最低系统：Android 12 / API 31
 - 目标/编译 SDK：API 36
 - UI：Kotlin + Jetpack Compose + Material 3
@@ -218,3 +217,4 @@ SillyTavern 项目地址：
 - [docs/AI_TASKS.md](docs/AI_TASKS.md)
 - [docs/RELEASE_1.5.2.md](docs/RELEASE_1.5.2.md)
 - [docs/RELEASE_1.5.3.md](docs/RELEASE_1.5.3.md)
+- [docs/RELEASE_1.5.4.md](docs/RELEASE_1.5.4.md)

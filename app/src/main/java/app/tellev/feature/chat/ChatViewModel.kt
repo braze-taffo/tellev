@@ -327,56 +327,70 @@ class ChatViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
-                val character = dataStore.readCharacter(characterId)
-                val sessions = dataStore.listChatSessions(characterId = characterId)
+                // 读卡/会话/世界书的 IO 与绑定集合运算搬到 Default，避免与首帧
+                // 绘制抢 Main。FileStDataStore 内部虽已是 IO，但 withCharacterGreetingSwipes
+                // 与世界书集合运算是纯 CPU，大卡（1.4MB/数百条目）上不可忽略。
+                data class Selection(
+                    val character: CharacterCard,
+                    val session: ChatSession,
+                    val allSessions: List<ChatSession>,
+                    val disabledWorldIds: Set<String>,
+                )
+                val selection = withContext(Dispatchers.Default) {
+                    val character = dataStore.readCharacter(characterId)
+                    val sessions = dataStore.listChatSessions(characterId = characterId)
 
-                val session = if (sessions.isNotEmpty()) {
-                    sessions.first().withCharacterGreetingSwipes(character).also { upgraded ->
-                        if (upgraded != sessions.first()) {
-                            dataStore.saveChatSession(upgraded)
+                    val session = if (sessions.isNotEmpty()) {
+                        sessions.first().withCharacterGreetingSwipes(character).also { upgraded ->
+                            if (upgraded != sessions.first()) {
+                                dataStore.saveChatSession(upgraded)
+                            }
+                        }
+                    } else {
+                        createSessionForCharacter(character)
+                    }
+                    val allSessions = dataStore.listChatSessions(characterId = characterId)
+
+                    // Selecting a character activates the books bound to it. That is
+                    // its embedded character_book *and* any external book named by
+                    // data.extensions.world — the way most real cards bind a
+                    // lorebook. Only ever force-disabling everything else meant such
+                    // a card activated nothing at all, and it also switched off
+                    // standalone books the user had enabled globally (in ST a global
+                    // lorebook stays on regardless of the selected character).
+                    //
+                    // Regex switches live only in the character card's
+                    // extensions.regex_scripts[].disabled fields.
+                    //
+                    // Read the full world-book list from the store directly rather
+                    // than relying on uiState.worldBooks being loaded yet, so the
+                    // set is correct even if the user selects a character before
+                    // initial data load finishes.
+                    val allWorldBooks = dataStore.listWorldBooks()
+                    val embeddedId = StDataStore.embeddedCharacterBookId(characterId)
+                    val ownWorldBookIds = buildSet {
+                        add(embeddedId)
+                        characterWorldBookNames(character).forEach { name ->
+                            allWorldBooks
+                                .firstOrNull { it.name.equals(name, ignoreCase = true) || it.id == name }
+                                ?.let { add(it.id) }
                         }
                     }
-                } else {
-                    createSessionForCharacter(character)
+                    // Another character's embedded book must not stay active across
+                    // a switch; standalone books keep whatever the user chose.
+                    val otherEmbeddedIds = allWorldBooks
+                        .map { it.id }
+                        .filter {
+                            it.endsWith(StDataStore.EMBEDDED_CHARACTER_BOOK_SUFFIX) &&
+                                it !in ownWorldBookIds
+                        }
+                    val disabledWorldIds =
+                        (dataStore.readDisabledWorldIds() + otherEmbeddedIds) - ownWorldBookIds
+                    dataStore.saveDisabledWorldIds(disabledWorldIds)
+                    Selection(character, session, allSessions, disabledWorldIds)
                 }
-                val allSessions = dataStore.listChatSessions(characterId = characterId)
-
-                // Selecting a character activates the books bound to it. That is
-                // its embedded character_book *and* any external book named by
-                // data.extensions.world — the way most real cards bind a
-                // lorebook. Only ever force-disabling everything else meant such
-                // a card activated nothing at all, and it also switched off
-                // standalone books the user had enabled globally (in ST a global
-                // lorebook stays on regardless of the selected character).
-                //
-                // Regex switches live only in the character card's
-                // extensions.regex_scripts[].disabled fields.
-                //
-                // Read the full world-book list from the store directly rather
-                // than relying on uiState.worldBooks being loaded yet, so the
-                // set is correct even if the user selects a character before
-                // initial data load finishes.
-                val allWorldBooks = dataStore.listWorldBooks()
-                val embeddedId = StDataStore.embeddedCharacterBookId(characterId)
-                val ownWorldBookIds = buildSet {
-                    add(embeddedId)
-                    characterWorldBookNames(character).forEach { name ->
-                        allWorldBooks
-                            .firstOrNull { it.name.equals(name, ignoreCase = true) || it.id == name }
-                            ?.let { add(it.id) }
-                    }
-                }
-                // Another character's embedded book must not stay active across
-                // a switch; standalone books keep whatever the user chose.
-                val otherEmbeddedIds = allWorldBooks
-                    .map { it.id }
-                    .filter {
-                        it.endsWith(StDataStore.EMBEDDED_CHARACTER_BOOK_SUFFIX) &&
-                            it !in ownWorldBookIds
-                    }
-                val disabledWorldIds =
-                    (dataStore.readDisabledWorldIds() + otherEmbeddedIds) - ownWorldBookIds
-                dataStore.saveDisabledWorldIds(disabledWorldIds)
+                val character = selection.character
+                val session = selection.session
 
                 _uiState.update {
                     it.copy(
@@ -385,15 +399,23 @@ class ChatViewModel(
                         currentSession = session,
                         messages = session.messages,
                         chatBackgroundFile = chatBackgroundFileFor(session),
-                        sessions = allSessions,
-                        disabledWorldIds = disabledWorldIds,
+                        sessions = selection.allSessions,
+                        disabledWorldIds = selection.disabledWorldIds,
                         isLoading = false,
                     )
                 }
-                reloadCharacterTavernHelperScripts(character)
+                // 角色脚本加载（含 WebView 创建与 ready 等待）不再挡首帧：先让
+                // 聊天 UI 可绘制，再后台加载；APP_INITIALIZED/APP_READY 随完成异步发。
+                val scriptJob = viewModelScope.launch(Dispatchers.Default) {
+                    reloadCharacterTavernHelperScripts(character)
+                }
                 emitCharacterSelected(character)
                 emitChatChanged(session)
+                // rendered 事件限流在 emitRenderedEventsForMessages 内部处理。
                 emitRenderedEventsForMessages(session.messages)
+                // 脚本加载失败时 reload 内部已写 error state；这里只等它完成，
+                // 不让异常外泄到 selectCharacter 的 catch（避免误报“加载角色失败”）。
+                runCatching { scriptJob.join() }
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -1392,9 +1414,19 @@ class ChatViewModel(
         emitStEvent(StEventCatalog.WORLD_INFO_CHANGED, session.id)
     }
 
+    /**
+     * 首启风暴削峰：原来对全量历史逐条 `withContext(Main) + evaluateJavascript`，
+     * 存量大号（数百条）直接把主线程消息队列打满。现只发最近
+     * [RECENT_RENDERED_EVENT_LIMIT] 条——扩展首屏只需要尾部上下文；
+     * 历史补发走按需/分页（getChatMessages API），不走事件风暴。
+     * 循环内 yield() 让出协作调度，避免连续 Main 跳霸占帧。
+     */
     private suspend fun emitRenderedEventsForMessages(messages: List<ChatMessage>) {
-        messages.forEachIndexed { index, message ->
-            emitRenderedEventForMessage(index, message, "load")
+        val start = (messages.size - RECENT_RENDERED_EVENT_LIMIT).coerceAtLeast(0)
+        for (index in start until messages.size) {
+            emitRenderedEventForMessage(index, messages[index], "load")
+            // 每 8 条让一帧，不让事件注入独占主线程。
+            if ((index - start) % 8 == 7) kotlinx.coroutines.yield()
         }
     }
 
@@ -1913,9 +1945,13 @@ class ChatViewModel(
             put("lastMessageId", state.messages.lastIndex)
             put("chatMetadata", session?.metadata ?: buildJsonObject { })
             put("chat_metadata", session?.metadata ?: buildJsonObject { })
+            // 高频快照只带最近 N 条：Proxy 每次读属性都全量序列化，
+            // 全量历史 × 每次事件 × 每次属性读取 = MB 级 × 百次。lastMessageId
+            // 仍是全局索引，全量历史走 getChatMessages 分页 API。
             putJsonArray("chat") {
-                state.messages.forEachIndexed { index, message ->
-                    add(message.toTavernJson(index))
+                val start = (state.messages.size - TAVERN_CONTEXT_CHAT_LIMIT).coerceAtLeast(0)
+                for (index in start until state.messages.size) {
+                    add(state.messages[index].toTavernJson(index))
                 }
             }
             putJsonArray("characters") {
@@ -1958,9 +1994,11 @@ class ChatViewModel(
             put("send_date", createdAtMillis.toString())
             put("send_date_unix", createdAtMillis)
             put("swipe_id", swipeIndex)
+            // 只保留当前 swipe 内容：原来全量展开所有 swipe，大卡首消息
+            // （HTML 前端）单条即数十 KB，全量历史下直接 MB 级。
             putJsonArray("swipes") {
                 val values = swipes.ifEmpty { listOf(content) }
-                values.forEach { add(JsonPrimitive(it)) }
+                add(JsonPrimitive(values.getOrElse(swipeIndex) { content }))
             }
             put("extra", metadata)
             // ST-Prompt-Template per-swipe arrays (only when present)
@@ -1988,7 +2026,9 @@ class ChatViewModel(
             putJsonArray("tags") {
                 tags.forEach { add(JsonPrimitive(it)) }
             }
-            put("raw", raw)
+            // NOTE: 高频 getContext 快照不再带整卡 raw（1.4MB 卡会存两份：
+            // raw 全量 + data 全量，序列化后数 MB，每次读属性都付一次）。
+            // 字段名保留但只放 data 子树；整卡按需走 TavernHelper.getCharacter(id)。
             put("data", (raw["data"] as? JsonObject) ?: raw)
         }
 
@@ -2139,6 +2179,17 @@ class ChatViewModel(
     private fun generateSessionId(): String = "sess-${UUID.randomUUID()}"
 
     companion object {
+        /**
+         * selectCharacter 首启只向扩展分发最近 N 条消息的 rendered 事件。
+         * 全量逐条分发在存量大号上是 O(消息数) 次 Main 跳 + JS 注入，
+         * 是 ANR 风暴的主力之一。
+         */
+        private const val RECENT_RENDERED_EVENT_LIMIT = 20
+        /**
+         * getContext() chat 快照只带最近 N 条。lastMessageId 仍是全局索引，
+         * 需要全量历史的扩展走 getChatMessages 分页 API。
+         */
+        private const val TAVERN_CONTEXT_CHAT_LIMIT = 100
         /** Built-in ChatML instruct preset used when no preset file is selected. */
         private val DEFAULT_CHATML_INSTRUCT: JsonObject = buildJsonObject {
             put("name", "ChatML")

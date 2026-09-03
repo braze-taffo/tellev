@@ -1,5 +1,6 @@
 package app.tellev.core.extension
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -50,5 +51,20 @@ class WebViewJsExtensionHostContractTest {
         assertTrue(shim.contains("emitFromEventSource"))
         assertTrue(shim.contains("return _fireLocal(n,args)"))
         assertTrue(shim.contains("JSON.stringify({args:args})"))
+    }
+
+    @Test
+    fun `context tick cache shares one snapshot per task without recursion`() {
+        val tick = WebViewJsExtensionHost.TAVERN_CONTEXT_TICK_CACHE_JS
+
+        // 同一任务内多次属性读取只付一次 bridge + parse。
+        assertTrue(tick.contains("function _getContextTick()"))
+        assertTrue(tick.contains("_ctxTickCache.tick===t"))
+        // 定义自身必须调新鲜快照；调自己就是无限递归。
+        assertTrue(tick.contains("var c=_getContext();"))
+        assertFalse(tick.contains("var c=_getContextTick();"))
+        // 推进靠 setTimeout 包裝；同一同步任务内 token 不变，正好共用。
+        assertTrue(tick.contains("__tellevCtxTickAdvancer"))
+        assertTrue(tick.contains("window.setTimeout=function"))
     }
 }

@@ -77,6 +77,13 @@ class TellevGraph private constructor(
     val themeAccentFlow = MutableStateFlow(parseThemeAccent(appPreferences.themeAccentName))
 
     /**
+     * Chat bubble opacity preference, mirrored the same way as
+     * [themeModeFlow] and updated by SettingsViewModel.setChatBubbleAlpha
+     * so ChatScreen recomposes without reaching into SettingsViewModel.
+     */
+    val chatBubbleAlphaFlow = MutableStateFlow(appPreferences.chatBubbleAlpha)
+
+    /**
      * Persist updated compat-module settings and push them to every
      * loaded extension WebView and to the [PromptEngine] so the change
      * takes effect immediately without an extension reload.

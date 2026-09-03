@@ -57,6 +57,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -123,6 +124,7 @@ import kotlinx.coroutines.withContext
 fun ChatScreen(
     viewModel: ChatViewModel,
     bottomBarReserve: Dp = 0.dp,
+    bubbleAlpha: Float = 0.6f,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -154,6 +156,7 @@ fun ChatScreen(
                 state = state,
                 viewModel = viewModel,
                 bottomBarReserve = bottomBarReserve,
+                bubbleAlpha = bubbleAlpha,
                 modifier = Modifier.padding(padding),
             )
         }
@@ -256,6 +259,7 @@ private fun ChatContentScreen(
     state: ChatUiState,
     viewModel: ChatViewModel,
     bottomBarReserve: Dp,
+    bubbleAlpha: Float,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -522,6 +526,7 @@ private fun ChatContentScreen(
                         userName = state.selectedPersona?.name ?: "User",
                         depth = visibleRegexDepth(state.messages, index),
                         htmlPanelMaxHeight = htmlPanelMaxHeight,
+                        bubbleAlpha = bubbleAlpha,
                         tavernRuntime = TavernMessageRuntime(
                             messageIndex = index,
                             variablesJson = viewModel::tavernMessageVariablesJson,
@@ -557,6 +562,7 @@ private fun ChatContentScreen(
                         characterName = state.selectedCharacter?.name ?: "助手",
                         character = state.selectedCharacter,
                         preset = state.selectedPreset,
+                        bubbleAlpha = bubbleAlpha,
                         userName = state.selectedPersona?.name ?: "User",
                         availableMaxHeight = htmlPanelMaxHeight,
                         tavernRuntime = TavernMessageRuntime(
@@ -591,6 +597,7 @@ private fun ChatContentScreen(
             onTextChange = { inputText = it },
             isGenerating = state.isGenerating,
             attachments = pendingAttachments,
+            bubbleAlpha = bubbleAlpha,
             onPickImage = {
                 pickImageLauncher.launch(
                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
@@ -624,6 +631,7 @@ private fun ChatBubble(
     userName: String,
     depth: Int,
     htmlPanelMaxHeight: Dp,
+    bubbleAlpha: Float,
     tavernRuntime: TavernMessageRuntime,
     onHtmlBoundaryDrag: (Float) -> Unit,
     onSwipeLeft: () -> Unit,
@@ -747,6 +755,7 @@ private fun ChatBubble(
                 availableMaxHeight = htmlPanelMaxHeight,
                 isUser = isUser,
                 highlightDialogue = message.role != MessageRole.System,
+                bubbleAlpha = bubbleAlpha,
                 modifier = Modifier.fillMaxWidth(),
                 tavernRuntime = tavernRuntime,
                 onHtmlBoundaryDrag = onHtmlBoundaryDrag,
@@ -757,11 +766,12 @@ private fun ChatBubble(
                 availableMaxHeight = htmlPanelMaxHeight,
                 isUser = isUser,
                 highlightDialogue = message.role != MessageRole.System,
+                bubbleAlpha = bubbleAlpha,
                 modifier = Modifier
                     .fillMaxWidth()
                     // 半透明气泡：背景图透出 40%，前端卡片分支保持无底板。
                     .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha))
                     .then(dragModifier),
                 tavernRuntime = tavernRuntime,
                 onHtmlBoundaryDrag = onHtmlBoundaryDrag,
@@ -783,6 +793,7 @@ private fun TavernMessageContent(
     availableMaxHeight: Dp,
     isUser: Boolean,
     highlightDialogue: Boolean,
+    bubbleAlpha: Float,
     modifier: Modifier = Modifier,
     tavernRuntime: TavernMessageRuntime,
     onHtmlBoundaryDrag: (Float) -> Unit,
@@ -820,7 +831,11 @@ private fun TavernMessageContent(
                     }
                 }
                 is TavernRenderSegment.Reasoning -> {
-                    ReasoningBlock(content = segment.content, highlightDialogue = highlightDialogue)
+                    ReasoningBlock(
+                        content = segment.content,
+                        highlightDialogue = highlightDialogue,
+                        bubbleAlpha = bubbleAlpha,
+                    )
                 }
                 is TavernRenderSegment.Frontend -> {
                     TavernHtmlPanel(
@@ -836,14 +851,14 @@ private fun TavernMessageContent(
 }
 
 @Composable
-private fun ReasoningBlock(content: String, highlightDialogue: Boolean) {
+private fun ReasoningBlock(content: String, highlightDialogue: Boolean, bubbleAlpha: Float) {
     var expanded by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 8.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha)),
     ) {
         Row(
             modifier = Modifier
@@ -909,6 +924,15 @@ private class TavernMessageBridge(
     @Volatile
     private var nestedScrollGesture: Boolean = false
 
+    /**
+     * 已下发过的高度。ResizeObserver 是像素级触发的，卡片内图片渐进加载、
+     * 字体就绪都会产生 1px 级抖动；没有这道门限，每次抖动都会经过
+     * mainHandler.post → Compose 重组 → WebView 视口变化 → 再次触发
+     * ResizeObserver 的完整循环，主线程被排版脉冲淹没（ANR）。
+     */
+    @Volatile
+    private var lastDeliveredHeight: Int = 0
+
     fun attach(view: WebView) {
         webView = java.lang.ref.WeakReference(view)
     }
@@ -918,6 +942,11 @@ private class TavernMessageBridge(
     }
 
     fun shouldLoad(html: String): Boolean = loadTracker.shouldLoad(html)
+
+    /** 新 HTML 即将加载时调用：旧高度门限不能带到新页面。 */
+    fun resetDeliveredHeight() {
+        lastDeliveredHeight = 0
+    }
 
     fun beginNativeTouchGesture() {
         nestedScrollGesture = false
@@ -943,6 +972,9 @@ private class TavernMessageBridge(
     @JavascriptInterface
     fun resize(height: Int) {
         if (height <= 0) return
+        // 差值门限：1px 级抖动直接丢弃，不进主线程消息队列。
+        if (kotlin.math.abs(height - lastDeliveredHeight) < 2) return
+        lastDeliveredHeight = height
         mainHandler.post { onHeightChanged(height) }
     }
 
@@ -1010,7 +1042,11 @@ private fun TavernHtmlPanel(
             .height(panelHeight),
         factory = { context ->
             val bridge = TavernMessageBridge(
-                onHeightChanged = { height -> contentHeightPx = height },
+                onHeightChanged = { height ->
+                    if (kotlin.math.abs(height - contentHeightPx) >= 2) {
+                        contentHeightPx = height
+                    }
+                },
                 onBoundaryDrag = onBoundaryDrag,
                 runtime = tavernRuntime,
             )
@@ -1097,6 +1133,7 @@ private fun TavernHtmlPanel(
             val bridge = webView.tag as? TavernMessageBridge
             bridge?.updateRuntime(tavernRuntime)
             if (bridge?.shouldLoad(wrappedHtml) != false) {
+                bridge?.resetDeliveredHeight()
                 webView.stopLoading()
                 webView.scrollTo(0, 0)
                 webView.loadDataWithBaseURL(
@@ -1188,20 +1225,42 @@ internal fun wrapTavernHtml(
 
 internal fun tavernResizeScript(): String = """
     (function() {
+        var lastPostedHeight = 0;
+        var scheduled = false;
+        var debounceTimer = 0;
         function pageHeight() {
             var body = document.body || {};
             var doc = document.documentElement || {};
+            // NOTE: doc.clientHeight 故意不参与：它是 WebView 视口高度，
+            // Compose 侧 panelHeight 变大 → 视口变大 → clientHeight 变大 →
+            // 再次 post 更大的高度，正反馈一路顶到 maxPanelHeight。
             return Math.ceil(Math.max(
                 body.scrollHeight || 0,
                 body.offsetHeight || 0,
-                doc.clientHeight || 0,
                 doc.scrollHeight || 0,
                 doc.offsetHeight || 0
             ));
         }
-        function postHeight() {
+        function postHeightNow() {
+            scheduled = false;
+            var h = pageHeight();
+            if (Math.abs(h - lastPostedHeight) < 2) return;
+            lastPostedHeight = h;
             if (window.TellevBridge && window.TellevBridge.resize) {
-                window.TellevBridge.resize(pageHeight());
+                window.TellevBridge.resize(h);
+            }
+        }
+        function postHeight() {
+            if (scheduled) return;
+            scheduled = true;
+            var flush = function() {
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(postHeightNow, 150);
+            };
+            if (window.requestAnimationFrame) {
+                window.requestAnimationFrame(flush);
+            } else {
+                flush();
             }
         }
         if (!window.__tellevResizeInstalled) {
@@ -1221,7 +1280,7 @@ internal fun tavernResizeScript(): String = """
             setTimeout(postHeight, 250);
             setTimeout(postHeight, 1000);
         }
-        postHeight();
+        postHeightNow();
     })();
 """.trimIndent()
 
@@ -1266,6 +1325,7 @@ private fun StreamingBubble(
     characterName: String,
     character: CharacterCard?,
     preset: GenerationPreset?,
+    bubbleAlpha: Float,
     userName: String,
     availableMaxHeight: Dp,
     tavernRuntime: TavernMessageRuntime,
@@ -1296,7 +1356,11 @@ private fun StreamingBubble(
             availableMaxHeight = availableMaxHeight,
             isUser = false,
             highlightDialogue = true,
-            modifier = Modifier.fillMaxWidth(),
+            bubbleAlpha = bubbleAlpha,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha)),
             tavernRuntime = tavernRuntime,
             onHtmlBoundaryDrag = onHtmlBoundaryDrag,
         )
@@ -1378,6 +1442,7 @@ private fun ChatInputBar(
     onTextChange: (String) -> Unit,
     isGenerating: Boolean,
     attachments: List<Attachment>,
+    bubbleAlpha: Float,
     onPickImage: () -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onSend: () -> Unit,
@@ -1445,7 +1510,7 @@ private fun ChatInputBar(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha)),
             ) {
                 Icon(
                     Icons.Default.AddPhotoAlternate,
@@ -1462,6 +1527,12 @@ private fun ChatInputBar(
                 maxLines = 6,
                 placeholder = { Text("输入消息") },
                 shape = RoundedCornerShape(24.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha),
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha),
+                    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha),
+                    errorContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha),
+                ),
             )
 
             if (isGenerating) {
@@ -1470,7 +1541,7 @@ private fun ChatInputBar(
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.errorContainer),
+                        .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = bubbleAlpha)),
                 ) {
                     Icon(
                         Icons.Default.Stop,
@@ -1486,8 +1557,8 @@ private fun ChatInputBar(
                         .size(48.dp)
                         .clip(CircleShape)
                         .background(
-                            if (canSend) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.surfaceVariant,
+                            if (canSend) MaterialTheme.colorScheme.primary.copy(alpha = bubbleAlpha)
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha),
                         ),
                 ) {
                     Icon(

@@ -778,6 +778,20 @@ fun SettingsScreen(
                     }
                 }
 
+                item(key = "bubble_alpha") {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                        Text(
+                            text = "气泡不透明度：${(state.chatBubbleAlpha * 100).toInt()}%",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Slider(
+                            value = state.chatBubbleAlpha,
+                            onValueChange = viewModel::setChatBubbleAlpha,
+                            valueRange = 0f..1f,
+                        )
+                    }
+                }
+
                 item(key = "divider_4") {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 }

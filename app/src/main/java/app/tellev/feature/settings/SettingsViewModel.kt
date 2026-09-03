@@ -61,6 +61,7 @@ data class SettingsUiState(
     val secretIds: List<String> = emptyList(),
     val themeMode: ThemeMode = ThemeMode.System,
     val themeAccent: ThemeAccent = ThemeAccent.Warm,
+    val chatBubbleAlpha: Float = 0.6f,
     val isLoading: Boolean = false,
     val error: String? = null,
     val info: String? = null,
@@ -74,6 +75,7 @@ class SettingsViewModel(
     private val appPreferences: AppPreferences,
     private val themeModeFlow: MutableStateFlow<ThemeMode>,
     private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
+    private val chatBubbleAlphaFlow: MutableStateFlow<Float>,
 ) : ViewModel() {
 
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
@@ -145,6 +147,7 @@ class SettingsViewModel(
                         secretIds = secretIds,
                         themeMode = parseThemeMode(appPreferences.themeModeName),
                         themeAccent = parseThemeAccent(appPreferences.themeAccentName),
+                        chatBubbleAlpha = appPreferences.chatBubbleAlpha,
                         baseUrl = fields.baseUrl,
                         apiKey = fields.apiKey,
                         model = fields.model,
@@ -832,6 +835,15 @@ class SettingsViewModel(
         }
     }
 
+    fun setChatBubbleAlpha(alpha: Float) {
+        val coerced = alpha.coerceIn(0f, 1f)
+        appPreferences.chatBubbleAlpha = coerced
+        chatBubbleAlphaFlow.value = coerced
+        _uiState.update {
+            it.copy(chatBubbleAlpha = coerced)
+        }
+    }
+
     fun exportBackup(context: Context, targetUri: Uri) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
@@ -960,6 +972,7 @@ class SettingsViewModelFactory(
     private val appPreferences: AppPreferences,
     private val themeModeFlow: MutableStateFlow<ThemeMode>,
     private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
+    private val chatBubbleAlphaFlow: MutableStateFlow<Float>,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -971,6 +984,7 @@ class SettingsViewModelFactory(
                 appPreferences = appPreferences,
                 themeModeFlow = themeModeFlow,
                 themeAccentFlow = themeAccentFlow,
+                chatBubbleAlphaFlow = chatBubbleAlphaFlow,
             ) as T
         }
         throw IllegalArgumentException("未知 ViewModel 类型：${modelClass.name}")
