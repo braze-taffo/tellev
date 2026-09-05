@@ -117,28 +117,23 @@ class TellevGraph private constructor(
             val templateEvaluator = app.tellev.core.prompt.WebViewTemplateEvaluator(context)
             val promptEngine = DefaultPromptEngine(macroEngine,
                 app.tellev.core.prompt.DefaultPromptTemplateProcessor(javascriptEvaluator = templateEvaluator::evaluate))
-            val deepSeekClient = OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .writeTimeout(2, TimeUnit.MINUTES)
-                .readTimeout(5, TimeUnit.MINUTES)
-                .callTimeout(0, TimeUnit.MILLISECONDS)
-                .build()
-
-            // ComfyUI runs long generation jobs and downloads multi-megabyte
-            // images over LAN links, so it gets the same generous timeouts as
-            // the DeepSeek client.
-            val comfyClient = OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .writeTimeout(2, TimeUnit.MINUTES)
+            // One shared client for every provider HTTP call (chat streaming,
+            // image generation, TTS, translation) with uniform 5-minute
+            // timeouts: reasoning models can stay silent between SSE bytes
+            // for minutes, and OkHttp's default 10s read timeout kills those
+            // streams mid-generation.
+            val providerClient = OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.MINUTES)
+                .writeTimeout(5, TimeUnit.MINUTES)
                 .readTimeout(5, TimeUnit.MINUTES)
                 .callTimeout(0, TimeUnit.MILLISECONDS)
                 .build()
 
             val providerRegistry = ProviderRegistry(
                 adapters = listOf(
-                    OpenAiCompatibleAdapter(),
+                    OpenAiCompatibleAdapter(client = providerClient),
                     OpenAiCompatibleAdapter(
-                        client = deepSeekClient,
+                        client = providerClient,
                         providerId = ProviderCatalog.DEEPSEEK,
                         providerDisplayName = "DeepSeek",
                         defaultModel = "deepseek-v4-flash",
@@ -146,34 +141,36 @@ class TellevGraph private constructor(
                         chatCompletionsPath = "/chat/completions",
                     ),
                     OpenAiCompatibleAdapter(
+                        client = providerClient,
                         providerId = ProviderCatalog.TELLEVCLICK,
                         providerDisplayName = "tellevclick",
                         modelsPath = "/models",
                         chatCompletionsPath = "/chat/completions",
                     ),
                     OpenAiCompatibleAdapter(
+                        client = providerClient,
                         providerId = ProviderCatalog.VOLCENGINE_CODING_PLAN,
                         providerDisplayName = "火山引擎 Coding Plan",
                         modelsPath = "/models",
                         chatCompletionsPath = "/chat/completions",
                         supportsModelListing = false,
                     ),
-                    AnthropicAdapter(),
-                    GeminiAdapter(),
-                    OpenRouterAdapter(),
-                    OllamaAdapter(),
-                    KoboldAdapter(),
-                    KoboldCppAdapter(),
-                    NovelAiAdapter(),
-                    TextGenAdapter(),
-                    AzureAdapter(),
-                    HordeAdapter(),
-                    LlamaCppAdapter(),
-                    StableDiffusionAdapter(),
-                    ComfyUiAdapter(client = comfyClient),
-                    OpenAiImageAdapter(),
-                    OpenAiSpeechAdapter(),
-                    GoogleTranslateAdapter(),
+                    AnthropicAdapter(client = providerClient),
+                    GeminiAdapter(client = providerClient),
+                    OpenRouterAdapter(client = providerClient),
+                    OllamaAdapter(client = providerClient),
+                    KoboldAdapter(client = providerClient),
+                    KoboldCppAdapter(client = providerClient),
+                    NovelAiAdapter(client = providerClient),
+                    TextGenAdapter(client = providerClient),
+                    AzureAdapter(client = providerClient),
+                    HordeAdapter(client = providerClient),
+                    LlamaCppAdapter(client = providerClient),
+                    StableDiffusionAdapter(client = providerClient),
+                    ComfyUiAdapter(client = providerClient),
+                    OpenAiImageAdapter(client = providerClient),
+                    OpenAiSpeechAdapter(client = providerClient),
+                    GoogleTranslateAdapter(client = providerClient),
                 ),
             )
 
