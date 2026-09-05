@@ -139,4 +139,58 @@ class ProviderConfigPersistenceTest {
         assertNull(ProviderConfigPersistence.migrateLegacyOpenAiCompatible(s))
         assertEquals(1, ProviderConfigPersistence.listCustomConfigs(s).size)
     }
+
+    // ── ComfyUI 生图设置 ──────────────────────────────────────────────────
+
+    @Test
+    fun `comfy settings default to fresh install state`() = runBlocking {
+        val s = store()
+        assertEquals(ComfyUiSettings(), ProviderConfigPersistence.loadComfySettings(s))
+        assertTrue(!ProviderConfigPersistence.isComfyImageGenerationConfigured(s))
+    }
+
+    @Test
+    fun `comfy settings round-trip and enable availability`() = runBlocking {
+        val s = store()
+        val settings = ComfyUiSettings(
+            workflowJson = """{"4": {"class_type": "CLIPTextEncode", "inputs": {"text": "%prompt%"}}}""",
+            negativePrompt = "lowres",
+            steps = 30,
+        )
+        ProviderConfigPersistence.saveComfySettings(s, settings)
+        assertEquals(settings, ProviderConfigPersistence.loadComfySettings(s))
+        assertTrue(ProviderConfigPersistence.isComfyImageGenerationConfigured(s))
+    }
+
+    @Test
+    fun `comfy settings corrupted json falls back to defaults`() = runBlocking {
+        val s = store()
+        s.putSecret("provider-comfyui-settings", "not json at all")
+        assertEquals(ComfyUiSettings(), ProviderConfigPersistence.loadComfySettings(s))
+    }
+
+    @Test
+    fun `comfy availability false for invalid workflow`() = runBlocking {
+        val s = store()
+        ProviderConfigPersistence.saveComfySettings(s, ComfyUiSettings(workflowJson = "{\"broken\": "))
+        assertTrue(!ProviderConfigPersistence.isComfyImageGenerationConfigured(s))
+    }
+
+    @Test
+    fun `comfy availability false when workflow only whitespace`() = runBlocking {
+        val s = store()
+        ProviderConfigPersistence.saveComfySettings(s, ComfyUiSettings(workflowJson = "   "))
+        assertTrue(!ProviderConfigPersistence.isComfyImageGenerationConfigured(s))
+    }
+
+    @Test
+    fun `loadProviderConfig reads comfy url and model slots`() = runBlocking {
+        val s = store()
+        s.putSecret("provider-${ProviderCatalog.COMFYUI}-baseurl", "http://192.168.1.50:8188")
+        s.putSecret("provider-${ProviderCatalog.COMFYUI}-model", "sd_xl.safetensors")
+        val config = ProviderConfigPersistence.loadProviderConfig(s, ProviderCatalog.COMFYUI)
+        assertEquals(ProviderCatalog.COMFYUI, config.providerType)
+        assertEquals("http://192.168.1.50:8188", config.baseUrl)
+        assertEquals("sd_xl.safetensors", config.model)
+    }
 }

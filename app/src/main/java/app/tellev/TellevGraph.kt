@@ -15,6 +15,7 @@ import app.tellev.core.prompt.MacroEngine
 import app.tellev.core.prompt.PromptEngine
 import app.tellev.core.provider.AnthropicAdapter
 import app.tellev.core.provider.AzureAdapter
+import app.tellev.core.provider.ComfyUiAdapter
 import app.tellev.core.provider.GeminiAdapter
 import app.tellev.core.provider.GoogleTranslateAdapter
 import app.tellev.core.provider.HordeAdapter
@@ -123,6 +124,16 @@ class TellevGraph private constructor(
                 .callTimeout(0, TimeUnit.MILLISECONDS)
                 .build()
 
+            // ComfyUI runs long generation jobs and downloads multi-megabyte
+            // images over LAN links, so it gets the same generous timeouts as
+            // the DeepSeek client.
+            val comfyClient = OkHttpClient.Builder()
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(2, TimeUnit.MINUTES)
+                .readTimeout(5, TimeUnit.MINUTES)
+                .callTimeout(0, TimeUnit.MILLISECONDS)
+                .build()
+
             val providerRegistry = ProviderRegistry(
                 adapters = listOf(
                     OpenAiCompatibleAdapter(),
@@ -159,6 +170,7 @@ class TellevGraph private constructor(
                     HordeAdapter(),
                     LlamaCppAdapter(),
                     StableDiffusionAdapter(),
+                    ComfyUiAdapter(client = comfyClient),
                     OpenAiImageAdapter(),
                     OpenAiSpeechAdapter(),
                     GoogleTranslateAdapter(),

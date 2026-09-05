@@ -149,6 +149,25 @@ object ProviderConfigPersistence {
         secretStore.putSecret(advancedSecretId(providerId), json.encodeToString(settings))
     }
 
+    /** Secret id holding the encrypted [ComfyUiSettings] JSON. */
+    private const val COMFY_SETTINGS_SECRET_ID = "provider-comfyui-settings"
+
+    /** True when a ComfyUI image model is usable: a workflow is pasted and parses as a JSON object. */
+    suspend fun isComfyImageGenerationConfigured(secretStore: SecretStore): Boolean {
+        val settings = loadComfySettings(secretStore)
+        return settings.workflowJson.isNotBlank() && ComfyWorkflowTemplate.parse(settings.workflowJson) != null
+    }
+
+    suspend fun loadComfySettings(secretStore: SecretStore): ComfyUiSettings {
+        val stored = secretStore.readSecret(COMFY_SETTINGS_SECRET_ID) ?: return ComfyUiSettings()
+        return runCatching { json.decodeFromString<ComfyUiSettings>(stored) }
+            .getOrElse { ComfyUiSettings() }
+    }
+
+    suspend fun saveComfySettings(secretStore: SecretStore, settings: ComfyUiSettings) {
+        secretStore.putSecret(COMFY_SETTINGS_SECRET_ID, json.encodeToString(settings))
+    }
+
     suspend fun loadProviderConfig(secretStore: SecretStore, providerId: String): ProviderConfig {
         // A custom: id selects one of the user's named OpenAI-compatible configs.
         if (isCustomConfigId(providerId)) {

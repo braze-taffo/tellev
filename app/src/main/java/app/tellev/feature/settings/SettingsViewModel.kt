@@ -17,6 +17,8 @@ import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.provider.ProviderStatus
 import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.supportsChatGeneration
+import app.tellev.core.provider.ComfyUiSettings
+import app.tellev.core.provider.ComfyWorkflowTemplate
 import app.tellev.core.provider.OpenAiCompatibilitySettings
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.AppPreferences
@@ -66,6 +68,13 @@ data class SettingsUiState(
     val error: String? = null,
     val info: String? = null,
     val availableModels: List<String> = emptyList(),
+    // ── 生图模型（ComfyUI），独立于聊天模型服务 ──
+    val comfyBaseUrl: String = "",
+    val comfyModel: String = "",
+    val comfySettings: ComfyUiSettings = ComfyUiSettings(),
+    val comfyStatus: ProviderStatus? = null,
+    val isTestingComfy: Boolean = false,
+    val comfyModels: List<String> = emptyList(),
 )
 
 class SettingsViewModel(
@@ -135,6 +144,11 @@ class SettingsViewModel(
 
                 val fields = loadConfigFields(selectedId, customConfigs)
 
+                val comfySettings = ProviderConfigPersistence.loadComfySettings(secretStore)
+                val comfyBaseUrl = secretStore.readSecret("provider-${ProviderCatalog.COMFYUI}-baseurl")
+                    ?: ProviderDefaults.baseUrl(ProviderCatalog.COMFYUI)
+                val comfyModel = secretStore.readSecret("provider-${ProviderCatalog.COMFYUI}-model") ?: ""
+
                 _uiState.update {
                     it.copy(
                         providers = providers,
@@ -155,6 +169,9 @@ class SettingsViewModel(
                         extraHeadersJson = json.encodeToString(fields.compatibility.headers),
                         extraBodyJson = json.encodeToString(JsonObject.serializer(), fields.compatibility.extraBody),
                         isLoading = false,
+                        comfyBaseUrl = comfyBaseUrl,
+                        comfyModel = comfyModel,
+                        comfySettings = comfySettings,
                     )
                 }
             } catch (e: Exception) {
@@ -282,6 +299,92 @@ class SettingsViewModel(
 
     private fun updateCompatibility(transform: OpenAiCompatibilitySettings.() -> OpenAiCompatibilitySettings) {
         _uiState.update { it.copy(compatibility = it.compatibility.transform()) }
+    }
+
+    // ── 生图模型（ComfyUI）──────────────────────────────────────────────
+
+    fun updateComfyBaseUrl(value: String) {
+        _uiState.update { it.copy(comfyBaseUrl = value) }
+    }
+
+    fun updateComfyModel(value: String) {
+        _uiState.update { it.copy(comfyModel = value) }
+    }
+
+    fun updateComfySettings(transform: (ComfyUiSettings) -> ComfyUiSettings) {
+        _uiState.update { state -> state.copy(comfySettings = transform(state.comfySettings)) }
+    }
+
+    private fun comfyConfigFromState(state: SettingsUiState): ProviderConfig = ProviderConfig(
+        providerType = ProviderCatalog.COMFYUI,
+        baseUrl = state.comfyBaseUrl.trim().ifBlank { ProviderDefaults.baseUrl(ProviderCatalog.COMFYUI) },
+        model = state.comfyModel.trim().takeIf { it.isNotBlank() },
+    )
+
+    fun testComfyConnection() {
+        val config = comfyConfigFromState(_uiState.value)
+        viewModelScope.launch {
+            _uiState.update { it.copy(isTestingComfy = true, comfyStatus = null, error = null) }
+            try {
+                val adapter = providerRegistry.require(ProviderCatalog.COMFYUI)
+                val status = withContext(Dispatchers.IO) { adapter.checkStatus(config) }
+                // Checkpoint listing feeds the model dropdown; failures are
+                // non-fatal (older ComfyUI builds may lack /object_info).
+                val models = if (status.available) {
+                    runCatching { withContext(Dispatchers.IO) { adapter.listModels(config) } }
+                        .getOrDefault(emptyList())
+                        .map { it.id }
+                } else {
+                    emptyList()
+                }
+                _uiState.update {
+                    it.copy(isTestingComfy = false, comfyStatus = status, comfyModels = models)
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isTestingComfy = false, error = "ComfyUI 连接测试失败：${e.message}")
+                }
+            }
+        }
+    }
+
+    fun saveComfyConfig() {
+        val state = _uiState.value
+        val workflow = state.comfySettings.workflowJson.trim()
+        if (workflow.isNotBlank() && ComfyWorkflowTemplate.parse(workflow) == null) {
+            _uiState.update {
+                it.copy(error = "工作流 JSON 无法解析，未保存。请粘贴 ComfyUI「保存（API 格式）」导出的 JSON。")
+            }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                if (state.comfyBaseUrl.isNotBlank()) {
+                    secretStore.putSecret("provider-${ProviderCatalog.COMFYUI}-baseurl", state.comfyBaseUrl.trim())
+                } else {
+                    secretStore.deleteSecret("provider-${ProviderCatalog.COMFYUI}-baseurl")
+                }
+                if (state.comfyModel.isNotBlank()) {
+                    secretStore.putSecret("provider-${ProviderCatalog.COMFYUI}-model", state.comfyModel.trim())
+                } else {
+                    secretStore.deleteSecret("provider-${ProviderCatalog.COMFYUI}-model")
+                }
+                val saved = state.comfySettings.copy(workflowJson = workflow)
+                ProviderConfigPersistence.saveComfySettings(secretStore, saved)
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        comfySettings = saved,
+                        info = "生图模型配置已保存。",
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isLoading = false, error = "保存生图模型配置失败：${e.message}")
+                }
+            }
+        }
     }
 
     fun testConnection() {

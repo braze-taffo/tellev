@@ -20,6 +20,7 @@ object ProviderDefaults {
         ProviderCatalog.HORDE -> "https://aihorde.net"
         ProviderCatalog.LLAMA_CPP -> "http://localhost:8080"
         ProviderCatalog.STABLE_DIFFUSION -> "http://localhost:7860"
+        ProviderCatalog.COMFYUI -> "http://127.0.0.1:8188"
         ProviderCatalog.OPENAI_IMAGE -> "https://api.openai.com"
         ProviderCatalog.OPENAI_SPEECH -> "https://api.openai.com"
         ProviderCatalog.GOOGLE_TRANSLATE -> "https://translate.googleapis.com"

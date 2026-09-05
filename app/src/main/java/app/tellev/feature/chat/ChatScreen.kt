@@ -48,9 +48,11 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,6 +63,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -94,6 +97,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import app.tellev.LocalTellevGraph
 import app.tellev.core.model.Attachment
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.ChatMessage
@@ -274,8 +280,12 @@ private fun ChatContentScreen(
     var editingMessageIndex by remember { mutableStateOf<Int?>(null) }
     var editTextField by remember { mutableStateOf("") }
     var pendingAttachments by remember { mutableStateOf(listOf<Attachment>()) }
+    var showImageDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val graph = LocalTellevGraph.current
+    // st-data 根：用于把消息里的图片附件相对路径解析成本地文件。
+    val dataRoot = graph.dataStore.layout.root.toFile()
 
     val pickImageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
@@ -526,6 +536,7 @@ private fun ChatContentScreen(
                         message = message,
                         character = state.selectedCharacter,
                         characterAvatar = state.characterAvatarFile,
+                        dataRoot = dataRoot,
                         preset = state.selectedPreset,
                         userName = state.selectedPersona?.name ?: "User",
                         depth = visibleRegexDepth(state.messages, index),
@@ -608,6 +619,10 @@ private fun ChatContentScreen(
             isGenerating = state.isGenerating,
             attachments = pendingAttachments,
             bubbleAlpha = bubbleAlpha,
+            imageGenAvailable = state.imageGenAvailable,
+            isGeneratingImage = state.isGeneratingImage,
+            imageGenStatus = state.imageGenStatus,
+            onGenerateImage = { showImageDialog = true },
             onPickImage = {
                 pickImageLauncher.launch(
                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
@@ -628,6 +643,18 @@ private fun ChatContentScreen(
             },
             onStop = { viewModel.stopGeneration() },
         )
+
+        if (showImageDialog) {
+            ImageGenerationDialog(
+                initialPrompt = inputText,
+                onGenerate = { prompt, negative, summarizeScene ->
+                    showImageDialog = false
+                    keyboardController?.hide()
+                    viewModel.generateImage(prompt, negative, summarizeScene)
+                },
+                onDismiss = { showImageDialog = false },
+            )
+        }
     }
 }
 
@@ -637,6 +664,7 @@ private fun ChatBubble(
     message: ChatMessage,
     character: CharacterCard?,
     characterAvatar: java.io.File?,
+    dataRoot: java.io.File,
     preset: GenerationPreset?,
     userName: String,
     depth: Int,
@@ -767,6 +795,12 @@ private fun ChatBubble(
             }
         }
         val hasFrontend = renderSegments.any { it is TavernRenderSegment.Frontend }
+        // 生成图片消息：解析附件里的本地图片文件（生图结果落盘于 st-data/user/images）。
+        val imageFiles = remember(message.id, message.attachments) {
+            message.attachments
+                .filter { it.relativePath.isNotBlank() && it.mimeType.startsWith("image/") }
+                .mapNotNull { attachment -> dataRoot.resolve(attachment.relativePath).takeIf { it.isFile } }
+        }
         val dragModifier = Modifier.pointerInput(message.id) {
             detectHorizontalDragGestures(
                 onDragEnd = {
@@ -802,7 +836,7 @@ private fun ChatBubble(
                 tavernRuntime = tavernRuntime,
                 onHtmlBoundaryDrag = onHtmlBoundaryDrag,
             )
-        } else {
+        } else if (imageFiles.isEmpty()) {
             TavernMessageContent(
                 segments = renderSegments,
                 availableMaxHeight = htmlPanelMaxHeight,
@@ -818,6 +852,31 @@ private fun ChatBubble(
                 tavernRuntime = tavernRuntime,
                 onHtmlBoundaryDrag = onHtmlBoundaryDrag,
             )
+        } else {
+            // 生成图片消息：图片与简短文字同处一个气泡底板。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha))
+                    .then(dragModifier),
+            ) {
+                imageFiles.forEach { file ->
+                    ChatBubbleImage(file = file)
+                }
+                if (parts.body.isNotBlank()) {
+                    TavernMessageContent(
+                        segments = renderSegments,
+                        availableMaxHeight = htmlPanelMaxHeight,
+                        isUser = isUser,
+                        highlightDialogue = message.role != MessageRole.System,
+                        bubbleAlpha = bubbleAlpha,
+                        modifier = Modifier.fillMaxWidth(),
+                        tavernRuntime = tavernRuntime,
+                        onHtmlBoundaryDrag = onHtmlBoundaryDrag,
+                    )
+                }
+            }
         }
 
         if (message.swipes.size > 1 && (!hasFrontend || isUser)) {
@@ -1513,6 +1572,10 @@ private fun ChatInputBar(
     isGenerating: Boolean,
     attachments: List<Attachment>,
     bubbleAlpha: Float,
+    imageGenAvailable: Boolean = false,
+    isGeneratingImage: Boolean = false,
+    imageGenStatus: String? = null,
+    onGenerateImage: () -> Unit = {},
     onPickImage: () -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onSend: () -> Unit,
@@ -1526,6 +1589,26 @@ private fun ChatInputBar(
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
+        // 生图进行中的状态行（可随时用 Stop 按钮取消）。
+        if (isGeneratingImage) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                )
+                Text(
+                    text = imageGenStatus ?: "正在生成图片…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         if (attachments.isNotEmpty()) {
             Row(
                 modifier = Modifier
@@ -1589,6 +1672,24 @@ private fun ChatInputBar(
                 )
             }
 
+            // 生图入口：仅在生图模型已配置时出现，未配置不占位、不影响布局。
+            if (imageGenAvailable) {
+                IconButton(
+                    onClick = onGenerateImage,
+                    enabled = !isGenerating && !isGeneratingImage,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha)),
+                ) {
+                    Icon(
+                        Icons.Default.Palette,
+                        contentDescription = "生成图片",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
             OutlinedTextField(
                 value = text,
                 onValueChange = onTextChange,
@@ -1605,7 +1706,7 @@ private fun ChatInputBar(
                 ),
             )
 
-            if (isGenerating) {
+            if (isGenerating || isGeneratingImage) {
                 IconButton(
                     onClick = onStop,
                     modifier = Modifier
@@ -1641,6 +1742,121 @@ private fun ChatInputBar(
             }
         }
     }
+}
+
+/** A generated-image file inside a chat bubble; tap to view full-screen. */
+@Composable
+private fun ChatBubbleImage(file: java.io.File) {
+    var showFull by remember(file) { mutableStateOf(false) }
+    AsyncImage(
+        model = file,
+        contentDescription = "生成的图片",
+        contentScale = ContentScale.FillWidth,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(8.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable { showFull = true },
+    )
+    if (showFull) {
+        Dialog(
+            onDismissRequest = { showFull = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable { showFull = false },
+                contentAlignment = Alignment.Center,
+            ) {
+                AsyncImage(
+                    model = file,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+    }
+}
+
+/** Image-generation dialog: manual prompt or AI scene summary of the chat. */
+@Composable
+private fun ImageGenerationDialog(
+    initialPrompt: String,
+    onGenerate: (prompt: String, negativePrompt: String, summarizeScene: Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var prompt by remember { mutableStateOf(initialPrompt) }
+    var negative by remember { mutableStateOf("") }
+    var summarizeScene by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("生成图片") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { summarizeScene = false },
+                ) {
+                    RadioButton(selected = !summarizeScene, onClick = { summarizeScene = false })
+                    Text("按提示词生成", style = MaterialTheme.typography.bodyMedium)
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { summarizeScene = true },
+                ) {
+                    RadioButton(selected = summarizeScene, onClick = { summarizeScene = true })
+                    Text("总结当前对话画面", style = MaterialTheme.typography.bodyMedium)
+                }
+                OutlinedTextField(
+                    value = prompt,
+                    onValueChange = { prompt = it },
+                    label = { Text("图片提示词") },
+                    enabled = !summarizeScene,
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    maxLines = 5,
+                )
+                OutlinedTextField(
+                    value = negative,
+                    onValueChange = { negative = it },
+                    label = { Text("负面提示词（可选）") },
+                    placeholder = { Text("留空使用设置中的默认负面提示词") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 1,
+                    maxLines = 3,
+                )
+                if (summarizeScene) {
+                    Text(
+                        "将用当前对话模型总结最近画面，再交给 ComfyUI 生成",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onGenerate(prompt.trim(), negative.trim(), summarizeScene) },
+                enabled = summarizeScene || prompt.isNotBlank(),
+            ) {
+                Text("生成")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+    )
 }
 
 /** Build a vision attachment from a picked image URI: downsample + base64. */

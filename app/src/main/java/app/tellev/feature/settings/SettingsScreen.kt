@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -37,6 +38,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -52,6 +54,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
@@ -102,6 +105,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -110,6 +115,7 @@ import androidx.compose.ui.window.DialogProperties
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.PresetCategory
 import app.tellev.core.model.PresetPrompt
+import app.tellev.core.provider.ComfyWorkflowTemplate
 import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.ProviderConfigPersistence
 import kotlinx.serialization.json.Json
@@ -158,6 +164,8 @@ fun SettingsScreen(
     var pendingPresetImportUri by remember { mutableStateOf<Uri?>(null) }
     var pendingPresetExport by remember { mutableStateOf<GenerationPreset?>(null) }
     var showAdvancedDialog by remember { mutableStateOf(false) }
+    var showComfyWorkflowDialog by remember { mutableStateOf(false) }
+    var showComfyParamsDialog by remember { mutableStateOf(false) }
     var pendingDeleteConfigId by remember { mutableStateOf<String?>(null) }
 
     val importLauncher = rememberLauncherForActivityResult(
@@ -266,6 +274,164 @@ fun SettingsScreen(
                     }
 
                     item(key = "provider_quick_divider") {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    }
+
+                    // ── 生图模型（ComfyUI）；未配置时聊天界面不出现生图入口 ──
+                    item(key = "comfy_header") {
+                        SectionHeader(
+                            icon = Icons.Default.Palette,
+                            title = "生图模型（ComfyUI）",
+                        )
+                    }
+                    item(key = "comfy_url") {
+                        OutlinedTextField(
+                            value = state.comfyBaseUrl,
+                            onValueChange = viewModel::updateComfyBaseUrl,
+                            label = { Text("ComfyUI 服务地址") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            placeholder = { Text("http://192.168.1.100:8188") },
+                            supportingText = {
+                                Text("电脑上运行的 ComfyUI 地址；配置工作流并保存后，对话输入栏会出现“生成图片”入口")
+                            },
+                        )
+                    }
+                    item(key = "comfy_model") {
+                        var comfyModelMenu by remember { mutableStateOf(false) }
+                        ExposedDropdownMenuBox(
+                            expanded = comfyModelMenu && state.comfyModels.isNotEmpty(),
+                            onExpandedChange = {
+                                comfyModelMenu = it && state.comfyModels.isNotEmpty()
+                            },
+                        ) {
+                            OutlinedTextField(
+                                value = state.comfyModel,
+                                onValueChange = {
+                                    viewModel.updateComfyModel(it)
+                                    comfyModelMenu = state.comfyModels.isNotEmpty()
+                                },
+                                label = { Text("模型（Checkpoint）") },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .menuAnchor(MenuAnchorType.PrimaryEditable),
+                                singleLine = true,
+                                placeholder = { Text("填入工作流 %model% 占位符对应的模型名，可留空") },
+                                trailingIcon = {
+                                    if (state.comfyModels.isNotEmpty()) {
+                                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = comfyModelMenu)
+                                    }
+                                },
+                                supportingText = {
+                                    Text(
+                                        if (state.comfyModels.isEmpty()) {
+                                            "测试连接后可从 ComfyUI 获取模型列表"
+                                        } else {
+                                            "已获取 ${state.comfyModels.size} 个模型，可输入筛选"
+                                        },
+                                    )
+                                },
+                            )
+                            ExposedDropdownMenu(
+                                expanded = comfyModelMenu && state.comfyModels.isNotEmpty(),
+                                onDismissRequest = { comfyModelMenu = false },
+                            ) {
+                                val filter = state.comfyModel
+                                state.comfyModels
+                                    .filter { it.contains(filter, ignoreCase = true) || it == state.comfyModel }
+                                    .take(100)
+                                    .forEach { model ->
+                                        DropdownMenuItem(
+                                            text = { Text(model) },
+                                            onClick = {
+                                                viewModel.updateComfyModel(model)
+                                                comfyModelMenu = false
+                                            },
+                                        )
+                                    }
+                            }
+                        }
+                    }
+                    item(key = "comfy_workflow") {
+                        OutlinedButton(
+                            onClick = { showComfyWorkflowDialog = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                if (state.comfySettings.workflowJson.isBlank()) {
+                                    "工作流 JSON（未配置）"
+                                } else {
+                                    "工作流 JSON（已配置，点击编辑）"
+                                },
+                            )
+                        }
+                    }
+                    item(key = "comfy_params") {
+                        OutlinedButton(
+                            onClick = { showComfyParamsDialog = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("生成参数与默认负面提示词")
+                        }
+                    }
+                    item(key = "comfy_actions") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = viewModel::testComfyConnection,
+                                modifier = Modifier.weight(1f),
+                                enabled = !state.isTestingComfy,
+                            ) {
+                                if (state.isTestingComfy) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                }
+                                Text(if (state.isTestingComfy) "测试中..." else "测试连接")
+                            }
+                            FilledTonalButton(
+                                onClick = viewModel::saveComfyConfig,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("保存")
+                            }
+                        }
+                    }
+                    if (state.comfyStatus != null) {
+                        item(key = "comfy_status") {
+                            val status = state.comfyStatus!!
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (status.available) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.errorContainer,
+                                ),
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = if (status.available) "已连接" else "连接失败",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = if (status.available) MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onErrorContainer,
+                                    )
+                                    Text(
+                                        text = status.message,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (status.available) MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onErrorContainer,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    item(key = "comfy_divider") {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     }
                 }
@@ -1067,6 +1233,24 @@ fun SettingsScreen(
         )
     }
 
+    // ComfyUI workflow JSON editor (2nd-level).
+    if (showComfyWorkflowDialog) {
+        ComfyWorkflowDialog(
+            state = state,
+            viewModel = viewModel,
+            onDismiss = { showComfyWorkflowDialog = false },
+        )
+    }
+
+    // ComfyUI generation parameters (2nd-level).
+    if (showComfyParamsDialog) {
+        ComfyParamsDialog(
+            state = state,
+            viewModel = viewModel,
+            onDismiss = { showComfyParamsDialog = false },
+        )
+    }
+
     // Confirm before deleting a custom config (holds its own key/url).
     pendingDeleteConfigId?.let { configId ->
         val configName = state.customConfigs.firstOrNull { it.id == configId }?.name ?: "该配置"
@@ -1452,6 +1636,207 @@ private fun UpdateStatus(
             }
         }
     }
+}
+
+@Composable
+private fun ComfyWorkflowDialog(
+    state: SettingsUiState,
+    viewModel: SettingsViewModel,
+    onDismiss: () -> Unit,
+) {
+    var text by remember(state.comfySettings.workflowJson) {
+        mutableStateOf(state.comfySettings.workflowJson)
+    }
+    var jsonError by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("ComfyUI 工作流 JSON") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    "在 ComfyUI 网页开启开发者模式，用「保存（API 格式）」导出工作流并粘贴到此处，" +
+                        "再把正向/负向提示词节点的文本改为占位符 \"%prompt%\" 与 \"%negative_prompt%\"。" +
+                        "可选占位符：\"%model%\"、\"%seed%\"、\"%steps%\"、\"%scale%\"、\"%width%\"、" +
+                        "\"%height%\"、\"%sampler%\"、\"%scheduler%\"、\"%denoise%\"、\"%clip_skip%\"" +
+                        "（工作流中不含对应占位符时参数不生效）。修改后请回到设置页点击「保存」。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = {
+                        text = it
+                        jsonError = false
+                    },
+                    label = { Text("API 格式工作流") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 240.dp),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    isError = jsonError,
+                    supportingText = if (jsonError) {
+                        { Text("JSON 无法解析，请检查后再确定") }
+                    } else {
+                        null
+                    },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (text.isNotBlank() && ComfyWorkflowTemplate.parse(text.trim()) == null) {
+                        jsonError = true
+                    } else {
+                        viewModel.updateComfySettings { it.copy(workflowJson = text) }
+                        onDismiss()
+                    }
+                },
+            ) {
+                Text("确定")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+    )
+}
+
+@Composable
+private fun ComfyParamsDialog(
+    state: SettingsUiState,
+    viewModel: SettingsViewModel,
+    onDismiss: () -> Unit,
+) {
+    val settings = state.comfySettings
+    var steps by remember { mutableStateOf(settings.steps.toString()) }
+    var cfg by remember { mutableStateOf(settings.cfgScale.toString()) }
+    var width by remember { mutableStateOf(settings.width.toString()) }
+    var height by remember { mutableStateOf(settings.height.toString()) }
+    var sampler by remember { mutableStateOf(settings.sampler) }
+    var scheduler by remember { mutableStateOf(settings.scheduler) }
+    var seed by remember { mutableStateOf(settings.seed.toString()) }
+    var negative by remember { mutableStateOf(settings.negativePrompt) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("生图参数") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    "参数会替换工作流中对应的占位符；采样器与调度器留空表示沿用工作流自身的值。" +
+                        "修改后请回到设置页点击「保存」。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = steps,
+                        onValueChange = { steps = it },
+                        label = { Text("步数") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                    OutlinedTextField(
+                        value = cfg,
+                        onValueChange = { cfg = it },
+                        label = { Text("CFG") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = width,
+                        onValueChange = { width = it },
+                        label = { Text("宽度") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                    OutlinedTextField(
+                        value = height,
+                        onValueChange = { height = it },
+                        label = { Text("高度") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = sampler,
+                        onValueChange = { sampler = it },
+                        label = { Text("采样器") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        placeholder = { Text("euler") },
+                    )
+                    OutlinedTextField(
+                        value = scheduler,
+                        onValueChange = { scheduler = it },
+                        label = { Text("调度器") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        placeholder = { Text("normal") },
+                    )
+                }
+                OutlinedTextField(
+                    value = seed,
+                    onValueChange = { seed = it },
+                    label = { Text("种子") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    supportingText = { Text("填 -1 表示每次生成随机种子") },
+                )
+                OutlinedTextField(
+                    value = negative,
+                    onValueChange = { negative = it },
+                    label = { Text("默认负面提示词") },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("lowres, bad anatomy, bad hands, blurry") },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    viewModel.updateComfySettings {
+                        it.copy(
+                            steps = steps.trim().toIntOrNull() ?: it.steps,
+                            cfgScale = cfg.trim().toDoubleOrNull() ?: it.cfgScale,
+                            width = width.trim().toIntOrNull() ?: it.width,
+                            height = height.trim().toIntOrNull() ?: it.height,
+                            sampler = sampler.trim(),
+                            scheduler = scheduler.trim(),
+                            seed = seed.trim().toLongOrNull() ?: -1L,
+                            negativePrompt = negative,
+                        )
+                    }
+                    onDismiss()
+                },
+            ) {
+                Text("确定")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+    )
 }
 
 @Composable

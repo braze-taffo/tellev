@@ -1,23 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
     <!--
-      Default: require TLS for all remote providers.  Public API
-      endpoints (OpenAI, Anthropic, Gemini, ...) must use HTTPS.
+      Cleartext is permitted app-wide so self-hosted image/LLM backends on
+      the LAN are reachable (ComfyUI at http://192.168.x.x:8188 and friends).
+      Remote API endpoints (OpenAI, Anthropic, Gemini, ...) always use their
+      HTTPS URLs, which are unaffected by this setting.
     -->
-    <base-config cleartextTrafficPermitted="false">
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
-
-    <!--
-      Permit cleartext only for the loopback, where local LLM backends
-      (Ollama, KoboldCpp, llama.cpp server, TextGen) run.  LAN hosts on
-      192.168.x.x / 10.x.x.x are intentionally NOT covered here; route
-      those through HTTPS or add explicit domain entries as needed.
-    -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">localhost</domain>
-        <domain includeSubdomains="false">127.0.0.1</domain>
-    </domain-config>
 </network-security-config>
