@@ -3,6 +3,7 @@ package app.tellev.core.model
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
 
 @Serializable
@@ -57,9 +58,11 @@ data class ChatMessage(
     // ── ST-Prompt-Template extension arrays (preserved for round-trip) ──
     // Per-swipe variable snapshots, evaluation flags, and init flags.
     // Defaults are empty so legacy jsonl without these fields still parses.
-    val variables: List<JsonObject> = emptyList(),
-    val isEjsProcessed: List<Boolean> = emptyList(),
-    val variablesInitialized: List<Boolean> = emptyList(),
+    val variables: List<JsonElement> = emptyList(),
+    /** Preserve null/unknown slots without shifting subsequent swipe identities. */
+    val swipeInfo: List<JsonElement> = emptyList(),
+    val isEjsProcessed: List<JsonElement> = emptyList(),
+    val variablesInitialized: List<JsonElement> = emptyList(),
 )
 
 @Serializable
@@ -72,6 +75,8 @@ data class ChatSession(
     val metadata: JsonObject = buildJsonObject { },
     /** Complete SillyTavern JSONL header object used for lossless round-trips. */
     val rawHeader: JsonObject = buildJsonObject { },
+    /** Internal durable revision; exported Tavern fields remain unchanged. */
+    @kotlinx.serialization.Transient val storageRevision: Long = 0,
 )
 
 @Serializable

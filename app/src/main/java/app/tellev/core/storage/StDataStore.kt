@@ -55,6 +55,12 @@ interface StDataStore {
     suspend fun listChatSessions(characterId: String? = null, groupId: String? = null): List<ChatSession>
     suspend fun readChatSession(id: String): ChatSession
     suspend fun saveChatSession(session: ChatSession)
+    suspend fun commitChatMutation(base: ChatSession, desired: ChatSession, expectedRevision: Long? = null, operationId: String? = null): ChatSession {
+        val merged = applyChatSessionMutation(base, desired, readChatSession(base.id))
+        val committed = merged.copy(storageRevision = (expectedRevision ?: base.storageRevision) + 1)
+        saveChatSession(committed)
+        return committed
+    }
     suspend fun appendMessage(sessionId: String, message: ChatMessage)
 
     suspend fun listGroups(): List<GroupChat>

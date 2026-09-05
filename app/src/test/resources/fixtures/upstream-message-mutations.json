@@ -1,0 +1,868 @@
+{
+  "provenance": {
+    "sillytavern": "51ad27fb86d39a3daca3adaa970375c9670c12df",
+    "tavern_helper": "ef0468636011e810efd12ab9286b4d74cc656aa8",
+    "prompt_template": "f9a07da0fbe25cd310eee746c2f5af24ed61f62b"
+  },
+  "repeats": 3,
+  "normalizations": [],
+  "cases": [
+    {
+      "name": "data_ignores_swipe_id",
+      "input": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 1
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "updates": [
+        {
+          "message_id": 0,
+          "swipe_id": 1,
+          "data": {
+            "n": 2
+          }
+        }
+      ],
+      "output": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 2
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "data_and_message_ignore_swipe_arrays",
+      "input": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 1
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "updates": [
+        {
+          "message_id": 0,
+          "message": "edited",
+          "data": {
+            "n": 3
+          },
+          "swipes": [
+            "ignored"
+          ],
+          "swipes_data": [
+            {
+              "ignored": true
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "name": "Fixture",
+          "mes": "edited",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "edited",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 3
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "select_and_pad",
+      "input": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 1
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "updates": [
+        {
+          "message_id": 0,
+          "swipe_id": 99,
+          "swipes": [
+            "new"
+          ],
+          "swipes_data": [
+            {
+              "n": 5
+            },
+            {
+              "n": 6
+            },
+            {
+              "n": 7
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "name": "Fixture",
+          "mes": "",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 2,
+          "swipes": [
+            "new",
+            "",
+            ""
+          ],
+          "variables": [
+            {
+              "n": 5
+            },
+            {
+              "n": 6
+            },
+            {
+              "n": 7
+            }
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            },
+            {}
+          ],
+          "extra": {},
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "swipe_only",
+      "input": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 1
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "updates": [
+        {
+          "message_id": -1,
+          "swipe_id": 1
+        }
+      ],
+      "output": [
+        {
+          "name": "Fixture",
+          "mes": "two",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 1,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 1
+            },
+            {}
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "b": 2
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "extra_without_message_or_data",
+      "input": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 1
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "updates": [
+        {
+          "message_id": 0,
+          "extra": {
+            "ignored": true
+          }
+        }
+      ],
+      "output": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 1
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "extra_on_selected_resets_info",
+      "input": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 1
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "updates": [
+        {
+          "message_id": 0,
+          "data": {},
+          "extra": {
+            "changed": true
+          }
+        }
+      ],
+      "output": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {},
+            null
+          ],
+          "swipe_info": [
+            {
+              "changed": true
+            },
+            {}
+          ],
+          "extra": {
+            "changed": true
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "duplicate_last_field_wins",
+      "input": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 1
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "updates": [
+        {
+          "message_id": 0,
+          "data": {
+            "n": 4
+          }
+        },
+        {
+          "message_id": -1,
+          "data": {
+            "n": 8
+          },
+          "name": "Renamed"
+        }
+      ],
+      "output": [
+        {
+          "name": "Renamed",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 8
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "narrator_is_not_hidden",
+      "input": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 1
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "updates": [
+        {
+          "message_id": 0,
+          "role": "system",
+          "is_hidden": false
+        }
+      ],
+      "output": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 1
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1,
+            "type": "narrator"
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "hidden_is_not_narrator",
+      "input": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 1
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "updates": [
+        {
+          "message_id": 0,
+          "role": "assistant",
+          "is_hidden": true
+        }
+      ],
+      "output": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": true,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 1
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "empty_swipes",
+      "input": [
+        {
+          "name": "Fixture",
+          "mes": "one",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [
+            "one",
+            "two"
+          ],
+          "variables": [
+            {
+              "n": 1
+            },
+            null
+          ],
+          "swipe_info": [
+            {
+              "a": 1
+            },
+            {
+              "b": 2
+            }
+          ],
+          "extra": {
+            "a": 1
+          },
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "updates": [
+        {
+          "message_id": 0,
+          "swipes": []
+        }
+      ],
+      "output": [
+        {
+          "name": "Fixture",
+          "is_user": false,
+          "is_system": false,
+          "send_date": "1970-01-01T00:00:00.000Z",
+          "swipe_id": 0,
+          "swipes": [],
+          "variables": [],
+          "swipe_info": [],
+          "unknown": {
+            "keep": [
+              1,
+              2
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

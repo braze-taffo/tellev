@@ -26,8 +26,8 @@ android {
         applicationId = "app.tellev"
         minSdk = 31
         targetSdk = 36
-        versionCode = 21
-        versionName = "1.5.4"
+        versionCode = 22
+        versionName = "1.5.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -60,6 +60,11 @@ android {
     }
 
     buildTypes {
+        create("mvuValidation") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".mvuvalidation"
+            matchingFallbacks += listOf("debug")
+        }
         release {
             // R8 code shrinking + resource shrinking. Release APK was ~45MB with
             // minify off (full Compose/AndroidX/material-icons-extended retained).
@@ -75,6 +80,8 @@ android {
             signingConfig = signingConfigs.findByName("release")
         }
     }
+    testBuildType = "mvuValidation"
+    sourceSets.getByName("androidTest").assets.srcDir(layout.buildDirectory.dir("mvu-fixtures"))
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -115,4 +122,7 @@ dependencies {
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.junit)
+    androidTestImplementation("androidx.test:runner:1.6.1")
 }

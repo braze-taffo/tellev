@@ -113,7 +113,9 @@ class TellevGraph private constructor(
             val layout = StDirectoryLayout.fromRoot(root)
 
             val macroEngine = DefaultMacroEngine()
-            val promptEngine = DefaultPromptEngine(macroEngine)
+            val templateEvaluator = app.tellev.core.prompt.WebViewTemplateEvaluator(context)
+            val promptEngine = DefaultPromptEngine(macroEngine,
+                app.tellev.core.prompt.DefaultPromptTemplateProcessor(javascriptEvaluator = templateEvaluator::evaluate))
             val deepSeekClient = OkHttpClient.Builder()
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(2, TimeUnit.MINUTES)
@@ -207,9 +209,7 @@ class TellevGraph private constructor(
             // Previously global variables were loaded lazily by the WebView
             // host, so {{getglobalvar::...}} started empty in that scenario.
             extensionScope.launch {
-                variableStore.loadGlobal(
-                    extensionSettingsStore.getSettings(WebViewJsExtensionHost.TAVERN_HELPER_VARS_KEY),
-                )
+                variableStore.initialize()
                 permissionManager.load()
             }
 

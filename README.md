@@ -2,13 +2,14 @@
 
 tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是在手机上提供更贴近原生应用体验的角色管理、聊天、世界书、扩展和模型服务配置能力，同时尽量保持与 SillyTavern 数据格式和使用习惯兼容。
 
-> 公开版本以 GitHub Releases 中发布的 APK 为准。当前版本 **v1.5.4**。
+> 公开版本以 GitHub Releases 中发布的 APK 为准。当前源码版本 **v1.5.5**。
 
-## v1.5.4 更新
+## v1.5.5 更新
 
-- 性能与稳定性：优化大型角色卡和长聊天记录的加载、扩展上下文生成与事件分发，降低首屏卡顿和 ANR 风险。
-- 动态卡片：修复 HTML 卡片高度反馈循环及频繁尺寸回调导致的界面卡顿。
-- 外观调节：设置页新增聊天气泡不透明度滑块，并同步应用到消息、思考块和输入区域。
+- 保存可靠性：聊天与扩展设置接入日志写入和恢复，减少并发修改覆盖；生成和会话切换会等待已接纳的写入。
+- 动态卡片：切换会话后拒绝旧页面写入，完善消息批量修改和 swipe 数据保留。
+- 兼容处理：内置固定版本的 MVU/Zod 资源，接入真实 EJS 执行，并优化部分大型 HTML 正则处理。
+- 兼容性仍有已知缺口，详见 [v1.5.5 发布说明](docs/RELEASE_1.5.5.md)及 [MVU 验收记录](docs/MVU-COMPATIBILITY.md)。
 
 ## 主要功能
 
@@ -105,7 +106,7 @@ tellev 的扩展运行环境是 SillyTavern / 酒馆助手兼容层的一个**�
 
 - 应用名：`tellev`
 - 包名：`app.tellev`
-- 当前版本：1.5.4（versionCode 21）
+- 当前源码版本：1.5.5（versionCode 22）
 - 最低系统：Android 12 / API 31
 - 目标/编译 SDK：API 36
 - UI：Kotlin + Jetpack Compose + Material 3
@@ -217,4 +218,5 @@ SillyTavern 项目地址：
 - [docs/AI_TASKS.md](docs/AI_TASKS.md)
 - [docs/RELEASE_1.5.2.md](docs/RELEASE_1.5.2.md)
 - [docs/RELEASE_1.5.3.md](docs/RELEASE_1.5.3.md)
+- [docs/RELEASE_1.5.5.md](docs/RELEASE_1.5.5.md)
 - [docs/RELEASE_1.5.4.md](docs/RELEASE_1.5.4.md)

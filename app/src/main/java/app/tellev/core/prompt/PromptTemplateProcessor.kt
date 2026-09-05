@@ -58,6 +58,7 @@ data class PromptTemplateVariableUpdates(
 
 class DefaultPromptTemplateProcessor(
     @Volatile var ejsSettings: EjsTemplateSettings = EjsTemplateSettings.DEFAULT,
+    private val javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
 ) : PromptTemplateProcessor {
 
     override fun process(request: PromptTemplateRequest): PromptTemplateResult {
@@ -138,6 +139,34 @@ class DefaultPromptTemplateProcessor(
 
     private fun renderTemplate(template: String, state: TemplateState): String {
         if (!template.contains("<%")) return template
+        javascriptEvaluator?.let { evaluate ->
+            val request = kotlinx.serialization.json.buildJsonObject {
+                put("template", JsonPrimitive(template))
+                put("local", toJsonObject(state.localVariables))
+                put("global", toJsonObject(state.globalVariables))
+                put("definitions", toJsonObject(state.locals))
+                put("context", toJsonObject(mapOf(
+                    "user" to state.context.userName, "char" to state.context.characterName,
+                    "name1" to state.context.userName, "name2" to state.context.characterName,
+                )))
+                put("currentWorldBookId", state.currentWorldBookId?.let(::JsonPrimitive) ?: JsonNull)
+                put("worldCatalog", JsonArray(state.worldCatalog.map { entry ->
+                    toJsonObject(mapOf("id" to entry.id, "comment" to entry.comment,
+                        "title" to entry.title, "content" to entry.content, "bookId" to entry.bookId, "bookName" to entry.bookName))
+                }))
+            }
+            val result = evaluate(request)
+            fun replace(target: MutableMap<String, Any?>, field: String) {
+                val values = result[field] as? JsonObject ?: return
+                target.clear()
+                values.forEach { (key, value) -> target[key] = toKotlinValue(value) }
+            }
+            replace(state.localVariables, "local")
+            replace(state.globalVariables, "global")
+            replace(state.locals, "definitions")
+            refreshMergedVariables(state)
+            return (result["content"] as? JsonPrimitive)?.content.orEmpty()
+        }
         val tokens = tokenize(template)
         return renderTokens(tokens, 0, tokens.size, state)
     }

@@ -34,6 +34,25 @@ import kotlinx.serialization.json.jsonPrimitive
  *   are enabled by migration and do not have an outer `enabled` field.
  */
 object CharacterTavernHelperScripts {
+    /** Each enabled script is a separate ES module, with its own script-scope API bindings. */
+    fun buildIsolatedScriptSource(character: CharacterCard, preset: app.tellev.core.model.GenerationPreset? = null): String {
+        val presetCard = preset?.let { CharacterCard(id = it.id, name = it.name, raw = it.raw) }
+        val scripts = extract(character) + presetCard?.let(::extract).orEmpty()
+        if (scripts.isEmpty()) return ""
+        val modules = kotlinx.serialization.json.buildJsonArray {
+            scripts.forEach { script -> add(kotlinx.serialization.json.buildJsonObject {
+                put("id", kotlinx.serialization.json.JsonPrimitive(script.id))
+                put("name", kotlinx.serialization.json.JsonPrimitive(script.name))
+                put("content", kotlinx.serialization.json.JsonPrimitive(script.content))
+            }) }
+        }
+        val vars = extractCharacterVariables(character) ?: JsonObject(emptyMap())
+        val presetVars = presetCard?.let(::extractCharacterVariables) ?: JsonObject(emptyMap())
+        return "export {};\nTavernHelper.insertVariables($vars,{type:'character'});\n" +
+            "TavernHelper.insertVariables($presetVars,{type:'preset'});\n" +
+            "await window.__tellevLoadScripts($modules);\n"
+    }
+
     data class Script(
         val id: String,
         val name: String,
@@ -109,14 +128,14 @@ object CharacterTavernHelperScripts {
             .replace("'", "\\'")
             .replace("\n", "\\n")
             .replace("\r", "\\r")
-        return "try{if(typeof _thScopedVariables!=='undefined'){_thScopedVariables.character=JSON.parse('$jsonStr');}}catch(e){}\n\n"
+        return "TavernHelper.insertVariables(JSON.parse('$jsonStr'),{type:'character'});\n"
     }
 
     /**
      * Extract `data.extensions.tavern_helper.variables` as a JsonObject.
      * Returns null when the card has no tavern_helper variables.
      */
-    private fun extractCharacterVariables(character: CharacterCard): JsonObject? {
+    fun extractCharacterVariables(character: CharacterCard): JsonObject? {
         val extensions = character.extensionObject()
         val tavernHelper = extensions["tavern_helper"]?.asObjectOrNull() ?: return null
         val variables = tavernHelper["variables"]

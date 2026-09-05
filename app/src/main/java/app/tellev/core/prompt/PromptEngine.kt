@@ -51,6 +51,11 @@ interface PromptEngine {
         backend: LocalVariableBackend,
     ): PromptBuildResult = build(request)
 
+    suspend fun buildWithLocalVariableBackendAsync(request: PromptBuildRequest, backend: LocalVariableBackend): PromptBuildResult =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            buildWithLocalVariableBackend(request, backend)
+        }
+
     fun snapshotPromptTemplateVariables(): PromptTemplateVariableSnapshot = PromptTemplateVariableSnapshot()
 
     fun persistGlobalPromptTemplateVariables(variables: JsonObject) {}
@@ -560,8 +565,8 @@ class DefaultPromptEngine(
         // js-slash-runner message scope: the last message that carries a
         // variables object at its current swipe.
         val messageVariables = visible
-            .lastOrNull { it.variables.getOrNull(it.swipeIndex) != null }
-            ?.let { it.variables[it.swipeIndex] }
+            .lastOrNull { it.variables.getOrNull(it.swipeIndex) is JsonObject }
+            ?.let { it.variables[it.swipeIndex] as JsonObject }
             ?: TavernInitVariables.extractMessageVariables(request.worldBooks)
 
         return MacroContext(

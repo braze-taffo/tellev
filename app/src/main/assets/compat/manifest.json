@@ -1,0 +1,18 @@
+{
+  "upstream": {
+    "mvu": "61010dab47bc3a08a1b626320bf7fc8c9573eca4",
+    "tavern_resource": "4b3ce6130ebb039f6675583dce46a46d3f9cc4f1",
+    "tavern_helper": "ef0468636011e810efd12ab9286b4d74cc656aa8",
+    "sillytavern": "51ad27fb86d39a3daca3adaa970375c9670c12df",
+    "prompt_template": "f9a07da0fbe25cd310eee746c2f5af24ed61f62b"
+  },
+  "files": {
+    "globals.js": "d0c122f974eb41cfc58f0e411b383089912b04338eecd5e821bd1cb4bdbd0910",
+    "mvu.js": "b141bb8719a3c915bd3f0e81ce9f3d4254b80c0fc6847eb40a8b8663ee43c3d6",
+    "mvu-zod.js": "8c46f5301e6f1c69c8c86517da51bb92f777ed700520d73a3ca6b412ca47c5e4",
+    "chat.js": "d9e6111e07e215b8eb42ea374cb1896b4b08e4e46b48d3273eed0ed70657f569",
+    "host.js": "f727edf9b50465b846223e1b21fd7ad603a9592199bb3fc65ce51354adcfc74c",
+    "template.js": "10b9652b6e7557d91a497b269f65d9add53965ba16c059e465848cbfd96d7cd8",
+    "message.js": "52c0ac13cf4b56ec8f57b2c6ae032f6c3d13372b67ba4bfbeb8c6ef51cbf67b8"
+  }
+}

@@ -206,6 +206,13 @@ object CharacterRegexApplier {
             2 -> substituteMacros(rawSource, characterName, userName, escaped = true)
             else -> rawSource
         }
+        // ICU scans every possible start for a leading greedy any-character capture.
+        // When its literal suffix is absent, an equivalent literal precheck avoids
+        // quadratic work on large HTML messages. Do not rewrite the regex itself.
+        val literalSuffix = source.takeIf { it.startsWith("([\\s\\S]*)") }
+            ?.removePrefix("([\\s\\S]*)")?.replace("\\/", "/")
+            ?.takeIf { it.isNotEmpty() && it.none { c -> c in "\\.[](){}*+?^$|" } }
+        if (literalSuffix != null && !input.contains(literalSuffix)) return input
         val regex = parseJavascriptRegex(source) ?: run {
             onDiagnostic?.invoke(RegexDiagnostic(
                 scriptName = script.stringValue("scriptName").orEmpty().ifBlank { rawSource },

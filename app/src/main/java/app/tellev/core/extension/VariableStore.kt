@@ -2,6 +2,10 @@ package app.tellev.core.extension
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonElement
@@ -81,12 +85,29 @@ class VariableStore(
     // GLOBAL in-memory mirror. Values are JsonElement so TavernHelper.getVariables
     // can hand back the raw object shape extensions expect.
     private val global = ConcurrentHashMap<String, JsonElement>()
-    private val saveMutex = Mutex()
+    private val globalLock = Any()
+    private var globalTail: Deferred<Unit>? = null
+    private var globalFailure: Throwable? = null
+    @Volatile private var globalLoaded = false
+    private val initialization = Mutex()
 
     /** Load the persisted global object once at startup. Idempotent. */
-    fun loadGlobal(obj: JsonObject) {
+    fun loadGlobal(obj: JsonObject) = synchronized(globalLock) {
+        check(globalTail == null) { "Global variables already have accepted writes" }
         global.clear()
         obj.forEach { (k, v) -> global[k] = v }
+        globalLoaded = true
+    }
+
+    suspend fun initialize() = initialization.withLock {
+        if (!globalLoaded) loadGlobal(settingsStore.getSettings(settingsKey))
+    }
+
+    private fun <T> withGlobalState(block: () -> T): T {
+        // Public variable APIs are synchronous. Host/generation initialization preloads this;
+        // first direct native access also waits instead of overwriting an unloaded file.
+        if (!globalLoaded) runBlocking(Dispatchers.IO) { initialize() }
+        return synchronized(globalLock, block)
     }
 
     // ── LOCAL (String API) ───────────────────────────────────────────────
@@ -121,43 +142,45 @@ class VariableStore(
 
     // ── GLOBAL (String API) ──────────────────────────────────────────────
 
-    fun getGlobal(name: String): String? = global[name]?.let { elementToString(it) }
+    fun getGlobal(name: String): String? = withGlobalState { global[name]?.let { elementToString(it) } }
 
-    fun setGlobal(name: String, value: String) {
-        if (name.isBlank()) return
+    fun setGlobal(name: String, value: String) = withGlobalState {
+        requireGlobalWritable()
+        if (name.isBlank()) return@withGlobalState
         global[name] = JsonPrimitive(value)
         persistGlobal()
     }
 
-    fun addGlobal(name: String, increment: String): String {
+    fun addGlobal(name: String, increment: String): String = withGlobalState {
+        requireGlobalWritable()
         val current = global[name]?.let { elementToString(it) } ?: "0"
         val result = addStrings(current, increment)
         global[name] = JsonPrimitive(result)
         persistGlobal()
-        return result
+        result
     }
 
     fun incGlobal(name: String): String = addGlobal(name, "1")
     fun decGlobal(name: String): String = addGlobal(name, "-1")
 
-    fun deleteGlobal(name: String) {
+    fun deleteGlobal(name: String) = withGlobalState {
+        requireGlobalWritable()
         global.remove(name)
         persistGlobal()
     }
 
-    fun hasGlobal(name: String): Boolean = global.containsKey(name)
+    fun hasGlobal(name: String): Boolean = withGlobalState { global.containsKey(name) }
 
-    fun listGlobal(): List<String> = global.keys().toList().sorted()
+    fun listGlobal(): List<String> = withGlobalState { global.keys().toList().sorted() }
 
     // ── Raw JsonObject API (TavernHelper / EJS) ──────────────────────────
 
     /** The full global object as extensions see it via `getVariables()`. */
-    fun globalObject(): JsonObject = buildJsonObject {
-        global.forEach { (k, v) -> put(k, v) }
-    }
+    fun globalObject(): JsonObject = withGlobalState { JsonObject(global.toMap()) }
 
     /** Overwrite the entire global store and persist. */
-    fun replaceGlobal(obj: JsonObject) {
+    fun replaceGlobal(obj: JsonObject) = withGlobalState {
+        requireGlobalWritable()
         global.clear()
         obj.forEach { (k, v) -> global[k] = v }
         persistGlobal()
@@ -185,14 +208,40 @@ class VariableStore(
      * `variables`/`vars` environment property.
      */
     fun mergedObject(): JsonObject = buildJsonObject {
-        global.forEach { (k, v) -> put(k, v) }
+        globalObject().forEach { (k, v) -> put(k, v) }
         activeLocalBackend()?.snapshot()?.forEach { (k, v) -> put(k, v) }
     }
 
+    /** Wait for writes accepted before this call; failure must reach generation/switch callers. */
+    suspend fun flushWrites() {
+        initialize()
+        val pending = withGlobalState { globalTail }
+        pending?.await()
+    }
+
+    private fun requireGlobalWritable() {
+        globalFailure?.let { throw IllegalStateException("全局变量保存失败，需要恢复后才能继续写入", it) }
+    }
+
     private fun persistGlobal() {
-        scope.launch {
-            saveMutex.withLock {
-                settingsStore.saveSettings(settingsKey, globalObject())
+        val snapshot = globalObject()
+        val previous = globalTail
+        val completion = CompletableDeferred<Unit>()
+        globalTail = completion
+        val job = scope.launch {
+            try {
+                previous?.await()
+                settingsStore.saveSettings(settingsKey, snapshot)
+                completion.complete(Unit)
+            } catch (error: Throwable) {
+                synchronized(globalLock) { globalFailure = error }
+                completion.completeExceptionally(error)
+            }
+        }
+        job.invokeOnCompletion { error ->
+            if (error != null) {
+                synchronized(globalLock) { globalFailure = error }
+                completion.completeExceptionally(error)
             }
         }
     }

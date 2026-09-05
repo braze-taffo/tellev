@@ -235,7 +235,7 @@ class CharacterTavernHelperScriptsTest {
 
         val source = CharacterTavernHelperScripts.buildScriptSource(card)
 
-        assertTrue("Character variables should be injected", source.contains("_thScopedVariables.character"))
+        assertTrue("Character variables should be injected", source.contains("TavernHelper.insertVariables("))
         assertTrue("phone_data should be in the injected JSON", source.contains("phone_data"))
         assertTrue("Script content should still be present", source.contains("run();"))
     }
@@ -254,7 +254,7 @@ class CharacterTavernHelperScriptsTest {
 
         val source = CharacterTavernHelperScripts.buildScriptSource(card)
 
-        assertFalse("_thScopedVariables init should not be present", source.contains("_thScopedVariables.character"))
+        assertFalse("_thScopedVariables init should not be present", source.contains("TavernHelper.insertVariables("))
     }
 
     @Test

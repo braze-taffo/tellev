@@ -17,6 +17,8 @@ interface ExtensionContextProvider {
 
     suspend fun setChatMessage(index: Int, field: String, value: String): Boolean = false
 
+    suspend fun setChatMessages(messages: kotlinx.serialization.json.JsonArray, options: JsonObject): Boolean = false
+
     suspend fun generateText(options: JsonObject): JsonObject? = null
 }
 
@@ -44,6 +46,8 @@ interface ExtensionHost {
     suspend fun load(manifest: ExtensionManifest, scriptSource: String): ExtensionHandle
     suspend fun unload(extensionId: String)
     suspend fun emit(event: ExtensionEvent)
+    /** Internal durability boundary for host-owned state, separate from public JS contracts. */
+    suspend fun flushWrites() {}
 
     /**
      * Publish a host/UI diagnostic without forwarding its potentially

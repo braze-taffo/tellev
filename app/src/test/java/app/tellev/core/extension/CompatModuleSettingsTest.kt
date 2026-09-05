@@ -216,7 +216,7 @@ class CompatModuleSettingsTest {
     }
 
     @Test
-    fun `corrupted settings file falls back to defaults`() = runBlocking {
+    fun `corrupted settings are reported and retained for recovery`() = runBlocking {
         val dir = Files.createTempDirectory("tellev-corrupt-test")
         val store = ExtensionSettingsStore(dir)
         // Write invalid JSON to the EjsTemplate settings file
@@ -224,7 +224,12 @@ class CompatModuleSettingsTest {
         Files.createDirectories(ejsFile.parent)
         Files.write(ejsFile, "{ this is not valid json".toByteArray())
 
-        val settings = store.readEjsTemplateSettings()
-        assertEquals(EjsTemplateSettings.DEFAULT, settings)
+        val original = Files.readAllBytes(ejsFile)
+        val error = runCatching { store.readEjsTemplateSettings() }.exceptionOrNull()
+        org.junit.Assert.assertTrue(error is java.io.IOException)
+        org.junit.Assert.assertTrue(error?.message?.contains("settings.json") == true)
+        org.junit.Assert.assertArrayEquals(original, Files.readAllBytes(ejsFile))
+        dir.toFile().deleteRecursively()
+        Unit
     }
 }

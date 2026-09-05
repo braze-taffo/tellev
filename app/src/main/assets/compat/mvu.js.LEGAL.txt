@@ -1,0 +1,42 @@
+/*! For license information please see bundle.js.LICENSE.txt */
+
+Bundled license information:
+
+fraction.js/fraction.js:
+  /**
+   * @license Fraction.js v4.3.0 20/08/2023
+   * https://www.xarg.org/2014/03/rational-numbers-in-javascript/
+   *
+   * Copyright (c) 2023, Robert Eisele (robert@raw.org)
+   * Dual licensed under the MIT or GPL Version 2 licenses.
+   **/
+
+@intlify/shared/dist/shared.mjs:
+  /*!
+    * shared v11.1.12
+    * (c) 2025 kazuya kawaguchi
+    * Released under the MIT License.
+    */
+
+@intlify/message-compiler/dist/message-compiler.mjs:
+  /*!
+    * message-compiler v11.1.12
+    * (c) 2025 kazuya kawaguchi
+    * Released under the MIT License.
+    */
+
+@intlify/core-base/dist/core-base.mjs:
+  /*!
+    * core-base v11.1.12
+    * (c) 2025 kazuya kawaguchi
+    * Released under the MIT License.
+    */
+
+decimal.js/decimal.mjs:
+  /*!
+   *  decimal.js v10.6.0
+   *  An arbitrary-precision Decimal type for JavaScript.
+   *  https://github.com/MikeMcl/decimal.js
+   *  Copyright (c) 2025 Michael Mclaughlin <M8ch88l@gmail.com>
+   *  MIT Licence
+   */

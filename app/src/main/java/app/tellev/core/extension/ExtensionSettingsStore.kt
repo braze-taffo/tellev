@@ -6,10 +6,11 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardOpenOption
+import app.tellev.core.storage.JournaledFileWriter
 import java.util.stream.Collectors
 
 /**
@@ -32,6 +33,12 @@ class ExtensionSettingsStore(
         },
 ) {
     private val mutex = Mutex()
+    private val writer = JournaledFileWriter(extensionsDir)
+    private var recovered = false
+
+    private fun recoverOnce() {
+        if (!recovered) { writer.recover(); recovered = true }
+    }
 
     /**
      * Return the persisted settings for [extensionId], or an empty JSON object
@@ -39,12 +46,13 @@ class ExtensionSettingsStore(
      */
     suspend fun getSettings(extensionId: String): JsonObject = withContext(Dispatchers.IO) {
         mutex.withLock {
+            recoverOnce()
             val file = settingsFile(extensionId)
             if (!Files.exists(file)) return@withContext buildJsonObject { }
             runCatching {
                 val text = String(Files.readAllBytes(file), Charsets.UTF_8)
                 json.parseToJsonElement(text) as JsonObject
-            }.getOrElse { buildJsonObject { } }
+            }.getOrElse { throw java.io.IOException("无法解析扩展设置：$file", it) }
         }
     }
 
@@ -55,16 +63,11 @@ class ExtensionSettingsStore(
     suspend fun saveSettings(extensionId: String, settings: JsonObject): Unit =
         withContext(Dispatchers.IO) {
             mutex.withLock {
+            recoverOnce()
                 val file = settingsFile(extensionId)
                 Files.createDirectories(file.parent)
                 val text = json.encodeToString(JsonObject.serializer(), settings)
-                Files.write(
-                    file,
-                    text.toByteArray(Charsets.UTF_8),
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.TRUNCATE_EXISTING,
-                    StandardOpenOption.WRITE,
-                )
+                writer.write(file, text.toByteArray(Charsets.UTF_8))
             }
         }
 
@@ -74,8 +77,9 @@ class ExtensionSettingsStore(
      */
     suspend fun deleteSettings(extensionId: String): Unit = withContext(Dispatchers.IO) {
         mutex.withLock {
+            recoverOnce()
             val file = settingsFile(extensionId)
-            Files.deleteIfExists(file)
+            writer.delete(file)
             val dir = file.parent
             if (Files.exists(dir) && Files.list(dir).use { !it.findFirst().isPresent }) {
                 Files.deleteIfExists(dir)
@@ -88,6 +92,7 @@ class ExtensionSettingsStore(
      */
     suspend fun listExtensionIds(): List<String> = withContext(Dispatchers.IO) {
         mutex.withLock {
+            recoverOnce()
             if (!Files.isDirectory(extensionsDir)) return@withContext emptyList()
             Files.list(extensionsDir).use { stream ->
                 stream
@@ -114,62 +119,73 @@ class ExtensionSettingsStore(
 
     suspend fun readEjsTemplateSettings(): EjsTemplateSettings = withContext(Dispatchers.IO) {
         mutex.withLock {
+            recoverOnce()
             val file = settingsFile(ejsTemplateExtensionId)
             if (!Files.exists(file)) return@withLock EjsTemplateSettings.DEFAULT
             runCatching {
                 val text = String(Files.readAllBytes(file), Charsets.UTF_8)
                 json.decodeFromString(EjsTemplateSettings.serializer(), text)
-            }.getOrElse { EjsTemplateSettings.DEFAULT }
+            }.getOrElse { throw java.io.IOException("无法解析模板设置：$file", it) }
         }
     }
 
     suspend fun saveEjsTemplateSettings(settings: EjsTemplateSettings): Unit =
         withContext(Dispatchers.IO) {
             mutex.withLock {
+            recoverOnce()
                 val file = settingsFile(ejsTemplateExtensionId)
                 Files.createDirectories(file.parent)
-                val text = json.encodeToString(EjsTemplateSettings.serializer(), settings)
-                Files.write(
-                    file,
-                    text.toByteArray(Charsets.UTF_8),
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.TRUNCATE_EXISTING,
-                    StandardOpenOption.WRITE,
-                )
+                val text = json.encodeToString(JsonObject.serializer(), mergeKnownSettings(file,
+                    json.encodeToJsonElement(EjsTemplateSettings.serializer(), settings) as JsonObject))
+                writer.write(file, text.toByteArray(Charsets.UTF_8))
             }
         }
 
     suspend fun readTavernHelperSettings(): TavernHelperSettings = withContext(Dispatchers.IO) {
         mutex.withLock {
+            recoverOnce()
             val file = settingsFile(tavernHelperExtensionId)
             if (!Files.exists(file)) return@withLock TavernHelperSettings.DEFAULT
             runCatching {
                 val text = String(Files.readAllBytes(file), Charsets.UTF_8)
                 json.decodeFromString(TavernHelperSettings.serializer(), text)
-            }.getOrElse { TavernHelperSettings.DEFAULT }
+            }.getOrElse { throw java.io.IOException("无法解析酒馆助手设置：$file", it) }
         }
     }
 
     suspend fun saveTavernHelperSettings(settings: TavernHelperSettings): Unit =
         withContext(Dispatchers.IO) {
             mutex.withLock {
+            recoverOnce()
                 val file = settingsFile(tavernHelperExtensionId)
                 Files.createDirectories(file.parent)
-                val text = json.encodeToString(TavernHelperSettings.serializer(), settings)
-                Files.write(
-                    file,
-                    text.toByteArray(Charsets.UTF_8),
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.TRUNCATE_EXISTING,
-                    StandardOpenOption.WRITE,
-                )
+                val text = json.encodeToString(JsonObject.serializer(), mergeKnownSettings(file,
+                    json.encodeToJsonElement(TavernHelperSettings.serializer(), settings) as JsonObject))
+                writer.write(file, text.toByteArray(Charsets.UTF_8))
             }
         }
 
+    private fun mergeKnownSettings(file: Path, fields: JsonObject): JsonObject {
+        if (!Files.exists(file)) return fields
+        val old = json.parseToJsonElement(String(Files.readAllBytes(file), Charsets.UTF_8)) as JsonObject
+        fun merge(before: JsonElement?, after: JsonElement): JsonElement =
+            if (before is JsonObject && after is JsonObject) {
+                JsonObject(before + after.mapValues { (key, value) -> merge(before[key], value) })
+            } else after
+        return merge(old, fields) as JsonObject
+    }
+
         // ── private helpers ────────────────────────────────────────────────
 
-    private fun settingsFile(extensionId: String): Path =
-        extensionsDir.resolve(sanitize(extensionId)).resolve("settings.json")
+    private fun settingsFile(extensionId: String): Path {
+        val name = sanitize(extensionId)
+        require(name.isNotBlank() && name != "." && name != "..") { "无效的扩展 ID" }
+        val root = extensionsDir.toAbsolutePath().normalize()
+        val target = root.resolve(name).resolve("settings.json").normalize()
+        check(target.startsWith(root)) { "扩展设置路径超出所属目录" }
+        check(!Files.isSymbolicLink(target.parent) && !Files.isSymbolicLink(target)) { "扩展设置不能通过符号链接改写其他对象" }
+        return target
+    }
 
     /**
      * Strip path-traversal and non-alphanumeric characters from an extension

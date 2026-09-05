@@ -166,6 +166,7 @@ internal fun tavernMessageCompatScript(): String = """
           catch (error) { delete callbacks[id]; reject(error); }
         });
       }
+      window.__tellevRequest = request;
       window.__tellevMessageResolve = function(id, ok, payloadJson) {
         var callback = callbacks[id];
         if (!callback) return;

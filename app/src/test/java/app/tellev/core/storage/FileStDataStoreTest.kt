@@ -58,6 +58,38 @@ class FileStDataStoreTest {
 
     // ---- World Book Tests ----
 
+    @Test fun `unrelated edits preserve legacy variable objects null swipe slots and template flags`() = runBlocking {
+        val dir = layout.chats.resolve("legacy").createDirectories()
+        val file = dir.resolve("legacy.jsonl")
+        val raw = kotlinx.serialization.json.Json.parseToJsonElement("""{"name":"Fixture","mes":"two","is_user":false,"is_system":false,"swipe_id":1,"swipes":["one","two","three"],"variables":{"0":{"n":1},"2":{"n":3},"future":"keep"},"swipe_info":[null,{"future":2}],"is_ejs_processed":[null,true,false],"variables_initialized":[],"extra":{},"unknown":{"keep":[2,1]}}""").jsonObject
+        file.writeText("{\"user_name\":\"User\",\"chat_metadata\":{}}\n$raw\n")
+        val original = store.readChatSession("legacy")
+        val message = original.messages.single()
+        assertEquals(3, message.variables.size)
+        assertEquals(JsonObject(emptyMap()), message.variables[1])
+        store.commitChatMutation(original, original.copy(title = "renamed"))
+        val output = kotlinx.serialization.json.Json.parseToJsonElement(file.readText().lineSequence().last()).jsonObject
+        for (key in listOf("variables", "swipe_info", "is_ejs_processed", "variables_initialized", "unknown")) {
+            assertEquals(key, raw[key], output[key])
+        }
+        val reread = store.readChatSession("legacy")
+        assertEquals(message.variables, reread.messages.single().variables)
+        assertEquals(message.swipeInfo, reread.messages.single().swipeInfo)
+        assertEquals(message.isEjsProcessed, reread.messages.single().isEjsProcessed)
+    }
+
+    @Test fun `message identities survive deletion reordering and process restart`() = runBlocking {
+        val messages = (0..2).map { ChatMessage("stable-$it", MessageRole.Assistant, "Fixture", "$it", 0) }
+        val session = ChatSession("stable-chat", "Fixture", null, null, messages)
+        store.saveChatSession(session)
+        val first = store.readChatSession(session.id)
+        assertEquals(messages.map { it.id }, first.messages.map { it.id })
+        store.saveChatSession(first.copy(messages = listOf(first.messages[2], first.messages[0])))
+        val restarted = FileStDataStore(layout)
+        restarted.bootstrap()
+        assertEquals(listOf("stable-2", "stable-0"), restarted.readChatSession(session.id).messages.map { it.id })
+    }
+
     @Test
     fun `listWorldBooks parses ST format with numeric string keys`() = runBlocking {
         val worldBookJson = this::class.java.classLoader

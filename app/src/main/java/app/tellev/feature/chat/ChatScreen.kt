@@ -262,6 +262,7 @@ private fun ChatContentScreen(
     bubbleAlpha: Float,
     modifier: Modifier = Modifier,
 ) {
+    val runtimeToken = viewModel.currentRuntimeToken(state.currentSession?.id)
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
     var inputText by remember { mutableStateOf("") }
@@ -528,14 +529,17 @@ private fun ChatContentScreen(
                         htmlPanelMaxHeight = htmlPanelMaxHeight,
                         bubbleAlpha = bubbleAlpha,
                         tavernRuntime = TavernMessageRuntime(
+                            token = runtimeToken,
                             messageIndex = index,
-                            variablesJson = viewModel::tavernMessageVariablesJson,
+                            variablesJson = { viewModel.tavernMessageVariablesJson(runtimeToken) },
+                            contextJson = { viewModel.tavernMessageContextJson(runtimeToken) },
                             request = { operation, payload, callback ->
                                 viewModel.handleTavernMessageRequest(
                                     operation = operation,
                                     payloadJson = payload,
                                     onSetInput = { inputText = it },
                                     callback = callback,
+                                    token = runtimeToken,
                                 )
                             },
                         ),
@@ -566,10 +570,12 @@ private fun ChatContentScreen(
                         userName = state.selectedPersona?.name ?: "User",
                         availableMaxHeight = htmlPanelMaxHeight,
                         tavernRuntime = TavernMessageRuntime(
+                            token = runtimeToken,
                             messageIndex = state.messages.size,
-                            variablesJson = viewModel::tavernMessageVariablesJson,
+                            variablesJson = { viewModel.tavernMessageVariablesJson(runtimeToken) },
+                            contextJson = { viewModel.tavernMessageContextJson(runtimeToken) },
                             request = { operation, payload, callback ->
-                                viewModel.handleTavernMessageRequest(operation, payload, { inputText = it }, callback)
+                                viewModel.handleTavernMessageRequest(operation, payload, { inputText = it }, callback, runtimeToken)
                             },
                         ),
                         onHtmlBoundaryDrag = { delta -> scope.launch { listState.scrollBy(delta) } },
@@ -903,8 +909,10 @@ private fun ReasoningBlock(content: String, highlightDialogue: Boolean, bubbleAl
 }
 
 private data class TavernMessageRuntime(
+    val token: app.tellev.core.extension.RuntimeToken?,
     val messageIndex: Int,
     val variablesJson: () -> String,
+    val contextJson: () -> String,
     val request: (String, String, (Boolean, String) -> Unit) -> Unit,
 )
 
@@ -937,8 +945,18 @@ private class TavernMessageBridge(
         webView = java.lang.ref.WeakReference(view)
     }
 
+    @Volatile private var closed = false
+    fun close() { closed = true; mainHandler.removeCallbacksAndMessages(null); webView.clear() }
+
+    private var lastVariablesJson: String? = null
     fun updateRuntime(value: TavernMessageRuntime) {
+        check(runtime.token == value.token) { "Frontend runtime ownership changed without replacing WebView" }
         runtime = value
+        val variables = runCatching { value.variablesJson() }.getOrNull() ?: return
+        if (variables != lastVariablesJson) {
+            lastVariablesJson = variables
+            webView.get()?.evaluateJavascript("window.__tellevStateChanged?.()", null)
+        }
     }
 
     fun shouldLoad(html: String): Boolean = loadTracker.shouldLoad(html)
@@ -980,15 +998,21 @@ private class TavernMessageBridge(
 
     @JavascriptInterface
     fun getAllVariables(): String =
-        runCatching { runtime.variablesJson() }.getOrDefault("{}")
+        runtime.variablesJson()
 
     @JavascriptInterface
     fun getCurrentMessageId(): Int = runtime.messageIndex
 
     @JavascriptInterface
+    fun getContext(): String = runtime.contextJson()
+
+    @JavascriptInterface
     fun request(requestId: String, operation: String, payloadJson: String) {
+        if (closed) return
+        val origin = runtime
         mainHandler.post {
-            runtime.request(operation, payloadJson) { ok, responseJson ->
+            if (closed) return@post
+            origin.request(operation, payloadJson) { ok, responseJson ->
                 mainHandler.post {
                     val view = webView.get() ?: return@post
                     val idLiteral = org.json.JSONObject.quote(requestId)
@@ -1014,6 +1038,8 @@ private fun TavernHtmlPanel(
     tavernRuntime: TavernMessageRuntime,
     onBoundaryDrag: (Float) -> Unit,
 ) {
+    if (tavernRuntime.token == null) return
+    androidx.compose.runtime.key(tavernRuntime.token) {
     val themeOnSurface = MaterialTheme.colorScheme.onSurface.toCssHex()
     val wrappedHtml = remember(html, themeOnSurface, dialogueQuoteColor) {
         wrapTavernHtml(html, themeOnSurface, dialogueQuoteColor)
@@ -1117,6 +1143,8 @@ private fun TavernHtmlPanel(
                 addJavascriptInterface(bridge, "TellevBridge")
                 addJavascriptInterface(bridge, "TellevMessage")
                 webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(view: WebView, request: android.webkit.WebResourceRequest): android.webkit.WebResourceResponse? =
+                        app.tellev.core.extension.CompatAssets.intercept(context, request.url.toString())
                     override fun onPageFinished(view: WebView, url: String?) {
                         view.post {
                             val density = view.resources.displayMetrics.density.coerceAtLeast(1f)
@@ -1128,6 +1156,13 @@ private fun TavernHtmlPanel(
                     }
                 }
             }
+        },
+        onRelease = { webView ->
+            (webView.tag as? TavernMessageBridge)?.close()
+            webView.stopLoading()
+            webView.removeJavascriptInterface("TellevBridge")
+            webView.removeJavascriptInterface("TellevMessage")
+            webView.destroy()
         },
         update = { webView ->
             val bridge = webView.tag as? TavernMessageBridge
@@ -1146,6 +1181,7 @@ private fun TavernHtmlPanel(
             }
         },
     )
+}
 }
 
 private fun Dp.coercePanelHeight(min: Dp, max: Dp): Dp =
@@ -1175,7 +1211,10 @@ internal fun wrapTavernHtml(
     }.orEmpty()
     val hostHead = """
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+        <script src="https://extensions.tellev.local/compat/globals.js"></script>
         ${tavernMessageCompatScript()}
+        <script src="https://extensions.tellev.local/compat/chat.js"></script>
+        <script src="https://extensions.tellev.local/compat/message.js"></script>
         <style id="tellev-host-style">
             html, body {
                 width: 100%;

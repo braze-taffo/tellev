@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -19,6 +20,51 @@ import java.nio.file.Files
 import java.util.concurrent.ConcurrentHashMap
 
 class VariableStoreTest {
+
+    @Test fun `first mutation loads persisted sibling values before accepting a write`() = runBlocking {
+        val dir = Files.createTempDirectory("tellev-global-startup-")
+        val job = SupervisorJob()
+        try {
+            val settings = ExtensionSettingsStore(dir)
+            settings.saveSettings("fixture", buildJsonObject { put("preserved", JsonPrimitive(9)) })
+            val store = VariableStore(CoroutineScope(job + Dispatchers.Default), settings, "fixture")
+            store.setGlobal("new", "value")
+            store.flushWrites()
+            assertEquals(JsonPrimitive(9), settings.getSettings("fixture")["preserved"])
+            assertEquals("value", settings.getSettings("fixture")["new"]?.jsonPrimitive?.content)
+        } finally { job.cancel(); dir.toFile().deleteRecursively() }
+    }
+
+    @Test fun `concurrent global increments are durable at the write barrier`() = runBlocking {
+        val dir = Files.createTempDirectory("tellev-global-concurrency-")
+        val job = SupervisorJob()
+        val workers = CoroutineScope(job + Dispatchers.Default)
+        try {
+            val settings = ExtensionSettingsStore(dir)
+            val store = VariableStore(workers, settings, "fixture")
+            kotlinx.coroutines.coroutineScope {
+                val tasks = (1..32).map { async(Dispatchers.Default) { store.incGlobal("count") } }
+                tasks.forEach { it.await() }
+            }
+            store.flushWrites()
+            assertEquals("32", store.getGlobal("count"))
+            assertEquals("32", settings.getSettings("fixture")["count"]?.jsonPrimitive?.content)
+        } finally { job.cancel(); dir.toFile().deleteRecursively() }
+    }
+
+    @Test fun `failed global save fails the barrier and blocks subsequent state changes`() = runBlocking {
+        val dir = Files.createTempDirectory("tellev-global-failure-")
+        val job = SupervisorJob()
+        try {
+            Files.write(dir.resolve("fixture"), "original".toByteArray())
+            val store = VariableStore(CoroutineScope(job + Dispatchers.Default), ExtensionSettingsStore(dir), "fixture")
+            store.setGlobal("count", "1")
+            assertTrue(runCatching { store.flushWrites() }.isFailure)
+            assertTrue(runCatching { store.setGlobal("count", "2") }.isFailure)
+            assertEquals("1", store.getGlobal("count"))
+            assertEquals("original", String(Files.readAllBytes(dir.resolve("fixture"))))
+        } finally { job.cancel(); dir.toFile().deleteRecursively() }
+    }
 
     companion object {
         /**
@@ -196,8 +242,7 @@ class VariableStoreTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val s1 = VariableStore(scope, settingsStore, key)
         s1.setGlobal("saved", "yes")
-        // persistGlobal launches on the scope; give it time to flush.
-        kotlinx.coroutines.delay(100)
+        s1.flushWrites()
 
         val s2 = VariableStore(scope, settingsStore, key)
         s2.loadGlobal(settingsStore.getSettings(key))

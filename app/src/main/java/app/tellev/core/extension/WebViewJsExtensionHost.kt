@@ -5,6 +5,7 @@ import android.content.Context
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceResponse
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -78,6 +79,9 @@ class WebViewJsExtensionHost(
     private val slashCommands = ConcurrentHashMap<String, RegisteredCommand>()
     private val virtualRoutes = ConcurrentHashMap<String, RegisteredRoute>()
 
+    private val pendingEvaluations = ConcurrentHashMap<String, CompletableDeferred<String>>()
+    private val pendingEvaluationOwners = ConcurrentHashMap<String, String>()
+
     private val pendingCommands = ConcurrentHashMap<String, CompletableDeferred<SlashCommandResult>>()
     private val pendingCommandOwners = ConcurrentHashMap<String, String>()
     private val pendingVirtualApi = ConcurrentHashMap<String, CompletableDeferred<VirtualApiResponse>>()
@@ -93,28 +97,9 @@ class WebViewJsExtensionHost(
     private var latestPromptDiagnostics: ExtensionEvent? = null
 
     private val settingsCache = ConcurrentHashMap<String, String>()
-    private val settingsWriteMutex = Mutex()
-
-    /**
-     * stGetContext 高频快照缓存。SillyTavern Proxy 每次读属性都调一次
-     * stGetContext；单次首启风暴里快照输入（uiState）不变，重复序列化
-     * 同一 JsonObject 是纯浪费。用“序列化输入引用 + 输出字符串”缓存：
-     * provider 每次返回同一实例则复用。
-     * 注意 ChatViewModel.buildTavernContext 每次新建 JsonObject，所以这里
-     * 用“内容指纹”（chat 大小 + 关键 id）做键，而非引用比较。
-     */
-    private data class TavernSnapshotKey(
-        val chatSize: Int,
-        val lastMessageId: Int,
-        val characterId: String,
-        val chatId: String,
-        val extSettingsSize: Int,
-    )
-
-    @Volatile
-    private var cachedTavernSnapshotKey: TavernSnapshotKey? = null
-    @Volatile
-    private var cachedTavernSnapshotJson: String = "{}"
+    private val settingsWriteLock = Any()
+    private val settingsWrites = mutableMapOf<String, CompletableDeferred<Unit>>()
+    private val settingsFailures = mutableMapOf<String, Throwable>()
 
     /**
      * Extension-injected prompts authored by loaded extensions via the ST
@@ -280,6 +265,9 @@ class WebViewJsExtensionHost(
                     settings.setSupportMultipleWindows(false)
 
                     webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+                            CompatAssets.intercept(context, request.url.toString())
+
                         override fun shouldOverrideUrlLoading(
                             view: WebView,
                             request: WebResourceRequest,
@@ -389,6 +377,7 @@ class WebViewJsExtensionHost(
         settingsCache.remove(extensionId)
         slashCommands.entries.removeIf { it.value.extensionId == extensionId }
         virtualRoutes.entries.removeIf { it.value.extensionId == extensionId }
+        cancelPending(pendingEvaluationOwners, pendingEvaluations, extensionId)
         cancelPending(pendingCommandOwners, pendingCommands, extensionId)
         cancelPending(pendingVirtualApiOwners, pendingVirtualApi, extensionId)
         pendingPermissions.entries.removeIf { (_, owner) -> owner == extensionId }
@@ -417,23 +406,41 @@ class WebViewJsExtensionHost(
         publishExtensionEvent(event, excludeExtensionId = null)
     }
 
+    override suspend fun flushWrites() {
+        variableStore?.flushWrites()
+        val accepted = synchronized(settingsWriteLock) { settingsWrites.values.toList() }
+        accepted.forEach { it.await() }
+    }
+
     private suspend fun publishExtensionEvent(
         event: ExtensionEvent,
         excludeExtensionId: String?,
     ) {
         publishLocalEvent(event)
-        withContext(Dispatchers.Main) {
-            val payloadStr = json.encodeToString(JsonObject.serializer(), event.payload)
-            val escapedName = jsEscape(event.name)
-            val escapedPayload = jsEscape(payloadStr)
-            val js = "if(window.Tellev&&window.Tellev.onEvent){" +
-                "window.Tellev.onEvent('" + escapedName + "','" + escapedPayload + "');" +
-                "}else if(window.eventSource&&window.eventSource._fireNative){" +
-                "window.eventSource._fireNative('" + escapedName + "','" + escapedPayload + "');}"
-            for ((id, webView) in webViews) {
-                if (id == excludeExtensionId) continue
-                runCatching { webView.evaluateJavascript(js, null) }
+        val payload = json.encodeToString(JsonObject.serializer(), event.payload)
+        for (id in webViews.keys.toList()) {
+            if (id == excludeExtensionId) continue
+            evaluateRuntime(id, "window.__tellevDispatch(" + JsonPrimitive(event.name) + "," + JsonPrimitive(payload) + ")")
+        }
+    }
+
+    suspend fun evaluateRuntime(extensionId: String, expression: String): String {
+        val id = UUID.randomUUID().toString()
+        val result = CompletableDeferred<String>()
+        pendingEvaluations[id] = result
+        pendingEvaluationOwners[id] = extensionId
+        try {
+            withContext(Dispatchers.Main) {
+                val view = webViews[extensionId] ?: error("Runtime unloaded: $extensionId")
+                view.evaluateJavascript("Promise.resolve().then(()=>($expression)).then(" +
+                    "v=>tellevNative.evaluationDone('$id',true,JSON.stringify(v??null))," +
+                    "e=>tellevNative.evaluationDone('$id',false,String(e.stack||e)))", null)
             }
+            return withTimeoutOrNull(apiCallTimeoutMs) { result.await() }
+                ?: error("Runtime operation timed out: $extensionId")
+        } finally {
+            pendingEvaluations.remove(id)
+            pendingEvaluationOwners.remove(id)
         }
     }
 
@@ -706,6 +713,14 @@ class WebViewJsExtensionHost(
         private val extensionId: String,
         private val token: String,
     ) {
+        private val runtimeGeneration = _contextProvider?.snapshot()?.get("__runtimeGeneration")
+
+        private fun requireCurrentRuntime() {
+            check(capabilityTokens[extensionId] == token &&
+                _contextProvider?.snapshot()?.get("__runtimeGeneration") == runtimeGeneration) {
+                "Expired runtime call from $extensionId"
+            }
+        }
         @JavascriptInterface
         fun emit(name: String, payloadJson: String) {
             val payload = runCatching { json.parseToJsonElement(payloadJson).jsonObject }
@@ -854,12 +869,29 @@ class WebViewJsExtensionHost(
 
         @JavascriptInterface
         fun saveSettings(settingsJson: String) {
-            val obj = runCatching { json.parseToJsonElement(settingsJson).jsonObject }
-                .getOrElse { buildJsonObject { } }
-            scope.launch {
-                settingsWriteMutex.withLock {
-                    settingsCache[extensionId] = settingsJson
-                    settingsStore.saveSettings(extensionId, obj)
+            requireCurrentRuntime()
+            val obj = json.parseToJsonElement(settingsJson).jsonObject
+            synchronized(settingsWriteLock) {
+                settingsFailures[extensionId]?.let { throw IllegalStateException("扩展设置需要恢复：$extensionId", it) }
+                val previous = settingsWrites[extensionId]
+                val completion = CompletableDeferred<Unit>()
+                settingsWrites[extensionId] = completion
+                settingsCache[extensionId] = settingsJson
+                val job = scope.launch {
+                    try {
+                        previous?.await()
+                        settingsStore.saveSettings(extensionId, obj)
+                        completion.complete(Unit)
+                    } catch (error: Throwable) {
+                        synchronized(settingsWriteLock) { settingsFailures[extensionId] = error }
+                        completion.completeExceptionally(error)
+                    }
+                }
+                job.invokeOnCompletion { error ->
+                    if (error != null) {
+                        synchronized(settingsWriteLock) { settingsFailures[extensionId] = error }
+                        completion.completeExceptionally(error)
+                    }
                 }
             }
         }
@@ -944,6 +976,7 @@ class WebViewJsExtensionHost(
         // ── SillyTavern / 酒馆助手 shim bridge methods ──────────────────
 
         private fun hasStorageBridgeAccess(operation: String): Boolean {
+            requireCurrentRuntime()
             val allowed = hasPermission(ExtensionPermission.Storage.name)
             if (!allowed) {
                 reportExtensionLog(extensionId, "warning", "Denied $operation: Storage permission not declared or granted")
@@ -955,20 +988,7 @@ class WebViewJsExtensionHost(
         fun stGetContext(): String {
             if (!hasStorageBridgeAccess("stGetContext")) return "{}"
             val snapshot = _contextProvider?.snapshot() ?: buildJsonObject { }
-            // 同一输入复用上次序列化结果：首启事件风暴里同一快照被读数十次。
-            val key = TavernSnapshotKey(
-                chatSize = (snapshot["chat"] as? JsonArray)?.size ?: 0,
-                lastMessageId = (snapshot["lastMessageId"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: -1,
-                characterId = (snapshot["characterId"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
-                chatId = (snapshot["chatId"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
-                extSettingsSize = (snapshot["extensionSettings"] as? JsonObject)?.size ?: 0,
-            )
-            val cachedKey = cachedTavernSnapshotKey
-            if (cachedKey == key) return cachedTavernSnapshotJson
-            val encoded = json.encodeToString(JsonObject.serializer(), snapshot)
-            cachedTavernSnapshotKey = key
-            cachedTavernSnapshotJson = encoded
-            return encoded
+            return json.encodeToString(JsonObject.serializer(), snapshot)
         }
 
         @JavascriptInterface
@@ -1029,17 +1049,14 @@ class WebViewJsExtensionHost(
 
         /**
          * Resolve a TavernHelper message_id to a chat message index.
-         * -1 (or 'latest') maps to the last message carrying variables, falling
-         * back to the last message; other negatives count from the chat end
-         * (js-slash-runner variables.ts:59-70).
+         * Negative numeric IDs count from the complete chat end. The JavaScript
+         * adapter resolves the distinct default/latest read semantics.
          */
         private fun resolveMessageIndex(messageId: Int): Int? {
             val backend = messageVariableBackend ?: return null
             val count = backend.messageCount()
             if (count <= 0) return null
             return when {
-                messageId == -1 ->
-                    backend.lastIndexWithVariables().takeIf { it >= 0 } ?: (count - 1)
                 messageId < 0 -> (count + messageId).takeIf { it >= 0 }
                 messageId < count -> messageId
                 else -> null
@@ -1164,13 +1181,42 @@ class WebViewJsExtensionHost(
         }
 
         @JavascriptInterface
+        fun evaluationDone(id: String, ok: Boolean, value: String) {
+            if (pendingEvaluationOwners[id] != extensionId) return
+            val result = pendingEvaluations[id] ?: return
+            if (ok) result.complete(value) else result.completeExceptionally(IllegalStateException(value))
+        }
+
+        @JavascriptInterface
+        fun stSetChatMessages(requestId: String, messagesJson: String, optionsJson: String) {
+            if (!hasStorageBridgeAccess("stSetChatMessages")) return
+            val provider = _contextProvider
+            val chatId = provider?.snapshot()?.get("chatId")
+            scope.launch {
+                val failure = runCatching {
+                    requireCurrentRuntime()
+                    check(provider === _contextProvider && provider?.snapshot()?.get("chatId") == chatId) { "Chat changed during write" }
+                    val messages = json.parseToJsonElement(messagesJson).jsonArray
+                    val options = json.parseToJsonElement(optionsJson).jsonObject
+                    check(provider?.setChatMessages(messages, options) == true) { "Message update failed" }
+                }.exceptionOrNull()
+                withContext(Dispatchers.Main) {
+                    webViews[extensionId]?.evaluateJavascript(
+                        "window.__tellevWriteDone(" + JsonPrimitive(requestId) + "," +
+                            (failure?.message?.let { JsonPrimitive(it).toString() } ?: "null") + ")", null)
+                }
+            }
+        }
+
+        @JavascriptInterface
         fun stSetChatMessage(index: String, field: String, value: String) {
             if (!hasStorageBridgeAccess("stSetChatMessage")) return
+            val provider = _contextProvider
             scope.launch {
+                requireCurrentRuntime()
                 // 写后快照内容已变，清掉 stGetContext 缓存（键不含消息体）。
-                cachedTavernSnapshotKey = null
                 val messageIndex = index.toIntOrNull()
-                if (messageIndex != null && _contextProvider?.setChatMessage(messageIndex, field, value) == true) {
+                if (messageIndex != null && provider?.setChatMessage(messageIndex, field, value) == true) {
                     return@launch
                 }
                 val body = buildJsonObject {
@@ -1311,12 +1357,13 @@ class WebViewJsExtensionHost(
         // module to fire after imports resolve. For regular scripts it runs in
         // a separate <script> after the extension code.
         val extensionScript = if (useModule) {
-            "<script type=\"module\">\n$safeScript\ntry{tellevNative.extensionReady();}catch(e){}\n</script>"
+            "<script type=\"module\">\n$safeScript\nwindow.__tellevReady().then(()=>tellevNative.extensionReady()).catch(e=>tellevNative.extensionFailed(String(e.stack||e)))\n</script>"
         } else {
-            "<script>\n$safeScript\n</script><script>try{tellevNative.extensionReady();}catch(e){}</script>"
+            "<script>\n$safeScript\n</script><script>window.__tellevReady().then(()=>tellevNative.extensionReady()).catch(e=>tellevNative.extensionFailed(String(e.stack||e)))</script>"
         }
         return HTML_TEMPLATE
             .replace("__EXTENSION_ID__", safeId)
+            .replace("__HOST_ADAPTER__", CompatAssets.source(context, "chat.js") + "\n" + CompatAssets.source(context, "host.js"))
             .replace("__TOKEN__", safeToken)
             .replace("__SHOWDOWN_SOURCE__", MarkdownScripts.showdownSource(context))
             .replace("__EJS_SETTINGS_JSON__", safeEjsJson)
@@ -1547,22 +1594,10 @@ class WebViewJsExtensionHost(
         // The HTML is stored as a plain string (not a raw """...""") so
         // that the JS /* ... */ comments inside cannot be mistaken for
         // Kotlin block comments by the compiler.
-        private const val HTML_TEMPLATE: String = "<!doctype html><html><head>" +
+        private const val HTML_TEMPLATE: String = "<!doctype html><html data-extension-id=\"__EXTENSION_ID__\"><head>" +
             "<meta charset=\"utf-8\">" +
-            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline' https:; style-src 'unsafe-inline' https:; connect-src 'self' https:; img-src https: data:; media-src https: data:; font-src https: data:;\">" +
-            "<script crossorigin=\"anonymous\" src=\"https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js\"></script>" +
-            "<script crossorigin=\"anonymous\" src=\"https://cdn.jsdelivr.net/npm/jquery@3/dist/jquery.min.js\"></script>" +
-            "<script crossorigin=\"anonymous\" src=\"https://cdn.jsdelivr.net/npm/toastr@2.1.4/build/toastr.min.js\"></script>" +
-            "<link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/toastr@2.1.4/build/toastr.min.css\">" +
-            // MVU (MagicalAstrogy/MagVarUpdate) variable frameworks reference a
-            // global Vue, matching real SillyTavern which exposes window.Vue.
-            "<script crossorigin=\"anonymous\" src=\"https://cdn.jsdelivr.net/npm/vue@3.5.13/dist/vue.global.prod.js\"></script>" +
-            // js-slash-runner third_party_object.ts exposes globalThis.z as the
-            // full zod v4 namespace (zod ^4.4.3; v4 has no UMD build, so it is
-            // imported as an ES module here — module scripts run in document
-            // order, before the deferred character-card module scripts).
-            "<script type=\"module\">import * as _z from 'https://cdn.jsdelivr.net/npm/zod@4.4.3/+esm';window.z=_z;</script>" +
-            "<script type=\"module\">import * as _yaml from 'https://cdn.jsdelivr.net/npm/yaml@2.7.1/+esm';window.YAML=_yaml;</script>" +
+            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https: blob:; style-src 'unsafe-inline' https:; connect-src 'self' https:; img-src https: data:; media-src https: data:; font-src https: data:;\">" +
+            "<script src=\"https://extensions.tellev.local/compat/globals.js\"></script>" +
             "</head><body><script>\n" +
             "__SHOWDOWN_SOURCE__\n" +
             "(function(){" +
@@ -1650,9 +1685,10 @@ class WebViewJsExtensionHost(
             // underscore stripped, e.g. _getScriptId -> getScriptId) as bare
             // globals. Fill in whatever the explicit assignments above missed.
             "(function(){var n;for(n in TavernHelper){if(n!=='_bind'&&window[n]===undefined)window[n]=TavernHelper[n];}if(TavernHelper._bind){for(n in TavernHelper._bind){if(typeof TavernHelper._bind[n]==='function'){var g=n.replace(/^_/,'');if(window[g]===undefined)window[g]=TavernHelper._bind[n];}}}})();" +
+            "window.__tellevInvalidateContext=_ctxTickAdvance;" +
             EXTENSION_LOAD_GUARDS +
             "})();" +
-            "\n</script>\n__EXTENSION_SCRIPT__\n</body></html>"
+            "\n</script><script>__HOST_ADAPTER__</script>\n__EXTENSION_SCRIPT__\n</body></html>"
     }
 }
 

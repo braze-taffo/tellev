@@ -1,0 +1,30 @@
+{
+  "name": "tellev-mvu-runtime",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test --test-force-exit test/*.test.mjs"
+  },
+  "dependencies": {
+    "@intlify/core-base": "11.1.12",
+    "@intlify/shared": "11.1.12",
+    "compare-versions": "6.1.1",
+    "ejs": "3.1.10",
+    "jquery": "3.7.1",
+    "json5": "2.2.3",
+    "jsonrepair": "3.15.0",
+    "klona": "2.0.6",
+    "lodash": "4.17.21",
+    "mathjs": "12.4.1",
+    "toastr": "2.1.4",
+    "vue": "3.5.21",
+    "yaml": "2.8.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.9",
+    "jsdom": "26.1.0",
+    "playwright-core": "1.55.0"
+  }
+}

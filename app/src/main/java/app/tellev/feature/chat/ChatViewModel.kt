@@ -12,6 +12,11 @@ import app.tellev.core.extension.ExtensionPermissionManager
 import app.tellev.core.extension.LocalVariableBackend
 import app.tellev.core.extension.MessageVariableBackend
 import app.tellev.core.extension.StEventCatalog
+import app.tellev.core.extension.RuntimeToken
+import app.tellev.core.extension.RuntimeWriteCoordinator
+import app.tellev.core.extension.StorageOwner
+import app.tellev.core.extension.MutationRequest
+import app.tellev.core.extension.CommitReceipt
 import app.tellev.core.model.Attachment
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterSummary
@@ -40,6 +45,13 @@ import app.tellev.core.storage.StDataStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,6 +62,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import app.tellev.util.decodeImageAsPng
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -64,6 +77,7 @@ import kotlinx.serialization.json.putJsonObject
 import java.util.UUID
 
 data class ChatUiState(
+    val runtimeGeneration: Long = -1,
     val characters: List<CharacterSummary> = emptyList(),
     // Card file per character id for the character picker list (card = avatar).
     val characterAvatarFiles: Map<String, java.io.File?> = emptyMap(),
@@ -110,11 +124,20 @@ class ChatViewModel(
     private val runtimeResolver = GenerationRuntimeResolver(dataStore, providerRegistry, secretStore)
 
     private var generationJob: Job? = null
+    private var interruptionJob: Job? = null
+    private var characterScriptJob: Job? = null
     private var activeRegeneration: ActiveRegeneration? = null
     @Volatile
     private var loadedCharacterScriptExtensionId: String? = null
-    @Volatile
-    private var metadataSaveJob: Job? = null
+    private val sessionWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val sessionWriteLock = Any()
+    private val sessionTransitions = Mutex()
+    @Volatile private var runtimeToken: RuntimeToken? = null
+    private val sessionWrites = RuntimeWriteCoordinator<ChatSession>(sessionWriteScope) { request, desired ->
+        val base = Json.decodeFromJsonElement(ChatSession.serializer(), request.payload.getValue("base"))
+        val committed = dataStore.commitChatMutation(base, desired, request.baseRevision, request.operationId)
+        CommitReceipt(request.operationId, committed.storageRevision, true)
+    }
 
     init {
         extensionHost.setContextProvider(object : ExtensionContextProvider {
@@ -122,6 +145,14 @@ class ChatViewModel(
 
             override suspend fun setChatMessage(index: Int, field: String, value: String): Boolean =
                 setChatMessageFromExtension(index, field, value)
+
+            override suspend fun setChatMessages(messages: JsonArray, options: JsonObject): Boolean {
+                val session = _uiState.value.currentSession ?: return false
+                val updated = app.tellev.core.extension.applyTavernChatMessages(session.messages, messages)
+                val next = session.copy(messages = updated)
+                persistSessionMutation(session, next)
+                return true
+            }
 
             override suspend fun generateText(options: JsonObject): JsonObject? =
                 generateTextFromExtension(options)
@@ -139,29 +170,25 @@ class ChatViewModel(
 
             override fun messageVariables(index: Int): JsonObject? {
                 val message = _uiState.value.currentSession?.messages?.getOrNull(index) ?: return null
-                return message.variables.getOrNull(message.swipeIndex)
+                return message.variables.getOrNull(message.swipeIndex) as? JsonObject
             }
 
             override fun lastIndexWithVariables(): Int {
                 val messages = _uiState.value.currentSession?.messages ?: return -1
-                return messages.indexOfLast { it.variables.getOrNull(it.swipeIndex) != null }
+                return messages.indexOfLast { it.variables.getOrNull(it.swipeIndex) is JsonObject }
             }
 
             override fun replaceMessageVariables(index: Int, variables: JsonObject) {
-                // Apply via _uiState.update so concurrent session changes (e.g.
-                // streaming) are never clobbered — same discipline as
-                // updateChatVariables. Persist through the debounced save.
-                _uiState.update { state ->
-                    val session = state.currentSession ?: return@update state
+                synchronized(sessionWriteLock) {
+                    val session = _uiState.value.currentSession ?: error("当前没有会话")
                     val messages = session.messages.toMutableList()
-                    val message = messages.getOrNull(index) ?: return@update state
+                    val message = messages.getOrNull(index) ?: error("消息不存在：$index")
                     val vars = message.variables.toMutableList()
                     while (vars.size <= message.swipeIndex) vars.add(buildJsonObject { })
                     vars[message.swipeIndex] = variables
                     messages[index] = message.copy(variables = vars)
-                    state.copy(currentSession = session.copy(messages = messages))
+                    scheduleMetadataSave(session, session.copy(messages = messages))
                 }
-                scheduleMetadataSave()
             }
         })
         observeCharacterChanges()
@@ -252,16 +279,22 @@ class ChatViewModel(
             dataStore.chatChanges.collect { sessionId ->
                 val state = _uiState.value
                 if (state.currentSession?.id != sessionId || state.isGenerating) return@collect
-                runCatching { dataStore.readChatSession(sessionId) }
-                    .onSuccess { refreshed ->
+                runCatching {
+                        val refreshed = dataStore.readChatSession(sessionId)
+                        val visible = synchronized(sessionWriteLock) {
+                            if (runtimeToken?.sessionId == sessionId) sessionWrites.observePersisted(StorageOwner("chat", sessionId), refreshed, refreshed.storageRevision).value
+                            else refreshed
+                        }
                         _uiState.update {
                             if (it.currentSession?.id != sessionId || it.isGenerating) it
                             else it.copy(
-                                currentSession = refreshed,
-                                messages = refreshed.messages,
-                                chatBackgroundFile = chatBackgroundFileFor(refreshed),
+                                currentSession = visible,
+                                messages = visible.messages,
+                                chatBackgroundFile = chatBackgroundFileFor(visible),
                             )
                         }
+                    }.onFailure { error ->
+                        _uiState.update { it.copy(error = "读取会话提交状态失败：${error.message}") }
                     }
             }
         }
@@ -325,8 +358,10 @@ class ChatViewModel(
 
     fun selectCharacter(characterId: String) {
         viewModelScope.launch {
+          sessionTransitions.withLock {
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
+                retireSessionRuntime()
                 // 读卡/会话/世界书的 IO 与绑定集合运算搬到 Default，避免与首帧
                 // 绘制抢 Main。FileStDataStore 内部虽已是 IO，但 withCharacterGreetingSwipes
                 // 与世界书集合运算是纯 CPU，大卡（1.4MB/数百条目）上不可忽略。
@@ -341,10 +376,10 @@ class ChatViewModel(
                     val sessions = dataStore.listChatSessions(characterId = characterId)
 
                     val session = if (sessions.isNotEmpty()) {
-                        sessions.first().withCharacterGreetingSwipes(character).also { upgraded ->
+                        sessions.first().withCharacterGreetingSwipes(character).let { upgraded ->
                             if (upgraded != sessions.first()) {
-                                dataStore.saveChatSession(upgraded)
-                            }
+                                dataStore.commitChatMutation(sessions.first(), upgraded)
+                            } else upgraded
                         }
                     } else {
                         createSessionForCharacter(character)
@@ -391,6 +426,7 @@ class ChatViewModel(
                 }
                 val character = selection.character
                 val session = selection.session
+                activateSessionWrites(session)
 
                 _uiState.update {
                     it.copy(
@@ -409,6 +445,7 @@ class ChatViewModel(
                 val scriptJob = viewModelScope.launch(Dispatchers.Default) {
                     reloadCharacterTavernHelperScripts(character)
                 }
+                characterScriptJob = scriptJob
                 emitCharacterSelected(character)
                 emitChatChanged(session)
                 // rendered 事件限流在 emitRenderedEventsForMessages 内部处理。
@@ -424,6 +461,7 @@ class ChatViewModel(
                     )
                 }
             }
+          }
         }
     }
 
@@ -476,6 +514,9 @@ class ChatViewModel(
 
         viewModelScope.launch {
             try {
+                characterScriptJob?.join()
+                flushSessionWrites(session.id)
+                check(_uiState.value.currentSession?.id == session.id) { "生成所属会话已经切换" }
                 val runtime = runtimeResolver.resolve(state.selectedPersona?.id)
                 val config = runtime.providerConfig
                 val preset = runtime.preset
@@ -502,18 +543,13 @@ class ChatViewModel(
                     )
                 }
 
-                val initializedSession = session.withTavernInitVariables(
+                val readySession = requireNotNull(_uiState.value.currentSession?.takeIf { it.id == session.id })
+                val initializedSession = readySession.withTavernInitVariables(
                     character = character,
                     worldBooks = runtime.activeWorldBooks,
                 )
-                if (initializedSession != session) {
-                    dataStore.saveChatSession(initializedSession)
-                    _uiState.update {
-                        it.copy(
-                            currentSession = initializedSession,
-                            messages = initializedSession.messages,
-                        )
-                    }
+                if (initializedSession != readySession) {
+                    persistSessionMutation(readySession, initializedSession)
                 }
 
                 val inputMessage = regenerationInput ?: CharacterRegexApplier.markNormalProcessed(ChatMessage(
@@ -539,14 +575,12 @@ class ChatViewModel(
                 val updatedSession = initializedSession.copy(messages = updatedMessages)
 
                 if (!isRegeneration) {
-                    dataStore.saveChatSession(updatedSession)
+                    persistSessionMutation(initializedSession, updatedSession)
                 }
                 activeRegeneration = regenerationMessageId?.let(::ActiveRegeneration)
 
                 _uiState.update {
                     it.copy(
-                        messages = updatedMessages,
-                        currentSession = updatedSession,
                         isGenerating = true,
                         streamingText = "",
                         error = null,
@@ -573,8 +607,7 @@ class ChatViewModel(
                 // Fire GENERATION_AFTER_COMMANDS BEFORE building the prompt so
                 // extensions (e.g. MVU) can call injectPrompts and have their
                 // injections picked up by buildPromptMetadata.  A short delay
-                // gives the WebView's async JS event handlers time to execute
-                // (evaluateJavascript dispatches but does not wait for JS).
+                // waits for async handlers and their variable writes to complete.
                 emitStEvent(
                     StEventCatalog.GENERATION_AFTER_COMMANDS,
                     "normal",
@@ -584,19 +617,20 @@ class ChatViewModel(
                     },
                     false,
                 )
-                // Allow WebView JS event handlers to process the event and
-                // register any injectPrompts calls before we collect them.
-                delay(300)
 
+
+                flushSessionWrites(updatedSession.id)
+                val promptSession = requireNotNull(_uiState.value.currentSession?.takeIf { it.id == updatedSession.id })
+                val promptMessages = promptSession.messages
                 val promptRequest = PromptBuildRequest(
                     character = character,
                     persona = runtime.persona,
                     messages = if (isRegeneration) {
-                        updatedMessages.take(regenerationInputIndex!!)
+                        promptMessages.take(regenerationInputIndex!!)
                     } else if (messageRole == MessageRole.User) {
-                        promptHistoryBeforeCurrentMessage(updatedMessages, inputMessage.id)
+                        promptHistoryBeforeCurrentMessage(promptMessages, inputMessage.id)
                     } else {
-                        updatedMessages
+                        promptMessages
                     },
                     worldBooks = runtime.activeWorldBooks,
                     preset = preset,
@@ -606,13 +640,13 @@ class ChatViewModel(
                         else -> ""
                     },
                     providerType = config.providerType,
-                    metadata = JsonObject(buildPromptMetadata(runtimeState, config, preset, updatedSession) +
+                    metadata = JsonObject(buildPromptMetadata(runtimeState, config, preset, promptSession) +
                         ("userInputNormalProcessed" to JsonPrimitive(
                             CharacterRegexApplier.isNormalProcessed(inputMessage),
                         ))),
                 )
 
-                val promptResult = buildPromptWithSessionScope(promptRequest, updatedSession)
+                val promptResult = buildPromptWithSessionScope(promptRequest, promptSession)
                 persistPromptTemplateVariableUpdates(
                     promptResult.promptTemplateVariableUpdates,
                     targetSessionId = updatedSession.id,
@@ -696,14 +730,12 @@ class ChatViewModel(
                             val finalSession = (latestSession?.takeIf { it.id == updatedSession.id } ?: updatedSession)
                                 .copy(messages = finalMessages)
 
-                            dataStore.saveChatSession(finalSession)
+                            persistSessionMutation(latestSession?.takeIf { it.id == updatedSession.id } ?: updatedSession, finalSession)
                             activeRegeneration = null
 
                             _uiState.update {
                                 it.copy(
-                                    messages = finalMessages,
-                                    currentSession = finalSession,
-                                    isGenerating = false,
+                                    isGenerating = true,
                                     streamingText = "",
                                 )
                             }
@@ -714,6 +746,8 @@ class ChatViewModel(
                                 emitStEvent(StEventCatalog.MESSAGE_SWIPED, assistantMessageIndex)
                             }
                             emitStEvent(StEventCatalog.CHARACTER_MESSAGE_RENDERED, assistantMessageIndex, eventType)
+                            flushSessionWrites(finalSession.id)
+                            _uiState.update { it.copy(isGenerating = false) }
                             emitStEvent(StEventCatalog.GENERATION_ENDED, finalMessages.size)
                             emitStEvent(StEventCatalog.GENERATE_AFTER_DATA, finalMessages.size)
                         }
@@ -769,6 +803,7 @@ class ChatViewModel(
 
     fun swipeMessage(messageIndex: Int, direction: Int) {
         val state = _uiState.value
+        if (state.isLoading) return
         val messages = state.messages.toMutableList()
 
         if (messageIndex !in messages.indices) return
@@ -795,15 +830,8 @@ class ChatViewModel(
         val session = state.currentSession ?: return
         val updatedSession = session.copy(messages = messages)
 
-        _uiState.update {
-            it.copy(
-                messages = messages,
-                currentSession = updatedSession,
-            )
-        }
-
-        viewModelScope.launch {
-            dataStore.saveChatSession(updatedSession)
+        val commit = scheduleUiMutation(session, updatedSession) ?: return
+        launchAfterCommit(commit) {
             emitStEvent(StEventCatalog.MESSAGE_SWIPED, messageIndex)
             emitRenderedEventForMessage(messageIndex, updatedMessage, "swipe")
         }
@@ -811,6 +839,7 @@ class ChatViewModel(
 
     fun editMessage(messageIndex: Int, newContent: String) {
         val state = _uiState.value
+        if (state.isLoading) return
         val messages = state.messages.toMutableList()
 
         if (messageIndex !in messages.indices) return
@@ -862,6 +891,7 @@ class ChatViewModel(
                 emitStEvent(StEventCatalog.MESSAGE_UPDATED, messageIndex)
                 emitRenderedEventForMessage(messageIndex, updatedMessage, "edit")
             }
+            scheduleMetadataSave(session, session.copy(messages = trimmedMessages))
             sendMessageWithRole(
                 text = newContent,
                 attachments = message.attachments,
@@ -872,9 +902,8 @@ class ChatViewModel(
         }
 
         val updatedSession = session.copy(messages = messages)
-        _uiState.update { it.copy(messages = messages, currentSession = updatedSession) }
-        viewModelScope.launch {
-            dataStore.saveChatSession(updatedSession)
+        val commit = scheduleUiMutation(session, updatedSession) ?: return
+        launchAfterCommit(commit) {
             emitStEvent(StEventCatalog.MESSAGE_EDITED, messageIndex)
             emitStEvent(StEventCatalog.MESSAGE_UPDATED, messageIndex)
             emitRenderedEventForMessage(messageIndex, updatedMessage, "edit")
@@ -883,6 +912,7 @@ class ChatViewModel(
 
     fun deleteMessage(messageIndex: Int) {
         val state = _uiState.value
+        if (state.isLoading) return
         val messages = state.messages.toMutableList()
 
         if (messageIndex !in messages.indices) return
@@ -891,15 +921,8 @@ class ChatViewModel(
         val session = state.currentSession ?: return
         val updatedSession = session.copy(messages = messages)
 
-        _uiState.update {
-            it.copy(
-                messages = messages,
-                currentSession = updatedSession,
-            )
-        }
-
-        viewModelScope.launch {
-            dataStore.saveChatSession(updatedSession)
+        val commit = scheduleUiMutation(session, updatedSession) ?: return
+        launchAfterCommit(commit) {
             emitStEvent(StEventCatalog.MESSAGE_DELETED, messageIndex)
         }
     }
@@ -939,8 +962,8 @@ class ChatViewModel(
                                 streamingText = "",
                             )
                         }
-                        viewModelScope.launch {
-                            dataStore.saveChatSession(updatedSession)
+                        val commit = scheduleUiMutation(session, updatedSession) ?: return
+                        interruptionJob = launchAfterCommit(commit) {
                             emitStEvent(StEventCatalog.MESSAGE_RECEIVED, targetIndex, "interrupted")
                             emitStEvent(StEventCatalog.MESSAGE_SWIPED, targetIndex)
                             emitStEvent(StEventCatalog.CHARACTER_MESSAGE_RENDERED, targetIndex, "interrupted")
@@ -975,8 +998,8 @@ class ChatViewModel(
                         streamingText = "",
                     )
                 }
-                viewModelScope.launch {
-                    dataStore.saveChatSession(updatedSession)
+                val commit = scheduleUiMutation(session, updatedSession) ?: return
+                interruptionJob = launchAfterCommit(commit) {
                     emitStEvent(StEventCatalog.MESSAGE_RECEIVED, partialMessageIndex, "interrupted")
                     emitStEvent(StEventCatalog.CHARACTER_MESSAGE_RENDERED, partialMessageIndex, "interrupted")
                     emitStEvent(StEventCatalog.GENERATION_STOPPED)
@@ -1006,12 +1029,14 @@ class ChatViewModel(
     }
 
     fun createNewSession() {
-        val state = _uiState.value
-        val character = state.selectedCharacter ?: return
-
         viewModelScope.launch {
+          sessionTransitions.withLock {
+            val character = _uiState.value.selectedCharacter ?: return@withLock
+            _uiState.update { it.copy(isLoading = true) }
             try {
+                retireSessionRuntime()
                 val newSession = createSessionForCharacter(character)
+                activateSessionWrites(newSession)
                 val sessions = dataStore.listChatSessions(characterId = character.id)
 
                 _uiState.update {
@@ -1022,20 +1047,28 @@ class ChatViewModel(
                         sessions = sessions,
                     )
                 }
+                reloadCharacterTavernHelperScripts(character)
                 emitChatChanged(newSession)
                 emitRenderedEventsForMessages(newSession.messages)
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(error = "创建会话失败：${e.message}")
                 }
+            } finally {
+                _uiState.update { it.copy(isLoading = false) }
             }
+          }
         }
     }
 
     fun switchSession(sessionId: String) {
         viewModelScope.launch {
+          sessionTransitions.withLock {
+            _uiState.update { it.copy(isLoading = true) }
             try {
+                retireSessionRuntime()
                 val session = dataStore.readChatSession(sessionId)
+                activateSessionWrites(session)
                 _uiState.update {
                     it.copy(
                         currentSession = session,
@@ -1043,13 +1076,17 @@ class ChatViewModel(
                         chatBackgroundFile = chatBackgroundFileFor(session),
                     )
                 }
+                _uiState.value.selectedCharacter?.let { reloadCharacterTavernHelperScripts(it) }
                 emitChatChanged(session)
                 emitRenderedEventsForMessages(session.messages)
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(error = "切换会话失败：${e.message}")
                 }
+            } finally {
+                _uiState.update { it.copy(isLoading = false) }
             }
+          }
         }
     }
 
@@ -1077,10 +1114,10 @@ class ChatViewModel(
                         put("background", rel)
                     },
                 )
-                dataStore.saveChatSession(updated)
+                persistSessionMutation(session, updated)
                 _uiState.update {
                     if (it.currentSession?.id != updated.id) it
-                    else it.copy(currentSession = updated, chatBackgroundFile = dataStore.layout.root.resolve(rel).toFile())
+                    else it.copy(chatBackgroundFile = dataStore.layout.root.resolve(rel).toFile())
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = "设置聊天背景失败：${e.message}") }
@@ -1100,10 +1137,10 @@ class ChatViewModel(
                         }
                     },
                 )
-                dataStore.saveChatSession(updated)
+                persistSessionMutation(session, updated)
                 _uiState.update {
                     if (it.currentSession?.id != updated.id) it
-                    else it.copy(currentSession = updated, chatBackgroundFile = null)
+                    else it.copy(chatBackgroundFile = null)
                 }
                 if (rel != null) {
                     withContext(Dispatchers.IO) {
@@ -1135,12 +1172,20 @@ class ChatViewModel(
     fun selectPreset(presetId: String) {
         val preset = _uiState.value.presets.firstOrNull { it.id == presetId } ?: return
         viewModelScope.launch {
-            runCatching {
-                dataStore.selectPreset(preset.category, preset.id)
-                _uiState.update { it.copy(selectedPreset = preset) }
-                emitStEvent(StEventCatalog.SETTINGS_UPDATED, "preset")
-            }.onFailure { error ->
-                _uiState.update { it.copy(error = "加载预设失败：${error.message}") }
+            sessionTransitions.withLock {
+                runCatching {
+                    val sessionId = _uiState.value.currentSession?.id
+                    retireSessionRuntime()
+                    dataStore.selectPreset(preset.category, preset.id)
+                    val session = sessionId?.let { dataStore.readChatSession(it) }
+                    session?.let { activateSessionWrites(it) }
+                    _uiState.update { it.copy(selectedPreset = preset, currentSession = session,
+                        messages = session?.messages ?: emptyList()) }
+                    _uiState.value.selectedCharacter?.let { reloadCharacterTavernHelperScripts(it) }
+                    emitStEvent(StEventCatalog.SETTINGS_UPDATED, "preset")
+                }.onFailure { error ->
+                    _uiState.update { it.copy(error = "加载预设失败：${error.message}") }
+                }
             }
         }
     }
@@ -1157,13 +1202,41 @@ class ChatViewModel(
         _uiState.update { it.copy(error = null) }
     }
 
-    fun tavernMessageVariablesJson(): String {
+    fun currentRuntimeToken(sessionId: String?): RuntimeToken? = runtimeToken?.takeIf {
+        it.sessionId == sessionId && sessionWrites.isActive(it)
+    }
+
+    private fun requireMessageRuntime(token: RuntimeToken?) {
+        check(token != null && sessionWrites.isActive(token) && _uiState.value.currentSession?.id == token.sessionId) {
+            "消息前端所属会话已失效"
+        }
+    }
+
+    fun tavernMessageContextJson(token: RuntimeToken?): String {
+        requireMessageRuntime(token)
+        val state = _uiState.value
+        val vars = promptEngine.snapshotPromptTemplateVariables()
+        return buildJsonObject {
+            buildTavernContext(state).forEach { (key, value) -> put(key, value) }
+            putJsonObject("variableScopes") {
+                put("global", vars.global)
+                put("chat", state.currentSession?.metadata?.get("variables") ?: vars.local)
+                put("character", state.selectedCharacter?.let { CharacterTavernHelperScripts.extractCharacterVariables(it) } ?: buildJsonObject {})
+            }
+        }.toString()
+    }
+
+    fun tavernMessageVariablesJson(token: RuntimeToken?): String {
+        requireMessageRuntime(token)
         val snapshot = promptEngine.snapshotPromptTemplateVariables()
         val local = (_uiState.value.currentSession?.metadata?.get("variables") as? JsonObject)
             ?: snapshot.local
         val merged = buildJsonObject {
             snapshot.global.forEach { (key, value) -> put(key, value) }
             local.forEach { (key, value) -> put(key, value) }
+            _uiState.value.messages.forEach { message ->
+                (message.variables.getOrNull(message.swipeIndex) as? JsonObject)?.forEach { (key, value) -> put(key, value) }
+            }
         }
         return decodeEmbeddedJsonValues(merged).toString()
     }
@@ -1173,11 +1246,52 @@ class ChatViewModel(
         payloadJson: String,
         onSetInput: (String) -> Unit,
         callback: (Boolean, String) -> Unit,
+        token: RuntimeToken?,
     ) {
         viewModelScope.launch {
             runCatching {
+                requireMessageRuntime(token)
                 val payload = (Json.parseToJsonElement(payloadJson) as? JsonObject) ?: buildJsonObject { }
                 when (operation) {
+                    "mvuReady", "mvuCall" -> {
+                        characterScriptJob?.join()
+                        requireMessageRuntime(token)
+                        val runtime = extensionHost as? app.tellev.core.extension.WebViewJsExtensionHost ?: error("MVU runtime unavailable")
+                        val owner = loadedCharacterScriptExtensionId ?: error("Character scripts are not ready")
+                        val expression = if (operation == "mvuReady") "window.__tellevReady().then(()=>{if(!window.Mvu)throw Error('MVU is not initialized');return window.Mvu.events})"
+                        else {
+                            val method = payload["method"]?.jsonPrimitive?.content ?: error("Missing MVU method")
+                            require(method in setOf("parseMessage", "parseMessages"))
+                            "window.Mvu[" + JsonPrimitive(method) + "](..." + (payload["args"] ?: JsonArray(emptyList())) + ")"
+                        }
+                        Json.parseToJsonElement(runtime.evaluateRuntime(owner, expression))
+                    }
+                    "setChatMessages" -> {
+                        val session = _uiState.value.currentSession ?: error("No chat")
+                        val updates = payload["messages"] as? JsonArray ?: error("Missing messages")
+                        val messages = app.tellev.core.extension.applyTavernChatMessages(session.messages, updates)
+                        val next = session.copy(messages = messages)
+                        persistSessionMutation(session, next)
+                        buildJsonObject { put("ok", true) }
+                    }
+                    "replaceVariables" -> {
+                        val options = payload["options"] as? JsonObject ?: buildJsonObject { put("type", "chat") }
+                        val variables = payload["variables"] as? JsonObject ?: error("Invalid variables")
+                        when (options["type"]?.jsonPrimitive?.content ?: "chat") {
+                            "chat" -> updateChatVariables { it.clear(); it.putAll(variables) }
+                            "global" -> promptEngine.persistGlobalPromptTemplateVariables(variables)
+                            "message" -> {
+                                val session = _uiState.value.currentSession ?: error("No chat")
+                                val id = options["message_id"]?.jsonPrimitive?.content?.toIntOrNull() ?: -1
+                                val updates = buildJsonArray { add(buildJsonObject { put("message_id", id); put("data", variables) }) }
+                                val messages = app.tellev.core.extension.applyTavernChatMessages(session.messages, updates)
+                                val next = session.copy(messages = messages)
+                                        persistSessionMutation(session, next)
+                            }
+                            else -> error("Unsupported writable variable scope")
+                        }
+                        buildJsonObject { put("ok", true) }
+                    }
                     "getChatMessages" -> {
                         val state = _uiState.value
                         val requested = payload["messageId"]?.jsonPrimitive?.content?.toIntOrNull()
@@ -1204,8 +1318,7 @@ class ChatViewModel(
                         // Update state first, then persist the freshest session
                         // snapshot: saving from a pre-suspension snapshot could
                         // clobber concurrent writes during the IO gap.
-                        _uiState.update { it.copy(messages = messages, currentSession = updatedSession) }
-                        dataStore.saveChatSession(_uiState.value.currentSession ?: updatedSession)
+                        persistSessionMutation(session, updatedSession)
                         emitStEvent(StEventCatalog.MESSAGE_SWIPED, index)
                         emitStEvent(StEventCatalog.MESSAGE_UPDATED, index)
                         emitRenderedEventForMessage(index, updated, "swipe")
@@ -1268,7 +1381,7 @@ class ChatViewModel(
                             else -> false
                         }
                         if (action.systemText != null && !handled) {
-                            _uiState.value.currentSession?.let { dataStore.saveChatSession(it) }
+                            flushSessionWrites(_uiState.value.currentSession?.id)
                         }
                         if (handled) {
                             buildJsonObject {
@@ -1315,6 +1428,7 @@ class ChatViewModel(
                 currentSession = updatedSession,
             )
         }
+        scheduleMetadataSave(session, updatedSession)
         return true
     }
 
@@ -1335,26 +1449,24 @@ class ChatViewModel(
         characters.associate { it.id to characterCardFile(it.id) }
 
     fun deselectCharacter() {
-        _uiState.update {
-            it.copy(
-                selectedCharacter = null,
-                characterAvatarFile = null,
-                currentSession = null,
-                chatBackgroundFile = null,
-                messages = emptyList(),
-                sessions = emptyList(),
-            )
-        }
         viewModelScope.launch {
-            unloadCharacterTavernHelperScripts()
-            emitStEvent(StEventCatalog.CHAT_CHANGED, "")
+            sessionTransitions.withLock {
+                try {
+                    retireSessionRuntime()
+                    _uiState.update { it.copy(selectedCharacter = null, characterAvatarFile = null,
+                        currentSession = null, chatBackgroundFile = null, messages = emptyList(), sessions = emptyList()) }
+                    emitStEvent(StEventCatalog.CHAT_CHANGED, "")
+                } catch (error: Exception) {
+                    _uiState.update { it.copy(error = "关闭会话失败：${error.message}") }
+                }
+            }
         }
     }
 
     private suspend fun reloadCharacterTavernHelperScripts(character: CharacterCard) {
         unloadCharacterTavernHelperScripts()
 
-        val scriptSource = CharacterTavernHelperScripts.buildScriptSource(character)
+        val scriptSource = CharacterTavernHelperScripts.buildIsolatedScriptSource(character, _uiState.value.selectedPreset)
         if (scriptSource.isBlank()) return
 
         val extensionId = characterScriptExtensionId(character.id)
@@ -1615,7 +1727,7 @@ class ChatViewModel(
                 currentSession = updatedSession,
             )
         }
-        dataStore.saveChatSession(updatedSession)
+        persistSessionMutation(session, updatedSession)
         emitStEvent(StEventCatalog.MESSAGE_UPDATED, index)
         emitRenderedEventForMessage(index, updated, "script")
         return true
@@ -1716,8 +1828,7 @@ class ChatViewModel(
     // The extension host reaches the active chat's variables through the
     // LocalVariableBackend plugged in at init. Reads are cheap snapshots of
     // the current session metadata; writes update the session in memory and
-    // persist through a debounced save so frequent /setvar calls don't rewrite
-    // the entire JSONL on every keystroke.
+    // enter the ordered commit queue before returning to the caller.
 
     private fun snapshotLocalVariables(): Map<String, JsonElement> {
         val vars = _uiState.value.currentSession?.metadata?.get("variables") as? JsonObject
@@ -1727,18 +1838,8 @@ class ChatViewModel(
 
     private fun updateChatVariables(
         transform: (MutableMap<String, JsonElement>) -> Unit,
-    ): Map<String, JsonElement> {
-        // Capture the transform result, then apply via _uiState.update so we
-        // never clobber concurrent session changes (e.g. streaming message
-        // updates) — we only re-read and rewrite the `variables` slot.
-        val session = _uiState.value.currentSession
-        if (session == null) {
-            // Still run the transform against an empty map so callers observe
-            // a consistent (empty) snapshot rather than a partial one.
-            val empty = mutableMapOf<String, JsonElement>()
-            transform(empty)
-            return empty
-        }
+    ): Map<String, JsonElement> = synchronized(sessionWriteLock) {
+        val session = requireNotNull(_uiState.value.currentSession) { "当前没有会话" }
         // Values stay JsonElement end to end. Round-tripping them through
         // String collapsed every nested object a variable card had written
         // (and any EJS-authored structure) into an opaque JSON string.
@@ -1749,31 +1850,114 @@ class ChatViewModel(
         val newVars = buildJsonObject {
             mutable.forEach { (k, v) -> put(k, v) }
         }
-        _uiState.update { state ->
-            val s = state.currentSession ?: return@update state
-            val newMetadata = JsonObject(s.metadata.toMutableMap().apply { put("variables", newVars) })
-            state.copy(currentSession = s.copy(metadata = newMetadata))
-        }
-        scheduleMetadataSave()
-        return mutable
+        scheduleMetadataSave(session, session.copy(metadata = JsonObject(session.metadata + ("variables" to newVars))))
+        mutable
     }
 
-    private fun scheduleMetadataSave() {
-        metadataSaveJob?.cancel()
-        metadataSaveJob = viewModelScope.launch {
-            delay(400L)
-            _uiState.value.currentSession?.let { dataStore.saveChatSession(it) }
+    private fun scheduleMetadataSave(base: ChatSession, desired: ChatSession): Deferred<CommitReceipt> {
+        val job = synchronized(sessionWriteLock) {
+            val token = requireNotNull(runtimeToken) { "会话写入环境尚未初始化" }
+            check(token.sessionId == base.id) { "写入所属会话已经切换：${base.id}" }
+            val owner = StorageOwner("chat", base.id)
+            val previous = sessionWrites.snapshot(owner)
+            val request = MutationRequest(UUID.randomUUID().toString(), token, owner, "chat", previous.revision,
+                buildJsonObject { put("base", Json.encodeToJsonElement(ChatSession.serializer(), previous.value)) })
+            val accepted = sessionWrites.submit(request) { current ->
+                app.tellev.core.storage.applyChatSessionMutation(base, desired, current).copy(storageRevision = previous.revision + 1)
+            }
+            val next = sessionWrites.snapshot(owner).value
+            _uiState.update { state ->
+                if (state.currentSession?.id == base.id) state.copy(currentSession = next, messages = next.messages) else state
+            }
+            accepted.committed
+        }
+        job.invokeOnCompletion { failure ->
+            if (failure != null && failure !is CancellationException) {
+                _uiState.update { state ->
+                    if (state.currentSession?.id == base.id) state.copy(error = "变量保存失败，生成已暂停：${failure.message}") else state
+                }
+            }
+        }
+        return job
+    }
+
+    private fun scheduleUiMutation(base: ChatSession, desired: ChatSession): Deferred<CommitReceipt>? =
+        runCatching { scheduleMetadataSave(base, desired) }.onFailure { error ->
+            _uiState.update { it.copy(error = "消息修改未提交：${error.message}") }
+        }.getOrNull()
+
+    private fun launchAfterCommit(commit: Deferred<CommitReceipt>, block: suspend () -> Unit): Job =
+        viewModelScope.launch {
+            try { commit.await(); block() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { _uiState.update { it.copy(error = "消息更新未完成：${error.message}") } }
+        }
+
+    private suspend fun persistSessionMutation(base: ChatSession, desired: ChatSession) {
+        scheduleMetadataSave(base, desired).await()
+    }
+
+    private fun activateSessionWrites(session: ChatSession) = synchronized(sessionWriteLock) {
+        check(runtimeToken == null) { "Previous chat runtime was not retired" }
+        sessionWrites.register(StorageOwner("chat", session.id), session, session.storageRevision)
+        runtimeToken = sessionWrites.activate(session.id, "native")
+        _uiState.update { it.copy(runtimeGeneration = runtimeToken!!.generation) }
+    }
+
+    private suspend fun flushSessionWrites(sessionId: String?) {
+        if (sessionId == null) return
+        runtimeToken?.takeIf { it.sessionId == sessionId }?.let { sessionWrites.flushWrites(it) }
+        extensionHost.flushWrites()
+    }
+
+    private suspend fun retireSessionRuntime() {
+        val previousGeneration = generationJob
+        if (previousGeneration?.isActive == true) stopGeneration()
+        previousGeneration?.join()
+        interruptionJob?.join()
+        interruptionJob = null
+        characterScriptJob?.cancelAndJoin()
+        characterScriptJob = null
+        unloadCharacterTavernHelperScripts()
+        _uiState.value.selectedCharacter?.let { extensionHost.unload(characterScriptExtensionId(it.id)) }
+        extensionHost.flushWrites()
+        val token = runtimeToken ?: return
+        sessionWrites.release(token)
+        synchronized(sessionWriteLock) {
+            sessionWrites.unregister(StorageOwner("chat", token.sessionId))
+            runtimeToken = null
         }
     }
 
-    private fun buildPromptWithSessionScope(
+    override fun onCleared() {
+        val token = runtimeToken
+        val scriptOwner = loadedCharacterScriptExtensionId
+        val scriptCapability = scriptOwner?.let { extensionHost.capabilityToken(it) }
+        token?.let { sessionWrites.revoke(it) }
+        extensionHost.setContextProvider(null)
+        extensionHost.setLocalVariableBackend(null)
+        extensionHost.setMessageVariableBackend(null)
+        sessionWriteScope.launch {
+            try {
+                if (scriptOwner != null && scriptCapability != null && extensionHost.capabilityToken(scriptOwner) == scriptCapability) {
+                    extensionHost.unload(scriptOwner)
+                }
+                token?.let { sessionWrites.release(it) }
+            }
+            catch (error: Exception) { _uiState.update { it.copy(error = "退出时仍有未完成写入：${error.message}") } }
+            finally { sessionWriteScope.cancel() }
+        }
+        super.onCleared()
+    }
+
+    private suspend fun buildPromptWithSessionScope(
         request: PromptBuildRequest,
         session: ChatSession?,
     ): PromptBuildResult {
         val initialLocal = (session?.metadata?.get("variables") as? JsonObject)
             ?: JsonObject(emptyMap())
         val backend = TrackingPromptLocalBackend(LinkedHashMap(initialLocal))
-        val result = promptEngine.buildWithLocalVariableBackend(request, backend)
+        val result = promptEngine.buildWithLocalVariableBackendAsync(request, backend)
         val templateLocal = result.promptTemplateVariableUpdates.local
         val combinedLocal = when {
             templateLocal != null -> applyTopLevelVariableDiff(
@@ -1834,23 +2018,10 @@ class ChatViewModel(
     ) {
         updates.local?.let { localVariables ->
             if (targetSessionId != null) {
-                var activeSessionUpdate: ChatSession? = null
-                _uiState.update { state ->
-                    val current = state.currentSession
-                    if (current?.id != targetSessionId) state
-                    else {
-                        val updated = current.withPromptTemplateVariables(localVariables)
-                        activeSessionUpdate = updated
-                        state.copy(currentSession = updated)
-                    }
+                val source = requireNotNull(_uiState.value.currentSession?.takeIf { it.id == targetSessionId }) {
+                    "Template belongs to an expired chat: $targetSessionId"
                 }
-                // Persist the exact originating session even if a chat switch
-                // races with the state update above.
-                val source = activeSessionUpdate
-                    ?: runCatching { dataStore.readChatSession(targetSessionId) }.getOrNull()
-                source?.let {
-                    dataStore.saveChatSession(it.withPromptTemplateVariables(localVariables))
-                }
+                persistSessionMutation(source, source.withPromptTemplateVariables(localVariables))
             }
         }
         updates.global?.let(promptEngine::persistGlobalPromptTemplateVariables)
@@ -1928,6 +2099,7 @@ class ChatViewModel(
 
         return buildJsonObject {
             put("name1", personaName)
+            put("__runtimeGeneration", runtimeToken?.generation ?: -1)
             put("name2", characterName)
             put("chatId", session?.id ?: "")
             put("characterId", character?.id ?: "")
@@ -1945,14 +2117,30 @@ class ChatViewModel(
             put("lastMessageId", state.messages.lastIndex)
             put("chatMetadata", session?.metadata ?: buildJsonObject { })
             put("chat_metadata", session?.metadata ?: buildJsonObject { })
-            // 高频快照只带最近 N 条：Proxy 每次读属性都全量序列化，
-            // 全量历史 × 每次事件 × 每次属性读取 = MB 级 × 百次。lastMessageId
-            // 仍是全局索引，全量历史走 getChatMessages 分页 API。
+            // The upstream chat array uses absolute indices; never truncate its prefix.
             putJsonArray("chat") {
-                val start = (state.messages.size - TAVERN_CONTEXT_CHAT_LIMIT).coerceAtLeast(0)
+                val start = 0
                 for (index in start until state.messages.size) {
                     add(state.messages[index].toTavernJson(index))
                 }
+            }
+            val books = (state.worldBooks + listOfNotNull(character?.characterBook)).distinctBy { it.id }
+            putJsonArray("worldBooks") {
+                books.forEach { book -> add(buildJsonObject {
+                    put("id", book.id); put("name", book.name)
+                    putJsonArray("entries") { book.entries.forEach { entry -> add(buildJsonObject {
+                        entry.raw.forEach { (key, value) -> put(key, value) }
+                        put("uid", entry.id); put("comment", entry.comment); put("content", entry.content)
+                        put("disable", !entry.enabled)
+                    }) } }
+                }) }
+            }
+            putJsonArray("characterWorldBooks") {
+                character?.characterBook?.let { add(JsonPrimitive(it.name)) }
+                character?.let { app.tellev.core.model.CharacterWorldBinding.linkedWorldBookNames(it).forEach { name -> add(JsonPrimitive(name)) } }
+            }
+            putJsonArray("globalWorldBooks") {
+                state.worldBooks.filter { it.id !in state.disabledWorldIds }.forEach { add(JsonPrimitive(it.name)) }
             }
             putJsonArray("characters") {
                 character?.let { add(it.toTavernJson()) }
@@ -1982,34 +2170,34 @@ class ChatViewModel(
 
     private fun ChatMessage.toTavernJson(index: Int): JsonObject =
         buildJsonObject {
+            raw.forEach { (key, value) -> put(key, value) }
             val user = role == MessageRole.User
-            val system = role == MessageRole.System
             put("id", id)
             put("index", index)
             put("name", name)
             put("mes", content)
             put("is_user", user)
-            put("is_system", system)
+            put("is_system", isHidden)
             put("role", role.name.lowercase())
             put("send_date", createdAtMillis.toString())
             put("send_date_unix", createdAtMillis)
             put("swipe_id", swipeIndex)
-            // 只保留当前 swipe 内容：原来全量展开所有 swipe，大卡首消息
-            // （HTML 前端）单条即数十 KB，全量历史下直接 MB 级。
+            // MVU initializes each greeting swipe independently.
             putJsonArray("swipes") {
                 val values = swipes.ifEmpty { listOf(content) }
-                add(JsonPrimitive(values.getOrElse(swipeIndex) { content }))
+                values.forEach { add(JsonPrimitive(it)) }
             }
-            put("extra", metadata)
+            put("extra", if (role == MessageRole.System && metadata["type"] == null) JsonObject(metadata + ("type" to JsonPrimitive("narrator"))) else metadata)
+            if (swipeInfo.isNotEmpty() || raw["swipe_info"] is JsonArray) put("swipe_info", JsonArray(swipeInfo))
             // ST-Prompt-Template per-swipe arrays (only when present)
             if (variables.isNotEmpty()) {
                 putJsonArray("variables") { variables.forEach { add(it) } }
             }
             if (isEjsProcessed.isNotEmpty()) {
-                putJsonArray("is_ejs_processed") { isEjsProcessed.forEach { add(JsonPrimitive(it)) } }
+                putJsonArray("is_ejs_processed") { isEjsProcessed.forEach { add(it) } }
             }
             if (variablesInitialized.isNotEmpty()) {
-                putJsonArray("variables_initialized") { variablesInitialized.forEach { add(JsonPrimitive(it)) } }
+                putJsonArray("variables_initialized") { variablesInitialized.forEach { add(it) } }
             }
         }
 
@@ -2109,15 +2297,17 @@ class ChatViewModel(
             worldBooks = listOfNotNull(character.characterBook),
         )
         dataStore.saveChatSession(initialized)
-        return initialized
+        return dataStore.readChatSession(initialized.id)
     }
 
     private fun ChatSession.withTavernInitVariables(
         character: CharacterCard,
         worldBooks: List<WorldBook>,
     ): ChatSession {
+        // The real MVU owns initialization, including all greeting swipes and Zod hooks.
+        if (CharacterTavernHelperScripts.extract(character).any { it.content.contains("MagVarUpdate/") }) return this
         if (messages.any { message ->
-                message.variables.getOrNull(message.swipeIndex)?.containsKey("stat_data") == true
+                (message.variables.getOrNull(message.swipeIndex) as? JsonObject)?.containsKey("stat_data") == true
             }
         ) {
             return this
@@ -2135,7 +2325,7 @@ class ChatViewModel(
         val swipeCount = message.swipes.ifEmpty { listOf(message.content) }.size
             .coerceAtLeast(message.swipeIndex + 1)
         val variables = MutableList(swipeCount) { initial }
-        val initialized = MutableList(swipeCount) { true }
+        val initialized = MutableList(swipeCount) { JsonPrimitive(true) }
         updatedMessages[targetIndex] = message.copy(
             variables = variables,
             variablesInitialized = initialized,

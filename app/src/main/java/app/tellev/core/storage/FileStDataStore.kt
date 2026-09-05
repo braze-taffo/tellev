@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -60,14 +62,15 @@ import kotlin.io.path.outputStream
 import kotlin.io.path.readBytes
 import kotlin.io.path.readText
 import kotlin.io.path.walk
-import kotlin.io.path.writeText
 
 class FileStDataStore(
     override val layout: StDirectoryLayout,
     private val json: Json = defaultJson,
+    private val durableFiles: JournaledFileWriter = JournaledFileWriter(layout.root),
 ) : StDataStore {
 
     private val characterImporter = CharacterImporter(json)
+    private val chatWrites = Mutex()
     private val mutableCharacterChanges = MutableSharedFlow<String>(extraBufferCapacity = 32)
     override val characterChanges = mutableCharacterChanges.asSharedFlow()
     private val mutablePresetChanges = MutableSharedFlow<PresetCategory>(extraBufferCapacity = 32)
@@ -82,6 +85,7 @@ class FileStDataStore(
 
     override suspend fun bootstrap(): Unit = withContext(Dispatchers.IO) {
         layout.allDirectories.forEach { it.createDirectories() }
+        durableFiles.recover()
         migrateLegacyRegexActivation()
         ensureDefaultPreset()
         migrateHandwrittenOpenAiDefaultPreset()
@@ -148,7 +152,7 @@ class FileStDataStore(
 
         // Default: save as SillyTavern V2 JSON, not tellev's internal model.
         val exporter = CharacterExporter(json)
-        layout.characters.resolve("${card.id}.json").writeText(exporter.exportToJson(card))
+        layout.characters.resolve("${card.id}.json").durableWriteText(exporter.exportToJson(card))
         saveEmbeddedCharacterAssets(card)
             mutableCharacterChanges.tryEmit(card.id)
     }
@@ -231,6 +235,21 @@ class FileStDataStore(
     }
 
     override suspend fun saveChatSession(session: ChatSession): Unit = withContext(Dispatchers.IO) {
+        chatWrites.withLock { writeChatSession(session); Unit }
+    }
+
+    override suspend fun commitChatMutation(base: ChatSession, desired: ChatSession, expectedRevision: Long?, operationId: String?): ChatSession = withContext(Dispatchers.IO) {
+        chatWrites.withLock {
+            val path = findByFileName(listOf(layout.chats, layout.groupChats), "${base.id}.jsonl")
+                ?: error("Chat session not found: ${base.id}")
+            val revision = durableFiles.revision(path)
+            val merged = applyChatSessionMutation(base, desired, readJsonlChat(path))
+            val receipt = writeChatSession(merged, expectedRevision ?: revision, operationId ?: UUID.randomUUID().toString())
+            merged.copy(storageRevision = receipt.revision)
+        }
+    }
+
+    private fun writeChatSession(session: ChatSession, expectedRevision: Long? = null, operationId: String = UUID.randomUUID().toString()): JournaledFileWriter.Receipt {
         val parent = session.groupId?.let { layout.groupChats.resolve(it) }
             ?: session.characterId?.let { layout.chats.resolve(it) }
             ?: layout.chats.resolve("_orphan")
@@ -274,20 +293,30 @@ class FileStDataStore(
         // Write each message in ST JSONL format
         for (message in session.messages) {
             val merged = message.raw.toMutableMap()
+            merged["_tellev_message_id"] = JsonPrimitive(message.id)
             merged["name"] = JsonPrimitive(message.name)
             merged["is_user"] = JsonPrimitive(message.role == MessageRole.User)
-            merged["is_system"] = JsonPrimitive(message.role == MessageRole.System)
-            if (message.isHidden || merged.containsKey("is_hidden")) {
+            merged["is_system"] = JsonPrimitive(message.isHidden)
+            if (merged.containsKey("is_hidden")) {
                 merged["is_hidden"] = JsonPrimitive(message.isHidden)
             }
             if (message.role == MessageRole.Tool || message.role == MessageRole.Assistant) {
                 merged["role"] = JsonPrimitive(message.role.name.lowercase())
             }
-            merged["send_date"] = JsonPrimitive(formatMillisToIso(message.createdAtMillis))
+            val originalDate = (message.raw["send_date"] as? JsonPrimitive)?.content
+            if (originalDate == null || parseDateStringToMillis(originalDate) != message.createdAtMillis) {
+                merged["send_date"] = JsonPrimitive(formatMillisToIso(message.createdAtMillis))
+            }
             merged["mes"] = JsonPrimitive(message.content)
-            merged["extra"] = message.metadata
+            merged["extra"] = if (message.role == MessageRole.System && message.metadata["type"] == null) {
+                JsonObject(message.metadata + ("type" to JsonPrimitive("narrator")))
+            } else message.metadata
+            // JSR accepts empty swipe arrays; its selected text/extra are then undefined.
+            val emptyUpstreamSwipes = message.raw["swipes"] == JsonArray(emptyList()) && message.swipes.isEmpty()
+            if (emptyUpstreamSwipes && "mes" !in message.raw && message.content.isEmpty()) merged.remove("mes")
+            if (emptyUpstreamSwipes && "extra" !in message.raw && message.metadata.isEmpty()) merged.remove("extra")
 
-            if (message.swipes.isNotEmpty()) {
+            if (message.swipes.isNotEmpty() || message.raw["swipes"] is JsonArray) {
                 merged["swipes"] = JsonArray(message.swipes.map(::JsonPrimitive))
                 merged["swipe_id"] = JsonPrimitive(message.swipeIndex)
             } else {
@@ -295,13 +324,18 @@ class FileStDataStore(
                 merged.remove("swipe_id")
             }
 
-            if (message.variables.isNotEmpty()) merged["variables"] = JsonArray(message.variables)
-            else merged.remove("variables")
-            if (message.isEjsProcessed.isNotEmpty()) {
-                merged["is_ejs_processed"] = JsonArray(message.isEjsProcessed.map(::JsonPrimitive))
+            val rawVariables = message.raw["variables"]
+            if (rawVariables is JsonObject && parseMessageVariables(message.raw) == message.variables) {
+                merged["variables"] = rawVariables
+            } else if (message.variables.isNotEmpty() || rawVariables is JsonArray) merged["variables"] = JsonArray(message.variables)
+            else if (rawVariables == null) merged.remove("variables")
+            if (message.swipeInfo.isNotEmpty() || message.raw["swipe_info"] is JsonArray) merged["swipe_info"] = JsonArray(message.swipeInfo)
+            else merged.remove("swipe_info")
+            if (message.isEjsProcessed.isNotEmpty() || message.raw["is_ejs_processed"] is JsonArray) {
+                merged["is_ejs_processed"] = JsonArray(message.isEjsProcessed)
             } else merged.remove("is_ejs_processed")
-            if (message.variablesInitialized.isNotEmpty()) {
-                merged["variables_initialized"] = JsonArray(message.variablesInitialized.map(::JsonPrimitive))
+            if (message.variablesInitialized.isNotEmpty() || message.raw["variables_initialized"] is JsonArray) {
+                merged["variables_initialized"] = JsonArray(message.variablesInitialized)
             } else merged.remove("variables_initialized")
 
             if (message.attachments.isNotEmpty()) {
@@ -316,13 +350,20 @@ class FileStDataStore(
             lines.add(compactJson.encodeToString(JsonObject.serializer(), line))
         }
 
-        parent.resolve("${session.id}.jsonl").writeText(lines.joinToString("\n"))
+        val receipt = durableFiles.write(parent.resolve("${session.id}.jsonl"), lines.joinToString("\n").toByteArray(Charsets.UTF_8), operationId, expectedRevision)
         mutableChatChanges.tryEmit(session.id)
+        return receipt
     }
 
     override suspend fun appendMessage(sessionId: String, message: ChatMessage): Unit = withContext(Dispatchers.IO) {
-        val session = readChatSession(sessionId)
-        saveChatSession(session.copy(messages = session.messages + message))
+        chatWrites.withLock {
+            val path = findByFileName(listOf(layout.chats, layout.groupChats), "$sessionId.jsonl")
+                ?: error("Chat session not found: $sessionId")
+            val revision = durableFiles.revision(path)
+            val session = readJsonlChat(path)
+            writeChatSession(session.copy(messages = session.messages + message), revision)
+            Unit
+        }
     }
 
     override suspend fun listGroups(): List<GroupChat> = withContext(Dispatchers.IO) {
@@ -339,7 +380,7 @@ class FileStDataStore(
 
     override suspend fun saveGroup(group: GroupChat): Unit = withContext(Dispatchers.IO) {
         layout.groups.createDirectories()
-        layout.groups.resolve("${group.id}.json").writeText(json.encodeToString(group))
+        layout.groups.resolve("${group.id}.json").durableWriteText(json.encodeToString(group))
     }
 
     override suspend fun listWorldBooks(): List<WorldBook> = withContext(Dispatchers.IO) {
@@ -404,7 +445,7 @@ class FileStDataStore(
             }
         }
 
-        layout.worlds.resolve("${book.id}.json").writeText(json.encodeToString(JsonObject.serializer(), output))
+        layout.worlds.resolve("${book.id}.json").durableWriteText(json.encodeToString(JsonObject.serializer(), output))
         mutableWorldBookChanges.tryEmit(book.id)
     }
 
@@ -463,7 +504,7 @@ class FileStDataStore(
                 ids.sorted().forEach { add(JsonPrimitive(it)) }
             }
         }
-        layout.worldInfoActivation.writeText(json.encodeToString(JsonObject.serializer(), output))
+        layout.worldInfoActivation.durableWriteText(json.encodeToString(JsonObject.serializer(), output))
         mutableWorldBookChanges.tryEmit("*")
     }
 
@@ -516,7 +557,7 @@ class FileStDataStore(
                 }
             }
         }
-        layout.regexActivation.writeText(json.encodeToString(JsonObject.serializer(), output))
+        layout.regexActivation.durableWriteText(json.encodeToString(JsonObject.serializer(), output))
     }
 
     private fun JsonElement.stringContentOrNull(): String? =
@@ -560,7 +601,7 @@ class FileStDataStore(
             } else null
             val merged = current.orEmpty().toMutableMap()
             merged[category.name.lowercase()] = JsonPrimitive(name)
-            statePath.writeText(json.encodeToString(JsonObject.serializer(), JsonObject(merged)))
+            statePath.durableWriteText(json.encodeToString(JsonObject.serializer(), JsonObject(merged)))
             mutablePresetChanges.tryEmit(category)
         }
 
@@ -592,7 +633,7 @@ class FileStDataStore(
             merged["prompt_order"] = serializePromptOrder(merged["prompt_order"], preset.prompts)
         }
         if (preset.extensions.isNotEmpty()) merged["extensions"] = preset.extensions
-        parent.resolve("${preset.id}.json").writeText(
+        parent.resolve("${preset.id}.json").durableWriteText(
             json.encodeToString(JsonObject.serializer(), JsonObject(merged)),
         )
         mutablePresetChanges.tryEmit(preset.category)
@@ -666,7 +707,7 @@ class FileStDataStore(
         } else null
         val selection = current.orEmpty().toMutableMap()
         selection[category.name.lowercase()] = JsonPrimitive(id)
-        statePath.writeText(json.encodeToString(JsonObject.serializer(), JsonObject(selection)))
+        statePath.durableWriteText(json.encodeToString(JsonObject.serializer(), JsonObject(selection)))
 
         val preset = parsePreset(destination, rawObj, category)
         val applied = rawObj.keys.intersect(APPLIED_PRESET_FIELDS)
@@ -696,7 +737,7 @@ class FileStDataStore(
 
     override suspend fun saveWorldInfoSettings(settings: WorldInfoSettings): Unit =
         withContext(Dispatchers.IO) {
-            layout.root.resolve("world-info-settings.json").writeText(
+            layout.root.resolve("world-info-settings.json").durableWriteText(
                 json.encodeToString(
                     JsonObject.serializer(),
                     buildJsonObject {
@@ -723,7 +764,7 @@ class FileStDataStore(
 
     override suspend fun savePromptSettings(settings: PromptSettings): Unit =
         withContext(Dispatchers.IO) {
-            layout.root.resolve("prompt-settings.json").writeText(
+            layout.root.resolve("prompt-settings.json").durableWriteText(
                 json.encodeToString(
                     JsonObject.serializer(),
                     buildJsonObject {
@@ -766,7 +807,7 @@ class FileStDataStore(
 
     override suspend fun savePersona(persona: Persona): Unit = withContext(Dispatchers.IO) {
         layout.user.createDirectories()
-        layout.user.resolve("${persona.id}.json").writeText(json.encodeToString(persona))
+        layout.user.resolve("${persona.id}.json").durableWriteText(json.encodeToString(persona))
         mutablePersonaChanges.tryEmit(persona.id)
     }
 
@@ -785,7 +826,7 @@ class FileStDataStore(
             name = "用户",
             description = "默认用户人设。",
         )
-        layout.user.resolve("${default.id}.json").writeText(json.encodeToString(default))
+        layout.user.resolve("${default.id}.json").durableWriteText(json.encodeToString(default))
     }
 
     override suspend fun exportBackup(targetZip: Path): Unit = withContext(Dispatchers.IO) {
@@ -932,7 +973,7 @@ class FileStDataStore(
             path.deleteIfExists()
             return
         }
-        path.writeText(json.encodeToString(JsonElement.serializer(), value))
+        path.durableWriteText(json.encodeToString(JsonElement.serializer(), value))
     }
 
     private fun JsonObject.cardDataObject(): JsonObject =
@@ -978,7 +1019,7 @@ class FileStDataStore(
         directory.createDirectories()
         val path = directory.resolve("default.json")
         if (!path.exists()) {
-            path.writeText(json.encodeToString(JsonObject.serializer(), defaultPresetRaw(category)))
+            path.durableWriteText(json.encodeToString(JsonObject.serializer(), defaultPresetRaw(category)))
         }
     }
 
@@ -1017,7 +1058,7 @@ class FileStDataStore(
             if (upgradeContext) put("openai_max_context", JsonPrimitive(DEFAULT_CONTEXT_TOKENS))
             if (upgradeCompletion) put("openai_max_tokens", JsonPrimitive(DEFAULT_COMPLETION_TOKENS))
         }
-        path.writeText(json.encodeToString(JsonObject.serializer(), JsonObject(migrated)))
+        path.durableWriteText(json.encodeToString(JsonObject.serializer(), JsonObject(migrated)))
         return true
     }
 
@@ -1035,7 +1076,7 @@ class FileStDataStore(
         )
         if (identifiers != legacyIdentifiers) return
         val canonical = defaultPresetRaw(PresetCategory.OpenAi)
-        path.writeText(json.encodeToString(JsonObject.serializer(), canonical))
+        path.durableWriteText(json.encodeToString(JsonObject.serializer(), canonical))
         if (runCatching { readSelectedPresetName(PresetCategory.OpenAi) }.getOrNull() == "default") {
             path.copyTo(layout.openAiSettings.resolve("in_use.json"), overwrite = true)
         }
@@ -1348,6 +1389,7 @@ class FileStDataStore(
             messages = messages,
             metadata = chatMetadata,
             rawHeader = if (headerParsed) firstObj ?: buildJsonObject { } else buildJsonObject { },
+            storageRevision = durableFiles.revision(path),
         )
     }
 
@@ -1368,7 +1410,7 @@ class FileStDataStore(
         val isUser = obj["is_user"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
         val isSystem = obj["is_system"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
         val explicitRole = obj["role"]?.jsonPrimitive?.content?.lowercase()
-        val isHidden = obj["is_hidden"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+        val isHidden = obj["is_hidden"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: isSystem
         val name = obj["name"]?.jsonPrimitive?.content ?: if (isUser) "You" else "Character"
         val content = obj["mes"]?.jsonPrimitive?.content ?: obj["content"]?.jsonPrimitive?.content ?: ""
         val sendDate = obj["send_date"]?.jsonPrimitive?.content
@@ -1378,7 +1420,7 @@ class FileStDataStore(
             explicitRole == "assistant" -> MessageRole.Assistant
             explicitRole == "system" -> MessageRole.System
             explicitRole == "user" -> MessageRole.User
-            isSystem -> MessageRole.System
+            (obj["extra"] as? JsonObject)?.get("type") == JsonPrimitive("narrator") -> MessageRole.System
             isUser -> MessageRole.User
             else -> MessageRole.Character
         }
@@ -1396,19 +1438,9 @@ class FileStDataStore(
         val extra = obj["extra"]?.jsonObject ?: buildJsonObject { }
 
         // ST-Prompt-Template per-swipe arrays (absent on legacy chats → empty)
-        val variables = runCatching {
-            obj["variables"]?.jsonArray?.mapNotNull { it as? JsonObject } ?: emptyList()
-        }.getOrDefault(emptyList())
-        val isEjsProcessed = runCatching {
-            obj["is_ejs_processed"]?.jsonArray?.map {
-                it.jsonPrimitive.content.toBooleanStrictOrNull() ?: false
-            } ?: emptyList()
-        }.getOrDefault(emptyList())
-        val variablesInitialized = runCatching {
-            obj["variables_initialized"]?.jsonArray?.map {
-                it.jsonPrimitive.content.toBooleanStrictOrNull() ?: false
-            } ?: emptyList()
-        }.getOrDefault(emptyList())
+        val variables = parseMessageVariables(obj)
+        val isEjsProcessed = (obj["is_ejs_processed"] as? JsonArray)?.toList() ?: emptyList()
+        val variablesInitialized = (obj["variables_initialized"] as? JsonArray)?.toList() ?: emptyList()
 
         val attachments = runCatching {
             obj["attachments"]?.jsonArray?.mapNotNull {
@@ -1417,7 +1449,8 @@ class FileStDataStore(
         }.getOrDefault(emptyList())
 
         return ChatMessage(
-            id = "$sessionId-$index",
+            id = (obj["_tellev_message_id"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+                ?: "$sessionId-$index",
             role = role,
             name = name,
             content = content,
@@ -1429,9 +1462,16 @@ class FileStDataStore(
             metadata = extra,
             raw = obj,
             variables = variables,
+            swipeInfo = (obj["swipe_info"] as? JsonArray)?.toList() ?: emptyList(),
             isEjsProcessed = isEjsProcessed,
             variablesInitialized = variablesInitialized,
         )
+    }
+
+    private fun parseMessageVariables(obj: JsonObject): List<JsonElement> = when (val value = obj["variables"]) {
+        is JsonArray -> value.toList()
+        is JsonObject -> List((obj["swipes"] as? JsonArray)?.size ?: 1) { value[it.toString()] ?: buildJsonObject { } }
+        else -> emptyList()
     }
 
     private fun inferCharacterId(path: Path, isGroupChat: Boolean): String? {
@@ -1588,6 +1628,10 @@ class FileStDataStore(
                 }
             }
             .firstOrNull()
+
+    private fun Path.durableWriteText(text: String) {
+        durableFiles.write(this, text.toByteArray(Charsets.UTF_8))
+    }
 
     companion object {
         private val ROUTING_PRESET_FIELDS = setOf(
