@@ -1,5 +1,10 @@
 package app.tellev.core.storage
 
+import app.tellev.core.model.MessageReasoning
+import app.tellev.core.model.withGenerationReasoning
+import app.tellev.core.model.reasoningParts
+import app.tellev.core.model.selectReasoningSwipe
+import app.tellev.feature.chat.withRegeneratedSwipe
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
@@ -57,6 +62,26 @@ class FileStDataStoreTest {
     }
 
     // ---- World Book Tests ----
+
+    @Test
+    fun `reasoning variants survive JSONL disk restart and export`() = runBlocking {
+        val first = ChatMessage("r", MessageRole.Character, "Bob", "body", 1L)
+            .withGenerationReasoning(MessageReasoning.Parts("body", "thought"), "body", "thought", "stop", false)
+        val second = first.withRegeneratedSwipe("").withGenerationReasoning(
+            MessageReasoning.Parts("", "only thought"), "", "only thought", "length", true,
+        )
+        store.saveChatSession(ChatSession("reasoning", "Reasoning", "bob", null, listOf(second)))
+        val restarted = FileStDataStore(layout)
+        val loaded = restarted.readChatSession("reasoning").messages.single()
+        assertEquals("", loaded.reasoningParts().body)
+        assertEquals("only thought", loaded.reasoningParts().reasoning)
+        assertEquals("body", loaded.selectReasoningSwipe(0).reasoningParts().body)
+        assertEquals("thought", loaded.selectReasoningSwipe(0).reasoningParts().reasoning)
+        val diagnostics = loaded.metadata["tellev_generation"]!!.jsonObject
+        assertEquals("true", diagnostics["retry"]!!.jsonPrimitive.content)
+        assertEquals("length", diagnostics["finishReason"]!!.jsonPrimitive.content)
+        assertEquals("only thought", diagnostics["response"]!!.jsonObject["reasoning"]!!.jsonPrimitive.content)
+    }
 
     @Test fun `unrelated edits preserve legacy variable objects null swipe slots and template flags`() = runBlocking {
         val dir = layout.chats.resolve("legacy").createDirectories()

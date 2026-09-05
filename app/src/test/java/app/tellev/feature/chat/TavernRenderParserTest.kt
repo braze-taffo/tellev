@@ -142,17 +142,14 @@ class TavernRenderParserTest {
     }
 
     @Test
-    fun `splits think tag variant into a separate segment`() {
+    fun `preserves think tags occurring inside body`() {
         val openThink = "<" + "think" + ">"
         val closeThink = "</" + "think" + ">"
         val text = "preamble\n${openThink}hidden reasoning${closeThink}\nreply"
 
         val segments = TavernRenderParser.parse(text)
 
-        assertEquals(3, segments.size)
-        assertEquals(TavernRenderSegment.Text("preamble"), segments[0])
-        assertEquals(TavernRenderSegment.Reasoning("hidden reasoning"), segments[1])
-        assertEquals(TavernRenderSegment.Text("reply"), segments[2])
+        assertEquals(listOf(TavernRenderSegment.Text(text)), segments)
     }
 
     @Test

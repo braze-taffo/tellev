@@ -199,6 +199,7 @@ class OpenAiCompatibleAdapter(
                         val reasoningDelta = parsed.reasoningContent
                         if (reasoningDelta.isNotEmpty()) {
                             reasoningText += reasoningDelta
+                            emit(GenerateChunk.Delta("", reasoning = reasoningDelta))
                         }
 
                         // Parse regular content delta
@@ -228,19 +229,13 @@ class OpenAiCompatibleAdapter(
                         parsed.usage?.let { lastUsage = it }
                     }
 
-                    // Append reasoning before main text in the completed result
-                    val completedText = if (reasoningText.isNotEmpty()) {
-                        "<reasoning>\n$reasoningText\n</reasoning>\n$fullText"
-                    } else {
-                        fullText
-                    }
-
                     emit(
                         GenerateChunk.Completed(
-                            completedText,
+                            fullText,
                             finishReason,
                             usage = lastUsage,
                             toolCalls = serializeToolCalls(toolCallAccumulator),
+                            reasoning = reasoningText,
                         ),
                     )
                 } else {
@@ -252,6 +247,7 @@ class OpenAiCompatibleAdapter(
                             parsed.finishReason,
                             usage = parsed.usage,
                             toolCalls = parsed.toolCalls,
+                            reasoning = parsed.reasoning,
                         ),
                     )
                 }
@@ -471,14 +467,9 @@ class OpenAiCompatibleAdapter(
 
             // Include reasoning if present
             val reasoning = message?.get("reasoning_content")?.jsonPrimitive?.contentOrNull.orEmpty()
-            val fullText = if (reasoning.isNotEmpty()) {
-                "<reasoning>\n$reasoning\n</reasoning>\n$text"
-            } else {
-                text
-            }
-
             NonStreamParsed(
-                text = fullText,
+                text = text,
+                reasoning = reasoning,
                 finishReason = finishReason,
                 usage = obj["usage"] as? JsonObject,
                 toolCalls = message?.get("tool_calls") as? JsonArray,
@@ -604,6 +595,7 @@ class OpenAiCompatibleAdapter(
     )
 
     private data class NonStreamParsed(
+        val reasoning: String = "",
         val text: String,
         val finishReason: String?,
         val usage: JsonObject? = null,

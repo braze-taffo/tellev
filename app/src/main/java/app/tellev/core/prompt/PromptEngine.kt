@@ -1,5 +1,6 @@
 package app.tellev.core.prompt
 
+import app.tellev.core.model.reasoningParts
 import app.tellev.core.extension.EjsTemplateSettings
 import app.tellev.core.extension.LocalVariableBackend
 import app.tellev.core.model.CharacterCard
@@ -297,8 +298,11 @@ class DefaultPromptEngine(
                 )
             }
             visibleHistory.forEachIndexed { index, message ->
+                val parts = message.reasoningParts()
+                // A reasoning-only completion is not an empty assistant turn for the API.
+                if (parts.body.isBlank() && parts.reasoning.isNotBlank()) return@forEachIndexed
                 val expandedContent = macroEngine.expand(
-                    message.swipes.getOrNull(message.swipeIndex) ?: message.content,
+                    parts.body,
                     macroContext,
                 )
                 add(
@@ -604,7 +608,7 @@ class DefaultPromptEngine(
 
     /** Resolves the active content of a message, honoring the current swipe. */
     private fun messageContent(message: ChatMessage): String =
-        message.swipes.getOrNull(message.swipeIndex) ?: message.content
+        message.reasoningParts().body
 
     private fun expandCharacterFields(
         character: CharacterCard,

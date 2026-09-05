@@ -1,5 +1,7 @@
 package app.tellev.core.prompt
 
+import app.tellev.core.model.MessageReasoning
+import app.tellev.core.model.withGenerationReasoning
 import app.tellev.core.extension.LocalVariableBackend
 import app.tellev.core.extension.VariableStoreTest
 import app.tellev.core.model.CharacterCard
@@ -21,6 +23,30 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DefaultPromptEngineTest {
+    @Test
+    fun `history excludes legacy and provider reasoning but retains user tags`() {
+        val stored = ChatMessage("api", MessageRole.Character, "Alice", "api body", 2L)
+            .withGenerationReasoning(MessageReasoning.Parts("api body", "secret API thought"), "api body", "secret API thought", "stop", false)
+        val result = DefaultPromptEngine().build(PromptBuildRequest(
+            character = CharacterCard("alice", "Alice"), persona = null,
+            messages = listOf(
+                ChatMessage("legacy", MessageRole.Character, "Alice", "<reasoning>secret legacy thought</reasoning>legacy body", 1L),
+                stored,
+                ChatMessage("empty", MessageRole.Character, "Alice", "<think>secret only</think>", 2L),
+                ChatMessage("user", MessageRole.User, "User", "<think>literal user text</think>", 3L),
+            ),
+            worldBooks = emptyList(),
+            preset = GenerationPreset("default", "Default", "openai-compatible"),
+            userInput = "next", providerType = "openai-compatible",
+        ))
+        val text = result.messages.joinToString("\n") { it.content }
+        assertFalse(text.contains("secret"))
+        assertFalse(result.messages.any { it.role == MessageRole.Assistant && it.content.isBlank() })
+        assertTrue(text.contains("legacy body"))
+        assertTrue(text.contains("api body"))
+        assertTrue(text.contains("<think>literal user text</think>"))
+    }
+
     @Test
     fun buildActivatesMatchingWorldEntry() {
         val result = DefaultPromptEngine().build(

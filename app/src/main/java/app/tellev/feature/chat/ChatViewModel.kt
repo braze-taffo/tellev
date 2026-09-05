@@ -1,5 +1,9 @@
 package app.tellev.feature.chat
 
+import app.tellev.core.model.MessageReasoning
+import app.tellev.core.model.withGenerationReasoning
+import app.tellev.core.model.preserveReasoningSwipe
+import app.tellev.core.model.selectReasoningSwipe
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.tellev.core.extension.CharacterTavernHelperScripts
@@ -93,6 +97,7 @@ data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val isGenerating: Boolean = false,
     val streamingText: String = "",
+    val streamingReasoning: String = "",
     val selectedProvider: String = "openai-compatible",
     val providerConfig: ProviderConfig? = null,
     val personas: List<Persona> = emptyList(),
@@ -583,6 +588,7 @@ class ChatViewModel(
                     it.copy(
                         isGenerating = true,
                         streamingText = "",
+                        streamingReasoning = "",
                         error = null,
                     )
                 }
@@ -682,17 +688,20 @@ class ChatViewModel(
                 val flow = adapter.streamGenerate(config, generateRequest)
 
                 var accumulatedText = ""
+                var accumulatedReasoning = ""
 
                 flow.collect { chunk ->
                     when (chunk) {
                         is GenerateChunk.Delta -> {
                             accumulatedText += chunk.text
-                            _uiState.update { it.copy(streamingText = accumulatedText) }
+                            accumulatedReasoning += chunk.reasoning
+                            _uiState.update { it.copy(streamingText = accumulatedText, streamingReasoning = accumulatedReasoning) }
                         }
                         is GenerateChunk.Completed -> {
-                            val rawFinalText = chunk.text.ifBlank { accumulatedText }
+                            val rawFinalText = chunk.text
+                            val parts = MessageReasoning.fromResponse(rawFinalText, chunk.reasoning)
                             val finalText = CharacterRegexApplier.applyNormal(
-                                text = rawFinalText,
+                                text = parts.body,
                                 role = MessageRole.Character,
                                 character = character,
                                 preset = preset,
@@ -713,7 +722,9 @@ class ChatViewModel(
                             val finalMessages = if (regeneration != null && regeneratedIndex >= 0) {
                                 baseMessages.toMutableList().also { messages ->
                                     messages[regeneratedIndex] = CharacterRegexApplier.markNormalProcessed(
-                                        messages[regeneratedIndex].withRegeneratedSwipe(finalText),
+                                        messages[regeneratedIndex].withRegeneratedSwipe(finalText).withGenerationReasoning(
+                                            parts, rawFinalText, chunk.reasoning, chunk.finishReason, true,
+                                        ),
                                     )
                                 }
                             } else {
@@ -725,7 +736,7 @@ class ChatViewModel(
                                     createdAtMillis = System.currentTimeMillis(),
                                     swipes = listOf(finalText),
                                     swipeIndex = 0,
-                                ))
+                                ).withGenerationReasoning(parts, rawFinalText, chunk.reasoning, chunk.finishReason, false))
                             }
                             val finalSession = (latestSession?.takeIf { it.id == updatedSession.id } ?: updatedSession)
                                 .copy(messages = finalMessages)
@@ -737,6 +748,7 @@ class ChatViewModel(
                                 it.copy(
                                     isGenerating = true,
                                     streamingText = "",
+                                    streamingReasoning = "",
                                 )
                             }
                             val assistantMessageIndex = if (regeneratedIndex >= 0) regeneratedIndex else finalMessages.lastIndex
@@ -757,6 +769,7 @@ class ChatViewModel(
                                 it.copy(
                                     isGenerating = false,
                                     streamingText = "",
+                                    streamingReasoning = "",
                                     error = "生成失败：${chunk.error.message}",
                                 )
                             }
@@ -772,6 +785,7 @@ class ChatViewModel(
                     it.copy(
                         isGenerating = false,
                         streamingText = "",
+                        streamingReasoning = "",
                         error = "出错了：${e.message}",
                     )
                 }
@@ -821,10 +835,7 @@ class ChatViewModel(
             else -> return
         }
 
-        val updatedMessage = message.copy(
-            swipeIndex = newSwipeIndex,
-            content = message.swipes[newSwipeIndex],
-        )
+        val updatedMessage = message.selectReasoningSwipe(newSwipeIndex)
         messages[messageIndex] = updatedMessage
 
         val session = state.currentSession ?: return
@@ -934,9 +945,10 @@ class ChatViewModel(
         val state = _uiState.value
         val regeneration = activeRegeneration
         activeRegeneration = null
-        if (state.streamingText.isNotEmpty()) {
+        if (state.streamingText.isNotEmpty() || state.streamingReasoning.isNotEmpty()) {
+            val parts = MessageReasoning.fromResponse(state.streamingText, state.streamingReasoning)
             val processedPartial = CharacterRegexApplier.applyNormal(
-                text = state.streamingText,
+                text = parts.body,
                 role = MessageRole.Character,
                 character = state.selectedCharacter,
                 preset = state.selectedPreset,
@@ -948,7 +960,9 @@ class ChatViewModel(
                 if (targetIndex >= 0) {
                     val updatedMessages = state.messages.toMutableList().also { messages ->
                         messages[targetIndex] = CharacterRegexApplier.markNormalProcessed(
-                            messages[targetIndex].withRegeneratedSwipe(processedPartial),
+                            messages[targetIndex].withRegeneratedSwipe(processedPartial).withGenerationReasoning(
+                                parts, state.streamingText, state.streamingReasoning, "interrupted", true,
+                            ),
                         )
                     }
                     val session = state.currentSession
@@ -960,6 +974,7 @@ class ChatViewModel(
                                 currentSession = updatedSession,
                                 isGenerating = false,
                                 streamingText = "",
+                                streamingReasoning = "",
                             )
                         }
                         val commit = scheduleUiMutation(session, updatedSession) ?: return
@@ -983,7 +998,7 @@ class ChatViewModel(
                 swipes = listOf(processedPartial),
                 swipeIndex = 0,
                 metadata = buildJsonObject { put("interrupted", true) },
-            ))
+            ).withGenerationReasoning(parts, state.streamingText, state.streamingReasoning, "interrupted", false))
             val updatedMessages = state.messages + partialMessage
             val session = state.currentSession
 
@@ -996,6 +1011,7 @@ class ChatViewModel(
                         currentSession = updatedSession,
                         isGenerating = false,
                         streamingText = "",
+                        streamingReasoning = "",
                     )
                 }
                 val commit = scheduleUiMutation(session, updatedSession) ?: return
@@ -1009,6 +1025,7 @@ class ChatViewModel(
                     it.copy(
                         isGenerating = false,
                         streamingText = "",
+                        streamingReasoning = "",
                     )
                 }
                 viewModelScope.launch {
@@ -1020,6 +1037,7 @@ class ChatViewModel(
                 it.copy(
                     isGenerating = false,
                     streamingText = "",
+                    streamingReasoning = "",
                 )
             }
             viewModelScope.launch {
@@ -1632,7 +1650,7 @@ class ChatViewModel(
                 when (chunk) {
                     is GenerateChunk.Delta -> {
                         accumulatedText += chunk.text
-                        if (shouldStream) {
+                        if (shouldStream && chunk.text.isNotEmpty()) {
                             emitStEvent("js_stream_token_received_fully", accumulatedText, generationId)
                             emitStEvent("js_stream_token_received_incrementally", chunk.text, generationId)
                         }
@@ -2428,7 +2446,7 @@ internal fun visibleRegexDepth(messages: List<ChatMessage>, messageIndex: Int): 
 
 internal fun ChatMessage.withRegeneratedSwipe(newContent: String): ChatMessage {
     val previousSwipes = swipes.ifEmpty { listOf(content) }
-    return copy(
+    return preserveReasoningSwipe().copy(
         content = newContent,
         swipes = previousSwipes + newContent,
         swipeIndex = previousSwipes.size,

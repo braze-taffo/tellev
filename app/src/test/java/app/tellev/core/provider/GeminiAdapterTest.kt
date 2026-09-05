@@ -87,7 +87,8 @@ class GeminiAdapterTest {
         assertEquals(2, contents.size)
         assertEquals(2, contents[0].jsonObject["parts"]!!.jsonArray.size)
         assertEquals("512", payload["generationConfig"]!!.jsonObject["maxOutputTokens"]!!.jsonPrimitive.content)
-        assertEquals("<reasoning>\nwhy\n</reasoning>\nonetwo", completed.text)
+        assertEquals("onetwo", completed.text)
+        assertEquals("why", completed.reasoning)
         assertEquals("12", completed.usage?.get("totalTokenCount")?.jsonPrimitive?.content)
     }
 

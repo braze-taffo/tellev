@@ -1,5 +1,8 @@
 package app.tellev.feature.chat
 
+import app.tellev.core.model.generationDiagnostics
+import app.tellev.core.model.MessageReasoning
+import app.tellev.core.model.reasoningParts
 import android.annotation.SuppressLint
 import android.graphics.Color
 import android.os.Handler
@@ -559,10 +562,11 @@ private fun ChatContentScreen(
                 }
             }
 
-            if (state.isGenerating && state.streamingText.isNotEmpty()) {
+            if (state.isGenerating && (state.streamingText.isNotEmpty() || state.streamingReasoning.isNotEmpty())) {
                 item(key = "streaming") {
                     StreamingBubble(
                         text = state.streamingText,
+                        reasoning = state.streamingReasoning,
                         characterName = state.selectedCharacter?.name ?: "助手",
                         character = state.selectedCharacter,
                         preset = state.selectedPreset,
@@ -583,7 +587,7 @@ private fun ChatContentScreen(
                 }
             }
 
-            if (state.isGenerating && state.streamingText.isEmpty()) {
+            if (state.isGenerating && state.streamingText.isEmpty() && state.streamingReasoning.isEmpty()) {
                 item(key = "loading") {
                     Row(
                         modifier = Modifier
@@ -647,6 +651,20 @@ private fun ChatBubble(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val exportScope = rememberCoroutineScope()
+    var pendingDiagnosticExport by remember { mutableStateOf("") }
+    val diagnosticExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        val payload = pendingDiagnosticExport
+        if (uri != null) exportScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                runCatching {
+                    requireNotNull(context.contentResolver.openOutputStream(uri)).bufferedWriter().use { it.write(payload) }
+                }.isSuccess
+            }
+            android.widget.Toast.makeText(context, if (success) "已导出" else "导出失败", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
     val isUser = message.role == MessageRole.User
     var dragAmount by remember { mutableFloatStateOf(0f) }
     var showActions by remember { mutableStateOf(false) }
@@ -699,6 +717,24 @@ private fun ChatBubble(
                             },
                         )
                     }
+                    if (message.generationDiagnostics() != null) {
+                        DropdownMenuItem(
+                            text = { Text("导出生成诊断") },
+                            onClick = {
+                                pendingDiagnosticExport = message.generationDiagnostics().toString()
+                                showActions = false
+                                diagnosticExport.launch("generation-diagnostics.json")
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("导出原始回复") },
+                            onClick = {
+                                pendingDiagnosticExport = message.generationDiagnostics(includeResponse = true).toString()
+                                showActions = false
+                                diagnosticExport.launch("generation-response.json")
+                            },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("编辑") },
                         leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
@@ -719,17 +755,17 @@ private fun ChatBubble(
             }
         }
 
-        val rawText = message.swipes.getOrNull(message.swipeIndex) ?: message.content
-        val displayText = CharacterRegexApplier.applyForDisplay(
-            rawText,
-            message.role,
-            character,
-            userName = userName,
-            depth = depth,
-            preset = preset,
+        val parts = message.reasoningParts()
+        val renderSegments = renderMessageParts(
+            parts, message.role, character, preset, userName, depth,
             includeNormal = !CharacterRegexApplier.isNormalProcessed(message),
         )
-        val renderSegments = TavernRenderParser.parse(displayText)
+        if (!isUser && parts.body.isBlank() && parts.reasoning.isNotBlank()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("未收到正文", modifier = Modifier.padding(8.dp))
+                if (canRegenerate) TextButton(onClick = onRegenerate) { Text("重试") }
+            }
+        }
         val hasFrontend = renderSegments.any { it is TavernRenderSegment.Frontend }
         val dragModifier = Modifier.pointerInput(message.id) {
             detectHorizontalDragGestures(
@@ -1361,6 +1397,7 @@ private fun HtmlSwipeControls(
 @Composable
 private fun StreamingBubble(
     text: String,
+    reasoning: String,
     characterName: String,
     character: CharacterCard?,
     preset: GenerationPreset?,
@@ -1370,16 +1407,10 @@ private fun StreamingBubble(
     tavernRuntime: TavernMessageRuntime,
     onHtmlBoundaryDrag: (Float) -> Unit,
 ) {
-    val displayText = CharacterRegexApplier.applyForDisplay(
-        text = text,
-        role = MessageRole.Character,
-        character = character,
-        preset = preset,
-        userName = userName,
-        depth = 0,
-        includeNormal = true,
+    val segments = renderMessageParts(
+        MessageReasoning.fromResponse(text, reasoning), MessageRole.Character,
+        character, preset, userName, 0, includeNormal = true,
     )
-    val segments = TavernRenderParser.parse(displayText)
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.Start,

@@ -31,6 +31,29 @@ import org.junit.Test
 class OpenAiCompatibleAdapterTest {
 
     @Test
+    fun `stream and nonstream preserve independent response channels including no body`() = runBlocking {
+        for (stream in listOf(false, true)) for (body in listOf("answer", "")) {
+            val fields = "\"content\":\"$body\",\"reasoning_content\":\"thought </reasoning> literal\""
+            val payload = if (stream) {
+                "data: {\"choices\":[{\"delta\":{$fields},\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n"
+            } else "{\"choices\":[{\"message\":{$fields},\"finish_reason\":\"length\"}]}"
+            val adapter = OpenAiCompatibleAdapter(client = client { chain -> response(chain, 200, payload, if (stream) "text/event-stream" else "application/json") })
+            val chunks = adapter.streamGenerate(
+                ProviderConfig("openai-compatible", "https://example.test", model = "test"),
+                generateRequest(stream, GenerationPreset("test", "Test", "openai-compatible")),
+            ).toList()
+            val done = chunks.filterIsInstance<GenerateChunk.Completed>().single()
+            assertEquals(body, done.text)
+            assertEquals("thought </reasoning> literal", done.reasoning)
+            assertEquals("length", done.finishReason)
+            if (stream) {
+                assertEquals(body, chunks.filterIsInstance<GenerateChunk.Delta>().joinToString("") { it.text })
+                assertEquals(done.reasoning, chunks.filterIsInstance<GenerateChunk.Delta>().joinToString("") { it.reasoning })
+            }
+        }
+    }
+
+    @Test
     fun `deepseek status checks chat endpoint after models endpoint`() = runBlocking {
         val paths = mutableListOf<String>()
         val client = client { chain ->
@@ -263,7 +286,8 @@ class OpenAiCompatibleAdapterTest {
         val completed = chunks.filterIsInstance<GenerateChunk.Completed>().single()
         val payload = Json.parseToJsonElement(capturedBody).jsonObject
 
-        assertEquals("<reasoning>\nthink\n</reasoning>\nanswer", completed.text)
+        assertEquals("answer", completed.text)
+        assertEquals("think", completed.reasoning)
         assertEquals("9", completed.usage?.get("total_tokens")?.jsonPrimitive?.content)
         assertTrue(payload["thinking"] is JsonObject)
         assertNull(payload["top_k"])

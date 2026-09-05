@@ -157,36 +157,37 @@ class GeminiAdapter(
                             emit(GenerateChunk.Delta(parsed.text))
                         }
                         reasoningText += parsed.reasoning
+                        if (parsed.reasoning.isNotEmpty()) emit(GenerateChunk.Delta("", reasoning = parsed.reasoning))
                         parsed.finishReason?.let { finishReason = it }
                         parsed.usage?.let { usage = it }
                         parsed.safetyBlock?.let { safetyBlock = it }
                         toolCalls += parsed.toolCalls
                     }
-                    val completedText = if (reasoningText.isBlank()) fullText
-                        else "<reasoning>\n$reasoningText\n</reasoning>\n$fullText"
-                    if (completedText.isEmpty() && safetyBlock != null) {
+                    if (fullText.isEmpty() && reasoningText.isEmpty() && safetyBlock != null) {
                         emit(GenerateChunk.Failed(TellevError("gemini_safety", safetyBlock!!, retryable = false)))
                     } else {
                         emit(
                             GenerateChunk.Completed(
-                                completedText,
+                                fullText,
                                 finishReason ?: safetyBlock,
                                 usage,
                                 toolCalls.takeIf { it.isNotEmpty() }?.let(::JsonArray),
+                                reasoning = reasoningText,
                             ),
                         )
                     }
                 } else {
                     val parsed = parseGeminiResponse(response.body?.string().orEmpty())
-                    if (parsed.completedText.isEmpty() && parsed.safetyBlock != null) {
+                    if ((parsed.text.isEmpty() && parsed.reasoning.isEmpty()) && parsed.safetyBlock != null) {
                         emit(GenerateChunk.Failed(TellevError("gemini_safety", parsed.safetyBlock, retryable = false)))
                     } else {
                         emit(
                             GenerateChunk.Completed(
-                                parsed.completedText,
+                                parsed.text,
                                 parsed.finishReason,
                                 parsed.usage,
                                 parsed.toolCalls.takeIf { it.isNotEmpty() }?.let(::JsonArray),
+                                reasoning = parsed.reasoning,
                             ),
                         )
                     }
@@ -295,10 +296,7 @@ class GeminiAdapter(
         val usage: JsonObject? = null,
         val safetyBlock: String? = null,
         val toolCalls: List<JsonObject> = emptyList(),
-    ) {
-        val completedText: String
-            get() = if (reasoning.isBlank()) text else "<reasoning>\n$reasoning\n</reasoning>\n$text"
-    }
+    )
 
     private companion object {
         val blockingFinishReasons = setOf("SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "RECITATION")

@@ -44,6 +44,7 @@ class UpdateCheckerTest {
         assertEquals(0, checker.compareVersions("1.4", "1.4.0"))
         assertEquals(0, checker.compareVersions("1.4.0.0", "1.4"))
         assertTrue(checker.isUpdateAvailable("1.4", info("1.4.1")))
+        assertTrue(checker.isUpdateAvailable("1.5.5", info("1.5.5.1")))
     }
 
     @Test

@@ -73,7 +73,7 @@ data class GenerateRequest(
 @Serializable
 sealed interface GenerateChunk {
     @Serializable
-    data class Delta(val text: String) : GenerateChunk
+    data class Delta(val text: String, val reasoning: String = "") : GenerateChunk
 
     @Serializable
     data class Completed(
@@ -84,6 +84,7 @@ sealed interface GenerateChunk {
         val usage: JsonObject? = null,
         // Normalized provider tool/function calls, when the model requests one.
         val toolCalls: kotlinx.serialization.json.JsonArray? = null,
+        val reasoning: String = "",
     ) : GenerateChunk
 
     @Serializable

@@ -68,7 +68,7 @@ object CharacterRegexApplier {
     fun summarizeScripts(scripts: JsonArray): List<RegexScriptSummary> =
         scripts.mapIndexedNotNull { index, element ->
             val script = element as? JsonObject ?: return@mapIndexedNotNull null
-            val name = script.stringValue("scriptName")?.takeIf { it.isNotBlank() }
+            val name = (script.stringValue("scriptName") ?: script.stringValue("name"))?.takeIf { it.isNotBlank() }
                 ?: script.stringValue("findRegex")?.takeIf { it.isNotBlank() }
                 ?: "未命名脚本"
             RegexScriptSummary(scriptIdentifier(script, index), name, script.booleanValue("disabled") != true)
@@ -200,7 +200,10 @@ object CharacterRegexApplier {
         userName: String,
         onDiagnostic: ((RegexDiagnostic) -> Unit)?,
     ): String {
-        val rawSource = script.stringValue("findRegex") ?: return input
+        // RP Hub uses a bare pattern plus separate flags. Standard Tavern fields win.
+        val standardSource = script.stringValue("findRegex")
+        val rawSource = standardSource ?: script.stringValue("regex") ?: return input
+        val separateFlags = if (standardSource == null) script.stringValue("flags").orEmpty() else null
         val source = when (script.intValue("substituteRegex") ?: 0) {
             1 -> substituteMacros(rawSource, characterName, userName, escaped = false)
             2 -> substituteMacros(rawSource, characterName, userName, escaped = true)
@@ -213,16 +216,16 @@ object CharacterRegexApplier {
             ?.removePrefix("([\\s\\S]*)")?.replace("\\/", "/")
             ?.takeIf { it.isNotEmpty() && it.none { c -> c in "\\.[](){}*+?^$|" } }
         if (literalSuffix != null && !input.contains(literalSuffix)) return input
-        val regex = parseJavascriptRegex(source) ?: run {
+        val regex = parseJavascriptRegex(source, separateFlags) ?: run {
             onDiagnostic?.invoke(RegexDiagnostic(
                 scriptName = script.stringValue("scriptName").orEmpty().ifBlank { rawSource },
                 message = "无效或不兼容的正则表达式/flag，已跳过该规则",
             ))
             return input
         }
-        val flags = javascriptFlags(source)
+        val flags = separateFlags ?: javascriptFlags(source)
         val replacement = substituteMacros(
-            script.stringValue("replaceString").orEmpty(),
+            (script.stringValue("replaceString") ?: script.stringValue("replacement")).orEmpty(),
             characterName,
             userName,
             escaped = false,
@@ -302,11 +305,13 @@ object CharacterRegexApplier {
     }
 
 
-    private fun parseJavascriptRegex(source: String): Regex? {
+    private fun parseJavascriptRegex(source: String, separateFlags: String? = null): Regex? {
         val trimmed = source.trim()
         if (trimmed.isEmpty()) return null
 
-        val (pattern, flags) = if (trimmed.startsWith("/")) {
+        val (pattern, flags) = if (separateFlags != null) {
+            source to separateFlags
+        } else if (trimmed.startsWith("/")) {
             val slashIndex = findClosingSlash(trimmed)
             if (slashIndex <= 0) {
                 trimmed to ""

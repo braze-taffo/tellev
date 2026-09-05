@@ -1,0 +1,79 @@
+{
+  "data": {
+    "name": "群星v0.1",
+    "extensions": {
+      "regex_scripts": [
+        {
+          "name": "科幻终端阅读面板",
+          "regex": "^([\\s\\S]+)$",
+          "flags": "g",
+          "replacement": "<div style='background-color:#070b14; background-image:linear-gradient(180deg, rgba(0,255,255,0.03) 0%, transparent 100%); color:#c0c5ce; padding:25px; border-radius:12px; border:1px solid #1a2b4c; box-shadow:0 0 20px rgba(0,255,255,0.05), inset 0 0 10px rgba(0,255,255,0.02); font-family:\"Microsoft YaHei\",sans-serif; max-width:100%; overflow-wrap:anywhere; white-space:pre-wrap; margin:0; line-height:1.6; position:relative;'><div style='position:absolute; top:0; left:20px; width:60px; height:2px; background:#00ffff; box-shadow:0 0 8px #00ffff;'></div>$1</div>",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true,
+          "promptOnly": false,
+          "minDepth": null,
+          "maxDepth": null,
+          "disabled": false
+        },
+        {
+          "name": "内部演算独白卡",
+          "regex": "（([^）]*?)）",
+          "flags": "g",
+          "replacement": "<div style='margin:12px 0; padding:12px 18px; background:rgba(0,255,255,0.04); border-left:4px solid #00ffff; border-radius:0 6px 6px 0; color:#7d96af; font-size:0.95em; box-shadow:inset 2px 0 5px rgba(0,255,255,0.05);'><span style='color:#00ffff; font-size:0.8em; margin-right:8px; font-weight:bold;'>[系统底层日志]</span>$1</div>",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true,
+          "promptOnly": false,
+          "minDepth": null,
+          "maxDepth": null,
+          "disabled": false
+        },
+        {
+          "name": "语音输出引语",
+          "regex": "『([^』]*?)』",
+          "flags": "g",
+          "replacement": "<span style='color:#00ffff; font-weight:bold; text-shadow:0 0 8px rgba(0,255,255,0.4);'>「$1」</span>",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true,
+          "promptOnly": false,
+          "minDepth": null,
+          "maxDepth": null,
+          "disabled": false
+        },
+        {
+          "name": "用户高亮标签",
+          "regex": "({{user}})",
+          "flags": "g",
+          "replacement": "<span style='background:rgba(255,153,0,0.15); border:1px solid rgba(255,153,0,0.6); padding:2px 6px; border-radius:4px; color:#ffb732; font-size:0.95em; box-shadow:0 0 5px rgba(255,153,0,0.2); font-weight:bold;'>$1</span>",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true,
+          "promptOnly": false,
+          "minDepth": null,
+          "maxDepth": null,
+          "disabled": false
+        },
+        {
+          "name": "角色高亮标签",
+          "regex": "(阿诺玛丽)",
+          "flags": "g",
+          "replacement": "<span style='background:rgba(0,255,255,0.1); border:1px solid rgba(0,255,255,0.5); padding:2px 6px; border-radius:4px; color:#00ffff; font-size:0.95em; box-shadow:0 0 5px rgba(0,255,255,0.2); font-weight:bold;'>$1</span>",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true,
+          "promptOnly": false,
+          "minDepth": null,
+          "maxDepth": null,
+          "disabled": false
+        }
+      ]
+    }
+  }
+}
