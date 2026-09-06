@@ -11,7 +11,16 @@
     const pending = writes.get(id);
     if (!pending) return;
     writes.delete(id);
-    error ? pending.reject(new Error(error)) : pending.resolve();
+    if (error) {
+      const failure = new Error(error);
+      // MVU rewrites the text before saving variables. If that write fails,
+      // surface its cause instead of waiting for a variable commit that cannot happen.
+      for (const floor of pending.messageIds) variableWrites.get(floor)?.reject(failure);
+      pending.reject(failure);
+    } else {
+      window.__tellevInvalidateContext();
+      pending.resolve();
+    }
   };
   expose('getScriptId', () => document.documentElement.dataset.extensionId);
   expose('getScriptName', () => getScriptId());
@@ -55,7 +64,7 @@
       let id = option.message_id ?? -1;
       if (id === 'latest') id = -1;
       if (id < 0) id += context().chat.length;
-      variableWrites.get(id)?.();
+      variableWrites.get(id)?.resolve();
     }
   });
   expose('updateVariablesWith', (updater, option) => {
@@ -75,7 +84,9 @@
   expose('getChatMessages', (range,options) => window.__tellevGetChatMessages(context().chat,range,options));
   expose('setChatMessages', (messages, options = {}) => new Promise((resolve, reject) => {
     const id = crypto.randomUUID();
-    writes.set(id, {resolve, reject});
+    const length = context().chat.length;
+    const messageIds = messages.map(m => m.message_id < 0 ? length + m.message_id : m.message_id);
+    writes.set(id, {resolve, reject, messageIds});
     tellevNative.stSetChatMessages(id, JSON.stringify(messages), JSON.stringify(options));
   }));
   expose('setChatMessage', (fields, message_id, options) =>
@@ -145,9 +156,11 @@
       chat[id]?.mes?.length >= 5 && chat.slice(0, Math.max(1,id)).some(m => m.variables?.[m.swipe_id || 0]?.stat_data);
     let timer;
     const committed = expectsMvuWrite ? new Promise((resolve,reject) => {
-      variableWrites.set(id,resolve);
+      variableWrites.set(id,{resolve,reject});
       timer=setTimeout(()=>reject(new Error(`MVU did not commit floor ${id} within 15 seconds`)),15000);
     }) : Promise.resolve();
+    // A native failure can arrive while the event listener is still unwinding.
+    committed.catch(() => {});
     try {
       await eventSource._fireNative(name, payload);
       await committed;
