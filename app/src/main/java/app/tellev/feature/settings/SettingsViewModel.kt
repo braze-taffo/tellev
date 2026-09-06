@@ -19,6 +19,7 @@ import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.supportsChatGeneration
 import app.tellev.core.provider.ComfyUiSettings
 import app.tellev.core.provider.ComfyWorkflowTemplate
+import app.tellev.core.provider.NovelAiImageSettings
 import app.tellev.core.provider.OpenAiCompatibilitySettings
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.AppPreferences
@@ -75,6 +76,15 @@ data class SettingsUiState(
     val comfyStatus: ProviderStatus? = null,
     val isTestingComfy: Boolean = false,
     val comfyModels: List<String> = emptyList(),
+    // ── 生图引擎选择与 NovelAI 生图（远程）──
+    /** ProviderCatalog.COMFYUI / NOVELAI_IMAGE：聊天内生图按钮走哪个引擎。 */
+    val imageEngine: String = ProviderCatalog.COMFYUI,
+    // ── NovelAI 生图（远程，行为对齐酒馆 novel 源）──
+    /** novelai.net 的 Persistent Token，保存在 provider-novelai-image-apikey。 */
+    val novelAiToken: String = "",
+    val novelAiSettings: NovelAiImageSettings = NovelAiImageSettings(),
+    val novelAiStatus: ProviderStatus? = null,
+    val isTestingNovelAi: Boolean = false,
 )
 
 class SettingsViewModel(
@@ -149,6 +159,11 @@ class SettingsViewModel(
                     ?: ProviderDefaults.baseUrl(ProviderCatalog.COMFYUI)
                 val comfyModel = secretStore.readSecret("provider-${ProviderCatalog.COMFYUI}-model") ?: ""
 
+                val imageEngine = ProviderConfigPersistence.loadImageEngine(secretStore)
+                val novelAiSettings = ProviderConfigPersistence.loadNovelAiImageSettings(secretStore)
+                val novelAiToken =
+                    secretStore.readSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey") ?: ""
+
                 _uiState.update {
                     it.copy(
                         providers = providers,
@@ -172,6 +187,9 @@ class SettingsViewModel(
                         comfyBaseUrl = comfyBaseUrl,
                         comfyModel = comfyModel,
                         comfySettings = comfySettings,
+                        imageEngine = imageEngine,
+                        novelAiToken = novelAiToken,
+                        novelAiSettings = novelAiSettings,
                     )
                 }
             } catch (e: Exception) {
@@ -382,6 +400,69 @@ class SettingsViewModel(
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(isLoading = false, error = "保存生图模型配置失败：${e.message}")
+                }
+            }
+        }
+    }
+
+    // ── 生图引擎选择 ───────────────────────────────────────────────────
+
+    fun selectImageEngine(engine: String) {
+        _uiState.update { it.copy(imageEngine = engine) }
+        viewModelScope.launch {
+            runCatching { ProviderConfigPersistence.saveImageEngine(secretStore, engine) }
+        }
+    }
+
+    // ── NovelAI 生图（远程）────────────────────────────────────────────
+
+    fun updateNovelAiToken(value: String) {
+        _uiState.update { it.copy(novelAiToken = value) }
+    }
+
+    fun updateNovelAiSettings(transform: (NovelAiImageSettings) -> NovelAiImageSettings) {
+        _uiState.update { state -> state.copy(novelAiSettings = transform(state.novelAiSettings)) }
+    }
+
+    fun testNovelAiImage() {
+        val state = _uiState.value
+        val config = ProviderConfig(
+            providerType = ProviderCatalog.NOVELAI_IMAGE,
+            baseUrl = ProviderDefaults.baseUrl(ProviderCatalog.NOVELAI_IMAGE),
+            apiKey = state.novelAiToken.trim().takeIf { it.isNotBlank() },
+        )
+        viewModelScope.launch {
+            _uiState.update { it.copy(isTestingNovelAi = true, novelAiStatus = null, error = null) }
+            try {
+                val adapter = providerRegistry.require(ProviderCatalog.NOVELAI_IMAGE)
+                val status = withContext(Dispatchers.IO) { adapter.checkStatus(config) }
+                _uiState.update { it.copy(isTestingNovelAi = false, novelAiStatus = status) }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isTestingNovelAi = false, error = "NovelAI 测试失败：${e.message}")
+                }
+            }
+        }
+    }
+
+    fun saveNovelAiImageConfig() {
+        val state = _uiState.value
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                val token = state.novelAiToken.trim()
+                if (token.isNotBlank()) {
+                    secretStore.putSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey", token)
+                } else {
+                    secretStore.deleteSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey")
+                }
+                ProviderConfigPersistence.saveNovelAiImageSettings(secretStore, state.novelAiSettings)
+                _uiState.update {
+                    it.copy(isLoading = false, info = "NovelAI 生图配置已保存。")
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isLoading = false, error = "保存 NovelAI 生图配置失败：${e.message}")
                 }
             }
         }

@@ -168,6 +168,42 @@ object ProviderConfigPersistence {
         secretStore.putSecret(COMFY_SETTINGS_SECRET_ID, json.encodeToString(settings))
     }
 
+    /** Secret id holding the encrypted [NovelAiImageSettings] JSON. */
+    private const val NOVELAI_IMAGE_SETTINGS_SECRET_ID = "provider-novelai-image-settings"
+
+    /** True when a NovelAI access token has been saved; model/parameters all carry valid defaults. */
+    suspend fun isNovelAiImageConfigured(secretStore: SecretStore): Boolean {
+        return !secretStore.readSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey").isNullOrBlank()
+    }
+
+    suspend fun loadNovelAiImageSettings(secretStore: SecretStore): NovelAiImageSettings {
+        val stored = secretStore.readSecret(NOVELAI_IMAGE_SETTINGS_SECRET_ID)
+            ?: return NovelAiImageSettings()
+        return runCatching { json.decodeFromString<NovelAiImageSettings>(stored) }
+            .getOrElse { NovelAiImageSettings() }
+    }
+
+    suspend fun saveNovelAiImageSettings(secretStore: SecretStore, settings: NovelAiImageSettings) {
+        secretStore.putSecret(NOVELAI_IMAGE_SETTINGS_SECRET_ID, json.encodeToString(settings))
+    }
+
+    /** Which image engine in-chat generation uses; an unconfigured selection falls back to ComfyUI. */
+    const val IMAGE_ENGINE_SECRET_ID = "image-engine-selected"
+
+    private val imageEngines = setOf(
+        ProviderCatalog.COMFYUI,
+        ProviderCatalog.NOVELAI_IMAGE,
+    )
+
+    suspend fun loadImageEngine(secretStore: SecretStore): String {
+        val stored = secretStore.readSecret(IMAGE_ENGINE_SECRET_ID) ?: return ProviderCatalog.COMFYUI
+        return if (stored in imageEngines) stored else ProviderCatalog.COMFYUI
+    }
+
+    suspend fun saveImageEngine(secretStore: SecretStore, engine: String) {
+        secretStore.putSecret(IMAGE_ENGINE_SECRET_ID, if (engine in imageEngines) engine else ProviderCatalog.COMFYUI)
+    }
+
     suspend fun loadProviderConfig(secretStore: SecretStore, providerId: String): ProviderConfig {
         // A custom: id selects one of the user's named OpenAI-compatible configs.
         if (isCustomConfigId(providerId)) {

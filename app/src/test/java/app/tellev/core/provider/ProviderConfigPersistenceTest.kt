@@ -193,4 +193,72 @@ class ProviderConfigPersistenceTest {
         assertEquals("http://192.168.1.50:8188", config.baseUrl)
         assertEquals("sd_xl.safetensors", config.model)
     }
+
+    fun `image engine legacy local-diffusion value falls back to comfy`() = runBlocking {
+        val s = store()
+        s.putSecret(ProviderConfigPersistence.IMAGE_ENGINE_SECRET_ID, "local-diffusion")
+        assertEquals(ProviderCatalog.COMFYUI, ProviderConfigPersistence.loadImageEngine(s))
+    }
+
+    @Test
+    fun `image engine unknown stored value falls back to comfy`() = runBlocking {
+        val s = store()
+        s.putSecret(ProviderConfigPersistence.IMAGE_ENGINE_SECRET_ID, "does-not-exist")
+        assertEquals(ProviderCatalog.COMFYUI, ProviderConfigPersistence.loadImageEngine(s))
+    }
+
+    // ── NovelAI 生图设置 ─────────────────────────────────────────────────
+
+    @Test
+    fun `novelai image settings default to fresh install state`() = runBlocking {
+        val s = store()
+        assertEquals(NovelAiImageSettings(), ProviderConfigPersistence.loadNovelAiImageSettings(s))
+        assertTrue(!ProviderConfigPersistence.isNovelAiImageConfigured(s))
+    }
+
+    @Test
+    fun `novelai image settings round-trip and availability follows the token`() = runBlocking {
+        val s = store()
+        val settings = NovelAiImageSettings(
+            model = "nai-diffusion-4-5-curated",
+            sampler = "k_dpmpp_2m",
+            steps = 28,
+            scale = 9.0,
+            width = 832,
+            height = 1216,
+            varietyBoost = true,
+        )
+        ProviderConfigPersistence.saveNovelAiImageSettings(s, settings)
+        assertEquals(settings, ProviderConfigPersistence.loadNovelAiImageSettings(s))
+        // Availability is driven by the saved token, not the settings blob.
+        assertTrue(!ProviderConfigPersistence.isNovelAiImageConfigured(s))
+        s.putSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey", "pst-token")
+        assertTrue(ProviderConfigPersistence.isNovelAiImageConfigured(s))
+        s.deleteSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey")
+        assertTrue(!ProviderConfigPersistence.isNovelAiImageConfigured(s))
+    }
+
+    @Test
+    fun `novelai image corrupted json falls back to defaults`() = runBlocking {
+        val s = store()
+        s.putSecret("provider-novelai-image-settings", "not json at all")
+        assertEquals(NovelAiImageSettings(), ProviderConfigPersistence.loadNovelAiImageSettings(s))
+    }
+
+    @Test
+    fun `image engine round-trips novelai-image`() = runBlocking {
+        val s = store()
+        ProviderConfigPersistence.saveImageEngine(s, ProviderCatalog.NOVELAI_IMAGE)
+        assertEquals(ProviderCatalog.NOVELAI_IMAGE, ProviderConfigPersistence.loadImageEngine(s))
+    }
+
+    @Test
+    fun `loadProviderConfig reads the novelai image token slot`() = runBlocking {
+        val s = store()
+        s.putSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey", "pst-token")
+        val config = ProviderConfigPersistence.loadProviderConfig(s, ProviderCatalog.NOVELAI_IMAGE)
+        assertEquals(ProviderCatalog.NOVELAI_IMAGE, config.providerType)
+        assertEquals("pst-token", config.apiKey)
+        assertEquals("https://image.novelai.net", config.baseUrl)
+    }
 }

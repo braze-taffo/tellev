@@ -20,6 +20,7 @@ object ProviderCatalog {
     const val STABLE_DIFFUSION = "stable-diffusion"
     const val COMFYUI = "comfyui"
     const val OPENAI_IMAGE = "openai-image"
+    const val NOVELAI_IMAGE = "novelai-image"
 
     const val GOOGLE_TTS = "google-tts"
     const val ELEVENLABS = "elevenlabs"

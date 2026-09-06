@@ -43,6 +43,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
@@ -71,6 +72,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -118,6 +120,7 @@ import app.tellev.core.model.PresetPrompt
 import app.tellev.core.provider.ComfyWorkflowTemplate
 import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.ProviderConfigPersistence
+import app.tellev.core.provider.NovelAiImageSettings
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonArray
@@ -166,6 +169,8 @@ fun SettingsScreen(
     var showAdvancedDialog by remember { mutableStateOf(false) }
     var showComfyWorkflowDialog by remember { mutableStateOf(false) }
     var showComfyParamsDialog by remember { mutableStateOf(false) }
+    var showNovelAiParamsDialog by remember { mutableStateOf(false) }
+    var novelAiTokenVisible by remember { mutableStateOf(false) }
     var pendingDeleteConfigId by remember { mutableStateOf<String?>(null) }
 
     val importLauncher = rememberLauncherForActivityResult(
@@ -432,6 +437,163 @@ fun SettingsScreen(
                     }
 
                     item(key = "comfy_divider") {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    }
+
+                    item(key = "image_engine") {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                "对话中生图按钮使用的引擎（立即生效，无需保存）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(
+                                    selected = state.imageEngine == ProviderCatalog.COMFYUI,
+                                    onClick = { viewModel.selectImageEngine(ProviderCatalog.COMFYUI) },
+                                    label = { Text("ComfyUI（远程）") },
+                                )
+                                FilterChip(
+                                    selected = state.imageEngine == ProviderCatalog.NOVELAI_IMAGE,
+                                    onClick = { viewModel.selectImageEngine(ProviderCatalog.NOVELAI_IMAGE) },
+                                    label = { Text("NovelAI（远程）") },
+                                )
+                            }
+                        }
+                    }
+
+                    // ── NovelAI 生图（远程）：行为对齐酒馆 novel 源 ──
+                    item(key = "novelai_header") {
+                        SectionHeader(
+                            icon = Icons.Default.Cloud,
+                            title = "NovelAI 生图（远程）",
+                        )
+                    }
+                    item(key = "novelai_token") {
+                        OutlinedTextField(
+                            value = state.novelAiToken,
+                            onValueChange = viewModel::updateNovelAiToken,
+                            label = { Text("NovelAI 令牌（Persistent Token）") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            visualTransformation = if (novelAiTokenVisible) VisualTransformation.None
+                            else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { novelAiTokenVisible = !novelAiTokenVisible }) {
+                                    Icon(
+                                        if (novelAiTokenVisible) Icons.Default.VisibilityOff
+                                        else Icons.Default.Visibility,
+                                        contentDescription = null,
+                                    )
+                                }
+                            },
+                            supportingText = {
+                                Text("novelai.net → 账户设置 → Persistent Token；需要有效订阅（如 Opus）")
+                            },
+                        )
+                    }
+                    item(key = "novelai_model") {
+                        var novelModelMenu by remember { mutableStateOf(false) }
+                        val modelDisplay = NovelAiImageSettings.MODELS
+                            .firstOrNull { it.first == state.novelAiSettings.model }
+                            ?.second ?: state.novelAiSettings.model
+                        ExposedDropdownMenuBox(
+                            expanded = novelModelMenu,
+                            onExpandedChange = { novelModelMenu = it },
+                        ) {
+                            OutlinedTextField(
+                                value = modelDisplay,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("模型") },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = novelModelMenu)
+                                },
+                            )
+                            ExposedDropdownMenu(
+                                expanded = novelModelMenu,
+                                onDismissRequest = { novelModelMenu = false },
+                            ) {
+                                NovelAiImageSettings.MODELS.forEach { (id, name) ->
+                                    DropdownMenuItem(
+                                        text = { Text(name) },
+                                        onClick = {
+                                            viewModel.updateNovelAiSettings { it.copy(model = id) }
+                                            novelModelMenu = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    item(key = "novelai_params") {
+                        OutlinedButton(
+                            onClick = { showNovelAiParamsDialog = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("生成参数、采样器与提示词前缀")
+                        }
+                    }
+                    item(key = "novelai_actions") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = viewModel::testNovelAiImage,
+                                modifier = Modifier.weight(1f),
+                                enabled = !state.isTestingNovelAi,
+                            ) {
+                                if (state.isTestingNovelAi) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                }
+                                Text(if (state.isTestingNovelAi) "测试中..." else "测试令牌")
+                            }
+                            FilledTonalButton(
+                                onClick = viewModel::saveNovelAiImageConfig,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("保存")
+                            }
+                        }
+                    }
+                    if (state.novelAiStatus != null) {
+                        item(key = "novelai_status") {
+                            val status = state.novelAiStatus!!
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (status.available) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.errorContainer,
+                                ),
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = if (status.available) "令牌可用" else "不可用",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = if (status.available) MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onErrorContainer,
+                                    )
+                                    Text(
+                                        text = status.message,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (status.available) MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onErrorContainer,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    item(key = "novelai_divider") {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     }
                 }
@@ -1251,6 +1413,15 @@ fun SettingsScreen(
         )
     }
 
+    // Local MNN generation parameters (2nd-level).
+    if (showNovelAiParamsDialog) {
+        NovelAiImageParamsDialog(
+            state = state,
+            viewModel = viewModel,
+            onDismiss = { showNovelAiParamsDialog = false },
+        )
+    }
+
     // Confirm before deleting a custom config (holds its own key/url).
     pendingDeleteConfigId?.let { configId ->
         val configName = state.customConfigs.firstOrNull { it.id == configId }?.name ?: "该配置"
@@ -1822,6 +1993,256 @@ private fun ComfyParamsDialog(
                             sampler = sampler.trim(),
                             scheduler = scheduler.trim(),
                             seed = seed.trim().toLongOrNull() ?: -1L,
+                            negativePrompt = negative,
+                        )
+                    }
+                    onDismiss()
+                },
+            ) {
+                Text("确定")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+    )
+}
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NovelAiImageParamsDialog(
+    state: SettingsUiState,
+    viewModel: SettingsViewModel,
+    onDismiss: () -> Unit,
+) {
+    val settings = state.novelAiSettings
+    var steps by remember { mutableStateOf(settings.steps.toString()) }
+    var cfg by remember { mutableStateOf(settings.scale.toString()) }
+    var width by remember { mutableStateOf(settings.width.toString()) }
+    var height by remember { mutableStateOf(settings.height.toString()) }
+    var sampler by remember { mutableStateOf(settings.sampler) }
+    var samplerMenu by remember { mutableStateOf(false) }
+    var scheduler by remember { mutableStateOf(settings.scheduler) }
+    var schedulerMenu by remember { mutableStateOf(false) }
+    var seed by remember { mutableStateOf(settings.seed.toString()) }
+    var upscale by remember { mutableStateOf(settings.upscaleRatio.toString()) }
+    var sm by remember { mutableStateOf(settings.sm) }
+    var smDyn by remember { mutableStateOf(settings.smDyn) }
+    var decrisper by remember { mutableStateOf(settings.decrisper) }
+    var varietyBoost by remember { mutableStateOf(settings.varietyBoost) }
+    var anlasGuard by remember { mutableStateOf(settings.anlasGuard) }
+    var prefix by remember { mutableStateOf(settings.promptPrefix) }
+    var negative by remember { mutableStateOf(settings.negativePrompt) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("NovelAI 生图参数") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    "与酒馆（SillyTavern）NovelAI 源一致：前缀与负面会自动拼进每次请求。" +
+                        "修改后请回到设置页点击「保存」。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = steps,
+                        onValueChange = { steps = it },
+                        label = { Text("步数") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        supportingText = { Text("上限 50；开 Anlas 防护时限 28") },
+                    )
+                    OutlinedTextField(
+                        value = cfg,
+                        onValueChange = { cfg = it },
+                        label = { Text("CFG") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = width,
+                        onValueChange = { width = it },
+                        label = { Text("宽度") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                    OutlinedTextField(
+                        value = height,
+                        onValueChange = { height = it },
+                        label = { Text("高度") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ExposedDropdownMenuBox(
+                        expanded = samplerMenu,
+                        onExpandedChange = { samplerMenu = it },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        OutlinedTextField(
+                            value = sampler,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("采样器") },
+                            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = samplerMenu) },
+                        )
+                        ExposedDropdownMenu(
+                            expanded = samplerMenu,
+                            onDismissRequest = { samplerMenu = false },
+                        ) {
+                            NovelAiImageSettings.SAMPLERS.forEach { name ->
+                                DropdownMenuItem(
+                                    text = { Text(name) },
+                                    onClick = {
+                                        sampler = name
+                                        samplerMenu = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    ExposedDropdownMenuBox(
+                        expanded = schedulerMenu,
+                        onExpandedChange = { schedulerMenu = it },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        OutlinedTextField(
+                            value = scheduler,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("调度器") },
+                            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = schedulerMenu) },
+                        )
+                        ExposedDropdownMenu(
+                            expanded = schedulerMenu,
+                            onDismissRequest = { schedulerMenu = false },
+                        ) {
+                            NovelAiImageSettings.SCHEDULERS.forEach { name ->
+                                DropdownMenuItem(
+                                    text = { Text(name) },
+                                    onClick = {
+                                        scheduler = name
+                                        schedulerMenu = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = seed,
+                        onValueChange = { seed = it },
+                        label = { Text("种子") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        supportingText = { Text("-1 为每次随机") },
+                    )
+                    OutlinedTextField(
+                        value = upscale,
+                        onValueChange = { upscale = it },
+                        label = { Text("放大倍数") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        supportingText = { Text("1 为不放大") },
+                    )
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("SMEA（高分辨率增强）", modifier = Modifier.weight(1f))
+                        Switch(checked = sm, onCheckedChange = { sm = it })
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("DYN（更多样的 SMEA）", modifier = Modifier.weight(1f))
+                        Switch(checked = smDyn, onCheckedChange = { smDyn = it })
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Decrisper（高 CFG 去伪影）", modifier = Modifier.weight(1f))
+                        Switch(checked = decrisper, onCheckedChange = { decrisper = it })
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Variety+（多样性增强）", modifier = Modifier.weight(1f))
+                        Switch(checked = varietyBoost, onCheckedChange = { varietyBoost = it })
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Anlas 防护（免费额度内生成）", modifier = Modifier.weight(1f))
+                        Switch(checked = anlasGuard, onCheckedChange = { anlasGuard = it })
+                    }
+                }
+                OutlinedTextField(
+                    value = prefix,
+                    onValueChange = { prefix = it },
+                    label = { Text("提示词前缀") },
+                    modifier = Modifier.fillMaxWidth(),
+                    supportingText = { Text("酒馆默认：best quality, absurdres, aesthetic；支持 {prompt} 占位") },
+                )
+                OutlinedTextField(
+                    value = negative,
+                    onValueChange = { negative = it },
+                    label = { Text("默认负面提示词") },
+                    modifier = Modifier.fillMaxWidth(),
+                    supportingText = { Text("酒馆默认负面会拼接在每次请求的负面之后") },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    viewModel.updateNovelAiSettings { current ->
+                        current.copy(
+                            steps = steps.trim().toIntOrNull() ?: current.steps,
+                            scale = cfg.trim().toDoubleOrNull() ?: current.scale,
+                            width = width.trim().toIntOrNull() ?: current.width,
+                            height = height.trim().toIntOrNull() ?: current.height,
+                            sampler = sampler.trim().ifBlank { current.sampler },
+                            scheduler = scheduler.trim().ifBlank { current.scheduler },
+                            seed = seed.trim().toLongOrNull() ?: -1L,
+                            upscaleRatio = upscale.trim().toDoubleOrNull() ?: current.upscaleRatio,
+                            sm = sm,
+                            smDyn = smDyn,
+                            decrisper = decrisper,
+                            varietyBoost = varietyBoost,
+                            anlasGuard = anlasGuard,
+                            promptPrefix = prefix,
                             negativePrompt = negative,
                         )
                     }

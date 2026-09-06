@@ -43,10 +43,12 @@ import app.tellev.core.provider.ComfyUiSettings
 import app.tellev.core.provider.GenerateChunk
 import app.tellev.core.provider.GenerateRequest
 import app.tellev.core.provider.GenerationRuntimeResolver
+import app.tellev.core.provider.NovelAiImageSettings
 import app.tellev.core.provider.ProviderConfig
 import app.tellev.core.provider.ProviderConfigPersistence
 import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.ProviderRegistry
+import app.tellev.core.provider.ProviderAdapter
 import app.tellev.core.provider.presetCategoryForProvider
 import app.tellev.core.provider.supportsChatGeneration
 import app.tellev.core.regex.CharacterRegexApplier
@@ -1199,10 +1201,11 @@ class ChatViewModel(
 
     // ── 生图（ComfyUI）──────────────────────────────────────────────────
 
-    /** Recomputes whether the ComfyUI image model is usable (workflow pasted and valid). */
+    /** Recomputes whether an image engine is usable (ComfyUI workflow pasted, or a NovelAI token). */
     private suspend fun refreshImageGenAvailability() {
         val available = runCatching {
-            ProviderConfigPersistence.isComfyImageGenerationConfigured(secretStore)
+            ProviderConfigPersistence.isComfyImageGenerationConfigured(secretStore) ||
+                ProviderConfigPersistence.isNovelAiImageConfigured(secretStore)
         }.getOrDefault(false)
         _uiState.update {
             if (it.imageGenAvailable == available) it else it.copy(imageGenAvailable = available)
@@ -1218,7 +1221,9 @@ class ChatViewModel(
     fun generateImage(prompt: String, negativePrompt: String, summarizeScene: Boolean) {
         val state = _uiState.value
         if (!state.imageGenAvailable) {
-            _uiState.update { it.copy(error = "生图模型未配置：请先在设置中配置 ComfyUI 工作流") }
+            _uiState.update {
+                it.copy(error = "生图模型未配置：请先在设置中配置 ComfyUI 工作流或填写 NovelAI 令牌")
+            }
             return
         }
         if (state.isGenerating || generationJob?.isActive == true) {
@@ -1245,8 +1250,11 @@ class ChatViewModel(
         imageGenerationJob = viewModelScope.launch {
             try {
                 _uiState.update { it.copy(isGeneratingImage = true, imageGenStatus = "准备生成图片…", error = null) }
-                val comfySettings = ProviderConfigPersistence.loadComfySettings(secretStore)
-                val comfyConfig = ProviderConfigPersistence.loadProviderConfig(secretStore, ProviderCatalog.COMFYUI)
+                // 引擎选择：ComfyUI（远程）或 NovelAI（远程）。
+                val engine = runCatching { ProviderConfigPersistence.loadImageEngine(secretStore) }
+                    .getOrDefault(ProviderCatalog.COMFYUI)
+                val useNovelAiEngine = engine == ProviderCatalog.NOVELAI_IMAGE
+                val engineId = if (useNovelAiEngine) ProviderCatalog.NOVELAI_IMAGE else ProviderCatalog.COMFYUI
 
                 val finalPrompt = if (summarizeScene) {
                     _uiState.update { it.copy(imageGenStatus = "正在用对话模型总结画面…") }
@@ -1266,31 +1274,60 @@ class ChatViewModel(
                     userPrompt
                 }
 
-                _uiState.update { it.copy(imageGenStatus = "正在生成图片…") }
-                val adapter = providerRegistry.require(ProviderCatalog.COMFYUI)
-                val imageRequest = GenerateRequest(
-                    prompt = PromptBuildResult(
-                        messages = listOf(PromptMessage(role = MessageRole.User, content = finalPrompt)),
-                        stop = emptyList(),
-                        maxTokens = null,
-                        providerType = ProviderCatalog.COMFYUI,
-                        diagnostics = PromptDiagnostics(activatedWorldEntryIds = emptyList()),
-                    ),
-                    preset = _uiState.value.selectedPreset
-                        ?: GenerationPreset(id = "none", name = "none", providerType = ProviderCatalog.COMFYUI),
-                    stream = false,
+                _uiState.update {
+                    it.copy(
+                        imageGenStatus = if (useNovelAiEngine) {
+                            "正在调用 NovelAI 生成图片…"
+                        } else {
+                            "正在生成图片…"
+                        },
+                    )
+                }
+                val adapter: ProviderAdapter = providerRegistry.require(engineId)
+                val config: ProviderConfig
+                val metadata: kotlinx.serialization.json.JsonObject
+                if (useNovelAiEngine) {
+                    val novelSettings = ProviderConfigPersistence.loadNovelAiImageSettings(secretStore)
+                    config = ProviderConfigPersistence.loadProviderConfig(secretStore, ProviderCatalog.NOVELAI_IMAGE)
+                    // 酒馆对最终提示词做 {{user}}/{{char}} 宏替换；适配器在前缀拼接后统一替换。
+                    val personaName = _uiState.value.selectedPersona?.name
+                    metadata = buildJsonObject {
+                        put("negative_prompt", negativePrompt.trim())
+                        put(
+                            "novelai_settings",
+                            Json.encodeToJsonElement(NovelAiImageSettings.serializer(), novelSettings),
+                        )
+                        if (!personaName.isNullOrBlank()) put("macro_user", personaName)
+                        if (character.name.isNotBlank()) put("macro_char", character.name)
+                    }
+                } else {
+                    val comfySettings = ProviderConfigPersistence.loadComfySettings(secretStore)
+                    config = ProviderConfigPersistence.loadProviderConfig(secretStore, ProviderCatalog.COMFYUI)
                     metadata = buildJsonObject {
                         put("negative_prompt", negativePrompt.trim())
                         put(
                             "comfy_settings",
                             Json.encodeToJsonElement(ComfyUiSettings.serializer(), comfySettings),
                         )
-                    },
+                    }
+                }
+                val imageRequest = GenerateRequest(
+                    prompt = PromptBuildResult(
+                        messages = listOf(PromptMessage(role = MessageRole.User, content = finalPrompt)),
+                        stop = emptyList(),
+                        maxTokens = null,
+                        providerType = engineId,
+                        diagnostics = PromptDiagnostics(activatedWorldEntryIds = emptyList()),
+                    ),
+                    preset = _uiState.value.selectedPreset
+                        ?: GenerationPreset(id = "none", name = "none", providerType = engineId),
+                    stream = false,
+                    metadata = metadata,
                 )
 
                 var imageBase64: String? = null
                 var failure: TellevError? = null
-                adapter.streamGenerate(comfyConfig, imageRequest).collect { chunk ->
+                adapter.streamGenerate(config, imageRequest).collect { chunk ->
                     when (chunk) {
                         is GenerateChunk.Delta -> Unit
                         is GenerateChunk.Completed -> imageBase64 = chunk.text

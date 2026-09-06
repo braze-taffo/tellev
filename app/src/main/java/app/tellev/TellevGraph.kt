@@ -23,6 +23,7 @@ import app.tellev.core.provider.KoboldAdapter
 import app.tellev.core.provider.KoboldCppAdapter
 import app.tellev.core.provider.LlamaCppAdapter
 import app.tellev.core.provider.NovelAiAdapter
+import app.tellev.core.provider.NovelAiImageAdapter
 import app.tellev.core.provider.OllamaAdapter
 import app.tellev.core.provider.OpenAiCompatibleAdapter
 import app.tellev.core.provider.OpenAiImageAdapter
@@ -168,6 +169,7 @@ class TellevGraph private constructor(
                     LlamaCppAdapter(client = providerClient),
                     StableDiffusionAdapter(client = providerClient),
                     ComfyUiAdapter(client = providerClient),
+                    NovelAiImageAdapter(client = providerClient),
                     OpenAiImageAdapter(client = providerClient),
                     OpenAiSpeechAdapter(client = providerClient),
                     GoogleTranslateAdapter(client = providerClient),
