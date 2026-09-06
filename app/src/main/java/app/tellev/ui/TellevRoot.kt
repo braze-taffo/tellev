@@ -342,6 +342,18 @@ fun TellevRoot() {
                     onOpenProviderSettings = {
                         navController.navigate("settings/providers")
                     },
+                    onOpenImageGenSettings = {
+                        navController.navigate("settings/imagegen")
+                    },
+                )
+            }
+            composable("settings/imagegen") {
+                SettingsScreen(
+                    viewModel = settingsViewModel,
+                    updateViewModel = updateViewModel,
+                    onOpenProviderSettings = {},
+                    imageGenDetailsOnly = true,
+                    onBack = { navController.popBackStack() },
                 )
             }
             composable("settings/providers") {
