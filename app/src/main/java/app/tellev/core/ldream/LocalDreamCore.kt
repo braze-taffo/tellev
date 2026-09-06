@@ -85,6 +85,35 @@ object LocalDreamCore {
     fun executable(): File = File(nativeLibDir ?: File("."), EXECUTABLE_NAME)
 
     /**
+     * 核心子进程的库搜索路径。除常规系统/供应商目录外，还要把 Mali 驱动所在的
+     * SoC 子目录（如 /vendor/lib64/egl/mt6991）加进来：应用子进程的 linker
+     * 命名空间不放行对 /vendor 下驱动的绝对路径 dlopen，libOpenCL 会退回按名
+     * 搜索，而搜索不递归——缺这一层 OpenCL 就初始化失败并静默回退 CPU
+     * （慢约 8 倍且输出纯噪音）。对齐 Local Dream BackendService 的做法。
+     */
+    private fun buildCoreLibraryPath(): String {
+        val paths = mutableListOf(
+            nativeLibDir?.absolutePath,
+            "/system/lib64",
+            "/vendor/lib64",
+            "/vendor/lib64/egl",
+        )
+        runCatching {
+            val mali = File("/system/vendor/lib64/egl/libGLES_mali.so")
+            if (mali.exists()) {
+                val segments = mali.canonicalPath.split("/")
+                val soc = segments.getOrNull(segments.size - 2)
+                if (!soc.isNullOrBlank()) {
+                    listOf("/vendor/lib64/$soc", "/vendor/lib64/egl/$soc").forEach { path ->
+                        if (!paths.contains(path)) paths.add(path)
+                    }
+                }
+            }
+        }
+        return paths.filterNotNull().joinToString(":")
+    }
+
+    /**
      * 确保核心进程针对 [modelDir] 运行，返回端口。已在跑同一模型时直接复用；
      * 模型变更时先停旧进程。失败抛 [IllegalStateException]。
      */
@@ -117,12 +146,7 @@ object LocalDreamCore {
             ).apply {
                 directory(nativeLibDir)
                 redirectErrorStream(true)
-                environment()["LD_LIBRARY_PATH"] = listOf(
-                    nativeLibDir?.absolutePath,
-                    "/system/lib64",
-                    "/vendor/lib64",
-                    "/vendor/lib64/egl",
-                ).joinToString(":")
+                environment()["LD_LIBRARY_PATH"] = buildCoreLibraryPath()
             }
             val proc = runCatching { pb.start() }.getOrElse { e ->
                 val msg = "启动本地生图核心失败：${e.message}"
@@ -244,12 +268,7 @@ object LocalDreamCore {
             ).apply {
                 directory(nativeLibDir)
                 redirectErrorStream(true)
-                environment()["LD_LIBRARY_PATH"] = listOf(
-                    nativeLibDir?.absolutePath,
-                    "/system/lib64",
-                    "/vendor/lib64",
-                    "/vendor/lib64/egl",
-                ).joinToString(":")
+                environment()["LD_LIBRARY_PATH"] = buildCoreLibraryPath()
             }
             val proc = runCatching { pb.start() }.getOrElse { return@withLock false }
             val reader: BufferedReader = proc.inputStream.bufferedReader()
