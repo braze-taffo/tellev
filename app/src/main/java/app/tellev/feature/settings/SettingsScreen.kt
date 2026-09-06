@@ -21,6 +21,8 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -133,13 +135,15 @@ import app.tellev.ui.theme.lightColors
 import app.tellev.util.UriUtils
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
     updateViewModel: UpdateViewModel,
     onOpenProviderSettings: () -> Unit,
     providerDetailsOnly: Boolean = false,
+    onOpenImageGenSettings: () -> Unit = {},
+    imageGenDetailsOnly: Boolean = false,
     presetFocusRequest: Int = 0,
     onBack: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -237,9 +241,17 @@ fun SettingsScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(if (providerDetailsOnly) "模型服务配置" else "设置") },
+                title = {
+                    Text(
+                        when {
+                            providerDetailsOnly -> "模型服务配置"
+                            imageGenDetailsOnly -> "生图设置"
+                            else -> "设置"
+                        },
+                    )
+                },
                 navigationIcon = {
-                    if (providerDetailsOnly) {
+                    if (providerDetailsOnly || imageGenDetailsOnly) {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                         }
@@ -270,7 +282,7 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
             ) {
-                if (!providerDetailsOnly) {
+                if (!providerDetailsOnly && !imageGenDetailsOnly) {
                     item(key = "provider_quick_switch") {
                         ProviderQuickSwitchCard(
                             state = state,
@@ -282,6 +294,52 @@ fun SettingsScreen(
                     item(key = "provider_quick_divider") {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     }
+
+
+                // ── 生图：引擎选择与各引擎模型配置，合并进二级页 ──
+                item(key = "imagegen_entry") {
+                    Card(
+                        onClick = onOpenImageGenSettings,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Default.Tune,
+                                contentDescription = null,
+                                modifier = Modifier.size(24.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text("生图（引擎与模型）", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    imageGenSummary(state),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                item(key = "imagegen_entry_divider") {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                }
+                }
+
+                if (imageGenDetailsOnly) {
 
                     // ── 生图引擎：聊天「生成图片」按钮走哪个引擎，各引擎配置见下方对应区块 ──
                     item(key = "image_engine_header") {
@@ -298,7 +356,7 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 FilterChip(
                                     selected = state.imageEngine == ProviderCatalog.COMFYUI,
                                     onClick = { viewModel.selectImageEngine(ProviderCatalog.COMFYUI) },
@@ -882,7 +940,7 @@ fun SettingsScreen(
 
                 }
 
-                if (!providerDetailsOnly) {
+                if (!providerDetailsOnly && !imageGenDetailsOnly) {
                 item(key = "divider_1") {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 }
@@ -2270,6 +2328,19 @@ private fun NovelAiImageParamsDialog(
             }
         },
     )
+}
+
+/** 主设置页生图入口卡片的摘要行：当前引擎与各引擎配置状态。 */
+private fun imageGenSummary(state: SettingsUiState): String {
+    val engineName = when (state.imageEngine) {
+        ProviderCatalog.NOVELAI_IMAGE -> "NovelAI"
+        else -> "ComfyUI"
+    }
+    val parts = listOf(
+        "ComfyUI " + if (state.comfySettings.workflowJson.isNotBlank()) "已配置" else "未配置",
+        "NovelAI " + if (state.novelAiToken.isNotBlank()) "已配置" else "未配置",
+    )
+    return "当前引擎：$engineName（${parts.joinToString(" · ")}）"
 }
 
 @Composable
