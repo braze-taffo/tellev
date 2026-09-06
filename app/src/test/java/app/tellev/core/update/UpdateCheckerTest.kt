@@ -108,6 +108,48 @@ class UpdateCheckerTest {
         assertNull(info.sha256)
     }
 
+    @Test
+    fun `mnn list picks first -mnn tag and skips master releases`() {
+        val json = """
+            [
+              {
+                "tag_name": "v1.6.0-mnn",
+                "name": "v1.6.0-mnn - 生图版",
+                "assets": [
+                  {"name": "tellev-1.6.0-mnn.apk", "browser_download_url": "https://x/tellev-1.6.0-mnn.apk", "size": 1}
+                ]
+              },
+              {
+                "tag_name": "v1.6.0",
+                "name": "v1.6.0 - 正式版",
+                "assets": [
+                  {"name": "tellev-1.6.0.apk", "browser_download_url": "https://x/tellev-1.6.0.apk", "size": 1}
+                ]
+              },
+              {
+                "tag_name": "v1.5.5.1",
+                "name": "v1.5.5.1",
+                "assets": [
+                  {"name": "tellev-1.5.5.1.apk", "browser_download_url": "https://x/tellev-1.5.5.1.apk", "size": 1}
+                ]
+              }
+            ]
+        """.trimIndent()
+
+        val info = checker.parseLatestMnnRelease(json)
+        assertEquals("v1.6.0-mnn", info.tagName)
+        // 版本比较只取前导数字段：1.6.0-mnn 与 1.6.0 同版本号。
+        assertEquals("1.6.0-mnn", info.version)
+        assertTrue(info.apkUrl.endsWith("tellev-1.6.0-mnn.apk"))
+        assertEquals(0, checker.compareVersions("1.6.0", info.version))
+        assertTrue(checker.isUpdateAvailable("1.5.5.1", info))
+    }
+
+    @Test(expected = IllegalStateException::class)
+    fun `mnn list without any -mnn tag throws`() {
+        checker.parseLatestMnnRelease("""[{"tag_name": "v1.6.0", "assets": []}]""")
+    }
+
     private fun info(version: String) = UpdateInfo(
         tagName = version,
         version = version,

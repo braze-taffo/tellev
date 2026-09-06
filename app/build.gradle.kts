@@ -23,7 +23,9 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "app.tellev"
+        // 独立包名：本分支（本地生图版）与 master 正式版可同时安装、互不
+        // 覆盖（签名本就不同，包名也分开后数据目录各自独立）。
+        applicationId = "app.tellev.mnn"
         minSdk = 31
         targetSdk = 36
         versionCode = 24

@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -54,13 +55,14 @@ class UpdateChecker(
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) {
     /**
-     * Fetches the latest non-prerelease release. Returns null only if every
-     * mirror was unreachable; throws the last error otherwise. A release with
-     * no APK asset is treated as "no info" (returns null) so callers can show
-     * "up to date" rather than a spurious error.
+     * Fetches the newest `-mnn` release. 本分支（tellev 生图版）的发行以
+     * pre-release + `-mnn` 后缀 tag 发布，master 正式版走普通 release 并
+     * 占据 releases/latest——两个分发渠道因此互不串台：这里拉列表后按
+     * tag 后缀过滤，而不是取 latest。Returns null only if every mirror was
+     * unreachable or no `-mnn` release parsed (callers show "up to date").
      */
     suspend fun fetchLatest(mirrors: List<UpdateMirror>): UpdateInfo? = withContext(Dispatchers.IO) {
-        val apiUrl = "https://api.github.com/repos/braze-taffo/tellev/releases/latest"
+        val apiUrl = "https://api.github.com/repos/braze-taffo/tellev/releases?per_page=30"
         var lastError: Throwable? = null
         for (mirror in mirrors) {
             try {
@@ -76,7 +78,7 @@ class UpdateChecker(
                         return@use
                     }
                     val body = response.body?.string().orEmpty()
-                    val parsed = runCatching { parseReleaseJson(body) }.getOrNull()
+                    val parsed = runCatching { parseLatestMnnRelease(body) }.getOrNull()
                     if (parsed != null) return@withContext parsed
                     lastError = IllegalStateException("无法解析版本信息")
                 }
@@ -92,11 +94,27 @@ class UpdateChecker(
     }
 
     /**
-     * Parses a GitHub `releases/latest` JSON body into [UpdateInfo].
-     * Throws if the body lacks a tag or an APK asset.
+     * Parses a GitHub `releases` list body and returns the first (newest)
+     * entry whose tag ends with `-mnn`. Throws when none is present.
      */
-    fun parseReleaseJson(body: String): UpdateInfo {
-        val root = json.parseToJsonElement(body).jsonObject
+    fun parseLatestMnnRelease(body: String): UpdateInfo {
+        val root = json.parseToJsonElement(body).jsonArray
+        val release = root.firstOrNull { entry ->
+            (entry as? JsonObject)
+                ?.get("tag_name")?.jsonPrimitive?.contentOrNull?.endsWith("-mnn") == true
+        } ?: error("未找到 -mnn 发行")
+        return parseReleaseObject(release.jsonObject)
+    }
+
+    /** Parses a single-release JSON body (e.g. a `releases/latest` response). */
+    fun parseReleaseJson(body: String): UpdateInfo =
+        parseReleaseObject(json.parseToJsonElement(body).jsonObject)
+
+    /**
+     * Parses a single GitHub release JSON object. Throws if it lacks a tag
+     * or an APK asset.
+     */
+    fun parseReleaseObject(root: JsonObject): UpdateInfo {
         val tag = root["tag_name"]?.jsonPrimitive?.contentOrNull
             ?: error("缺少 tag_name")
         val assets = root["assets"]?.jsonArray
