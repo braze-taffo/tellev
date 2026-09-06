@@ -39,16 +39,19 @@ android {
     }
 
     // ── Release signing ────────────────────────────────────────────────
+    // 本分支（mnn-image-gen）使用独立签名，与 master 发行包互不兼容、
+    // 不能互换覆盖安装。凭据属性带 Mnn 前缀；缺失时宁可产出未签名包，
+    // 也不回退到 master 的密钥。
     // Credentials come from (in priority order): Gradle project properties
     // (-P on CLI / ~/.gradle/gradle.properties) → local.properties.
     // The keystore itself lives under .keystore/ (gitignored).
     fun prop(name: String): String? =
         (project.findProperty(name) as String?) ?: localProps.getProperty(name)
 
-    val tellevStoreFile = prop("tellevStoreFile")
-    val tellevStorePassword = prop("tellevStorePassword")
-    val tellevKeyAlias = prop("tellevKeyAlias")
-    val tellevKeyPassword = prop("tellevKeyPassword")
+    val tellevStoreFile = prop("tellevMnnStoreFile")
+    val tellevStorePassword = prop("tellevMnnStorePassword")
+    val tellevKeyAlias = prop("tellevMnnKeyAlias")
+    val tellevKeyPassword = prop("tellevMnnKeyPassword")
 
     signingConfigs {
         if (tellevStoreFile != null && tellevStorePassword != null &&
