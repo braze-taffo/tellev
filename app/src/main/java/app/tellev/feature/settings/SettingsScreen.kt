@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -120,6 +121,9 @@ import app.tellev.core.model.PresetPrompt
 import app.tellev.core.provider.ComfyWorkflowTemplate
 import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.ProviderConfigPersistence
+import app.tellev.core.ldream.LocalDreamCore
+import app.tellev.core.ldream.LocalDreamCoreState
+import app.tellev.core.provider.LocalDreamSettings
 import app.tellev.core.provider.NovelAiImageSettings
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -169,6 +173,7 @@ fun SettingsScreen(
     var showAdvancedDialog by remember { mutableStateOf(false) }
     var showComfyWorkflowDialog by remember { mutableStateOf(false) }
     var showComfyParamsDialog by remember { mutableStateOf(false) }
+    var showLocalParamsDialog by remember { mutableStateOf(false) }
     var showNovelAiParamsDialog by remember { mutableStateOf(false) }
     var novelAiTokenVisible by remember { mutableStateOf(false) }
     var pendingDeleteConfigId by remember { mutableStateOf<String?>(null) }
@@ -440,7 +445,14 @@ fun SettingsScreen(
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     }
 
-                    item(key = "image_engine") {
+                    // ── 本地生图（Local Dream MNN OpenCL）：与 ComfyUI 并存 ──
+                    item(key = "local_dream_header") {
+                        SectionHeader(
+                            icon = Icons.Default.Memory,
+                            title = "本地生图（MNN 引擎）",
+                        )
+                    }
+                    item(key = "local_dream_engine") {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
                                 "对话中生图按钮使用的引擎（立即生效，无需保存）",
@@ -454,12 +466,187 @@ fun SettingsScreen(
                                     label = { Text("ComfyUI（远程）") },
                                 )
                                 FilterChip(
+                                    selected = state.imageEngine == ProviderCatalog.LOCAL_DREAM,
+                                    onClick = { viewModel.selectImageEngine(ProviderCatalog.LOCAL_DREAM) },
+                                    label = { Text("本地 MNN（手机离线出图）") },
+                                )
+                                FilterChip(
                                     selected = state.imageEngine == ProviderCatalog.NOVELAI_IMAGE,
                                     onClick = { viewModel.selectImageEngine(ProviderCatalog.NOVELAI_IMAGE) },
                                     label = { Text("NovelAI（远程）") },
                                 )
                             }
                         }
+                    }
+                    item(key = "local_dream_model") {
+                        val modelPicker = rememberLauncherForActivityResult(
+                            ActivityResultContracts.OpenDocument(),
+                        ) { uri -> uri?.let(viewModel::importLocalModel) }
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                OutlinedTextField(
+                                    value = state.localDreamSettings.modelDirName,
+                                    onValueChange = { name ->
+                                        viewModel.updateLocalDreamSettings { it.copy(modelDirName = name.trim()) }
+                                    },
+                                    label = { Text("模型目录") },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true,
+                                    placeholder = { Text("尚未导入") },
+                                    supportingText = {
+                                    Text(
+                                        if (state.localDreamModels.isEmpty()) {
+                                            "支持 SD1.5 的 .safetensors 单文件（约 2GB）；导入后自动转换"
+                                        } else {
+                                            "已转换 ${state.localDreamModels.size} 个模型，可直接输入目录名"
+                                        },
+                                    )
+                                },
+                                )
+                                FilledTonalButton(
+                                    onClick = { modelPicker.launch(arrayOf("*/*")) },
+                                    enabled = !state.isImportingLocalModel,
+                                ) {
+                                    if (state.isImportingLocalModel) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                    }
+                                    Text(if (state.isImportingLocalModel) "导入中" else "导入")
+                                }
+                            }
+                            if (state.isImportingLocalModel && state.localConvertLine != null) {
+                                Text(
+                                    state.localConvertLine ?: "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (state.localDreamModels.isNotEmpty() &&
+                                state.localDreamSettings.modelDirName !in state.localDreamModels
+                            ) {
+                                state.localDreamModels.take(3).forEach { dirName ->
+                                    TextButton(
+                                        onClick = {
+                                            viewModel.updateLocalDreamSettings { it.copy(modelDirName = dirName) }
+                                        },
+                                    ) {
+                                        Text("选择 $dirName")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    item(key = "local_dream_params") {
+                        OutlinedButton(
+                            onClick = { showLocalParamsDialog = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("生成参数与默认负面提示词")
+                        }
+                    }
+                    item(key = "local_dream_actions") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = viewModel::testLocalDream,
+                                modifier = Modifier.weight(1f),
+                                enabled = !state.isTestingLocalDream,
+                            ) {
+                                if (state.isTestingLocalDream) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                }
+                                Text(if (state.isTestingLocalDream) "测试中..." else "测试引擎")
+                            }
+                            FilledTonalButton(
+                                onClick = viewModel::saveLocalDreamConfig,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("保存")
+                            }
+                        }
+                    }
+                    if (state.localDreamStatus != null) {
+                        item(key = "local_dream_status") {
+                            val status = state.localDreamStatus!!
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (status.available) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.errorContainer,
+                                ),
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(
+                                        text = if (status.available) "引擎可用" else "引擎不可用",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = if (status.available) MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onErrorContainer,
+                                    )
+                                    Text(
+                                        text = status.message,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (status.available) MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onErrorContainer,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    item(key = "local_dream_runtime") {
+                        val engineState by LocalDreamCore.state.collectAsState()
+                        when (val runtime = engineState) {
+                            is LocalDreamCoreState.Starting -> {
+                                Card(modifier = Modifier.fillMaxWidth()) {
+                                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("引擎启动中：${runtime.modelDirName}", style = MaterialTheme.typography.titleSmall)
+                                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                        Text(
+                                            "首次启动含 OpenCL 内核调优，约 1 分钟；之后秒级启动。",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                            is LocalDreamCoreState.Ready -> {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    ),
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("引擎运行中：${runtime.modelDirName}（127.0.0.1:${runtime.port}）", style = MaterialTheme.typography.titleSmall)
+                                        Text(
+                                            "模型经 mmap 常驻（约 1.2GB，内存紧张时可被系统回收）。生成时进度见对话界面。",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        )
+                                        TextButton(onClick = viewModel::stopLocalDreamEngine) {
+                                            Text("停止引擎并释放内存")
+                                        }
+                                    }
+                                }
+                            }
+                            else -> {}
+                        }
+                    }
+                    item(key = "local_dream_divider") {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     }
 
                     // ── NovelAI 生图（远程）：行为对齐酒馆 novel 源 ──
@@ -1414,6 +1601,13 @@ fun SettingsScreen(
     }
 
     // Local MNN generation parameters (2nd-level).
+    if (showLocalParamsDialog) {
+        LocalDreamParamsDialog(
+            state = state,
+            viewModel = viewModel,
+            onDismiss = { showLocalParamsDialog = false },
+        )
+    }
     if (showNovelAiParamsDialog) {
         NovelAiImageParamsDialog(
             state = state,
@@ -2010,6 +2204,170 @@ private fun ComfyParamsDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LocalDreamParamsDialog(
+    state: SettingsUiState,
+    viewModel: SettingsViewModel,
+    onDismiss: () -> Unit,
+) {
+    val settings = state.localDreamSettings
+    var steps by remember { mutableStateOf(settings.steps.toString()) }
+    var cfg by remember { mutableStateOf(settings.cfgScale.toString()) }
+    var width by remember { mutableStateOf(settings.width.toString()) }
+    var height by remember { mutableStateOf(settings.height.toString()) }
+    var scheduler by remember { mutableStateOf(settings.scheduler) }
+    var schedulerMenu by remember { mutableStateOf(false) }
+    var seed by remember { mutableStateOf(settings.seed.toString()) }
+    var negative by remember { mutableStateOf(settings.negativePrompt) }
+    var clipSkip by remember { mutableStateOf(settings.clipSkip.toString()) }
+    var useOpencl by remember { mutableStateOf(settings.useOpencl) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("本地生图参数") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    "GPU（OpenCL）出图：512×768、20 步通常 1~2 分钟。" +
+                        "修改后请回到设置页点击「保存」。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = steps,
+                        onValueChange = { steps = it },
+                        label = { Text("步数") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                    OutlinedTextField(
+                        value = cfg,
+                        onValueChange = { cfg = it },
+                        label = { Text("CFG") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = width,
+                        onValueChange = { width = it },
+                        label = { Text("宽度") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                    OutlinedTextField(
+                        value = height,
+                        onValueChange = { height = it },
+                        label = { Text("高度") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                }
+                ExposedDropdownMenuBox(
+                    expanded = schedulerMenu,
+                    onExpandedChange = { schedulerMenu = it },
+                ) {
+                    OutlinedTextField(
+                        value = scheduler,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("采样调度器") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = schedulerMenu) },
+                    )
+                    ExposedDropdownMenu(
+                        expanded = schedulerMenu,
+                        onDismissRequest = { schedulerMenu = false },
+                    ) {
+                        LocalDreamSettings.SCHEDULERS.forEach { name ->
+                            DropdownMenuItem(
+                                text = { Text(name) },
+                                onClick = {
+                                    scheduler = name
+                                    schedulerMenu = false
+                                },
+                            )
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = seed,
+                        onValueChange = { seed = it },
+                        label = { Text("种子") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        supportingText = { Text("-1 为每次随机") },
+                    )
+                    OutlinedTextField(
+                        value = clipSkip,
+                        onValueChange = { clipSkip = it },
+                        label = { Text("Clip Skip") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        supportingText = { Text("导入时生效，重导可改") },
+                    )
+                }
+                OutlinedTextField(
+                    value = negative,
+                    onValueChange = { negative = it },
+                    label = { Text("默认负面提示词") },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("lowres, bad anatomy, bad hands, blurry") },
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("GPU 加速（OpenCL，建议开启）", modifier = Modifier.weight(1f))
+                    Switch(checked = useOpencl, onCheckedChange = { useOpencl = it })
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    viewModel.updateLocalDreamSettings { current ->
+                        current.copy(
+                            steps = steps.trim().toIntOrNull() ?: current.steps,
+                            cfgScale = cfg.trim().toDoubleOrNull() ?: current.cfgScale,
+                            width = width.trim().toIntOrNull() ?: current.width,
+                            height = height.trim().toIntOrNull() ?: current.height,
+                            scheduler = scheduler.trim().ifBlank { current.scheduler },
+                            seed = seed.trim().toLongOrNull() ?: -1L,
+                            negativePrompt = negative,
+                            clipSkip = clipSkip.trim().toIntOrNull() ?: current.clipSkip,
+                            useOpencl = useOpencl,
+                        )
+                    }
+                    onDismiss()
+                },
+            ) {
+                Text("确定")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+    )
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

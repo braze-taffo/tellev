@@ -30,6 +30,12 @@ android {
         versionName = "1.5.5.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            // 本地生图核心（jniLibs 的 libstable_diffusion_core.so）只提供
+            // arm64；过滤掉其他 ABI，避免 32 位设备装上缺库的包。
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     // ── Release signing ────────────────────────────────────────────────
@@ -82,6 +88,15 @@ android {
     }
     testBuildType = "mvuValidation"
     sourceSets.getByName("androidTest").assets.srcDir(layout.buildDirectory.dir("mvu-fixtures"))
+
+    // ── 本地生图核心（Local Dream MNN OpenCL）──────────────────────────
+    // jniLibs 里的 libstable_diffusion_core.so 以子进程方式 exec，要求它以
+    // 真实文件落在 nativeLibraryDir——必须走 legacy 打包（解压 so）。
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

@@ -168,6 +168,25 @@ object ProviderConfigPersistence {
         secretStore.putSecret(COMFY_SETTINGS_SECRET_ID, json.encodeToString(settings))
     }
 
+    /** Secret id holding the encrypted [LocalDreamSettings] JSON. */
+    private const val LOCAL_DREAM_SETTINGS_SECRET_ID = "provider-local-dream-settings"
+
+    /** True when a converted local MNN model directory has been selected (presence checked at generate time). */
+    suspend fun isLocalDreamConfigured(secretStore: SecretStore): Boolean {
+        return loadLocalDreamSettings(secretStore).modelDirName.isNotBlank()
+    }
+
+    suspend fun loadLocalDreamSettings(secretStore: SecretStore): LocalDreamSettings {
+        val stored = secretStore.readSecret(LOCAL_DREAM_SETTINGS_SECRET_ID)
+            ?: return LocalDreamSettings()
+        return runCatching { json.decodeFromString<LocalDreamSettings>(stored) }
+            .getOrElse { LocalDreamSettings() }
+    }
+
+    suspend fun saveLocalDreamSettings(secretStore: SecretStore, settings: LocalDreamSettings) {
+        secretStore.putSecret(LOCAL_DREAM_SETTINGS_SECRET_ID, json.encodeToString(settings))
+    }
+
     /** Secret id holding the encrypted [NovelAiImageSettings] JSON. */
     private const val NOVELAI_IMAGE_SETTINGS_SECRET_ID = "provider-novelai-image-settings"
 
@@ -192,6 +211,7 @@ object ProviderConfigPersistence {
 
     private val imageEngines = setOf(
         ProviderCatalog.COMFYUI,
+        ProviderCatalog.LOCAL_DREAM,
         ProviderCatalog.NOVELAI_IMAGE,
     )
 

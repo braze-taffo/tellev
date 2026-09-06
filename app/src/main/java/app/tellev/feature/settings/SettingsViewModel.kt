@@ -19,6 +19,8 @@ import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.supportsChatGeneration
 import app.tellev.core.provider.ComfyUiSettings
 import app.tellev.core.provider.ComfyWorkflowTemplate
+import app.tellev.core.ldream.LocalDreamCore
+import app.tellev.core.provider.LocalDreamSettings
 import app.tellev.core.provider.NovelAiImageSettings
 import app.tellev.core.provider.OpenAiCompatibilitySettings
 import app.tellev.core.security.SecretStore
@@ -76,9 +78,17 @@ data class SettingsUiState(
     val comfyStatus: ProviderStatus? = null,
     val isTestingComfy: Boolean = false,
     val comfyModels: List<String> = emptyList(),
-    // ── 生图引擎选择与 NovelAI 生图（远程）──
-    /** ProviderCatalog.COMFYUI / NOVELAI_IMAGE：聊天内生图按钮走哪个引擎。 */
+    // ── 本地生图（Local Dream MNN OpenCL），与 ComfyUI 并存 ──
+    /** ProviderCatalog.COMFYUI / LOCAL_DREAM：聊天内生图按钮走哪个引擎。 */
     val imageEngine: String = ProviderCatalog.COMFYUI,
+    val localDreamSettings: LocalDreamSettings = LocalDreamSettings(),
+    val localDreamStatus: ProviderStatus? = null,
+    val isTestingLocalDream: Boolean = false,
+    /** 已完成转换的模型目录名。 */
+    val localDreamModels: List<String> = emptyList(),
+    val isImportingLocalModel: Boolean = false,
+    /** 导入转换的最新输出行（进度展示）。 */
+    val localConvertLine: String? = null,
     // ── NovelAI 生图（远程，行为对齐酒馆 novel 源）──
     /** novelai.net 的 Persistent Token，保存在 provider-novelai-image-apikey。 */
     val novelAiToken: String = "",
@@ -95,6 +105,9 @@ class SettingsViewModel(
     private val themeModeFlow: MutableStateFlow<ThemeMode>,
     private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
     private val chatBubbleAlphaFlow: MutableStateFlow<Float>,
+    private val localDreamModelsRoot: java.io.File,
+    private val contentResolver: android.content.ContentResolver,
+    private val assets: android.content.res.AssetManager?,
 ) : ViewModel() {
 
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
@@ -159,7 +172,9 @@ class SettingsViewModel(
                     ?: ProviderDefaults.baseUrl(ProviderCatalog.COMFYUI)
                 val comfyModel = secretStore.readSecret("provider-${ProviderCatalog.COMFYUI}-model") ?: ""
 
+                val localSettings = ProviderConfigPersistence.loadLocalDreamSettings(secretStore)
                 val imageEngine = ProviderConfigPersistence.loadImageEngine(secretStore)
+                val localDreamModels = listLocalDreamModelDirs()
                 val novelAiSettings = ProviderConfigPersistence.loadNovelAiImageSettings(secretStore)
                 val novelAiToken =
                     secretStore.readSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey") ?: ""
@@ -188,6 +203,8 @@ class SettingsViewModel(
                         comfyModel = comfyModel,
                         comfySettings = comfySettings,
                         imageEngine = imageEngine,
+                        localDreamSettings = localSettings,
+                        localDreamModels = localDreamModels,
                         novelAiToken = novelAiToken,
                         novelAiSettings = novelAiSettings,
                     )
@@ -405,13 +422,130 @@ class SettingsViewModel(
         }
     }
 
-    // ── 生图引擎选择 ───────────────────────────────────────────────────
+    // ── 本地生图（stable-diffusion.cpp）────────────────────────────────
 
     fun selectImageEngine(engine: String) {
         _uiState.update { it.copy(imageEngine = engine) }
         viewModelScope.launch {
             runCatching { ProviderConfigPersistence.saveImageEngine(secretStore, engine) }
         }
+    }
+
+    fun updateLocalDreamSettings(transform: (LocalDreamSettings) -> LocalDreamSettings) {
+        _uiState.update { state -> state.copy(localDreamSettings = transform(state.localDreamSettings)) }
+    }
+
+    private fun listLocalDreamModelDirs(): List<String> =
+        localDreamModelsRoot.listFiles { file -> file.isDirectory }
+            ?.filter { java.io.File(it, "finished").isFile }
+            ?.map { it.name }
+            ?.sorted()
+            ?: emptyList()
+
+    /**
+     * SAF 选中的 SD1.5 safetensors → 复制到 models-mnn/<名称>/model.safetensors →
+     * 铺转换骨架 → 核心执行 --convert（手机上约 1 分钟）。失败时清理本次新建的
+     * 半成品目录，避免残留 GB 级死文件。
+     */
+    fun importLocalModel(uri: Uri) {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(isImportingLocalModel = true, error = null, info = null, localConvertLine = "读取模型文件…")
+            }
+            var freshDir: java.io.File? = null
+            try {
+                val modelDir = withContext(Dispatchers.IO) {
+                    localDreamModelsRoot.mkdirs()
+                    val displayName = runCatching {
+                        contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                            val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
+                        }
+                    }.getOrNull()
+                    val rawName = displayName?.takeIf { it.isNotBlank() }
+                        ?: "model-${System.currentTimeMillis()}.safetensors"
+                    val baseName = rawName.substringBeforeLast('.').ifBlank { "model" }
+                        .replace(Regex("""[\\/:*?"<>|]"""), "_")
+                    val dir = java.io.File(localDreamModelsRoot, baseName)
+                    freshDir = if (dir.isDirectory) null else dir
+                    dir.mkdirs()
+                    val target = java.io.File(dir, "model.safetensors")
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        target.outputStream().use { output -> input.copyTo(output) }
+                    } ?: throw IllegalStateException("无法读取所选文件")
+                    dir
+                }
+                _uiState.update { it.copy(localConvertLine = "铺开转换骨架…") }
+                val clipSkip = _uiState.value.localDreamSettings.clipSkip
+                val staged = withContext(Dispatchers.IO) {
+                    LocalDreamCore.stageConversionAssets(modelDir, clipSkip) { path ->
+                        assets?.open(path)
+                    }
+                }
+                if (!staged) throw IllegalStateException("转换骨架资产缺失（assets/ldcvt）")
+                val converted = LocalDreamCore.convert(modelDir, clipSkip >= 2) { line ->
+                    _uiState.update { it.copy(localConvertLine = line) }
+                }
+                if (!converted) throw IllegalStateException("模型转换失败：请确认这是 SD1.5 的 safetensors 单文件模型")
+                _uiState.update {
+                    it.copy(
+                        isImportingLocalModel = false,
+                        localConvertLine = null,
+                        localDreamModels = (it.localDreamModels + modelDir.name).distinct().sorted(),
+                        localDreamSettings = it.localDreamSettings.copy(modelDirName = modelDir.name),
+                        info = "模型已导入并转换完成：${modelDir.name}（记得点击保存）",
+                    )
+                }
+            } catch (e: Exception) {
+                freshDir?.deleteRecursively()
+                _uiState.update {
+                    it.copy(isImportingLocalModel = false, localConvertLine = null, error = "导入模型失败：${e.message}")
+                }
+            }
+        }
+    }
+
+    fun testLocalDream() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isTestingLocalDream = true, localDreamStatus = null, error = null) }
+            try {
+                val adapter = providerRegistry.require(ProviderCatalog.LOCAL_DREAM)
+                val config = ProviderConfig(
+                    providerType = ProviderCatalog.LOCAL_DREAM,
+                    baseUrl = ProviderDefaults.baseUrl(ProviderCatalog.LOCAL_DREAM),
+                )
+                val status = withContext(Dispatchers.IO) { adapter.checkStatus(config) }
+                val models = withContext(Dispatchers.IO) { listLocalDreamModelDirs() }
+                _uiState.update {
+                    it.copy(isTestingLocalDream = false, localDreamStatus = status, localDreamModels = models)
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isTestingLocalDream = false, error = "本地引擎测试失败：${e.message}")
+                }
+            }
+        }
+    }
+
+    fun saveLocalDreamConfig() {
+        val state = _uiState.value
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                ProviderConfigPersistence.saveLocalDreamSettings(secretStore, state.localDreamSettings)
+                _uiState.update {
+                    it.copy(isLoading = false, info = "本地生图配置已保存。")
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, error = "保存本地生图配置失败：${e.message}") }
+            }
+        }
+    }
+
+    /** 停止核心进程（释放显存与内存）；下次生成会自动重新拉起。 */
+    fun stopLocalDreamEngine() {
+        LocalDreamCore.stop()
+        testLocalDream()
     }
 
     // ── NovelAI 生图（远程）────────────────────────────────────────────
@@ -1157,6 +1291,9 @@ class SettingsViewModelFactory(
     private val themeModeFlow: MutableStateFlow<ThemeMode>,
     private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
     private val chatBubbleAlphaFlow: MutableStateFlow<Float>,
+    private val localDreamModelsRoot: java.io.File,
+    private val contentResolver: android.content.ContentResolver,
+    private val assets: android.content.res.AssetManager?,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -1169,6 +1306,9 @@ class SettingsViewModelFactory(
                 themeModeFlow = themeModeFlow,
                 themeAccentFlow = themeAccentFlow,
                 chatBubbleAlphaFlow = chatBubbleAlphaFlow,
+                localDreamModelsRoot = localDreamModelsRoot,
+                contentResolver = contentResolver,
+                assets = assets,
             ) as T
         }
         throw IllegalArgumentException("未知 ViewModel 类型：${modelClass.name}")

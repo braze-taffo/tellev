@@ -194,6 +194,45 @@ class ProviderConfigPersistenceTest {
         assertEquals("sd_xl.safetensors", config.model)
     }
 
+    // ── 本地生图（Local Dream MNN）设置 ─────────────────────────────────
+
+    @Test
+    fun `local dream settings default to fresh install state`() = runBlocking {
+        val s = store()
+        assertEquals(LocalDreamSettings(), ProviderConfigPersistence.loadLocalDreamSettings(s))
+        assertTrue(!ProviderConfigPersistence.isLocalDreamConfigured(s))
+    }
+
+    @Test
+    fun `local dream settings round-trip and enable availability`() = runBlocking {
+        val s = store()
+        val settings = LocalDreamSettings(
+            modelDirName = "abyssorangemix2_Hard",
+            steps = 24,
+            scheduler = "dpm",
+            negativePrompt = "lowres",
+        )
+        ProviderConfigPersistence.saveLocalDreamSettings(s, settings)
+        assertEquals(settings, ProviderConfigPersistence.loadLocalDreamSettings(s))
+        assertTrue(ProviderConfigPersistence.isLocalDreamConfigured(s))
+    }
+
+    @Test
+    fun `local dream corrupted json falls back to defaults`() = runBlocking {
+        val s = store()
+        s.putSecret("provider-local-dream-settings", "not json at all")
+        assertEquals(LocalDreamSettings(), ProviderConfigPersistence.loadLocalDreamSettings(s))
+    }
+
+    @Test
+    fun `image engine defaults to comfy and round-trips local dream`() = runBlocking {
+        val s = store()
+        assertEquals(ProviderCatalog.COMFYUI, ProviderConfigPersistence.loadImageEngine(s))
+        ProviderConfigPersistence.saveImageEngine(s, ProviderCatalog.LOCAL_DREAM)
+        assertEquals(ProviderCatalog.LOCAL_DREAM, ProviderConfigPersistence.loadImageEngine(s))
+    }
+
+    @Test
     fun `image engine legacy local-diffusion value falls back to comfy`() = runBlocking {
         val s = store()
         s.putSecret(ProviderConfigPersistence.IMAGE_ENGINE_SECRET_ID, "local-diffusion")

@@ -22,6 +22,8 @@ object ProviderDefaults {
         ProviderCatalog.STABLE_DIFFUSION -> "http://localhost:7860"
         ProviderCatalog.COMFYUI -> "http://127.0.0.1:8188"
         ProviderCatalog.OPENAI_IMAGE -> "https://api.openai.com"
+        // Local on-device engine: no server behind this id; the value is a placeholder.
+        ProviderCatalog.LOCAL_DREAM -> "local://image-engine-mnn"
         ProviderCatalog.NOVELAI_IMAGE -> "https://image.novelai.net"
         ProviderCatalog.OPENAI_SPEECH -> "https://api.openai.com"
         ProviderCatalog.GOOGLE_TRANSLATE -> "https://translate.googleapis.com"
