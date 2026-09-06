@@ -8,6 +8,36 @@ import org.junit.Test
 import java.io.File
 
 class TavernChatMutationTest {
+    @Test fun `MVU text rewrite after generation commits with an older raw snapshot`() = kotlinx.coroutines.runBlocking {
+        val root = java.nio.file.Files.createTempDirectory("tellev-mvu-rewrite-")
+        try {
+            val store = app.tellev.core.storage.FileStDataStore(app.tellev.core.storage.StDirectoryLayout.fromRoot(root))
+            store.bootstrap()
+            val message = ChatMessage("reply", MessageRole.Character, "Fixture", "", 0)
+            store.saveChatSession(app.tellev.core.model.ChatSession("chat", "Fixture", null, null, listOf(message)))
+            val before = store.readChatSession("chat")
+            // The generation queue retains the imported raw snapshot while content advances.
+            val generated = before.copy(messages = listOf(before.messages.single().copy(content = "Generated reply")))
+            store.commitChatMutation(before, generated)
+            val rewritten = generated.copy(messages = applyTavernChatMessages(generated.messages,
+                Json.parseToJsonElement("""[{"message_id":0,"message":"Generated reply\\n<StatusPlaceHolderImpl/>"}]""").jsonArray))
+            store.commitChatMutation(generated, rewritten)
+            val withVariables = rewritten.copy(messages = applyTavernChatMessages(rewritten.messages,
+                Json.parseToJsonElement("""[{"message_id":0,"data":{"stat_data":{"hp":85}}}]""").jsonArray))
+            store.commitChatMutation(rewritten, withVariables)
+            val reread = store.readChatSession("chat").messages.single()
+            assertEquals(rewritten.messages.single().content, reread.content)
+            assertEquals(withVariables.messages.single().variables, reread.variables)
+            // A genuine concurrent text edit is still rejected.
+            org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+                kotlinx.coroutines.runBlocking {
+                    store.commitChatMutation(generated, generated.copy(messages = listOf(generated.messages.single().copy(content = "Competing edit"))))
+                }
+            }
+            Unit
+        } finally { root.toFile().deleteRecursively() }
+    }
+
     @Test fun `normal data writes ignore swipe selection as in the fixed upstream`() {
         val message = ChatMessage("a", MessageRole.Character, "A", "one", 0,
             swipes = listOf("one", "two"), variables = listOf(buildJsonObject { put("n", 1) }))

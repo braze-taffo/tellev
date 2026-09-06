@@ -11,8 +11,8 @@
     "mvu.js": "b141bb8719a3c915bd3f0e81ce9f3d4254b80c0fc6847eb40a8b8663ee43c3d6",
     "mvu-zod.js": "8c46f5301e6f1c69c8c86517da51bb92f777ed700520d73a3ca6b412ca47c5e4",
     "chat.js": "d9e6111e07e215b8eb42ea374cb1896b4b08e4e46b48d3273eed0ed70657f569",
-    "host.js": "f727edf9b50465b846223e1b21fd7ad603a9592199bb3fc65ce51354adcfc74c",
-    "template.js": "10b9652b6e7557d91a497b269f65d9add53965ba16c059e465848cbfd96d7cd8",
-    "message.js": "52c0ac13cf4b56ec8f57b2c6ae032f6c3d13372b67ba4bfbeb8c6ef51cbf67b8"
+    "host.js": "c80f480e71dd0489a1697cd1acfa44aa68a0afc1ccbc567ceb5528b5588b6fb0",
+    "template.js": "5563c8f4a5faf9cc2ca43c60019a5f1163d6f5206ba29d71f969f47c2e3da98a",
+    "message.js": "83ec248f1ee8e97ea57b2fe16fbed545a8a2553b1c54b4949840fef8b3e5f9b6"
   }
 }

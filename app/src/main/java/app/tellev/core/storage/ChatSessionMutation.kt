@@ -6,6 +6,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 
 /**
@@ -42,10 +43,24 @@ fun applyChatSessionMutation(base: ChatSession, desired: ChatSession, current: C
         if (before[id] == after[id]) return@map present.getValue(id)
         if (present[id] == before[id] || present[id] == after[id]) return@map after.getValue(id)
         check(before[id] != null && after[id] != null && present[id] != null) { "Message was removed or replaced: $id" }
+        // `raw.mes` is an import snapshot; FileStDataStore writes `content` over it.
+        // Generation changes content without refreshing raw, whereas TavernHelper changes
+        // both. Compare the authoritative text on all sides of the disk round trip so
+        // this cache cannot manufacture a conflict after an ordered generation commit.
+        val normalizeRawText = listOf(before.getValue(id), after.getValue(id), present.getValue(id))
+            .map { it.raw["mes"] }.distinct().size > 1
+        fun messageJson(message: ChatMessage): JsonElement {
+            val emptyUpstreamSelection = message.raw["swipes"] == JsonArray(emptyList()) &&
+                message.swipes.isEmpty() && "mes" !in message.raw && message.content.isEmpty()
+            val normalized = if (normalizeRawText && !emptyUpstreamSelection) {
+                message.copy(raw = JsonObject(message.raw + ("mes" to JsonPrimitive(message.content))))
+            } else message
+            return json.encodeToJsonElement(ChatMessage.serializer(), normalized)
+        }
         json.decodeFromJsonElement(ChatMessage.serializer(), mergeChangedFields(
-            json.encodeToJsonElement(ChatMessage.serializer(), before.getValue(id)),
-            json.encodeToJsonElement(ChatMessage.serializer(), after.getValue(id)),
-            json.encodeToJsonElement(ChatMessage.serializer(), present.getValue(id)),
+            messageJson(before.getValue(id)),
+            messageJson(after.getValue(id)),
+            messageJson(present.getValue(id)),
             "message[$id]",
             swipeFields = setOf("variables", "swipeInfo", "swipes", "isEjsProcessed", "variablesInitialized")
                 .map { "message[$id].$it" }.toSet(),

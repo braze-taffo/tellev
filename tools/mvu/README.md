@@ -17,6 +17,13 @@ From tellev, run `npm --prefix tools/mvu ci`, `npm --prefix tools/mvu run build`
 
 Results are under ignored `build/mvu-oracle/results`. Full upstream generation reports contain user-owned card/preset text and complete prompts; do not publish them without reviewing content. Generation probes currently establish the oracle capture path, not final prompt equality. Fixed time/randomness/ID sources and comprehensive protocol fixtures are still pending.
 
+## Card script regression replay
+
+After exporting the production host with the JVM tests, run `node tools/mvu/replay-card.mjs <extracted-card.json> <preset.json>`.
+The input files remain outside the repository. The replay executes the card's Schema and maintenance scripts with the pinned real MVU bundle, checks every greeting and two synthetic reply cycles, and checks that the greeting variables remain intact. Recognized MVU and Zod imports use the local pinned bundles; other imports fail explicitly. When a card references a moving branch such as `@beta`, verify its downloaded source hash against `tools/mvu/vendor/SHA256.json` before using this replay as evidence.
+
+This uses a simulated native boundary and does not validate Android rendering, model output, preset prompt/regex application, or disk persistence. The `TavernChatMutationTest` regression separately exercises generation, an MVU text rewrite and variable persistence against the real JSONL store, including rejection of a competing text edit. `host-writes.test.mjs` verifies immediate propagation of native rewrite failures instead of a misleading MVU timeout.
+
 ## API inventory
 
 `node audit-api.mjs` enumerates actual exposed function objects. The original 374-entry baseline and expanded 414-entry baseline are both retained under `contracts`; later audits write `build/mvu-api-current.json`. `node api-matrix.mjs` checks local reference HEADs, locates source candidates, and generates `contracts/api-contracts.json` plus `docs/MVU-API-MATRIX.md`. All contracts remain pending until their complete behavior, failures and calling convention have executable evidence; aliases and placeholder candidates are not accepted implementations.
