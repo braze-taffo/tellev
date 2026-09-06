@@ -126,6 +126,8 @@ class TellevGraph private constructor(
             app.tellev.core.ldream.LocalDreamCore.initialize(
                 nativeLibDir = java.io.File(context.applicationInfo.nativeLibraryDir),
             )
+            // 引擎/转换运行期间以前台服务保活，防止退后台时模型被系统回收。
+            app.tellev.core.ldream.LocalDreamKeepAlive.start(context)
             // One shared client for every provider HTTP call (chat streaming,
             // image generation, TTS, translation) with uniform 5-minute
             // timeouts: reasoning models can stay silent between SSE bytes

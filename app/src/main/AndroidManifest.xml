@@ -6,6 +6,10 @@
          system PackageInstaller. tellev is distributed via GitHub Releases
          (sideloaded), so this is the standard self-update permission. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 本地生图引擎保活：模型加载后常驻内存直至用户退出应用或卸载。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="false"
@@ -51,5 +55,20 @@
                 <data android:mimeType="text/json" />
             </intent-filter>
         </activity>
+
+        <!-- 本地生图引擎的前台保活服务：核心子进程随 app 进程被系统回收会连
+             模型一起丢，前台服务让模型常驻直至用户退出应用或卸载。 -->
+        <service
+            android:name=".core.ldream.LocalDreamEngineService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the on-device diffusion engine process and its resident model in memory until the user exits the app or unloads the model" />
+        </service>
+
+        <receiver
+            android:name=".core.ldream.LocalDreamEngineStopReceiver"
+            android:exported="false" />
     </application>
 </manifest>

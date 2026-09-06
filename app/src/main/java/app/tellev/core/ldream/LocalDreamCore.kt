@@ -214,6 +214,18 @@ object LocalDreamCore {
         }
     }
 
+    /** 适配器在生成结束（完成/失败/取消）时回写：Generating 回落 Ready。 */
+    fun reportGenerationFinished() {
+        val current = _state.value
+        if (current is LocalDreamCoreState.Generating) {
+            _state.value = LocalDreamCoreState.Ready(current.modelDirName, servingPort)
+        }
+    }
+
+    /** 核心是否正在服务该模型目录（删除模型前据此决定是否先停引擎）。 */
+    fun isServing(modelDirName: String): Boolean =
+        processRef.get() != null && servingModelDir?.name == modelDirName
+
     private fun stopLocked(): Boolean {
         val proc = processRef.getAndSet(null) ?: return false
         servingModelDir = null

@@ -286,6 +286,10 @@ class LocalDreamAdapter(
                     ),
                 ),
             )
+        } finally {
+            // 完成/失败/取消一律把引擎状态从 Generating 回落 Ready，
+            // 否则状态流和保活通知会永远停在「生成中」。
+            LocalDreamCore.reportGenerationFinished()
         }
     }.flowOn(Dispatchers.IO)
 

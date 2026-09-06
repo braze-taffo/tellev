@@ -89,6 +89,7 @@ data class SettingsUiState(
     val isImportingLocalModel: Boolean = false,
     /** 导入转换的最新输出行（进度展示）。 */
     val localConvertLine: String? = null,
+    val isDeletingLocalModel: Boolean = false,
     // ── NovelAI 生图（远程，行为对齐酒馆 novel 源）──
     /** novelai.net 的 Persistent Token，保存在 provider-novelai-image-apikey。 */
     val novelAiToken: String = "",
@@ -546,6 +547,55 @@ class SettingsViewModel(
     fun stopLocalDreamEngine() {
         LocalDreamCore.stop()
         testLocalDream()
+    }
+
+    /**
+     * 删除已导入的本地模型目录（原始 safetensors + 转换产物，GB 级）。引擎
+     * 正在服务该模型时先停止引擎；删的是当前选中模型时同步清空选择并立即
+     * 持久化，避免设置指向已删除目录。
+     */
+    fun deleteLocalModel(dirName: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isDeletingLocalModel = true, error = null, info = null) }
+            try {
+                val freedGb = withContext(Dispatchers.IO) {
+                    val dir = java.io.File(localDreamModelsRoot, dirName)
+                    if (!dir.isDirectory) return@withContext 0.0
+                    val bytes = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                    if (LocalDreamCore.isServing(dirName)) LocalDreamCore.stop()
+                    val deleted = dir.deleteRecursively()
+                    if (!deleted && dir.isDirectory) {
+                        throw IllegalStateException("部分文件删除失败，请重试")
+                    }
+                    bytes / (1024.0 * 1024 * 1024)
+                }
+                val models = listLocalDreamModelDirs()
+                val clearedSelection = _uiState.value.localDreamSettings.modelDirName == dirName
+                if (clearedSelection) {
+                    ProviderConfigPersistence.saveLocalDreamSettings(
+                        secretStore,
+                        _uiState.value.localDreamSettings.copy(modelDirName = ""),
+                    )
+                }
+                _uiState.update {
+                    it.copy(
+                        isDeletingLocalModel = false,
+                        localDreamModels = models,
+                        localDreamSettings = if (clearedSelection) {
+                            it.localDreamSettings.copy(modelDirName = "")
+                        } else {
+                            it.localDreamSettings
+                        },
+                        info = "已删除模型 $dirName（释放约 ${"%.1f".format(freedGb)} GB）" +
+                            if (clearedSelection) "；当前选择已清空" else "",
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isDeletingLocalModel = false, error = "删除模型失败：${e.message}")
+                }
+            }
+        }
     }
 
     // ── NovelAI 生图（远程）────────────────────────────────────────────

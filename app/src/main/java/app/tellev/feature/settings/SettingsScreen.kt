@@ -598,18 +598,64 @@ fun SettingsScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            if (state.localDreamModels.isNotEmpty() &&
-                                state.localDreamSettings.modelDirName !in state.localDreamModels
-                            ) {
-                                state.localDreamModels.take(3).forEach { dirName ->
-                                    TextButton(
-                                        onClick = {
-                                            viewModel.updateLocalDreamSettings { it.copy(modelDirName = dirName) }
-                                        },
+                            var confirmDeleteModel by remember { mutableStateOf<String?>(null) }
+                            if (state.localDreamModels.isNotEmpty()) {
+                                Text(
+                                    "已导入的模型（点选切换，右侧删除）",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                state.localDreamModels.forEach { dirName ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        Text("选择 $dirName")
+                                        FilterChip(
+                                            selected = dirName == state.localDreamSettings.modelDirName,
+                                            onClick = {
+                                                viewModel.updateLocalDreamSettings { it.copy(modelDirName = dirName) }
+                                            },
+                                            label = { Text(dirName) },
+                                        )
+                                        Spacer(modifier = Modifier.weight(1f))
+                                        IconButton(
+                                            onClick = { confirmDeleteModel = dirName },
+                                            enabled = !state.isDeletingLocalModel && !state.isImportingLocalModel,
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "删除模型 $dirName",
+                                                tint = MaterialTheme.colorScheme.error,
+                                            )
+                                        }
                                     }
                                 }
+                            }
+                            if (confirmDeleteModel != null) {
+                                val deleteTarget = confirmDeleteModel!!
+                                AlertDialog(
+                                    onDismissRequest = { confirmDeleteModel = null },
+                                    title = { Text("删除模型") },
+                                    text = {
+                                        Text(
+                                            "将删除「$deleteTarget」的全部文件（原始 safetensors 与转换产物，GB 级），" +
+                                                "不可恢复。若引擎正在使用该模型，会先停止引擎。",
+                                        )
+                                    },
+                                    confirmButton = {
+                                        TextButton(
+                                            onClick = {
+                                                viewModel.deleteLocalModel(deleteTarget)
+                                                confirmDeleteModel = null
+                                            },
+                                        ) {
+                                            Text("删除", color = MaterialTheme.colorScheme.error)
+                                        }
+                                    },
+                                    dismissButton = {
+                                        TextButton(onClick = { confirmDeleteModel = null }) { Text("取消") }
+                                    },
+                                )
                             }
                         }
                     }
@@ -703,7 +749,7 @@ fun SettingsScreen(
                                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("引擎运行中：${runtime.modelDirName}（127.0.0.1:${runtime.port}）", style = MaterialTheme.typography.titleSmall)
                                         Text(
-                                            "模型经 mmap 常驻（约 1.2GB，内存紧张时可被系统回收）。生成时进度见对话界面。",
+                                            "模型已常驻内存（前台服务保活，切到其他应用也不会被回收），直至退出应用或点此停止。",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                                         )
