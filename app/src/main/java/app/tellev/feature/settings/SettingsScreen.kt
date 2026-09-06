@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
@@ -287,6 +288,44 @@ fun SettingsScreen(
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     }
 
+                    // ── 生图引擎：聊天「生成图片」按钮走哪个引擎，各引擎配置见下方对应区块 ──
+                    item(key = "image_engine_header") {
+                        SectionHeader(
+                            icon = Icons.Default.Tune,
+                            title = "生图引擎",
+                        )
+                    }
+                    item(key = "image_engine") {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                "聊天输入栏「生成图片」按钮使用的引擎（立即生效，无需保存）；" +
+                                    "各引擎的连接与参数在下方对应区块配置。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(
+                                    selected = state.imageEngine == ProviderCatalog.COMFYUI,
+                                    onClick = { viewModel.selectImageEngine(ProviderCatalog.COMFYUI) },
+                                    label = { Text("ComfyUI（远程）") },
+                                )
+                                FilterChip(
+                                    selected = state.imageEngine == ProviderCatalog.LOCAL_DREAM,
+                                    onClick = { viewModel.selectImageEngine(ProviderCatalog.LOCAL_DREAM) },
+                                    label = { Text("本地 MNN（手机离线出图）") },
+                                )
+                                FilterChip(
+                                    selected = state.imageEngine == ProviderCatalog.NOVELAI_IMAGE,
+                                    onClick = { viewModel.selectImageEngine(ProviderCatalog.NOVELAI_IMAGE) },
+                                    label = { Text("NovelAI（远程）") },
+                                )
+                            }
+                        }
+                    }
+                    item(key = "image_engine_divider") {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    }
+
                     // ── 生图模型（ComfyUI）；未配置时聊天界面不出现生图入口 ──
                     item(key = "comfy_header") {
                         SectionHeader(
@@ -451,32 +490,6 @@ fun SettingsScreen(
                             icon = Icons.Default.Memory,
                             title = "本地生图（MNN 引擎）",
                         )
-                    }
-                    item(key = "local_dream_engine") {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                "对话中生图按钮使用的引擎（立即生效，无需保存）",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                FilterChip(
-                                    selected = state.imageEngine == ProviderCatalog.COMFYUI,
-                                    onClick = { viewModel.selectImageEngine(ProviderCatalog.COMFYUI) },
-                                    label = { Text("ComfyUI（远程）") },
-                                )
-                                FilterChip(
-                                    selected = state.imageEngine == ProviderCatalog.LOCAL_DREAM,
-                                    onClick = { viewModel.selectImageEngine(ProviderCatalog.LOCAL_DREAM) },
-                                    label = { Text("本地 MNN（手机离线出图）") },
-                                )
-                                FilterChip(
-                                    selected = state.imageEngine == ProviderCatalog.NOVELAI_IMAGE,
-                                    onClick = { viewModel.selectImageEngine(ProviderCatalog.NOVELAI_IMAGE) },
-                                    label = { Text("NovelAI（远程）") },
-                                )
-                            }
-                        }
                     }
                     item(key = "local_dream_model") {
                         val modelPicker = rememberLauncherForActivityResult(
