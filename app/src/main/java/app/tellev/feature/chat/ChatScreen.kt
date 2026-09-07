@@ -13,6 +13,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.scrollBy
@@ -647,10 +649,12 @@ private fun ChatContentScreen(
         if (showImageDialog) {
             ImageGenerationDialog(
                 initialPrompt = inputText,
-                onGenerate = { prompt, negative, summarizeScene ->
+                initialEngine = state.imageEngine,
+                configuredEngines = state.configuredImageEngines,
+                onGenerate = { prompt, negative, summarizeScene, engine ->
                     showImageDialog = false
                     keyboardController?.hide()
-                    viewModel.generateImage(prompt, negative, summarizeScene)
+                    viewModel.generateImage(prompt, negative, summarizeScene, engine)
                 },
                 onDismiss = { showImageDialog = false },
             )
@@ -796,10 +800,18 @@ private fun ChatBubble(
         }
         val hasFrontend = renderSegments.any { it is TavernRenderSegment.Frontend }
         // 生成图片消息：解析附件里的本地图片文件（生图结果落盘于 st-data/user/images）。
-        val imageFiles = remember(message.id, message.attachments) {
+        // tellev-img 日志用于真机排查生图链路（附件→路径→文件存在性）。
+        val imageFiles = remember(message.id, message.attachments, dataRoot) {
             message.attachments
                 .filter { it.relativePath.isNotBlank() && it.mimeType.startsWith("image/") }
-                .mapNotNull { attachment -> dataRoot.resolve(attachment.relativePath).takeIf { it.isFile } }
+                .mapNotNull { attachment ->
+                    val resolved = dataRoot.resolve(attachment.relativePath)
+                    android.util.Log.i(
+                        "tellev-img",
+                        "attachment=${attachment.name} rel=${attachment.relativePath} resolved=${resolved.path} exists=${resolved.isFile}",
+                    )
+                    resolved.takeIf { it.isFile }
+                }
         }
         val dragModifier = Modifier.pointerInput(message.id) {
             detectHorizontalDragGestures(
@@ -817,7 +829,8 @@ private fun ChatBubble(
             )
         }
 
-        if (hasFrontend && !isUser) {
+        // 生图消息优先走图片分支：无论正文是否前端渲染，图片都必须展示。
+        if (hasFrontend && !isUser && imageFiles.isEmpty()) {
             if (message.swipes.size > 1) {
                 HtmlSwipeControls(
                     currentIndex = message.swipeIndex,
@@ -1784,18 +1797,46 @@ private fun ChatBubbleImage(file: java.io.File) {
 @Composable
 private fun ImageGenerationDialog(
     initialPrompt: String,
-    onGenerate: (prompt: String, negativePrompt: String, summarizeScene: Boolean) -> Unit,
+    initialEngine: String?,
+    configuredEngines: Set<String>,
+    onGenerate: (prompt: String, negativePrompt: String, summarizeScene: Boolean, engine: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var prompt by remember { mutableStateOf(initialPrompt) }
     var negative by remember { mutableStateOf("") }
     var summarizeScene by remember { mutableStateOf(false) }
+    var selectedEngineId by remember(initialEngine) { mutableStateOf(initialEngine) }
+    val selectedEngine = selectedEngineId?.let(ChatImageEngine::fromProviderId)
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("生成图片") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("生图引擎", style = MaterialTheme.typography.titleSmall)
+                ChatImageEngine.entries.forEach { engine ->
+                    val configured = engine.providerId in configuredEngines
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(enabled = configured) { selectedEngineId = engine.providerId },
+                    ) {
+                        RadioButton(
+                            selected = selectedEngineId == engine.providerId,
+                            enabled = configured,
+                            onClick = { selectedEngineId = engine.providerId },
+                        )
+                        Text(
+                            engine.label + if (configured) "" else "（请先在设置中配置）",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (configured) 1f else 0.5f),
+                        )
+                    }
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -1820,6 +1861,9 @@ private fun ImageGenerationDialog(
                     value = prompt,
                     onValueChange = { prompt = it },
                     label = { Text("图片提示词") },
+                    supportingText = if (selectedEngine?.usesEnglishTags == true) {
+                        { Text("建议使用英文 tag，以逗号分隔，如：1girl, solo, blue eyes, garden") }
+                    } else null,
                     enabled = !summarizeScene,
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
@@ -1836,7 +1880,9 @@ private fun ImageGenerationDialog(
                 )
                 if (summarizeScene) {
                     Text(
-                        "将用当前对话模型总结最近画面，再交给 ComfyUI 生成",
+                        if (selectedEngine?.usesEnglishTags == true)
+                            "将用当前对话模型提取英文 tag，校验后交给 ${selectedEngine.label} 生成；格式不合格时自动重试一次。"
+                        else "将用当前对话模型总结最近画面，再交给 ${selectedEngine?.label.orEmpty()} 生成",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1845,8 +1891,8 @@ private fun ImageGenerationDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onGenerate(prompt.trim(), negative.trim(), summarizeScene) },
-                enabled = summarizeScene || prompt.isNotBlank(),
+                onClick = { selectedEngine?.let { onGenerate(prompt.trim(), negative.trim(), summarizeScene, it.providerId) } },
+                enabled = selectedEngineId in configuredEngines && (summarizeScene || prompt.isNotBlank()),
             ) {
                 Text("生成")
             }

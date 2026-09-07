@@ -168,6 +168,25 @@ object ProviderConfigPersistence {
         secretStore.putSecret(COMFY_SETTINGS_SECRET_ID, json.encodeToString(settings))
     }
 
+    /** Secret id holding the encrypted [LocalDreamSettings] JSON. */
+    private const val LOCAL_DREAM_SETTINGS_SECRET_ID = "provider-local-dream-settings"
+
+    /** True when a converted local MNN model directory has been selected (presence checked at generate time). */
+    suspend fun isLocalDreamConfigured(secretStore: SecretStore): Boolean {
+        return loadLocalDreamSettings(secretStore).modelDirName.isNotBlank()
+    }
+
+    suspend fun loadLocalDreamSettings(secretStore: SecretStore): LocalDreamSettings {
+        val stored = secretStore.readSecret(LOCAL_DREAM_SETTINGS_SECRET_ID)
+            ?: return LocalDreamSettings()
+        return runCatching { json.decodeFromString<LocalDreamSettings>(stored) }
+            .getOrElse { LocalDreamSettings() }
+    }
+
+    suspend fun saveLocalDreamSettings(secretStore: SecretStore, settings: LocalDreamSettings) {
+        secretStore.putSecret(LOCAL_DREAM_SETTINGS_SECRET_ID, json.encodeToString(settings))
+    }
+
     /** Secret id holding the encrypted [NovelAiImageSettings] JSON. */
     private const val NOVELAI_IMAGE_SETTINGS_SECRET_ID = "provider-novelai-image-settings"
 
@@ -187,13 +206,25 @@ object ProviderConfigPersistence {
         secretStore.putSecret(NOVELAI_IMAGE_SETTINGS_SECRET_ID, json.encodeToString(settings))
     }
 
-    /** Which image engine in-chat generation uses; an unconfigured selection falls back to ComfyUI. */
+    /** Saved default; callers must check that the selected engine is configured. */
     const val IMAGE_ENGINE_SECRET_ID = "image-engine-selected"
 
     private val imageEngines = setOf(
         ProviderCatalog.COMFYUI,
+        ProviderCatalog.LOCAL_DREAM,
         ProviderCatalog.NOVELAI_IMAGE,
     )
+
+    suspend fun configuredImageEngines(secretStore: SecretStore): Set<String> = buildSet {
+        if (isComfyImageGenerationConfigured(secretStore)) add(ProviderCatalog.COMFYUI)
+        if (isLocalDreamConfigured(secretStore)) add(ProviderCatalog.LOCAL_DREAM)
+        if (isNovelAiImageConfigured(secretStore)) add(ProviderCatalog.NOVELAI_IMAGE)
+    }
+
+    suspend fun availableImageEngine(secretStore: SecretStore, configured: Set<String>): String? {
+        val saved = loadImageEngine(secretStore)
+        return saved.takeIf { it in configured } ?: imageEngines.firstOrNull { it in configured }
+    }
 
     suspend fun loadImageEngine(secretStore: SecretStore): String {
         val stored = secretStore.readSecret(IMAGE_ENGINE_SECRET_ID) ?: return ProviderCatalog.COMFYUI

@@ -26,10 +26,15 @@ android {
         applicationId = "app.tellev"
         minSdk = 31
         targetSdk = 36
-        versionCode = 25
-        versionName = "1.6.0.1"
+        versionCode = 26
+        versionName = "1.6.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // The local diffusion executable is supplied for arm64 devices.
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     // ── Release signing ────────────────────────────────────────────────
@@ -82,6 +87,13 @@ android {
     }
     testBuildType = "mvuValidation"
     sourceSets.getByName("androidTest").assets.srcDir(layout.buildDirectory.dir("mvu-fixtures"))
+
+    // The diffusion core runs as a subprocess and needs a real executable in nativeLibraryDir.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

@@ -94,6 +94,7 @@ private enum class TellevTab(
 fun TellevRoot() {
     val graph = LocalTellevGraph.current
     val navController = rememberNavController()
+    val context = LocalContext.current
 
     // Create ViewModels scoped to the activity (survive navigation)
     val chatViewModel: ChatViewModel = viewModel(
@@ -129,6 +130,12 @@ fun TellevRoot() {
             themeModeFlow = graph.themeModeFlow,
             themeAccentFlow = graph.themeAccentFlow,
             chatBubbleAlphaFlow = graph.chatBubbleAlphaFlow,
+            localDreamModelsRoot = java.io.File(
+                graph.dataStore.layout.root.toFile(),
+                app.tellev.core.ldream.LocalDreamCore.LOCAL_DREAM_MODELS_DIR_NAME,
+            ),
+            contentResolver = context.contentResolver,
+            assets = context.assets,
         ),
     )
 

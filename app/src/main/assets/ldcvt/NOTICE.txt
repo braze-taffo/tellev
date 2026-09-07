@@ -1,0 +1,9 @@
+本目录的转换骨架资产（*.mnn、tokenizer.json）与应用内 jniLibs/arm64-v8a/libstable_diffusion_core.so
+取自开源项目 Local Dream（https://github.com/xororz/local-dream）v2.8.1 官方发布包。
+
+Local Dream 采用 CC BY-NC 4.0 许可证（署名-非商业性使用）。
+Tellev 为个人非商业自用应用，按该许可证条款复用上述二进制与资产，并在此署名致谢。
+
+本地生图核心（MNN OpenCL 推理管线）作者：xororz
+依赖：alibaba/MNN（Apache-2.0）、xtensor（BSD-3）、tokenizers-cpp（Apache-2.0）、
+cpp-httplib（MIT）、nlohmann/json（MIT）、zstd（BSD/Double licensed）、stb（Public Domain）
