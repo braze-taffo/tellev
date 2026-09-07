@@ -2,16 +2,16 @@
 
 tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是在手机上提供更贴近原生应用体验的角色管理、聊天、世界书、扩展和模型服务配置能力，同时尽量保持与 SillyTavern 数据格式和使用习惯兼容。
 
-> 公开版本以 GitHub Releases 中发布的 APK 为准。当前源码版本 **v1.6.1**。
+> 公开版本以 GitHub Releases 中发布的 APK 为准。当前源码版本 **v1.6.1.1**。
 
-## v1.6.1 更新
+## v1.6.1.1 更新
 
-- 正式版接入 Local Dream MNN OpenCL 本地生图，支持导入、转换、切换与删除 SD1.5 模型。
+- 当前分支为独立生图版（`mnn-image-gen` / `app.tellev.mnn`），包含 Local Dream MNN OpenCL 本地生图，支持导入、转换、切换与删除 SD1.5 模型。
 - 聊天内每次生图都可选择已配置的本地推理、ComfyUI 或 NovelAI 引擎。
 - 本地推理与 NovelAI 的「总结当前场景」会输出经校验的英文图像 tag，格式不合格时自动重试一次。
 - 修复生成图片消息可能被前端富文本分支遮住的问题。
-- 独立生图版继续使用包名 `app.tellev.mnn` 和预发布渠道，可与正式版共存。
-- 版本说明与验证范围见 [v1.6.1 发布说明](docs/RELEASE_1.6.1.md)。
+- 生图版使用独立签名和 `-mnn` 预发布渠道，可与正式版共存；正式版 `master` / `app.tellev` 仅提供 ComfyUI、NovelAI 远程生图。
+- 版本说明与验证范围见 [v1.6.1.1 发布说明](docs/RELEASE_1.6.1.1.md)。
 
 ## 主要功能
 
