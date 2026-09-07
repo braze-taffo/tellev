@@ -30,7 +30,7 @@ class ImagePromptTemplatesTest {
 
     @Test
     fun `tag engines retry invalid scene output once with format instructions`() = runBlocking {
-        for (engine in listOf(ChatImageEngine.Local, ChatImageEngine.NovelAi)) {
+        for (engine in listOf(ChatImageEngine.NovelAi)) {
             val instructions = mutableListOf<String>()
             val result = ImagePromptTemplates.summarize(engine) { instruction ->
                 instructions += instruction
@@ -46,7 +46,7 @@ class ImagePromptTemplatesTest {
     @Test
     fun `tag engines never pass invalid fallback text to image generation`() = runBlocking {
         var attempts = 0
-        assertNull(ImagePromptTemplates.summarize(ChatImageEngine.Local) {
+        assertNull(ImagePromptTemplates.summarize(ChatImageEngine.NovelAi) {
             attempts++
             "1girl, 女孩微笑"
         })
@@ -62,7 +62,7 @@ class ImagePromptTemplatesTest {
         })
         assertEquals(1, attempts)
         attempts = 0
-        assertNull(ImagePromptTemplates.summarize(ChatImageEngine.Local) { attempts++; null })
+        assertNull(ImagePromptTemplates.summarize(ChatImageEngine.NovelAi) { attempts++; null })
         assertEquals(1, attempts)
     }
 

@@ -20,7 +20,6 @@ object ProviderCatalog {
     const val STABLE_DIFFUSION = "stable-diffusion"
     const val COMFYUI = "comfyui"
     const val OPENAI_IMAGE = "openai-image"
-    const val LOCAL_DREAM = "local-dream"
     const val NOVELAI_IMAGE = "novelai-image"
 
     const val GOOGLE_TTS = "google-tts"
@@ -50,7 +49,6 @@ object ProviderCatalog {
         STABLE_DIFFUSION,
         COMFYUI,
         OPENAI_IMAGE,
-        LOCAL_DREAM,
         GOOGLE_TTS,
         ELEVENLABS,
         OPENAI_SPEECH,

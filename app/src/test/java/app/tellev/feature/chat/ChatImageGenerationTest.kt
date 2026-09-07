@@ -24,6 +24,14 @@ import java.util.concurrent.Executors
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatImageGenerationTest {
     @Test
+    fun `official chat exposes remote image engines only`() {
+        assertEquals(setOf(ProviderCatalog.COMFYUI, ProviderCatalog.NOVELAI_IMAGE),
+            ChatImageEngine.entries.map { it.providerId }.toSet())
+        assertNull(ChatImageEngine.fromProviderId("local-dream"))
+        assertTrue(ChatImageEngine.NovelAi.usesEnglishTags)
+    }
+
+    @Test
     fun `chat dispatches the chosen NovelAI engine and blocks removed configuration before summarizing`() = runBlocking {
         val root = Files.createTempDirectory("tellev-image-dispatch-")
         val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
@@ -46,7 +54,8 @@ class ChatImageGenerationTest {
                         error("Manual or unconfigured image requests must not call the chat model")
                 }, secrets, host(), ExtensionPermissionManager()).also { models.put("chat", it) }
             }
-            waitUntil { !vm.uiState.value.isLoading }
+            // The initial default isLoading=false precedes the asynchronous bootstrap.
+            waitUntil { vm.uiState.value.characters.any { it.id == "fixture" } && !vm.uiState.value.isLoading }
             withContext(main) { vm.selectCharacter("fixture") }
             waitUntil { vm.uiState.value.selectedCharacter != null && !vm.uiState.value.isLoading }
             assertTrue(vm.uiState.value.imageGenAvailable)
@@ -63,6 +72,12 @@ class ChatImageGenerationTest {
             assertEquals("nai-diffusion-3", request.metadata["novelai_settings"]?.jsonObject?.get("model")?.jsonPrimitive?.content)
             assertEquals("Fixture", request.metadata["macro_char"]?.jsonPrimitive?.content)
             assertEquals(ProviderCatalog.NOVELAI_IMAGE, ProviderConfigPersistence.loadImageEngine(secrets))
+
+            // Even stale callers from the erroneous integrated package cannot route to a local engine.
+            withContext(main) { vm.generateImage("1girl, solo", "", false, "local-dream") }
+            waitUntil { vm.uiState.value.error?.contains("请选择生图引擎") == true && !vm.uiState.value.isGeneratingImage }
+            assertEquals(1, novel.requests.size)
+            assertEquals(0, comfy.requests.size)
 
             secrets.deleteSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey")
             withContext(main) { vm.generateImage("", "", true, ProviderCatalog.NOVELAI_IMAGE) }

@@ -10,7 +10,7 @@ import java.text.Normalizer
  * generationMode.NOW, kept verbatim including its indentation).
  */
 object ImagePromptTemplates {
-    /** Compact visual tags for the local SD1.5 models and NovelAI. No forced two-person composition. */
+    /** Compact visual tags for NovelAI. No forced two-person composition. */
     const val ENGLISH_TAGS = """Summarize the current visible scene in the conversation as an image prompt. Do not continue the story or dialogue.
 Output ONLY one comma-separated line of English visual tags, using common Danbooru-style tags where appropriate.
 Use short tags such as 1girl, solo, long hair, blue eyes, white dress, sitting, garden, sunset. Do not copy this example unless it matches the scene.

@@ -43,7 +43,6 @@ import app.tellev.core.provider.ComfyUiSettings
 import app.tellev.core.provider.GenerateChunk
 import app.tellev.core.provider.GenerateRequest
 import app.tellev.core.provider.GenerationRuntimeResolver
-import app.tellev.core.provider.LocalDreamSettings
 import app.tellev.core.provider.NovelAiImageSettings
 import app.tellev.core.provider.ProviderConfig
 import app.tellev.core.provider.ProviderConfigPersistence
@@ -52,8 +51,6 @@ import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.provider.ProviderAdapter
 import app.tellev.core.provider.presetCategoryForProvider
 import app.tellev.core.provider.supportsChatGeneration
-import app.tellev.core.ldream.LocalDreamCore
-import app.tellev.core.ldream.LocalDreamCoreState
 import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.StDataStore
@@ -1206,7 +1203,7 @@ class ChatViewModel(
 
     // ── 生图 ──────────────────────────────────────────────────────────
 
-    /** Recomputes whether an image engine is usable (ComfyUI workflow, a local model, or a NovelAI token). */
+    /** Recomputes remote image availability from the ComfyUI workflow and NovelAI token. */
     private suspend fun refreshImageGenAvailability() {
         val configured = ProviderConfigPersistence.configuredImageEngines(secretStore)
         val engine = ProviderConfigPersistence.availableImageEngine(secretStore, configured)
@@ -1225,7 +1222,7 @@ class ChatViewModel(
         val state = _uiState.value
         if (!state.imageGenAvailable) {
             _uiState.update {
-                it.copy(error = "生图模型未配置：请先在设置中配置 ComfyUI 工作流、导入本地模型或填写 NovelAI 令牌")
+                it.copy(error = "生图模型未配置：请先在设置中配置 ComfyUI 工作流或填写 NovelAI 令牌")
             }
             return
         }
@@ -1253,7 +1250,7 @@ class ChatViewModel(
         imageGenerationJob = viewModelScope.launch {
             try {
                 _uiState.update { it.copy(isGeneratingImage = true, imageGenStatus = "准备生成图片…", error = null) }
-                // 引擎选择：ComfyUI（远程）、本地 MNN 或 NovelAI（远程）。
+                // 正式版仅使用远程生图服务：ComfyUI 或 NovelAI。
                 val engine = (selectedEngine ?: state.imageEngine)?.let(ChatImageEngine::fromProviderId)
                     ?: error("请选择生图引擎")
                 val engineId = engine.providerId
@@ -1261,7 +1258,6 @@ class ChatViewModel(
                 check(engine.providerId in configured) { "${engine.label} 未配置，请先在设置中完成配置" }
                 ProviderConfigPersistence.saveImageEngine(secretStore, engine.providerId)
                 _uiState.update { it.copy(imageEngine = engine.providerId, configuredImageEngines = configured) }
-                val useLocalEngine = engine == ChatImageEngine.Local
                 val useNovelAiEngine = engine == ChatImageEngine.NovelAi
 
                 val finalPrompt = if (summarizeScene) {
@@ -1287,7 +1283,6 @@ class ChatViewModel(
                 _uiState.update {
                     it.copy(
                         imageGenStatus = when {
-                            useLocalEngine -> "本地引擎准备中（首次启动含 OpenCL 调优，约 1 分钟）…"
                             useNovelAiEngine -> "正在调用 NovelAI 生成图片…"
                             else -> "正在生成图片…"
                         },
@@ -1296,17 +1291,7 @@ class ChatViewModel(
                 val adapter: ProviderAdapter = providerRegistry.require(engineId)
                 val config: ProviderConfig
                 val metadata: kotlinx.serialization.json.JsonObject
-                if (useLocalEngine) {
-                    val localSettings = ProviderConfigPersistence.loadLocalDreamSettings(secretStore)
-                    config = ProviderConfigPersistence.loadProviderConfig(secretStore, ProviderCatalog.LOCAL_DREAM)
-                    metadata = buildJsonObject {
-                        put("negative_prompt", negativePrompt.trim())
-                        put(
-                            "local_dream_settings",
-                            Json.encodeToJsonElement(LocalDreamSettings.serializer(), localSettings),
-                        )
-                    }
-                } else if (useNovelAiEngine) {
+                if (useNovelAiEngine) {
                     val novelSettings = ProviderConfigPersistence.loadNovelAiImageSettings(secretStore)
                     config = ProviderConfigPersistence.loadProviderConfig(secretStore, ProviderCatalog.NOVELAI_IMAGE)
                     // 酒馆对最终提示词做 {{user}}/{{char}} 宏替换；适配器在前缀拼接后统一替换。
@@ -1345,31 +1330,6 @@ class ChatViewModel(
                     metadata = metadata,
                 )
 
-                // 本地引擎：把采样进度透传到生图状态文案。
-                val progressJob = if (useLocalEngine) {
-                    launch {
-                        LocalDreamCore.state.collect { engineState ->
-                            when (engineState) {
-                                is LocalDreamCoreState.Starting -> _uiState.update {
-                                    it.copy(imageGenStatus = "正在启动本地生图引擎（${engineState.modelDirName}）…")
-                                }
-                                is LocalDreamCoreState.Generating -> _uiState.update {
-                                    it.copy(
-                                        imageGenStatus =
-                                        "正在生成图片（${engineState.step}/${engineState.totalSteps} 步）…",
-                                    )
-                                }
-                                is LocalDreamCoreState.Converting -> _uiState.update {
-                                    it.copy(imageGenStatus = "模型转换中：${engineState.line}")
-                                }
-                                else -> Unit
-                            }
-                        }
-                    }
-                } else {
-                    null
-                }
-
                 var imageBase64: String? = null
                 var failure: TellevError? = null
                 adapter.streamGenerate(config, imageRequest).collect { chunk ->
@@ -1379,7 +1339,6 @@ class ChatViewModel(
                         is GenerateChunk.Failed -> failure = chunk.error
                     }
                 }
-                progressJob?.cancel()
                 val error = failure
                 if (error != null) {
                     _uiState.update {

@@ -1,29 +1,30 @@
-# tellev v1.6.1
+# tellev v1.6.1 分支修正说明
 
-完善本地生图与聊天内生图流程，正式版和独立生图版同步更新。
+此前 v1.6.1 正式版误包含本地 MNN 生图功能，对应 Release 已撤下。旧标签保留用于历史追溯；修正版本见 [v1.6.1.1](RELEASE_1.6.1.1.md)。
 
-## 更新内容
+## 正式版 master
 
-- 正式版接入 Local Dream MNN OpenCL 本地生图，支持导入、转换、切换和删除 SD1.5 模型。
-- 聊天内每次生图都可选择已配置的本地推理、ComfyUI 或 NovelAI 引擎。
-- 本地推理与 NovelAI 的场景总结会输出经校验的英文图像 tag，格式不合格时自动重试一次。
-- 修复生成图片消息可能被前端富文本分支遮住的问题。
-- 本地引擎保持前台服务与模型管理，生成进度会同步显示在聊天界面。
+- 包名 `app.tellev`，使用正式版原有签名和普通 Release 更新渠道。
+- 聊天生图仅提供 ComfyUI、NovelAI；可按次选择已配置的引擎。
+- NovelAI 场景总结使用英文 tag，并在格式不合格时重试一次。
+- 保留生成图片消息的显示修复。
+- 不包含 Local Dream 原生核心、模型转换资产、本地推理、模型管理或相关前台服务。
+- 忽略误装整合包遗留的本地引擎选择；保留已有用户数据。
 
-## 版本与分发
+## 独立生图版 mnn-image-gen
 
-- `versionName`: `1.6.1`
-- `versionCode`: `26`
-- 最低系统：Android 12 / API 31；目标 SDK：36。
-- 正式版：`app.tellev`，标签 `v1.6.1`，附件 `tellev-1.6.1.apk`。
-- 生图版：`app.tellev.mnn`，标签 `v1.6.1-mnn`，附件 `tellev-1.6.1-mnn.apk`，保持预发布。
-- 两个渠道使用各自原有签名与独立包名，可分别覆盖升级并同时安装。
-- Local Dream 本地生图核心遵循 CC BY-NC 4.0，仅供非商业使用。
+- 包名 `app.tellev.mnn`，使用生图版原有独立签名和 `-mnn` 预发布更新渠道。
+- 聊天生图提供本地推理、ComfyUI、NovelAI。
+- 保留 SD1.5 / MNN OpenCL 推理、模型导入转换、切换、删除和前台保活。
+- 本地推理及 NovelAI 场景总结使用英文 tag，格式不合格时重试一次。
+- 保留生成图片消息的显示修复。
+- 本地核心和转换资产基于 Local Dream，遵循 CC BY-NC 4.0，仅供非商业使用。
 
-## 验证范围
+## 构建与验证
 
-- 正式版 Debug、MVU Validation 与 Release 单元测试各 669 项通过；生图版各 671 项通过。
-- 两版 `lintDebug` 均为 0 错误，JavaScript 兼容测试各 5 项通过。
-- 两个 Release APK 均通过 v2 签名验证，包名、版本号、最低 SDK 与目标 SDK 均已复核。
-- 正式版 APK SHA-256：`66546482E41903CF0E9828C0CD9E12682D6F416FC63B1F415D07678EF8E637A5`。
-- 生图版 APK SHA-256：`BA77DF33FF8BCC319A0DE9CB1F4502DB976181F38B8DAE8DC32D537328BBA9E1`。
+- 历史 v1.6.1 的版本号为 `versionName=1.6.1`、`versionCode=26`，最低 Android 12 / API 31。
+- 各自在对应 worktree 运行 `:app:testReleaseUnitTest :app:assembleRelease`。
+- 校验 APK 包名、版本、签名证书及 SHA-256；两套签名必须保持独立。
+- 正式 APK 不得包含 `libstable_diffusion_core.so` 或 `assets/ldcvt/`；生图 APK 必须包含核心及全部转换资产，并仅支持 arm64-v8a。
+- 历史错误产物的测试数量及 SHA-256 已移除，不能用于确认本次修正后的 APK。
+- 构建和自动测试不代表实际设备出图验收。

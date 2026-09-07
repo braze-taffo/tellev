@@ -18,7 +18,6 @@ import app.tellev.core.provider.AzureAdapter
 import app.tellev.core.provider.ComfyUiAdapter
 import app.tellev.core.provider.GeminiAdapter
 import app.tellev.core.provider.GoogleTranslateAdapter
-import app.tellev.core.provider.LocalDreamAdapter
 import app.tellev.core.provider.HordeAdapter
 import app.tellev.core.provider.KoboldAdapter
 import app.tellev.core.provider.KoboldCppAdapter
@@ -119,15 +118,6 @@ class TellevGraph private constructor(
             val templateEvaluator = app.tellev.core.prompt.WebViewTemplateEvaluator(context)
             val promptEngine = DefaultPromptEngine(macroEngine,
                 app.tellev.core.prompt.DefaultPromptTemplateProcessor(javascriptEvaluator = templateEvaluator::evaluate))
-            // Model directories for the on-device MNN image engine (st-data/user/models-mnn).
-            val localDreamModelsRoot = layout.root
-                .resolve(app.tellev.core.ldream.LocalDreamCore.LOCAL_DREAM_MODELS_DIR_NAME)
-                .toFile()
-            app.tellev.core.ldream.LocalDreamCore.initialize(
-                nativeLibDir = java.io.File(context.applicationInfo.nativeLibraryDir),
-            )
-            // 引擎/转换运行期间以前台服务保活，防止退后台时模型被系统回收。
-            app.tellev.core.ldream.LocalDreamKeepAlive.start(context)
             // One shared client for every provider HTTP call (chat streaming,
             // image generation, TTS, translation) with uniform 5-minute
             // timeouts: reasoning models can stay silent between SSE bytes
@@ -179,7 +169,6 @@ class TellevGraph private constructor(
                     LlamaCppAdapter(client = providerClient),
                     StableDiffusionAdapter(client = providerClient),
                     ComfyUiAdapter(client = providerClient),
-                    LocalDreamAdapter(modelsRoot = localDreamModelsRoot),
                     NovelAiImageAdapter(client = providerClient),
                     OpenAiImageAdapter(client = providerClient),
                     OpenAiSpeechAdapter(client = providerClient),
