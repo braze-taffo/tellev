@@ -120,8 +120,10 @@ data class ChatUiState(
     val sessions: List<ChatSession> = emptyList(),
     val error: String? = null,
     val isLoading: Boolean = false,
-    // ── 生图（ComfyUI）——仅在生图模型已配置时对 UI 可见 ──
+    // ── 生图：仅在至少一个引擎已配置时对 UI 可见 ──
     val imageGenAvailable: Boolean = false,
+    val configuredImageEngines: Set<String> = emptySet(),
+    val imageEngine: String? = null,
     val isGeneratingImage: Boolean = false,
     val imageGenStatus: String? = null,
 )
@@ -1202,27 +1204,24 @@ class ChatViewModel(
         return dataStore.layout.root.resolve(rel).toFile().takeIf { it.exists() }
     }
 
-    // ── 生图（ComfyUI）──────────────────────────────────────────────────
+    // ── 生图 ──────────────────────────────────────────────────────────
 
     /** Recomputes whether an image engine is usable (ComfyUI workflow, a local model, or a NovelAI token). */
     private suspend fun refreshImageGenAvailability() {
-        val available = runCatching {
-            ProviderConfigPersistence.isComfyImageGenerationConfigured(secretStore) ||
-                ProviderConfigPersistence.isLocalDreamConfigured(secretStore) ||
-                ProviderConfigPersistence.isNovelAiImageConfigured(secretStore)
-        }.getOrDefault(false)
+        val configured = ProviderConfigPersistence.configuredImageEngines(secretStore)
+        val engine = ProviderConfigPersistence.availableImageEngine(secretStore, configured)
         _uiState.update {
-            if (it.imageGenAvailable == available) it else it.copy(imageGenAvailable = available)
+            it.copy(imageGenAvailable = configured.isNotEmpty(), configuredImageEngines = configured, imageEngine = engine)
         }
     }
 
     /**
-     * Generates an image through the configured ComfyUI backend and appends it
+     * Generates an image through the selected backend and appends it
      * to the chat as a character message carrying a file attachment. In scene
      * mode the current chat model first summarizes the conversation into an
-     * image prompt using SillyTavern's "The Last Message" template.
+     * image prompt in the selected engine's format.
      */
-    fun generateImage(prompt: String, negativePrompt: String, summarizeScene: Boolean) {
+    fun generateImage(prompt: String, negativePrompt: String, summarizeScene: Boolean, selectedEngine: String? = null) {
         val state = _uiState.value
         if (!state.imageGenAvailable) {
             _uiState.update {
@@ -1255,25 +1254,27 @@ class ChatViewModel(
             try {
                 _uiState.update { it.copy(isGeneratingImage = true, imageGenStatus = "准备生成图片…", error = null) }
                 // 引擎选择：ComfyUI（远程）、本地 MNN 或 NovelAI（远程）。
-                val engine = runCatching { ProviderConfigPersistence.loadImageEngine(secretStore) }
-                    .getOrDefault(ProviderCatalog.COMFYUI)
-                val useLocalEngine = engine == ProviderCatalog.LOCAL_DREAM
-                val useNovelAiEngine = engine == ProviderCatalog.NOVELAI_IMAGE
-                val engineId = when {
-                    useLocalEngine -> ProviderCatalog.LOCAL_DREAM
-                    useNovelAiEngine -> ProviderCatalog.NOVELAI_IMAGE
-                    else -> ProviderCatalog.COMFYUI
-                }
+                val engine = (selectedEngine ?: state.imageEngine)?.let(ChatImageEngine::fromProviderId)
+                    ?: error("请选择生图引擎")
+                val engineId = engine.providerId
+                val configured = ProviderConfigPersistence.configuredImageEngines(secretStore)
+                check(engine.providerId in configured) { "${engine.label} 未配置，请先在设置中完成配置" }
+                ProviderConfigPersistence.saveImageEngine(secretStore, engine.providerId)
+                _uiState.update { it.copy(imageEngine = engine.providerId, configuredImageEngines = configured) }
+                val useLocalEngine = engine == ChatImageEngine.Local
+                val useNovelAiEngine = engine == ChatImageEngine.NovelAi
 
                 val finalPrompt = if (summarizeScene) {
                     _uiState.update { it.copy(imageGenStatus = "正在用对话模型总结画面…") }
-                    val summarized = summarizeScenePrompt(character, session.id)
+                    val summarized = summarizeScenePrompt(character, session.id, engine)
                     if (summarized.isNullOrBlank()) {
                         _uiState.update {
                             it.copy(
                                 isGeneratingImage = false,
                                 imageGenStatus = null,
-                                error = "场景总结失败，无法生成图片提示词",
+                                error = if (engine.usesEnglishTags)
+                                    "场景总结失败或未返回合格的英文 tag 提示词，请重试或手动填写英文 tag"
+                                else "场景总结失败，无法生成图片提示词",
                             )
                         }
                         return@launch
@@ -1435,6 +1436,7 @@ class ChatViewModel(
                         put("image_prompt", finalPrompt)
                         put("image_negative_prompt", negativePrompt.trim())
                         put("image_mode", if (summarizeScene) "scene" else "manual")
+                        put("image_engine", engine.providerId)
                     },
                 )
                 val updatedSession = latestSession.copy(messages = latestSession.messages + imageMessage)
@@ -1452,12 +1454,11 @@ class ChatViewModel(
     }
 
     /**
-     * Quiet one-shot generation with the currently selected chat model:
-     * appends SillyTavern's NOW template as a final user turn over the
-     * existing conversation and normalizes the reply into a tag list.
+     * Quiet generation with the currently selected chat model and an
+     * engine-specific scene template. Tag engines retry format failures once.
      * Returns null when no chat model is available or the reply is unusable.
      */
-    private suspend fun summarizeScenePrompt(character: CharacterCard, sessionId: String): String? {
+    private suspend fun summarizeScenePrompt(character: CharacterCard, sessionId: String, engine: ChatImageEngine): String? {
         val runtime = runCatching { runtimeResolver.resolve(_uiState.value.selectedPersona?.id) }.getOrNull()
             ?: return null
         val config = runtime.providerConfig
@@ -1465,49 +1466,43 @@ class ChatViewModel(
         if (!adapter.supportsChatGeneration) return null
 
         val personaName = runtime.persona?.name ?: "User"
-        val template = ImagePromptTemplates.NOW
-            .replace("{{user}}", personaName)
-            .replace("{{char}}", character.name)
-
         val promptSession = _uiState.value.currentSession?.takeIf { it.id == sessionId } ?: return null
-        val request = PromptBuildRequest(
-            character = character,
-            persona = runtime.persona,
-            messages = promptSession.messages.filterNot { it.isHidden } + ChatMessage(
-                id = "img-scene-prompt",
-                role = MessageRole.User,
-                name = personaName,
-                content = template,
-                createdAtMillis = System.currentTimeMillis(),
-            ),
-            worldBooks = runtime.activeWorldBooks,
-            preset = runtime.preset,
-            userInput = template,
-            providerType = config.providerType,
-        )
-        val promptResult = buildPromptWithSessionScope(request, promptSession)
-        val generateRequest = GenerateRequest(prompt = promptResult, preset = runtime.preset, stream = true)
+        return ImagePromptTemplates.summarize(engine) { instruction ->
+            val template = instruction.replace("{{user}}", personaName).replace("{{char}}", character.name)
+            val request = PromptBuildRequest(
+                character = character,
+                persona = runtime.persona,
+                messages = promptSession.messages.filterNot { it.isHidden } + ChatMessage(
+                    id = "img-scene-prompt",
+                    role = MessageRole.User,
+                    name = personaName,
+                    content = template,
+                    createdAtMillis = System.currentTimeMillis(),
+                ),
+                worldBooks = runtime.activeWorldBooks,
+                preset = runtime.preset,
+                userInput = template,
+                providerType = config.providerType,
+            )
+            val promptResult = buildPromptWithSessionScope(request, promptSession)
+            val generateRequest = GenerateRequest(prompt = promptResult, preset = runtime.preset, stream = true)
 
-        var accumulated = ""
-        var completed: String? = null
-        var failed: TellevError? = null
-        adapter.streamGenerate(config, generateRequest).collect { chunk ->
-            when (chunk) {
-                is GenerateChunk.Delta -> accumulated += chunk.text
-                is GenerateChunk.Completed -> if (chunk.text.isNotBlank()) completed = chunk.text
-                is GenerateChunk.Failed -> failed = chunk.error
+            var accumulated = ""
+            var completed: String? = null
+            var failed: TellevError? = null
+            adapter.streamGenerate(config, generateRequest).collect { chunk ->
+                when (chunk) {
+                    is GenerateChunk.Delta -> accumulated += chunk.text
+                    is GenerateChunk.Completed -> if (chunk.text.isNotBlank()) completed = chunk.text
+                    is GenerateChunk.Failed -> failed = chunk.error
+                }
             }
+            if (failed != null) return@summarize null
+            val raw = completed ?: accumulated
+            if (raw.isBlank()) return@summarize null
+            val body = MessageReasoning.fromResponse(raw, "").body
+            body.takeIf { it.isNotBlank() }
         }
-        if (failed != null) return null
-        val raw = completed ?: accumulated
-        if (raw.isBlank()) return null
-        val body = MessageReasoning.fromResponse(raw, "").body
-        if (body.isBlank()) return null
-        // ST's processReply filter keeps ASCII only; replies dominated by
-        // other scripts (Chinese etc.) would be erased, so fall back to the
-        // loose normalization in that case.
-        val processed = ImagePromptTemplates.processReply(body)
-        return processed.ifBlank { ImagePromptTemplates.processReplyLoose(body) }
     }
 
     fun updateProviderConfig(config: ProviderConfig) {

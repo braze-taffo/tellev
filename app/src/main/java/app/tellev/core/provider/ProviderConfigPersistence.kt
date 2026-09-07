@@ -206,7 +206,7 @@ object ProviderConfigPersistence {
         secretStore.putSecret(NOVELAI_IMAGE_SETTINGS_SECRET_ID, json.encodeToString(settings))
     }
 
-    /** Which image engine in-chat generation uses; an unconfigured selection falls back to ComfyUI. */
+    /** Saved default; callers must check that the selected engine is configured. */
     const val IMAGE_ENGINE_SECRET_ID = "image-engine-selected"
 
     private val imageEngines = setOf(
@@ -214,6 +214,17 @@ object ProviderConfigPersistence {
         ProviderCatalog.LOCAL_DREAM,
         ProviderCatalog.NOVELAI_IMAGE,
     )
+
+    suspend fun configuredImageEngines(secretStore: SecretStore): Set<String> = buildSet {
+        if (isComfyImageGenerationConfigured(secretStore)) add(ProviderCatalog.COMFYUI)
+        if (isLocalDreamConfigured(secretStore)) add(ProviderCatalog.LOCAL_DREAM)
+        if (isNovelAiImageConfigured(secretStore)) add(ProviderCatalog.NOVELAI_IMAGE)
+    }
+
+    suspend fun availableImageEngine(secretStore: SecretStore, configured: Set<String>): String? {
+        val saved = loadImageEngine(secretStore)
+        return saved.takeIf { it in configured } ?: imageEngines.firstOrNull { it in configured }
+    }
 
     suspend fun loadImageEngine(secretStore: SecretStore): String {
         val stored = secretStore.readSecret(IMAGE_ENGINE_SECRET_ID) ?: return ProviderCatalog.COMFYUI

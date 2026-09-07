@@ -21,6 +21,30 @@ class ProviderConfigPersistenceTest {
     private fun store() = InMemorySecretStore()
 
     @Test
+    fun `NovelAI only configuration enables its engine despite default ComfyUI selection`() = runBlocking {
+        val s = store()
+        assertTrue(ProviderConfigPersistence.configuredImageEngines(s).isEmpty())
+        assertNull(ProviderConfigPersistence.availableImageEngine(s, emptySet()))
+        s.putSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey", "test-token")
+        val configured = ProviderConfigPersistence.configuredImageEngines(s)
+        assertEquals(setOf(ProviderCatalog.NOVELAI_IMAGE), configured)
+        assertEquals(ProviderCatalog.NOVELAI_IMAGE, ProviderConfigPersistence.availableImageEngine(s, configured))
+    }
+
+    @Test
+    fun `saved engine is respected and removed configuration falls back to an available engine`() = runBlocking {
+        val s = store()
+        ProviderConfigPersistence.saveLocalDreamSettings(s, LocalDreamSettings(modelDirName = "test-model"))
+        s.putSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey", "test-token")
+        ProviderConfigPersistence.saveImageEngine(s, ProviderCatalog.NOVELAI_IMAGE)
+        assertEquals(ProviderCatalog.NOVELAI_IMAGE,
+            ProviderConfigPersistence.availableImageEngine(s, ProviderConfigPersistence.configuredImageEngines(s)))
+        s.deleteSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey")
+        assertEquals(ProviderCatalog.LOCAL_DREAM,
+            ProviderConfigPersistence.availableImageEngine(s, ProviderConfigPersistence.configuredImageEngines(s)))
+    }
+
+    @Test
     fun `listCustomConfigs is empty when none stored`() = runBlocking {
         assertTrue(ProviderConfigPersistence.listCustomConfigs(store()).isEmpty())
     }

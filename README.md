@@ -2,15 +2,16 @@
 
 tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是在手机上提供更贴近原生应用体验的角色管理、聊天、世界书、扩展和模型服务配置能力，同时尽量保持与 SillyTavern 数据格式和使用习惯兼容。
 
-> 公开版本以 GitHub Releases 中发布的 APK 为准。当前源码版本 **v1.6.0.1**。
+> 公开版本以 GitHub Releases 中发布的 APK 为准。当前源码版本 **v1.6.1**。
 
-## v1.6.0.1 更新
+## v1.6.1 更新
 
-- 修复 MVU 更新正文与变量时误报保存冲突、导致生成暂停或会话无法关闭的问题。
-- 保存失败直接显示实际原因，避免被 MVU 提交超时报错掩盖；写入成功后同步刷新上下文。
-- 正式版仅提供 ComfyUI、NovelAI 远程生图，不包含本地生图；同时包含统一生图设置入口与五分钟模型网络超时。
-- 独立生图版额外提供 MNN OpenCL 本地生图，使用包名 `app.tellev.mnn` 和预发布渠道，可与正式版共存。
-- 版本说明与验证范围见 [v1.6.0.1 发布说明](docs/RELEASE_1.6.0.1.md)。
+- 正式版接入 Local Dream MNN OpenCL 本地生图，支持导入、转换、切换与删除 SD1.5 模型。
+- 聊天内每次生图都可选择已配置的本地推理、ComfyUI 或 NovelAI 引擎。
+- 本地推理与 NovelAI 的「总结当前场景」会输出经校验的英文图像 tag，格式不合格时自动重试一次。
+- 修复生成图片消息可能被前端富文本分支遮住的问题。
+- 独立生图版继续使用包名 `app.tellev.mnn` 和预发布渠道，可与正式版共存。
+- 版本说明与验证范围见 [v1.6.1 发布说明](docs/RELEASE_1.6.1.md)。
 
 ## 主要功能
 
@@ -107,7 +108,7 @@ tellev 的扩展运行环境是 SillyTavern / 酒馆助手兼容层的一个**�
 
 - 应用名：`tellev`
 - 包名：`app.tellev`
-- 当前源码版本：1.6.0.1（versionCode 25）
+- 当前源码版本：1.6.1（versionCode 26）
 - 最低系统：Android 12 / API 31
 - 目标/编译 SDK：API 36
 - UI：Kotlin + Jetpack Compose + Material 3
@@ -223,3 +224,4 @@ SillyTavern 项目地址：
 - [docs/RELEASE_1.5.5.md](docs/RELEASE_1.5.5.md)
 - [docs/RELEASE_1.5.5.1.md](docs/RELEASE_1.5.5.1.md)
 - [docs/RELEASE_1.6.0.1.md](docs/RELEASE_1.6.0.1.md)
+- [docs/RELEASE_1.6.1.md](docs/RELEASE_1.6.1.md)
