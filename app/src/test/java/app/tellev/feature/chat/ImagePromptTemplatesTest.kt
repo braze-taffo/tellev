@@ -30,7 +30,7 @@ class ImagePromptTemplatesTest {
 
     @Test
     fun `tag engines retry invalid scene output once with format instructions`() = runBlocking {
-        for (engine in listOf(ChatImageEngine.NovelAi)) {
+        for (engine in ChatImageEngine.entries.filter { it.usesEnglishTags }) {
             val instructions = mutableListOf<String>()
             val result = ImagePromptTemplates.summarize(engine) { instruction ->
                 instructions += instruction
@@ -67,40 +67,54 @@ class ImagePromptTemplatesTest {
     }
 
     @Test
-    fun `ComfyUI retains existing summary format`() = runBlocking {
-        assertEquals("教室, 女孩微笑", ImagePromptTemplates.summarize(ChatImageEngine.ComfyUi) {
-            assertEquals(ImagePromptTemplates.NOW, it)
-            "教室\n女孩微笑"
-        })
+    fun `ComfyUI retries complete invalid response without stripping Chinese into fragments`() = runBlocking {
+        for (invalid in listOf("魔法少女和使魔走在回家的路上.", "女孩撑着红伞，1girl, solo", ".", "123")) {
+            var attempts = 0
+            val expected = "A magical girl and her small animal familiar walk home along a quiet street."
+            val result = ImagePromptTemplates.summarize(ChatImageEngine.ComfyUi) {
+                attempts++
+                if (attempts == 1) invalid else expected
+            }
+            assertEquals(expected, result)
+            assertEquals(2, attempts)
+        }
     }
 
     @Test
-    fun `NOW template keeps user and char macros and POV ordering`() {
-        assertTrue(ImagePromptTemplates.NOW.contains("{{user}}"))
-        assertTrue(ImagePromptTemplates.NOW.contains("{{char}}"))
-        assertTrue(ImagePromptTemplates.NOW.contains("'POV'"))
-        assertTrue(ImagePromptTemplates.NOW.contains("comma-delimited"))
+    fun `ComfyUI rejects invalid second output and provider failure`() = runBlocking {
+        var attempts = 0
+        assertNull(ImagePromptTemplates.summarize(ChatImageEngine.ComfyUi) { attempts++; "教室，女孩微笑." })
+        assertEquals(2, attempts)
+        attempts = 0
+        assertNull(ImagePromptTemplates.summarize(ChatImageEngine.ComfyUi) { attempts++; null })
+        assertEquals(1, attempts)
     }
 
     @Test
-    fun `processReply strips quotes newlines and non-ascii noise`() {
-        val input = "He said \"hello\"“\nblue eyes, long hair\n\nsmile"
-        assertEquals("He said hello, blue eyes, long hair, smile", ImagePromptTemplates.processReply(input))
+    fun `ComfyUI preserves descriptive phrases weights and punctuation`() {
+        val prompt = "A magical girl walking home with a small winged familiar, (red umbrella:1.2), evening light."
+        assertEquals(prompt, ImagePromptTemplates.processComfyScene("```text\n$prompt\n```"))
+        assertEquals("1girl, solo, street", ImagePromptTemplates.processComfyScene("1girl, solo, street"))
+        assertEquals("red dress, white shoes", ImagePromptTemplates.processComfyScene("red dress,\n white shoes"))
     }
 
     @Test
-    fun `processReply normalizes comma spacing`() {
-        assertEquals("a, b, c", ImagePromptTemplates.processReply(" a ,,\nb ,  c "))
+    fun `ComfyUI rejects explanations sections and mixed language as a whole`() {
+        listOf(".", "123", "1girl, 魔法少女", "Here is your prompt: a girl walking home",
+            "Positive prompt: a girl\nNegative prompt: blurry", "Sorry, I cannot describe this scene.",
+            "{\"prompt\": \"a girl walking home\"}", "# Scene\nA girl walking home",
+        ).forEach { assertNull(it, ImagePromptTemplates.processComfyScene(it)) }
     }
 
     @Test
-    fun `processReply blanks out non-ascii replies so callers fall back`() {
-        assertEquals("", ImagePromptTemplates.processReply("教室，女孩微笑"))
-    }
-
-    @Test
-    fun `processReplyLoose keeps non-ascii scripts`() {
-        assertEquals("教室, 女孩微笑", ImagePromptTemplates.processReplyLoose("教室\n女孩微笑"))
-        assertEquals("a, b", ImagePromptTemplates.processReplyLoose("a\nb"))
+    fun `scene history skips only hidden and generated image placeholders and preserves active narrative swipes`() {
+        val scene = app.tellev.core.model.ChatMessage("scene", app.tellev.core.model.MessageRole.Character,
+            "Alice", "old scene", 1L, swipes = listOf("old scene", "walking home"), swipeIndex = 1)
+        val image = scene.copy(id = "image", content = "【图片】", swipes = listOf("【图片】"), swipeIndex = 0,
+            metadata = kotlinx.serialization.json.buildJsonObject {
+                put("image_prompt", kotlinx.serialization.json.JsonPrimitive("wrong previous image"))
+            })
+        val edited = image.copy(id = "edited", content = "a new narrative scene", swipes = listOf("a new narrative scene"))
+        assertEquals(listOf(scene, edited), ImagePromptTemplates.sceneHistory(listOf(scene, image, scene.copy(isHidden = true), edited)))
     }
 }

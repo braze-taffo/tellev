@@ -72,6 +72,8 @@ data class PromptBuildRequest(
     val userInput: String,
     val providerType: String,
     val metadata: JsonObject = buildJsonObject { },
+    /** Background instruction, separate from chat history and pending user input (ST quiet generation). */
+    val quietPrompt: String? = null,
 )
 
 @Serializable
@@ -159,6 +161,8 @@ class DefaultPromptEngine(
         // 2. Expand macros in all text fields
         val expandedCharacter = expandCharacterFields(request.character, macroContext)
         val expandedUserInput = macroEngine.expand(request.userInput, macroContext)
+        val quietPrompt = request.quietPrompt?.takeIf { it.isNotBlank() }
+            ?.let { macroEngine.expand(it, macroContext) }
 
         // 3. Build search text for world book key matching. ST prefixes each
         // scanned message with the speaker name (script.js:4565 chatForWI,
@@ -179,6 +183,8 @@ class DefaultPromptEngine(
                 appendLine(it.swipes.getOrNull(it.swipeIndex) ?: it.content)
             }
             extensionInjectionScanText(request.metadata).forEach(::appendLine)
+            // ST makes the quiet instruction available to world-info scanning without adding a chat turn.
+            quietPrompt?.let(::appendLine)
         }
 
         val maxContextTokens = request.preset.maxContextTokens
@@ -327,7 +333,7 @@ class DefaultPromptEngine(
                     ),
                 )
             }
-            add(
+            if (quietPrompt == null) add(
                 PromptMessage(
                     role = MessageRole.User,
                     name = request.persona?.name,
@@ -430,12 +436,13 @@ class DefaultPromptEngine(
         val allInjectionsForBudget =
             presetOrder.absoluteInjections + extensionInjections + characterInjections + anInjections
         val injectionTokens = injectionTokenCost(allInjectionsForBudget)
+        val quietTokens = quietPrompt?.let { TokenBudget.estimateTokens(it) + 4 } ?: 0
         val budgetedRaw = TokenBudget.fitToBudget(
             systemPrompt = templatedSystemPrompt,
             worldInfo = emptyList(),
             characterDescription = "",
             messages = templatedMessages.drop(1), // Drop system message, fitToBudget adds its own
-            budget = (maxContextTokens - maxCompletionTokens.orElse(0) - injectionTokens)
+            budget = (maxContextTokens - maxCompletionTokens.orElse(0) - injectionTokens - quietTokens)
                 .coerceAtLeast(0),
         )
         // fitToBudget rebuilds the head system message from plain text, which
@@ -450,6 +457,10 @@ class DefaultPromptEngine(
         // Applied after budget trimming so injected system/user/assistant
         // messages survive into the request and instruct mode sees them too.
         val withInjections = applyExtensionInjections(budgetedMessages, allInjectionsForBudget)
+        // Like ST's final controlPrompts collection: after PHI, depth injections and preset ordering.
+        // Do this before instruct serialization so text-completion providers receive the instruction too.
+        val withControlPrompt = if (quietPrompt == null) withInjections else
+            withInjections + PromptMessage(MessageRole.System, content = quietPrompt)
 
         // 10. Check for instruct mode
         val instructPresetObj = request.metadata["instructPreset"] as? JsonObject
@@ -457,7 +468,7 @@ class DefaultPromptEngine(
 
         val namesApplied = (if (instructPreset != null) {
             val instructText = InstructMode.applyInstruct(
-                messages = withInjections,
+                messages = withControlPrompt,
                 preset = instructPreset,
                 macroEngine = macroEngine,
                 macroContext = macroContext,
@@ -467,12 +478,12 @@ class DefaultPromptEngine(
             // completion-style APIs
             listOf(PromptMessage(role = MessageRole.User, content = instructText))
         } else {
-            applyNamesBehavior(withInjections, request.metadata, request.preset)
+            applyNamesBehavior(withControlPrompt, request.metadata, request.preset)
         }).filter { it.content.isNotBlank() }
         val squashed = if (request.preset.raw["squash_system_messages"]
                 ?.jsonPrimitive?.booleanOrNull == true
         ) squashAdjacentSystemMessages(namesApplied) else namesApplied
-        val assistantPrefill = request.preset.raw["assistant_prefill"]
+        val assistantPrefill = if (quietPrompt != null) "" else request.preset.raw["assistant_prefill"]
             ?.jsonPrimitive?.contentOrNull.orEmpty()
             .let { macroEngine.expand(it, macroContext) }
         val finalMessages = if (assistantPrefill.isBlank() || instructPreset != null) squashed

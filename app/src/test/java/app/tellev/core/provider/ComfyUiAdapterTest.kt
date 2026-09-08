@@ -34,6 +34,19 @@ class ComfyUiAdapterTest {
     """.trimIndent()
 
     @Test
+    fun `rejects unbound workflows and punctuation before any HTTP request`() = runBlocking {
+        val adapter = ComfyUiAdapter(client = client(Interceptor { error("Invalid prompt must not reach HTTP") }))
+        val unbound = adapter.streamGenerate(config(), request(ComfyUiSettings(
+            workflowJson = workflow.replace("%prompt%", "a fixed unrelated picture"),
+        ))).toList().single() as GenerateChunk.Failed
+        assertEquals("comfy_prompt_unbound", unbound.error.code)
+        val base = request(ComfyUiSettings(workflowJson = workflow))
+        val punctuation = base.copy(prompt = base.prompt.copy(messages = listOf(PromptMessage(MessageRole.User, content = "."))))
+        val failed = adapter.streamGenerate(config(), punctuation).toList().single() as GenerateChunk.Failed
+        assertEquals("comfy_prompt_empty", failed.error.code)
+    }
+
+    @Test
     fun `generates image through prompt history and view`() = runBlocking {
         var submittedBody: String? = null
         var viewQuery: String? = null

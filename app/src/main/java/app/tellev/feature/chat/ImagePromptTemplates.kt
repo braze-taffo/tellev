@@ -1,16 +1,13 @@
 package app.tellev.feature.chat
 
-import java.text.Normalizer
+import app.tellev.core.model.ChatMessage
+import app.tellev.core.model.reasoningParts
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
-/**
- * Scene-to-image prompt material ported from SillyTavern's stable-diffusion
- * extension. The NOW template instructs the current chat model to summarize
- * the last chat message into a comma-delimited list of visual keywords
- * (SillyTavern public/scripts/extensions/stable-diffusion/index.js,
- * generationMode.NOW, kept verbatim including its indentation).
- */
+/** Scene instructions are sent as quiet control prompts, never as a new roleplay turn. */
 object ImagePromptTemplates {
-    /** Compact visual tags for NovelAI. No forced two-person composition. */
+    /** Compact visual tags for tag-based image engines. No forced two-person composition. */
     const val ENGLISH_TAGS = """Summarize the current visible scene in the conversation as an image prompt. Do not continue the story or dialogue.
 Output ONLY one comma-separated line of English visual tags, using common Danbooru-style tags where appropriate.
 Use short tags such as 1girl, solo, long hair, blue eyes, white dress, sitting, garden, sunset. Do not copy this example unless it matches the scene.
@@ -41,70 +38,65 @@ No Chinese, full sentences, explanations, headings, Markdown, quotes, bullet lis
         return tags.joinToString(", ")
     }
 
-    /** Retry format failures once; never fall back to untranslated text for a tag engine. */
+    /** ComfyUI can run both tag-based and natural-language models; do not impose SD1.5 tag limits. */
+    const val COMFY_SCENE = """Describe the latest visible scene in the conversation as an image prompt in English. Translate visual details from any other language into English. Do not continue the story or dialogue.
+Use the latest narrative message for the current action and location; use earlier context, character descriptions and world information only to resolve appearance and other details that still apply.
+Output ONLY one concise English paragraph or comma-separated list of visual phrases, at most 120 words. Describe the visible subjects, their appearance and clothing, main action, spatial relationships, surroundings and lighting.
+Include only subjects actually present. Preserve non-human companions as their actual creature type. Do not assume {{user}} or {{char}} is visible, invent extra people, force a minimum subject count or force POV.
+Describe visible appearance instead of unexplained character names. Omit thoughts, feelings, dialogue, instructions and non-visual story details.
+No Chinese, explanation, headings, Markdown, JSON, positive/negative sections or alternative prompts. Return only the English image prompt."""
+
+    private const val SCENE_RETRY = "The response was not a usable English image prompt. Try again using the same scene. Translate ALL visual details into English, preserving the subjects, action and location. Return only the prompt, without explanation or headings."
+
+    /** Validate the complete response before whitespace normalization; never delete non-English content. */
+    fun processComfyScene(input: String): String? {
+        var value = input.trim()
+        if (value.startsWith("```") && value.endsWith("```")) {
+            value = value.substringAfter('\n').removeSuffix("```").trim()
+        }
+        value = value.trim('"', '“', '”')
+            .replace('“', '"').replace('”', '"').replace('’', '\'')
+            .replace('–', '-').replace('—', '-').replace('，', ',')
+        if (value.any { it.code > 127 }) return null
+        if (Regex("[a-zA-Z]{2,}").findAll(value).count() < 2) return null
+        if (value.length > 2000 || value.split(Regex("\\s+")).size > 200) return null
+        // Explanations/sections are format failures, not text to strip into an apparently valid prompt.
+        if (Regex("(?im)^\\s*(?:#{1,6}\\s|[-*]\\s|(?:positive|negative)(?: prompt)?\\s*:|(?:prompt|tags|description)\\s*:)").containsMatchIn(value)) return null
+        if (Regex("(?i)^(?:here (?:is|are)\\b|(?:sure|sorry)\\b|(?:i|we) (?:cannot|can't|can not|am unable|are unable)\\b|as an ai\\b)").containsMatchIn(value)) return null
+        if (value.startsWith("{") || value.startsWith("[") || '`' in value) return null
+        return value.replace(Regex("\\s+"), " ").trim()
+    }
+
+    /** All engines retry invalid output once; no untranslated or partially stripped fallback. */
     suspend fun summarize(
         engine: ChatImageEngine,
+        onRejected: (response: String, reason: String) -> Unit = { _, _ -> },
         generate: suspend (instruction: String) -> String?,
     ): String? {
-        val template = if (engine.usesEnglishTags) ENGLISH_TAGS else NOW
+        val template = if (engine.usesEnglishTags) ENGLISH_TAGS else COMFY_SCENE
+        val validate = if (engine.usesEnglishTags) ::processEnglishTags else ::processComfyScene
         val first = generate(template) ?: return null
-        if (!engine.usesEnglishTags) return processReply(first).ifBlank { processReplyLoose(first) }
-        processEnglishTags(first)?.let { return it }
-        val retried = generate("$template\n\n$TAG_RETRY") ?: return null
-        return processEnglishTags(retried)
+        validate(first)?.let { return it }
+        onRejected(first, rejectionReason(engine, first))
+        val retry = if (engine.usesEnglishTags) TAG_RETRY else SCENE_RETRY
+        val retried = generate("$template\n\n$retry") ?: return null
+        return validate(retried).also { if (it == null) onRejected(retried, rejectionReason(engine, retried)) }
     }
 
-    const val NOW = """Ignore previous instructions. Your next response must be formatted as a single comma-delimited list of concise keywords.  The list will describe of the visual details included in the last chat message.
-
-    Only mention characters by using pronouns ('he','his','she','her','it','its') or neutral nouns ('male', 'the man', 'female', 'the woman').
-
-    Ignore non-visible things such as feelings, personality traits, thoughts, and spoken dialog.
-
-    Add keywords in this precise order:
-    a keyword to describe the location of the scene,
-    a keyword to mention how many characters of each gender or type are present in the scene (minimum of two characters:
-    {{user}} and {{char}}, example: '2 men ' or '1 man 1 woman ', '1 man 3 robots'),
-
-    keywords to describe the relative physical positioning of the characters to each other (if a commonly known term for the positioning is known use it instead of describing the positioning in detail) + 'POV',
-
-    a single keyword or phrase to describe the primary act taking place in the last chat message,
-
-    keywords to describe {{char}}'s physical appearance and facial expression,
-    keywords to describe {{char}}'s actions,
-    keywords to describe {{user}}'s physical appearance and actions.
-
-    If character actions involve direct physical interaction with another character, mention specifically which body parts interacting and how.
-
-    A correctly formatted example response would be:
-    '(location),(character list by gender),(primary action), (relative character position) POV, (character 1's description and actions), (character 2's description and actions)'"""
-
-    /**
-     * Port of SillyTavern's processReply (index.js): strip quotes, turn
-     * newlines into commas, drop non-ASCII noise and normalize into a clean
-     * comma-separated tag list. Non-ASCII scripts (e.g. a Chinese reply) do
-     * not survive the filter — callers should fall back to [processReplyLoose]
-     * when this returns something blank.
-     */
-    fun processReply(input: String): String {
-        var str = input.replace("\"", "").replace("“", "")
-        str = str.replace("\n", ", ")
-        str = Normalizer.normalize(str, Normalizer.Form.NFD)
-        str = str.replace(Regex("[^a-zA-Z0-9.,:_(){}<>\\[\\]/\\-'|#]+"), " ")
-        str = str.replace(Regex("\\s+"), " ")
-        return str.split(",")
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .joinToString(", ")
+    private fun rejectionReason(engine: ChatImageEngine, input: String): String = when {
+        input.isBlank() -> "回复为空"
+        !Regex("[a-zA-Z]{2,}").containsMatchIn(input) -> "回复没有英文画面描述"
+        input.any { it.code > 127 } -> "回复含非 ASCII 字符，当前格式校验未通过"
+        input.length > 2000 || input.split(Regex("\\s+")).size > 200 -> "回复超过当前长度限制"
+        engine.usesEnglishTags -> "回复不是所要求的短英文标签"
+        else -> "回复带有标题、说明或结构化格式，当前格式校验未通过"
     }
 
-    /** Quote/newline/comma normalization without the ASCII filter, for replies in other scripts. */
-    fun processReplyLoose(input: String): String {
-        var str = input.replace("\"", "").replace("“", "")
-        str = str.replace("\n", ", ")
-        str = str.replace(Regex("\\s+"), " ")
-        return str.split(",")
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .joinToString(", ")
+    /** Generated-image placeholders must not become the latest narrative scene on repeated generation. */
+    fun sceneHistory(messages: List<ChatMessage>): List<ChatMessage> = messages.filterNot { message ->
+        message.isHidden || (
+            message.metadata["image_prompt"]?.jsonPrimitive?.contentOrNull != null &&
+                message.reasoningParts().body.trim().let { it.isEmpty() || it == "【图片】" }
+            )
     }
 }

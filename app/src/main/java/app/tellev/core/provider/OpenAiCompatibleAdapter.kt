@@ -179,6 +179,9 @@ class OpenAiCompatibleAdapter(
 
                 if (request.stream) {
                     val source = response.body?.source()
+                    val captureDiagnostics = request.metadata["capture_response_diagnostics"]?.jsonPrimitive?.contentOrNull == "true"
+                    val responseSample = StringBuilder()
+                    var dataFrames = 0
                     var fullText = ""
                     var reasoningText = ""
                     var finishReason: String? = null
@@ -192,6 +195,10 @@ class OpenAiCompatibleAdapter(
                         if (!line.startsWith("data:")) continue
                         val data = line.removePrefix("data:").trim()
                         if (data == "[DONE]") break
+                        dataFrames++
+                        if (captureDiagnostics && responseSample.length < 12000) {
+                            responseSample.appendLine(data.take(12000 - responseSample.length))
+                        }
 
                         val parsed = parseStreamChunk(data)
 
@@ -236,6 +243,11 @@ class OpenAiCompatibleAdapter(
                             usage = lastUsage,
                             toolCalls = serializeToolCalls(toolCallAccumulator),
                             reasoning = reasoningText,
+                            providerDiagnostics = if (captureDiagnostics) buildJsonObject {
+                                put("contentType", JsonPrimitive(response.header("Content-Type").orEmpty()))
+                                put("dataFrames", JsonPrimitive(dataFrames))
+                                put("responseSample", JsonPrimitive(responseSample.toString()))
+                            } else null,
                         ),
                     )
                 } else {

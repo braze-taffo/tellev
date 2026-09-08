@@ -29,6 +29,7 @@ import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageRole
+import app.tellev.core.model.reasoningParts
 import app.tellev.core.model.Persona
 import app.tellev.core.model.TellevError
 import app.tellev.core.model.WorldBook
@@ -53,6 +54,8 @@ import app.tellev.core.provider.presetCategoryForProvider
 import app.tellev.core.provider.supportsChatGeneration
 import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.security.SecretStore
+import app.tellev.core.storage.GeneratedImage
+import app.tellev.core.storage.GeneratedImageStore
 import app.tellev.core.storage.StDataStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -123,6 +126,10 @@ data class ChatUiState(
     val imageEngine: String? = null,
     val isGeneratingImage: Boolean = false,
     val imageGenStatus: String? = null,
+    val imageGenError: String? = null,
+    val generatedImages: List<GeneratedImage> = emptyList(),
+    /** Last failed scene summary, kept in memory for user inspection; never written to logcat. */
+    val imageGenDiagnostic: String? = null,
 )
 
 private data class ActiveRegeneration(
@@ -140,6 +147,7 @@ class ChatViewModel(
 
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
+    private val generatedImageStore = GeneratedImageStore(dataStore.layout)
     private val runtimeResolver = GenerationRuntimeResolver(dataStore, providerRegistry, secretStore)
 
     private var generationJob: Job? = null
@@ -469,6 +477,7 @@ class ChatViewModel(
                 }
                 characterScriptJob = scriptJob
                 emitCharacterSelected(character)
+                refreshGeneratedImages(session.id)
                 emitChatChanged(session)
                 // rendered 事件限流在 emitRenderedEventsForMessages 内部处理。
                 emitRenderedEventsForMessages(session.messages)
@@ -955,13 +964,20 @@ class ChatViewModel(
         }
     }
 
+    fun stopImageGeneration() {
+        imageGenerationJob?.cancel()
+        imageGenerationJob = null
+        _uiState.update { it.copy(isGeneratingImage = false, imageGenStatus = null) }
+    }
+
+    fun clearImageError() { _uiState.update { it.copy(imageGenError = null) } }
+
+    private suspend fun refreshGeneratedImages(sessionId: String) {
+        val images = withContext(Dispatchers.IO) { generatedImageStore.read(sessionId) }
+        _uiState.update { if (it.currentSession?.id == sessionId) it.copy(generatedImages = images) else it }
+    }
+
     fun stopGeneration() {
-        if (imageGenerationJob?.isActive == true) {
-            imageGenerationJob?.cancel()
-            imageGenerationJob = null
-            _uiState.update { it.copy(isGeneratingImage = false, imageGenStatus = null) }
-            return
-        }
         generationJob?.cancel()
         generationJob = null
 
@@ -1084,6 +1100,7 @@ class ChatViewModel(
                     it.copy(
                         currentSession = newSession,
                         messages = newSession.messages,
+                        generatedImages = emptyList(),
                         chatBackgroundFile = null,
                         sessions = sessions,
                     )
@@ -1118,6 +1135,7 @@ class ChatViewModel(
                     )
                 }
                 _uiState.value.selectedCharacter?.let { reloadCharacterTavernHelperScripts(it) }
+                refreshGeneratedImages(session.id)
                 emitChatChanged(session)
                 emitRenderedEventsForMessages(session.messages)
             } catch (e: Exception) {
@@ -1222,34 +1240,34 @@ class ChatViewModel(
         val state = _uiState.value
         if (!state.imageGenAvailable) {
             _uiState.update {
-                it.copy(error = "生图模型未配置：请先在设置中配置 ComfyUI 工作流或填写 NovelAI 令牌")
+                it.copy(imageGenError = "生图模型未配置：请先在设置中配置 ComfyUI 工作流或填写 NovelAI 令牌")
             }
             return
         }
         if (state.isGenerating || generationJob?.isActive == true) {
-            _uiState.update { it.copy(error = "正在生成回复，请等回复结束后再生图") }
+            _uiState.update { it.copy(imageGenError = "正在生成回复，请等回复结束后再生图") }
             return
         }
         if (state.isGeneratingImage || imageGenerationJob?.isActive == true) return
         val character = state.selectedCharacter
         if (character == null) {
-            _uiState.update { it.copy(error = "请先选择角色") }
+            _uiState.update { it.copy(imageGenError = "请先选择角色") }
             return
         }
         val session = state.currentSession
         if (session == null) {
-            _uiState.update { it.copy(error = "当前没有可用会话") }
+            _uiState.update { it.copy(imageGenError = "当前没有可用会话") }
             return
         }
         val userPrompt = prompt.trim()
         if (!summarizeScene && userPrompt.isBlank()) {
-            _uiState.update { it.copy(error = "请输入图片提示词") }
+            _uiState.update { it.copy(imageGenError = "请输入图片提示词") }
             return
         }
 
         imageGenerationJob = viewModelScope.launch {
             try {
-                _uiState.update { it.copy(isGeneratingImage = true, imageGenStatus = "准备生成图片…", error = null) }
+                _uiState.update { it.copy(isGeneratingImage = true, imageGenStatus = "准备生成图片…", imageGenDiagnostic = null, imageGenError = null) }
                 // 正式版仅使用远程生图服务：ComfyUI 或 NovelAI。
                 val engine = (selectedEngine ?: state.imageEngine)?.let(ChatImageEngine::fromProviderId)
                     ?: error("请选择生图引擎")
@@ -1262,20 +1280,7 @@ class ChatViewModel(
 
                 val finalPrompt = if (summarizeScene) {
                     _uiState.update { it.copy(imageGenStatus = "正在用对话模型总结画面…") }
-                    val summarized = summarizeScenePrompt(character, session.id, engine)
-                    if (summarized.isNullOrBlank()) {
-                        _uiState.update {
-                            it.copy(
-                                isGeneratingImage = false,
-                                imageGenStatus = null,
-                                error = if (engine.usesEnglishTags)
-                                    "场景总结失败或未返回合格的英文 tag 提示词，请重试或手动填写英文 tag"
-                                else "场景总结失败，无法生成图片提示词",
-                            )
-                        }
-                        return@launch
-                    }
-                    summarized
+                    summarizeScenePrompt(character, session, state.selectedPersona, state.selectedProvider, engine)
                 } else {
                     userPrompt
                 }
@@ -1295,7 +1300,7 @@ class ChatViewModel(
                     val novelSettings = ProviderConfigPersistence.loadNovelAiImageSettings(secretStore)
                     config = ProviderConfigPersistence.loadProviderConfig(secretStore, ProviderCatalog.NOVELAI_IMAGE)
                     // 酒馆对最终提示词做 {{user}}/{{char}} 宏替换；适配器在前缀拼接后统一替换。
-                    val personaName = _uiState.value.selectedPersona?.name
+                    val personaName = state.selectedPersona?.name
                     metadata = buildJsonObject {
                         put("negative_prompt", negativePrompt.trim())
                         put(
@@ -1324,8 +1329,7 @@ class ChatViewModel(
                         providerType = engineId,
                         diagnostics = PromptDiagnostics(activatedWorldEntryIds = emptyList()),
                     ),
-                    preset = _uiState.value.selectedPreset
-                        ?: GenerationPreset(id = "none", name = "none", providerType = engineId),
+                    preset = GenerationPreset(id = "image", name = "Image generation", providerType = engineId),
                     stream = false,
                     metadata = metadata,
                 )
@@ -1345,7 +1349,7 @@ class ChatViewModel(
                         it.copy(
                             isGeneratingImage = false,
                             imageGenStatus = null,
-                            error = "生成图片失败：${error.message}（${error.code}）",
+                            imageGenError = "生成图片失败：${error.message}（${error.code}）",
                         )
                     }
                     return@launch
@@ -1353,7 +1357,7 @@ class ChatViewModel(
                 val base64 = imageBase64
                 if (base64.isNullOrBlank()) {
                     _uiState.update {
-                        it.copy(isGeneratingImage = false, imageGenStatus = null, error = "生成图片失败：未返回图片数据")
+                        it.copy(isGeneratingImage = false, imageGenStatus = null, imageGenError = "生成图片失败：未返回图片数据")
                     }
                     return@launch
                 }
@@ -1369,101 +1373,100 @@ class ChatViewModel(
                     dir.mkdirs()
                     java.io.File(dir, imageFileName).writeBytes(bytes)
                 }
-                android.util.Log.i("tellev-img", "image written: $relativePath (${bytes.size} bytes)")
 
-                flushSessionWrites(session.id)
-                val latestSession = _uiState.value.currentSession?.takeIf { it.id == session.id } ?: session
-                val caption = "【图片】"
-                val imageMessage = ChatMessage(
-                    id = generateMessageId(),
-                    role = MessageRole.Character,
-                    name = character.name,
-                    content = caption,
+                val record = GeneratedImage(
+                    id = imageFileId,
                     createdAtMillis = System.currentTimeMillis(),
-                    swipes = listOf(caption),
-                    swipeIndex = 0,
-                    attachments = listOf(
-                        Attachment(
-                            id = "img-$imageFileId",
-                            name = imageFileName,
-                            mimeType = "image/png",
-                            relativePath = relativePath,
-                            source = AttachmentSource.Chat,
-                        ),
-                    ),
-                    metadata = buildJsonObject {
-                        put("image_prompt", finalPrompt)
-                        put("image_negative_prompt", negativePrompt.trim())
-                        put("image_mode", if (summarizeScene) "scene" else "manual")
-                        put("image_engine", engine.providerId)
-                    },
+                    attachments = listOf(Attachment(
+                        id = "img-$imageFileId", name = imageFileName, mimeType = "image/png",
+                        relativePath = relativePath, source = AttachmentSource.Chat,
+                    )),
+                    prompt = finalPrompt,
+                    negativePrompt = negativePrompt.trim(),
+                    engine = engine.providerId,
                 )
-                val updatedSession = latestSession.copy(messages = latestSession.messages + imageMessage)
-                persistSessionMutation(latestSession, updatedSession)
+                withContext(Dispatchers.IO) { generatedImageStore.append(session.id, listOf(record)) }
+                refreshGeneratedImages(session.id)
                 _uiState.update { it.copy(isGeneratingImage = false, imageGenStatus = null) }
-                emitStEvent(StEventCatalog.MESSAGE_RECEIVED, updatedSession.messages.lastIndex, "normal")
-                emitStEvent(StEventCatalog.CHARACTER_MESSAGE_RENDERED, updatedSession.messages.lastIndex, "normal")
-                flushSessionWrites(updatedSession.id)
             } catch (e: CancellationException) {
                 _uiState.update { it.copy(isGeneratingImage = false, imageGenStatus = null) }
             } catch (e: Exception) {
-                _uiState.update { it.copy(isGeneratingImage = false, imageGenStatus = null, error = "生成图片失败：${e.message}") }
+                _uiState.update { it.copy(isGeneratingImage = false, imageGenStatus = null, imageGenError = "生成图片失败：${e.message}") }
             }
         }
     }
 
     /**
-     * Quiet generation with the currently selected chat model and an
-     * engine-specific scene template. Tag engines retry format failures once.
-     * Returns null when no chat model is available or the reply is unusable.
+     * Independent extraction with the currently selected chat model and an
+     * engine-specific scene template. All engines retry format failures once.
+     * Reports provider, empty-body and validation failures separately with local diagnostics.
      */
-    private suspend fun summarizeScenePrompt(character: CharacterCard, sessionId: String, engine: ChatImageEngine): String? {
-        val runtime = runCatching { runtimeResolver.resolve(_uiState.value.selectedPersona?.id) }.getOrNull()
-            ?: return null
-        val config = runtime.providerConfig
-        val adapter = providerRegistry.find(config.providerType) ?: return null
-        if (!adapter.supportsChatGeneration) return null
-
-        val personaName = runtime.persona?.name ?: "User"
-        val promptSession = _uiState.value.currentSession?.takeIf { it.id == sessionId } ?: return null
-        return ImagePromptTemplates.summarize(engine) { instruction ->
-            val template = instruction.replace("{{user}}", personaName).replace("{{char}}", character.name)
-            val request = PromptBuildRequest(
-                character = character,
-                persona = runtime.persona,
-                messages = promptSession.messages.filterNot { it.isHidden } + ChatMessage(
-                    id = "img-scene-prompt",
-                    role = MessageRole.User,
-                    name = personaName,
-                    content = template,
-                    createdAtMillis = System.currentTimeMillis(),
-                ),
-                worldBooks = runtime.activeWorldBooks,
-                preset = runtime.preset,
-                userInput = template,
-                providerType = config.providerType,
-            )
-            val promptResult = buildPromptWithSessionScope(request, promptSession)
-            val generateRequest = GenerateRequest(prompt = promptResult, preset = runtime.preset, stream = true)
-
-            var accumulated = ""
-            var completed: String? = null
-            var failed: TellevError? = null
-            adapter.streamGenerate(config, generateRequest).collect { chunk ->
-                when (chunk) {
-                    is GenerateChunk.Delta -> accumulated += chunk.text
-                    is GenerateChunk.Completed -> if (chunk.text.isNotBlank()) completed = chunk.text
-                    is GenerateChunk.Failed -> failed = chunk.error
+    private suspend fun summarizeScenePrompt(character: CharacterCard, session: ChatSession, persona: Persona?, selectedProvider: String, engine: ChatImageEngine): String {
+        val diagnostic = StringBuilder()
+        try {
+            // Read the chosen provider without resolving/mutating chat defaults, presets or world books.
+            val config = ProviderConfigPersistence.loadProviderConfig(secretStore, selectedProvider)
+            diagnostic.appendLine("对话服务商：${config.providerType}；模型：${config.model.orEmpty()}")
+            val adapter = providerRegistry.find(config.providerType)
+                ?: error("找不到当前对话服务商：${config.providerType}")
+            check(adapter.supportsChatGeneration) { "当前服务商不支持对话总结" }
+            val personaName = persona?.name ?: "User"
+            // Immutable snapshot from the click; no EJS evaluation, variable writes or extension flush.
+            val sceneHistory = ImagePromptTemplates.sceneHistory(session.messages)
+            check(sceneHistory.any { it.reasoningParts().body.isNotBlank() }) { "当前会话没有可供总结的剧情正文" }
+            var attempt = 0
+            var rejectedReason = "模型未返回有效正文"
+            val summary = ImagePromptTemplates.summarize(engine, onRejected = { _, reason ->
+                rejectedReason = reason
+                diagnostic.appendLine("校验结果：$reason")
+            }) { instruction ->
+                attempt++
+                val template = instruction.replace("{{user}}", personaName).replace("{{char}}", character.name)
+                val generateRequest = SceneSummaryRequestBuilder.build(
+                    character, persona, sceneHistory, config.providerType, template,
+                )
+                val promptResult = generateRequest.prompt
+                diagnostic.appendLine("\n第 $attempt 次请求：独立画面提取，${promptResult.messages.size} 条消息，预计 ${promptResult.diagnostics.estimatedTokenCount} tokens")
+                diagnostic.appendLine("回复上限：${promptResult.maxTokens}；停止序列：${generateRequest.preset.stop + promptResult.stop}")
+                diagnostic.appendLine("消息角色：${promptResult.messages.joinToString { it.role.name }}")
+                val accumulated = StringBuilder()
+                var completed: String? = null
+                var failed: TellevError? = null
+                var finishReason: String? = null
+                var reasoningLength = 0
+                adapter.streamGenerate(config, generateRequest).collect { chunk ->
+                    when (chunk) {
+                        is GenerateChunk.Delta -> { accumulated.append(chunk.text); reasoningLength += chunk.reasoning.length }
+                        is GenerateChunk.Completed -> {
+                            if (chunk.text.isNotBlank()) completed = chunk.text
+                            finishReason = chunk.finishReason
+                            reasoningLength = maxOf(reasoningLength, chunk.reasoning.length)
+                            chunk.providerDiagnostics?.let { diagnostic.appendLine("接口原始响应样本：$it") }
+                            chunk.usage?.let { diagnostic.appendLine("接口用量：$it") }
+                        }
+                        is GenerateChunk.Failed -> failed = chunk.error
+                    }
                 }
+                failed?.let { error("总结接口请求失败（${it.code}）：${it.message}") }
+                val raw = completed ?: accumulated.toString()
+                diagnostic.appendLine("结束原因：${finishReason ?: "未提供"}；正文长度：${raw.length}；推理长度：$reasoningLength")
+                diagnostic.appendLine("模型原始回复：\n${raw.take(12000).ifEmpty { "（空）" }}")
+                val parts = MessageReasoning.fromResponse(raw, "")
+                check(parts.body.isNotBlank()) {
+                    if (reasoningLength > 0 || parts.reasoning.isNotBlank()) "总结模型只返回推理，没有正文（结束原因：$finishReason）"
+                    else "总结模型没有返回正文（结束原因：$finishReason）"
+                }
+                parts.body
             }
-            if (failed != null) return@summarize null
-            val raw = completed ?: accumulated
-            if (raw.isBlank()) return@summarize null
-            val body = MessageReasoning.fromResponse(raw, "").body
-            body.takeIf { it.isNotBlank() }
+            return summary ?: error("场景总结校验失败，已停止生图：$rejectedReason")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            diagnostic.appendLine("\n失败原因：${e.message}")
+            _uiState.update { it.copy(imageGenDiagnostic = diagnostic.toString()) }
+            throw e
         }
     }
-
     fun updateProviderConfig(config: ProviderConfig) {
         _uiState.update {
             it.copy(
@@ -1758,7 +1761,7 @@ class ChatViewModel(
                 try {
                     retireSessionRuntime()
                     _uiState.update { it.copy(selectedCharacter = null, characterAvatarFile = null,
-                        currentSession = null, chatBackgroundFile = null, messages = emptyList(), sessions = emptyList()) }
+                        currentSession = null, chatBackgroundFile = null, messages = emptyList(), generatedImages = emptyList(), sessions = emptyList()) }
                     emitStEvent(StEventCatalog.CHAT_CHANGED, "")
                 } catch (error: Exception) {
                     _uiState.update { it.copy(error = "关闭会话失败：${error.message}") }

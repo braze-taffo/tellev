@@ -29,6 +29,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OpenAiCompatibleAdapterTest {
+    @Test
+    fun `response diagnostics are opt in and contain response frames rather than credentials`() = runBlocking {
+        val wire = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n"
+        val adapter = OpenAiCompatibleAdapter(client = client { response(it, 200, wire, "text/event-stream") })
+        val base = generateRequest(true, GenerationPreset("p", "p", "openai-compatible"))
+        val normal = adapter.streamGenerate(config(model = "custom-model"), base).toList().filterIsInstance<GenerateChunk.Completed>().single()
+        assertNull(normal.providerDiagnostics)
+        val diagnostic = adapter.streamGenerate(config(model = "custom-model"), base.copy(metadata = buildJsonObject {
+            put("capture_response_diagnostics", JsonPrimitive(true))
+        })).toList().filterIsInstance<GenerateChunk.Completed>().single().providerDiagnostics!!
+        assertEquals("1", diagnostic["dataFrames"]!!.jsonPrimitive.content)
+        assertTrue(diagnostic["responseSample"]!!.jsonPrimitive.content.contains("finish_reason"))
+        assertFalse(diagnostic.toString().contains("Bearer"))
+    }
+
 
     @Test
     fun `stream and nonstream preserve independent response channels including no body`() = runBlocking {
