@@ -199,6 +199,22 @@ class ComfyUiAdapter(
         val promptText = request.prompt.messages
             .filter { it.role != MessageRole.System }
             .joinToString(" ") { it.content }
+        if (!settings.workflowJson.contains("\"%prompt%\"")) {
+            emit(GenerateChunk.Failed(TellevError(
+                code = "comfy_prompt_unbound",
+                message = "ComfyUI 工作流未接入图片提示词：请将正向提示词节点的完整文本设为 %prompt% 并连接到采样器",
+                retryable = false,
+            )))
+            return@flow
+        }
+        if (promptText.none { it.isLetter() }) {
+            emit(GenerateChunk.Failed(TellevError(
+                code = "comfy_prompt_empty",
+                message = "图片提示词没有有效文字，已停止生图",
+                retryable = false,
+            )))
+            return@flow
+        }
         val negativeOverride = request.metadata["negative_prompt"]?.jsonPrimitive?.contentOrNull
         val negativePrompt = negativeOverride?.takeIf { it.isNotBlank() } ?: settings.negativePrompt
         val seed = if (settings.seed >= 0) settings.seed else Random.nextLong(0, Long.MAX_VALUE)

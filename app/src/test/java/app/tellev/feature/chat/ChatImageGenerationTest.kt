@@ -63,7 +63,7 @@ class ChatImageGenerationTest {
             assertEquals(ProviderCatalog.COMFYUI, vm.uiState.value.imageEngine)
 
             withContext(main) { vm.generateImage("1girl, solo, garden", "blurry", false, ProviderCatalog.NOVELAI_IMAGE) }
-            waitUntil { vm.uiState.value.error?.contains("test_finished") == true && !vm.uiState.value.isGeneratingImage }
+            waitUntil { vm.uiState.value.imageGenError?.contains("test_finished") == true && !vm.uiState.value.isGeneratingImage }
             assertEquals(0, comfy.requests.size)
             val (config, request) = novel.requests.single()
             assertEquals(ProviderCatalog.NOVELAI_IMAGE, config.providerType)
@@ -76,7 +76,7 @@ class ChatImageGenerationTest {
 
             secrets.deleteSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey")
             withContext(main) { vm.generateImage("", "", true, ProviderCatalog.NOVELAI_IMAGE) }
-            waitUntil { vm.uiState.value.error?.contains("NovelAI 未配置") == true && !vm.uiState.value.isGeneratingImage }
+            waitUntil { vm.uiState.value.imageGenError?.contains("NovelAI 未配置") == true && !vm.uiState.value.isGeneratingImage }
             assertEquals(1, novel.requests.size)
             assertEquals(0, comfy.requests.size)
         } finally {

@@ -1340,7 +1340,12 @@ class FileStDataStore(
      * Line 0: header with user_name, character_name, chat_metadata
      * Lines 1+: messages with is_user, mes, swipes, swipe_id, send_date, etc.
      */
-    private fun readJsonlChat(path: Path): ChatSession {
+    private fun readJsonlChat(path: Path): ChatSession = GeneratedImageStore(layout).withSessionLock(path.nameWithoutExtension) {
+        readChatWithoutGeneratedImages(path)
+    }
+
+    private fun readChatWithoutGeneratedImages(path: Path): ChatSession {
+        val initialRevision = durableFiles.revision(path)
         val lines = path.readText()
             .lineSequence()
             .filter { it.isNotBlank() }
@@ -1379,6 +1384,29 @@ class FileStDataStore(
 
         val messages = lines.drop(messageStartIndex).mapIndexed { index, line ->
             parseStChatMessage(line, sessionId, index)
+        }
+
+        // Archive first, then remove only Tellev's generated-image rows. Preserve
+        // all narrative lines and variable snapshots; migration emits no chat event.
+        // The journal retains the original file and CAS prevents a concurrent edit being lost.
+        val images = messages.filter { it.isGeneratedImage() }
+        if (images.isNotEmpty()) {
+            fun ChatMessage.field(key: String) = (metadata[key] as? JsonPrimitive)?.content.orEmpty()
+            GeneratedImageStore(layout).append(sessionId, images.map {
+                GeneratedImage(it.id, it.createdAtMillis, it.attachments, it.field("image_prompt"),
+                    it.field("image_negative_prompt"), it.field("image_engine"), it)
+            })
+            val kept = lines.take(messageStartIndex) + messages.mapIndexedNotNull { index, message ->
+                if (message.isGeneratedImage()) null else {
+                    val line = lines[messageStartIndex + index]
+                    // Imported JSONL can have index-derived IDs. Freeze those IDs before removing rows.
+                    if (message.raw.isNotEmpty() && "_tellev_message_id" !in message.raw) {
+                        JsonObject(message.raw + ("_tellev_message_id" to JsonPrimitive(message.id))).toString()
+                    } else line
+                }
+            }
+            durableFiles.write(path, kept.joinToString("\n").toByteArray(Charsets.UTF_8), expectedRevision = initialRevision)
+            return readChatWithoutGeneratedImages(path)
         }
 
         return ChatSession(

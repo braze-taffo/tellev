@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -117,6 +118,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.net.Uri
 import app.tellev.core.model.AttachmentSource
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import androidx.compose.material.icons.filled.AddPhotoAlternate
@@ -283,6 +285,11 @@ private fun ChatContentScreen(
     var editTextField by remember { mutableStateOf("") }
     var pendingAttachments by remember { mutableStateOf(listOf<Attachment>()) }
     var showImageDialog by remember { mutableStateOf(false) }
+    var showImageGallery by remember(state.currentSession?.id) { mutableStateOf(false) }
+    var showImageDiagnostic by remember { mutableStateOf(false) }
+    LaunchedEffect(state.imageGenDiagnostic) {
+        if (state.imageGenDiagnostic != null) showImageDiagnostic = true
+    }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val graph = LocalTellevGraph.current
@@ -615,6 +622,46 @@ private fun ChatContentScreen(
             }
         }
 
+        if (state.generatedImages.isNotEmpty()) {
+            TextButton(onClick = { showImageGallery = true }) {
+                Text("查看生成图片（${state.generatedImages.size}）")
+            }
+        }
+        if (showImageGallery) {
+            AlertDialog(
+                onDismissRequest = { showImageGallery = false },
+                title = { Text("生成图片") },
+                text = {
+                    LazyColumn(modifier = Modifier.heightIn(max = 520.dp)) {
+                        items(state.generatedImages.asReversed(), key = { it.id }) { image ->
+                            Column {
+                                image.attachments.forEach { attachment ->
+                                    val file = dataRoot.resolve(attachment.relativePath)
+                                    if (file.isFile) ChatBubbleImage(file)
+                                }
+                                var showPrompt by remember(image.id) { mutableStateOf(false) }
+                                TextButton(onClick = { showPrompt = !showPrompt }) {
+                                    Text(if (showPrompt) "收起提示词" else "查看图片提示词")
+                                }
+                                if (showPrompt) SelectionContainer {
+                                    Text(image.prompt, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { showImageGallery = false }) { Text("关闭") } },
+            )
+        }
+        if (state.imageGenError != null && state.imageGenDiagnostic == null) {
+            AlertDialog(
+                onDismissRequest = viewModel::clearImageError,
+                title = { Text("生图失败") },
+                text = { Text(state.imageGenError) },
+                confirmButton = { TextButton(onClick = viewModel::clearImageError) { Text("关闭") } },
+            )
+        }
+
         ChatInputBar(
             text = inputText,
             onTextChange = { inputText = it },
@@ -644,6 +691,7 @@ private fun ChatContentScreen(
                 }
             },
             onStop = { viewModel.stopGeneration() },
+            onStopImage = { viewModel.stopImageGeneration() },
         )
 
         if (showImageDialog) {
@@ -651,12 +699,32 @@ private fun ChatContentScreen(
                 initialPrompt = inputText,
                 initialEngine = state.imageEngine,
                 configuredEngines = state.configuredImageEngines,
+                onShowDiagnostic = state.imageGenDiagnostic?.let { { showImageDiagnostic = true } },
                 onGenerate = { prompt, negative, summarizeScene, engine ->
                     showImageDialog = false
                     keyboardController?.hide()
                     viewModel.generateImage(prompt, negative, summarizeScene, engine)
                 },
                 onDismiss = { showImageDialog = false },
+            )
+        }
+        if (showImageDiagnostic && state.imageGenDiagnostic != null) {
+            AlertDialog(
+                onDismissRequest = { showImageDiagnostic = false },
+                title = { Text("场景总结诊断") },
+                text = {
+                    SelectionContainer {
+                        Text(state.imageGenDiagnostic,
+                            modifier = Modifier.verticalScroll(rememberScrollState()))
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("场景总结诊断", state.imageGenDiagnostic))
+                    }) { Text("复制诊断") }
+                },
+                dismissButton = { TextButton(onClick = { showImageDiagnostic = false }) { Text("关闭") } },
             )
         }
     }
@@ -876,6 +944,19 @@ private fun ChatBubble(
             ) {
                 imageFiles.forEach { file ->
                     ChatBubbleImage(file = file)
+                }
+                val imagePrompt = message.metadata["image_prompt"]?.jsonPrimitive?.contentOrNull
+                if (!imagePrompt.isNullOrBlank()) {
+                    var showPrompt by remember(message.id) { mutableStateOf(false) }
+                    TextButton(onClick = { showPrompt = !showPrompt }) {
+                        Text(if (showPrompt) "收起图片提示词" else "查看图片提示词")
+                    }
+                    if (showPrompt) {
+                        SelectionContainer {
+                            Text(imagePrompt, style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                        }
+                    }
                 }
                 if (parts.body.isNotBlank()) {
                     TavernMessageContent(
@@ -1593,6 +1674,7 @@ private fun ChatInputBar(
     onRemoveAttachment: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    onStopImage: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val canSend = text.isNotBlank() || attachments.isNotEmpty()
@@ -1616,10 +1698,12 @@ private fun ChatInputBar(
                     strokeWidth = 2.dp,
                 )
                 Text(
+                    modifier = Modifier.weight(1f),
                     text = imageGenStatus ?: "正在生成图片…",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                TextButton(onClick = onStopImage) { Text("取消生图") }
             }
         }
         if (attachments.isNotEmpty()) {
@@ -1719,7 +1803,7 @@ private fun ChatInputBar(
                 ),
             )
 
-            if (isGenerating || isGeneratingImage) {
+            if (isGenerating) {
                 IconButton(
                     onClick = onStop,
                     modifier = Modifier
@@ -1799,6 +1883,7 @@ private fun ImageGenerationDialog(
     initialPrompt: String,
     initialEngine: String?,
     configuredEngines: Set<String>,
+    onShowDiagnostic: (() -> Unit)? = null,
     onGenerate: (prompt: String, negativePrompt: String, summarizeScene: Boolean, engine: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1817,6 +1902,9 @@ private fun ImageGenerationDialog(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text("生图引擎", style = MaterialTheme.typography.titleSmall)
+                if (onShowDiagnostic != null) {
+                    TextButton(onClick = onShowDiagnostic) { Text("查看上次总结诊断") }
+                }
                 ChatImageEngine.entries.forEach { engine ->
                     val configured = engine.providerId in configuredEngines
                     Row(

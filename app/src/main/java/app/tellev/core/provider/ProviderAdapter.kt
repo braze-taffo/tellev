@@ -85,6 +85,8 @@ sealed interface GenerateChunk {
         // Normalized provider tool/function calls, when the model requests one.
         val toolCalls: kotlinx.serialization.json.JsonArray? = null,
         val reasoning: String = "",
+        /** Opt-in response diagnostics for local troubleshooting; excludes request headers/credentials. */
+        val providerDiagnostics: JsonObject? = null,
     ) : GenerateChunk
 
     @Serializable
