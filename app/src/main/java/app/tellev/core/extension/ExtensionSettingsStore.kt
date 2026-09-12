@@ -37,7 +37,7 @@ class ExtensionSettingsStore(
     private var recovered = false
 
     private fun recoverOnce() {
-        if (!recovered) { writer.recover(); recovered = true }
+        if (!recovered) { writer.recover(); writer.sweep(); recovered = true }
     }
 
     /**

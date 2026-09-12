@@ -117,6 +117,7 @@ class FileStDataStore(
     override suspend fun bootstrap(): Unit = withContext(Dispatchers.IO) {
         layout.allDirectories.forEach { it.createDirectories() }
         durableFiles.recover()
+        durableFiles.sweep()
         settingsRepository.migrateLegacyRegexActivation(
             readCharacter = { characterRepository.readCharacter(it) },
             saveCharacter = { characterRepository.saveCharacter(it) },
