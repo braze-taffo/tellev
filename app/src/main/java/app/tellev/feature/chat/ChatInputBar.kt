@@ -247,12 +247,12 @@ internal suspend fun buildAttachmentFromUri(
     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val imagesDir = java.io.File(dataRoot, "user/images")
         imagesDir.mkdirs()
-        // fsync 落盘：消息持久化（journal 已 fsync）引用此文件前先确保字节到盘，
-        // 否则断电后消息可能指向缺失文件。
-        java.io.FileOutputStream(java.io.File(imagesDir, imageFileName)).use { stream ->
-            stream.write(bytes)
-            stream.fd.sync()
-        }
+        // 与 journal 同纪律的落盘（temp+fsync+原子改名+目录同步）：
+        // 消息持久化引用此文件前先确保字节完整到盘，且中途被杀不留半文件。
+        app.tellev.core.storage.DurableFileOps.write(
+            java.io.File(imagesDir, imageFileName).toPath(),
+            bytes,
+        )
     }
     return Attachment(
         id = "att-$attachmentId",

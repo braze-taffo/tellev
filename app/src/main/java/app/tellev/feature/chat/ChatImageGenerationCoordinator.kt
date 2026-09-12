@@ -34,6 +34,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -56,6 +58,12 @@ internal class ChatImageGenerationCoordinator(
     val isJobActive: Boolean
         get() = imageGenerationJob?.isActive == true
 
+    // 在途生图所属会话：删除任意会话（不限于当前）前据此判定是否需要停掉。
+    @Volatile
+    private var activeImageSessionId: String? = null
+
+    fun activeImageSessionId(): String? = activeImageSessionId
+
     suspend fun refreshImageGenAvailability(
         onAvailabilityUpdated: (available: Boolean, configured: Set<String>, engine: String?) -> Unit,
     ) {
@@ -75,6 +83,7 @@ internal class ChatImageGenerationCoordinator(
     fun stopImageGeneration(onStopped: () -> Unit) {
         imageGenerationJob?.cancel()
         imageGenerationJob = null
+        activeImageSessionId = null
         onStopped()
     }
 
@@ -119,6 +128,7 @@ internal class ChatImageGenerationCoordinator(
 
         imageGenerationJob = scope.launch {
             try {
+                activeImageSessionId = session.id
                 onStatusUpdated(true, "准备生成图片…", null, null)
 
                 val engine = (selectedEngine ?: state.imageEngine)?.let(ChatImageEngine::fromProviderId)
@@ -265,10 +275,16 @@ internal class ChatImageGenerationCoordinator(
                 val bytes = withContext(Dispatchers.IO) {
                     java.util.Base64.getDecoder().decode(base64)
                 }
+                // 会话可能在生成期间被删除并取消了本 job：取消后不再落盘，
+                // 避免为已删除会话重建图片与画廊（级联清理会被撤销）。
+                currentCoroutineContext().ensureActive()
                 withContext(Dispatchers.IO) {
                     val dir = dataStore.layout.userImages.toFile()
                     dir.mkdirs()
-                    java.io.File(dir, imageFileName).writeBytes(bytes)
+                    app.tellev.core.storage.DurableFileOps.write(
+                        java.io.File(dir, imageFileName).toPath(),
+                        bytes,
+                    )
                 }
 
                 val record = GeneratedImage(
@@ -285,6 +301,7 @@ internal class ChatImageGenerationCoordinator(
                     negativePrompt = negativePrompt.trim(),
                     engine = engine.providerId,
                 )
+                currentCoroutineContext().ensureActive()
                 withContext(Dispatchers.IO) { generatedImageStore.append(session.id, listOf(record)) }
                 refreshGeneratedImages(session.id, onImagesLoaded)
                 onStatusUpdated(false, null, null, null)
@@ -292,6 +309,8 @@ internal class ChatImageGenerationCoordinator(
                 onStatusUpdated(false, null, null, null)
             } catch (e: Exception) {
                 onStatusUpdated(false, null, null, "生成图片失败：${e.message}")
+            } finally {
+                activeImageSessionId = null
             }
         }
     }

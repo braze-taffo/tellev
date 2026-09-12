@@ -51,7 +51,11 @@ internal class ChatRepository(
             }
         }
         roots.flatMap { root ->
-            if (!root.exists()) emptyList() else root.listDirectoryEntries("*.jsonl").map { readJsonlChat(it) }
+            if (!root.exists()) emptyList() else root.listDirectoryEntries("*.jsonl").mapNotNull { path ->
+                // 并发删除的会话直接跳过；仍然存在但损坏的会话照旧如实失败。
+                if (!path.exists()) null
+                else runCatching { readJsonlChat(path) }.getOrElse { if (!path.exists()) null else throw it }
+            }
         }.sortedByDescending { session -> session.messages.lastOrNull()?.createdAtMillis ?: 0L }
     }
 
@@ -102,8 +106,9 @@ internal class ChatRepository(
         chatWrites.withLock {
             val path = StorageFileOps.findByFileName(listOf(layout.chats, layout.groupChats), "$sessionId.jsonl")
                 ?: error("Chat session not found: $sessionId")
-            val revision = durableFiles.revision(path)
             val session = readJsonlChat(path)
+            // Read the revision after parsing: a read-time migration may have just bumped it.
+            val revision = durableFiles.revision(path)
             writeChatSession(session.copy(messages = session.messages + message), revision)
             Unit
         }
@@ -113,6 +118,9 @@ internal class ChatRepository(
      * Permanently remove a session: JSONL, its gallery index, referenced chat image
      * files, and the per-session background. Only files under user/images are touched;
      * attachments pointing at shared assets stay untouched.
+     *
+     * The JSONL is removed first: if that fails nothing else is destroyed. A failure
+     * after it can only leave invisible orphan image files, never a half-deleted chat.
      */
     suspend fun deleteChatSession(id: String): Unit = withContext(Dispatchers.IO) {
         chatWrites.withLock {
@@ -121,13 +129,13 @@ internal class ChatRepository(
             val galleryStore = GeneratedImageStore(layout)
             val chatText = runCatching { path.readText() }.getOrDefault("")
             val galleryText = runCatching { galleryStore.galleryFile(id).readText() }.getOrDefault("")
+            durableFiles.delete(path)
             (imagePathsReferencedBy(chatText) + imagePathsReferencedBy(galleryText)).forEach { relative ->
                 val file = layout.root.resolve(relative).normalize()
                 if (file.startsWith(layout.userImages)) runCatching { Files.deleteIfExists(file) }
             }
             galleryStore.delete(id)
             runCatching { Files.deleteIfExists(layout.backgrounds.resolve("$id.png")) }
-            durableFiles.delete(path)
             runCatching {
                 val dir = path.parent
                 if (dir != null && dir != layout.chats && dir != layout.groupChats &&
@@ -181,23 +189,38 @@ internal class ChatRepository(
 
     private fun readJsonlChatCached(path: Path): ChatSession = synchronized(sessionCache) {
         val revision = durableFiles.revision(path)
-        val mtime = Files.getLastModifiedTime(path).toMillis()
-        val size = Files.size(path)
-        val cached = sessionCache[path]
-        if (cached != null && cached.revision == revision && cached.mtimeMillis == mtime && cached.size == size) {
+        val stats = runCatching {
+            Files.getLastModifiedTime(path).toMillis() to Files.size(path)
+        }.getOrNull()
+        val cached = if (stats != null) sessionCache[path] else null
+        if (cached != null && stats != null &&
+            cached.revision == revision && cached.mtimeMillis == stats.first && cached.size == stats.second
+        ) {
             return@synchronized cached.session
         }
-        val parsed = readChatWithoutGeneratedImages(path)
-        sessionCache[path] = SessionCacheEntry(
-            durableFiles.revision(path),
-            Files.getLastModifiedTime(path).toMillis(),
-            Files.size(path),
-            parsed,
-        )
-        parsed
+        val outcome = readChatWithoutGeneratedImages(path)
+        // 未落定的读取结果（迁移写失败）不缓存：下一次读取必须重试迁移，
+        // 否则缓存会把「内存已剥离、磁盘未迁移」的视图固化。
+        if (outcome.settled) {
+            val postStats = runCatching {
+                Files.getLastModifiedTime(path).toMillis() to Files.size(path)
+            }.getOrNull()
+            if (postStats != null) {
+                sessionCache[path] = SessionCacheEntry(
+                    durableFiles.revision(path),
+                    postStats.first,
+                    postStats.second,
+                    outcome.session,
+                )
+            }
+        }
+        outcome.session
     }
 
-    private fun readChatWithoutGeneratedImages(path: Path): ChatSession {
+    /** [settled] 为 false 表示磁盘上还有待迁移内容，内存视图与磁盘不完全一致。 */
+    private class ChatReadOutcome(val session: ChatSession, val settled: Boolean)
+
+    private fun readChatWithoutGeneratedImages(path: Path): ChatReadOutcome {
         val initialRevision = durableFiles.revision(path)
         val lines = path.readText()
             .lineSequence()
@@ -205,12 +228,15 @@ internal class ChatRepository(
             .toList()
 
         if (lines.isEmpty()) {
-            return ChatSession(
-                id = path.nameWithoutExtension,
-                title = path.nameWithoutExtension,
-                characterId = inferCharacterId(path, isGroupChat = false),
-                groupId = inferCharacterId(path, isGroupChat = true),
-                messages = emptyList(),
+            return ChatReadOutcome(
+                ChatSession(
+                    id = path.nameWithoutExtension,
+                    title = path.nameWithoutExtension,
+                    characterId = inferCharacterId(path, isGroupChat = false),
+                    groupId = inferCharacterId(path, isGroupChat = true),
+                    messages = emptyList(),
+                ),
+                settled = true,
             )
         }
 
@@ -237,46 +263,59 @@ internal class ChatRepository(
         }
 
         val images = messages.filter { it.isGeneratedImage() }
-        var migrated = images.isNotEmpty()
-        if (images.isNotEmpty()) {
-            fun ChatMessage.field(key: String) = (metadata[key] as? JsonPrimitive)?.content.orEmpty()
-            GeneratedImageStore(layout).append(sessionId, images.map {
-                GeneratedImage(it.id, it.createdAtMillis, it.attachments, it.field("image_prompt"),
-                    it.field("image_negative_prompt"), it.field("image_engine"), stripLegacyMessage(it))
-            })
+        // 画廊与 JSONL 的剥离必须同生共死：append 失败就不动磁盘，也不从消息中剥离。
+        val gallerySettled = if (images.isEmpty()) {
+            true
+        } else {
+            runCatching {
+                fun ChatMessage.field(key: String) = (metadata[key] as? JsonPrimitive)?.content.orEmpty()
+                GeneratedImageStore(layout).append(sessionId, images.map {
+                    GeneratedImage(it.id, it.createdAtMillis, it.attachments, it.field("image_prompt"),
+                        it.field("image_negative_prompt"), it.field("image_engine"), stripLegacyMessage(it))
+                })
+            }.isSuccess
         }
+        var extractionChanged = false
         val kept = lines.take(messageStartIndex) + messages.mapIndexedNotNull { index, message ->
             val line = lines[messageStartIndex + index]
             when {
-                message.isGeneratedImage() -> null
+                message.isGeneratedImage() && gallerySettled -> null
                 else -> {
                     val withId = if (message.raw.isNotEmpty() && "_tellev_message_id" !in message.raw) {
                         JsonObject(message.raw + ("_tellev_message_id" to JsonPrimitive(message.id))).toString()
                     } else line
                     // Substring prefilter: parsing every line twice would double read cost.
                     val migratedLine = if ("base64" !in withId) null else extractInlineImageAttachments(withId)
-                    migratedLine?.also { migrated = true } ?: withId
+                    migratedLine?.also { extractionChanged = true } ?: withId
                 }
             }
         }
-        if (migrated) {
-            // 迁移写失败时退回未迁移的解析结果（请求构建仍兼容 metadata.base64）：
-            // 读取路径不允许因为迁移写而失败。
+        val needsRewrite = (images.isNotEmpty() && gallerySettled) || extractionChanged
+        if (needsRewrite) {
+            // 读取路径不允许因为迁移写而失败：写失败时返回与目标状态一致的内存视图，
+            // 磁盘保持旧格式等待下次读取重试（base64 附件保留，请求构建仍兼容）。
             val rewritten = runCatching {
                 durableFiles.write(path, kept.joinToString("\n").toByteArray(Charsets.UTF_8), expectedRevision = initialRevision)
             }.isSuccess
             if (rewritten) return readChatWithoutGeneratedImages(path)
         }
 
-        return ChatSession(
-            id = sessionId,
-            title = chatMetadata["title"]?.jsonPrimitive?.content ?: sessionId,
-            characterId = characterId,
-            groupId = groupId,
-            messages = messages,
-            metadata = chatMetadata,
-            rawHeader = if (headerParsed) firstObj ?: buildJsonObject { } else buildJsonObject { },
-            storageRevision = durableFiles.revision(path),
+        // 内存视图与画廊对齐：已入画廊的生成图从消息中剥离，避免气泡与画廊
+        // 双份显示、以及它们作为对话回合进入提示词；画廊未收录时保留原消息。
+        val effectiveMessages = if (gallerySettled) messages.filterNot { it.isGeneratedImage() } else messages
+        return ChatReadOutcome(
+            ChatSession(
+                id = sessionId,
+                title = chatMetadata["title"]?.jsonPrimitive?.content ?: sessionId,
+                characterId = characterId,
+                groupId = groupId,
+                messages = effectiveMessages,
+                metadata = chatMetadata,
+                rawHeader = if (headerParsed) firstObj ?: buildJsonObject { } else buildJsonObject { },
+                storageRevision = durableFiles.revision(path),
+            ),
+            // 画廊未收录（需要重试 append）或重写失败（磁盘未迁移）都视为未落定。
+            settled = !needsRewrite && (images.isEmpty() || gallerySettled),
         )
     }
 
@@ -305,11 +344,27 @@ internal class ChatRepository(
             ?.replace(Regex("[^a-zA-Z0-9._-]"), "")
             ?.takeIf { it.isNotBlank() }
             ?: "att-${UUID.randomUUID().toString().substring(0, 8)}"
+        val relative = writeMigratedImage(attId, bytes) ?: return null
+        return JsonObject(
+            attachment +
+                ("relativePath" to JsonPrimitive(relative)) +
+                ("mimeType" to JsonPrimitive("image/jpeg")) +
+                ("metadata" to JsonObject(metadata.filterKeys { it != "base64" })),
+        )
+    }
+
+    /**
+     * Persist migrated image bytes under user/images with the same durability discipline
+     * as the journal (temp + fsync + atomic rename + directory fsync): the JSONL commit
+     * that drops the inline base64 is fsynced by the journal, so the image must be fully
+     * on disk first. A same-named file with identical content is a replay and gets reused;
+     * different content means an id conflict and gets a unique name instead of an overwrite.
+     * Returns the data-root-relative path, or null when the write failed.
+     */
+    private fun writeMigratedImage(attId: String, bytes: ByteArray): String? {
         var fileName = "att-mig-$attId.jpg"
         var target = layout.userImages.resolve(fileName)
         if (Files.exists(target)) {
-            // 同名文件：内容一致说明是上次迁移中断后的重放，直接复用；
-            // 内容不同说明 id 冲突，改用唯一文件名避免静默覆盖。
             val identical = runCatching { Files.readAllBytes(target).contentEquals(bytes) }.getOrDefault(false)
             if (!identical) {
                 fileName = "att-mig-$attId-${UUID.randomUUID().toString().substring(0, 8)}.jpg"
@@ -318,26 +373,9 @@ internal class ChatRepository(
         }
         return runCatching {
             layout.userImages.createDirectories()
-            writeImageFileSynced(target, bytes)
-            JsonObject(
-                attachment +
-                    ("relativePath" to JsonPrimitive("user/images/$fileName")) +
-                    ("mimeType" to JsonPrimitive("image/jpeg")) +
-                    ("metadata" to JsonObject(metadata.filterKeys { it != "base64" })),
-            )
+            app.tellev.core.storage.DurableFileOps.write(target, bytes)
+            "user/images/$fileName"
         }.getOrNull()
-    }
-
-    /**
-     * Migrated images live outside the journal; the JSONL commit that drops the inline
-     * base64 is fsynced by the journal, so the image bytes must hit the disk first or
-     * a power loss after the commit would leave the chat pointing at a missing file.
-     */
-    private fun writeImageFileSynced(target: Path, bytes: ByteArray) {
-        java.io.FileOutputStream(target.toFile()).use { stream ->
-            stream.write(bytes)
-            stream.fd.sync()
-        }
     }
 
     /** Rewrite a message line whose attachments still carry inline base64; null when unchanged. */
@@ -372,20 +410,13 @@ internal class ChatRepository(
             val bytes = runCatching { java.util.Base64.getDecoder().decode(base64) }.getOrNull() ?: return@map attachment
             val attId = attachment.id.replace(Regex("[^a-zA-Z0-9._-]"), "")
                 .ifBlank { "att-${UUID.randomUUID().toString().substring(0, 8)}" }
-            val fileName = "att-mig-$attId.jpg"
-            val wrote = runCatching {
-                layout.userImages.createDirectories()
-                writeImageFileSynced(layout.userImages.resolve(fileName), bytes)
-            }.isSuccess
-            if (!wrote) {
-                attachment
-            } else {
-                attachment.copy(
-                    relativePath = attachment.relativePath.ifBlank { "user/images/$fileName" },
-                    mimeType = "image/jpeg",
-                    metadata = JsonObject(attachment.metadata.filterKeys { it != "base64" }),
-                )
-            }
+            // 与 JSONL 迁移同一条冲突安全的写路径，两条路径不得一高一低。
+            val relative = writeMigratedImage(attId, bytes) ?: return@map attachment
+            attachment.copy(
+                relativePath = attachment.relativePath.ifBlank { relative },
+                mimeType = "image/jpeg",
+                metadata = JsonObject(attachment.metadata.filterKeys { it != "base64" }),
+            )
         }
         return message.copy(attachments = cleanAttachments, raw = cleanRaw)
     }
