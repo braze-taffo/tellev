@@ -25,6 +25,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import kotlin.io.path.createDirectories
@@ -106,6 +107,41 @@ internal class ChatRepository(
             Unit
         }
     }
+
+    /**
+     * Permanently remove a session: JSONL, its gallery index, referenced chat image
+     * files, and the per-session background. Only files under user/images are touched;
+     * attachments pointing at shared assets stay untouched.
+     */
+    suspend fun deleteChatSession(id: String): Unit = withContext(Dispatchers.IO) {
+        chatWrites.withLock {
+            val path = StorageFileOps.findByFileName(listOf(layout.chats, layout.groupChats), "$id.jsonl")
+                ?: return@withLock
+            val galleryStore = GeneratedImageStore(layout)
+            val chatText = runCatching { path.readText() }.getOrDefault("")
+            val galleryText = runCatching { galleryStore.galleryFile(id).readText() }.getOrDefault("")
+            (imagePathsReferencedBy(chatText) + imagePathsReferencedBy(galleryText)).forEach { relative ->
+                val file = layout.root.resolve(relative).normalize()
+                if (file.startsWith(layout.userImages)) runCatching { Files.deleteIfExists(file) }
+            }
+            galleryStore.delete(id)
+            runCatching { Files.deleteIfExists(layout.backgrounds.resolve("$id.png")) }
+            durableFiles.delete(path)
+            runCatching {
+                val dir = path.parent
+                if (dir != null && dir != layout.chats && dir != layout.groupChats &&
+                    Files.isDirectory(dir) && Files.list(dir).use { !it.findAny().isPresent }
+                ) {
+                    Files.deleteIfExists(dir)
+                }
+            }
+            chatChanges.tryEmit(id)
+        }
+        Unit
+    }
+
+    private fun imagePathsReferencedBy(text: String): Set<String> =
+        CHAT_IMAGE_PATH_REGEX.findAll(text).map { it.groupValues[1] }.toSet()
 
     suspend fun listGroups(): List<GroupChat> = withContext(Dispatchers.IO) {
         StorageFileOps.readJsonObjects(layout.groups, json).map { raw ->
@@ -294,5 +330,10 @@ internal class ChatRepository(
             }
         }
         return message.copy(attachments = cleanAttachments, raw = cleanRaw)
+    }
+
+    private companion object {
+        /** Chat-created images live only under user/images; other attachment paths are shared assets. */
+        private val CHAT_IMAGE_PATH_REGEX = Regex("\"relativePath\"\\s*:\\s*\"(user/images/[^\"]+)\"")
     }
 }

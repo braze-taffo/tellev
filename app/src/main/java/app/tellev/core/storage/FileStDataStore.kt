@@ -29,6 +29,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.nio.file.Path
 import kotlin.io.path.createDirectories
+import kotlin.io.path.nameWithoutExtension
 
 class FileStDataStore(
     override val layout: StDirectoryLayout,
@@ -143,8 +144,21 @@ class FileStDataStore(
     override suspend fun importCharacter(card: CharacterCard, sourceBytes: ByteArray, sourceFileName: String) =
         characterRepository.importCharacter(card, sourceBytes, sourceFileName)
 
-    override suspend fun deleteCharacter(id: String) =
+    override suspend fun deleteCharacter(id: String) {
         characterRepository.deleteCharacter(id)
+        // 级联删除该角色的全部会话及其图片/画廊/背景；此前删角色后这些数据会永久残留。
+        val chatDir = layout.chats.resolve(id)
+        val sessionIds = if (java.nio.file.Files.isDirectory(chatDir)) {
+            java.nio.file.Files.list(chatDir).use { paths ->
+                paths.filter { it.fileName.toString().endsWith(".jsonl") }
+                    .map { it.nameWithoutExtension }
+                    .collect(java.util.stream.Collectors.toList())
+            }
+        } else {
+            emptyList()
+        }
+        sessionIds.forEach { chatRepository.deleteChatSession(it) }
+    }
 
     override suspend fun replaceCharacterAvatar(id: String, pngBytes: ByteArray) =
         characterRepository.replaceCharacterAvatar(id, pngBytes)
@@ -159,6 +173,9 @@ class FileStDataStore(
 
     override suspend fun saveChatSession(session: ChatSession) =
         chatRepository.saveChatSession(session)
+
+    override suspend fun deleteChatSession(id: String): Unit =
+        chatRepository.deleteChatSession(id)
 
     override suspend fun commitChatMutation(
         base: ChatSession,

@@ -49,6 +49,32 @@ class GeneratedImageStore(private val layout: StDirectoryLayout) {
         Unit
     }
 
+    /** Gallery index file path for [sessionId]; exposed for deletion cascades. */
+    fun galleryFile(sessionId: String): Path = path(sessionId)
+
+    /** Remove the whole gallery index for a session (chat deletion cascade). */
+    fun delete(sessionId: String) = withSessionLock(sessionId) {
+        val file = path(sessionId)
+        if (file.exists()) writer.delete(file)
+        Unit
+    }
+
+    /** Drop one record; returns it when it existed. An emptied gallery removes the index file. */
+    fun remove(sessionId: String, imageId: String): GeneratedImage? = withSessionLock(sessionId) {
+        val previous = read(sessionId)
+        val target = previous.firstOrNull { it.id == imageId }
+        if (target != null) {
+            val next = previous.filterNot { it.id == imageId }
+            if (next.isEmpty()) {
+                val file = path(sessionId)
+                if (file.exists()) writer.delete(file)
+            } else {
+                writer.write(path(sessionId), json.encodeToString(next).toByteArray(Charsets.UTF_8))
+            }
+        }
+        target
+    }
+
     private fun path(sessionId: String): Path {
         val key = MessageDigest.getInstance("SHA-256").digest(sessionId.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }

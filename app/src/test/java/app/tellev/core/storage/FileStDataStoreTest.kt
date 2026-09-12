@@ -613,6 +613,68 @@ class FileStDataStoreTest {
         assertTrue(file.exists())
     }
 
+    @Test
+    fun `deleteChatSession cascades jsonl gallery background and chat images`() = runBlocking {
+        val dir = layout.chats.resolve("cascade").createDirectories()
+        val imagesDir = layout.userImages.createDirectories()
+        imagesDir.resolve("img-1.png").writeText("png-1")
+        imagesDir.resolve("att-2.jpg").writeText("jpg-2")
+        val galleryStore = GeneratedImageStore(layout)
+        val attachment = app.tellev.core.model.Attachment(
+            id = "img-1", name = "img-1.png", mimeType = "image/png", relativePath = "user/images/img-1.png",
+        )
+        galleryStore.append(
+            "cascade",
+            listOf(GeneratedImage("1", 1L, listOf(attachment), "prompt", engine = "test")),
+        )
+        layout.backgrounds.createDirectories()
+        layout.backgrounds.resolve("cascade.png").writeText("bg")
+        dir.resolve("cascade.jsonl").writeText(
+            """
+            {"user_name":"You","character_name":"C","chat_metadata":{}}
+            {"name":"You","is_user":true,"is_system":false,"mes":"pic","send_date":"2025-01-01T00:00:00Z","attachments":[{"id":"att-2","name":"photo.jpg","mimeType":"image/jpeg","relativePath":"user/images/att-2.jpg"}]}
+            """.trimIndent(),
+        )
+        // 共享资产目录：删除会话不得触碰。
+        val sharedDir = layout.root.resolve("User Avatars").createDirectories()
+        val sharedFile = sharedDir.resolve("keep.png")
+        sharedFile.writeText("keep")
+
+        store.deleteChatSession("cascade")
+
+        assertTrue(!dir.resolve("cascade.jsonl").exists())
+        assertTrue(!galleryStore.galleryFile("cascade").exists())
+        assertTrue(!layout.backgrounds.resolve("cascade.png").exists())
+        assertTrue(!imagesDir.resolve("img-1.png").exists())
+        assertTrue(!imagesDir.resolve("att-2.jpg").exists())
+        assertTrue(sharedFile.exists())
+        assertTrue(store.listChatSessions(characterId = "cascade").isEmpty())
+        // 重复删除是幂等的。
+        store.deleteChatSession("cascade")
+    }
+
+    @Test
+    fun `deleteCharacter cascades every session of the character`() = runBlocking {
+        val id = "cascade_char"
+        store.saveCharacter(CharacterCard(id = id, name = "Cascade"))
+        layout.chats.resolve(id).createDirectories()
+        layout.chats.resolve(id).resolve("s1.jsonl").writeText(
+            "{\"user_name\":\"You\",\"character_name\":\"Cascade\",\"chat_metadata\":{}}\n" +
+                "{\"name\":\"You\",\"is_user\":true,\"is_system\":false,\"mes\":\"m\",\"send_date\":\"\"}",
+        )
+        layout.chats.resolve(id).resolve("s2.jsonl").writeText(
+            "{\"user_name\":\"You\",\"character_name\":\"Cascade\",\"chat_metadata\":{}}\n" +
+                "{\"name\":\"You\",\"is_user\":true,\"is_system\":false,\"mes\":\"m2\",\"send_date\":\"\"}",
+        )
+        assertTrue(layout.chats.resolve(id).resolve("s1.jsonl").exists())
+
+        store.deleteCharacter(id)
+
+        assertTrue(!layout.chats.resolve(id).resolve("s1.jsonl").exists())
+        assertTrue(!layout.chats.resolve(id).resolve("s2.jsonl").exists())
+        assertTrue(store.listChatSessions(characterId = id).isEmpty())
+    }
+
     // ---- Group Parsing Tests ----
 
     @Test

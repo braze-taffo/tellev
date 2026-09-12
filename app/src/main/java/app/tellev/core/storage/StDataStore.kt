@@ -55,6 +55,12 @@ interface StDataStore {
     suspend fun listChatSessions(characterId: String? = null, groupId: String? = null): List<ChatSession>
     suspend fun readChatSession(id: String): ChatSession
     suspend fun saveChatSession(session: ChatSession)
+
+    // Permanently remove a session: the JSONL, its gallery index, chat image files
+    // under user/images, and the per-session background. No-op when the id is unknown.
+    suspend fun deleteChatSession(id: String) {
+        error("当前存储实现不支持删除聊天会话：$id")
+    }
     suspend fun commitChatMutation(base: ChatSession, desired: ChatSession, expectedRevision: Long? = null, operationId: String? = null): ChatSession {
         val merged = applyChatSessionMutation(base, desired, readChatSession(base.id))
         val committed = merged.copy(storageRevision = (expectedRevision ?: base.storageRevision) + 1)
