@@ -269,7 +269,10 @@ class ChatViewModel(
                         )
                     }
                 }.onFailure { error ->
-                    _uiState.update { it.copy(error = "读取会话提交状态失败：${error.message}") }
+                    // 已删除的会话（删除级联会发出 change 事件）不算读取失败。
+                    if (!error.message.orEmpty().contains("Chat session not found")) {
+                        _uiState.update { it.copy(error = "读取会话提交状态失败：${error.message}") }
+                    }
                 }
             }
         }
@@ -690,15 +693,22 @@ class ChatViewModel(
     fun deleteSession(sessionId: String) {
         viewModelScope.launch {
             sessionRuntime.sessionTransitions.withLock {
+                _uiState.update { it.copy(isLoading = true) }
+                // 区分「删除本身失败」与「删除成功后的后续步骤失败」：前者才需要恢复现场。
+                var deleteSucceeded = false
                 try {
                     val character = _uiState.value.selectedCharacter
                     val deletingCurrent = _uiState.value.currentSession?.id == sessionId
-                    if (deletingCurrent) {
-                        // 停掉进行中的生图，防止完成后给已删除的会话重建画廊与图片文件。
+                    if (deletingCurrent || imageGenCoordinator.activeImageSessionId() == sessionId) {
+                        // 停掉归属于被删会话的在途生图（含当前会话）：否则完成后会给
+                        // 已删除的会话重建画廊与图片文件，撤销级联清理。
                         stopImageGeneration()
+                    }
+                    if (deletingCurrent) {
                         retireSessionRuntime()
                     }
                     dataStore.deleteChatSession(sessionId)
+                    deleteSucceeded = true
                     val remaining = if (character != null) {
                         dataStore.listChatSessions(characterId = character.id)
                     } else {
@@ -736,23 +746,45 @@ class ChatViewModel(
                             )
                         }
                         character?.let { reloadCharacterTavernHelperScripts(it) }
-                        imageGenCoordinator.refreshGeneratedImages(next.id) { targetSessionId, images ->
-                            _uiState.update { if (it.currentSession?.id == targetSessionId) it.copy(generatedImages = images) else it }
+                        runCatching {
+                            imageGenCoordinator.refreshGeneratedImages(next.id) { targetSessionId, images ->
+                                _uiState.update { if (it.currentSession?.id == targetSessionId) it.copy(generatedImages = images) else it }
+                            }
                         }
                         ChatTavernAdapter.emitChatChanged(extensionHost, next)
                         ChatTavernAdapter.emitRenderedEventsForMessages(extensionHost, next.messages)
                     }
                 } catch (e: Exception) {
-                    // 删除失败且当前会话的写入环境已被拆除时先把它重建回来，保持会话可用。
-                    runCatching {
-                        _uiState.value.currentSession?.let { current ->
-                            if (sessionRuntime.currentRuntimeToken(current.id) == null) {
-                                val token = sessionRuntime.activateSessionWrites(current)
-                                _uiState.update { it.copy(runtimeGeneration = token.generation) }
+                    if (!deleteSucceeded) {
+                        // 删除失败且当前会话的写入环境已被拆除时先把它重建回来，保持会话可用。
+                        runCatching {
+                            _uiState.value.currentSession?.let { current ->
+                                if (sessionRuntime.currentRuntimeToken(current.id) == null) {
+                                    val token = sessionRuntime.activateSessionWrites(current)
+                                    _uiState.update { it.copy(runtimeGeneration = token.generation) }
+                                }
                             }
                         }
+                        _uiState.update { it.copy(error = "删除会话失败：${e.message}") }
+                    } else {
+                        // 会话已删除但后续刷新失败：绝不为已删会话重建写入环境（会制造
+                        // 注定失败的存储 owner 并卡死后续切换），回到干净的无会话状态。
+                        _uiState.update {
+                            it.copy(
+                                selectedCharacter = null,
+                                characterAvatarFile = null,
+                                currentSession = null,
+                                chatBackgroundFile = null,
+                                messages = emptyList(),
+                                generatedImages = emptyList(),
+                                sessions = emptyList(),
+                                error = "会话已删除，但刷新会话列表失败：${e.message}",
+                            )
+                        }
+                        ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.CHAT_CHANGED, "")
                     }
-                    _uiState.update { it.copy(error = "删除会话失败：${e.message}") }
+                } finally {
+                    _uiState.update { it.copy(isLoading = false) }
                 }
             }
         }

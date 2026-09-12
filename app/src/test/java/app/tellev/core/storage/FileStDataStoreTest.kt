@@ -36,6 +36,7 @@ import org.junit.Before
 import org.junit.Test
 import java.nio.file.Files
 import java.nio.file.Path
+import java.io.IOException
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.readText
@@ -626,6 +627,82 @@ class FileStDataStoreTest {
         }
         assertTrue(entries.isNotEmpty())
         assertTrue(entries.none { it.split('/').any { segment -> segment == ".tellev-writes" } })
+    }
+
+    @Test
+    fun `migration write failure returns stripped view and retries on next read`() = runBlocking {
+        val armed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val faultWriter = JournaledFileWriter(layout.root) { if (armed.get()) throw IOException("disk full") }
+        val faultStore = FileStDataStore(layout, durableFiles = faultWriter)
+        faultStore.bootstrap()
+
+        val dir = layout.chats.resolve("migfail").createDirectories()
+        val file = dir.resolve("migfail.jsonl")
+        val legacyLine = """{"name":"C","is_user":false,"is_system":false,"mes":"","send_date":"2025-01-01T00:00:00Z","extra":{"image_prompt":"a cat","image_engine":"test"},"attachments":[{"id":"img-x1","name":"img.png","mimeType":"image/png","relativePath":"user/images/img-x1.png"}]}"""
+        file.writeText("{\"user_name\":\"You\",\"character_name\":\"C\",\"chat_metadata\":{}}\n$legacyLine\n")
+
+        armed.set(true)
+        // 迁移写失败：读取不得抛错，返回的内存视图已剥离生成图消息（避免气泡/画廊双显示
+        // 与进入提示词），磁盘保持旧格式等待重试。
+        val fallback = faultStore.readChatSession("migfail")
+        assertTrue(fallback.messages.isEmpty())
+        val gallery = GeneratedImageStore(layout).read("migfail")
+        assertEquals(1, gallery.size)
+        assertEquals("a cat", gallery.single().prompt)
+        assertTrue(file.readText().contains("image_prompt"))
+
+        // 未落定的结果不能进缓存：故障解除后同一实例的下一次读取必须重试迁移。
+        armed.set(false)
+        val retried = faultStore.readChatSession("migfail")
+        assertTrue(retried.messages.isEmpty())
+        assertTrue(!file.readText().contains("image_prompt"))
+        assertEquals(1, GeneratedImageStore(layout).read("migfail").size)
+    }
+
+    @Test
+    fun `failed session delete leaves jsonl images and gallery intact`() = runBlocking {
+        val armed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val faultWriter = JournaledFileWriter(layout.root) { if (armed.get()) throw IOException("disk full") }
+        val faultStore = FileStDataStore(layout, durableFiles = faultWriter)
+        faultStore.bootstrap()
+
+        val dir = layout.chats.resolve("delfail").createDirectories()
+        val imagesDir = layout.userImages.createDirectories()
+        imagesDir.resolve("img-keep.png").writeText("png")
+        GeneratedImageStore(layout).append(
+            "delfail",
+            listOf(
+                GeneratedImage(
+                    "keep", 1L,
+                    listOf(app.tellev.core.model.Attachment("img-keep", "img-keep.png", "image/png", "user/images/img-keep.png")),
+                    "prompt", engine = "test",
+                ),
+            ),
+        )
+        dir.resolve("delfail.jsonl").writeText(
+            "{\"user_name\":\"You\",\"character_name\":\"C\",\"chat_metadata\":{}}\n" +
+                "{\"name\":\"You\",\"is_user\":true,\"is_system\":false,\"mes\":\"pic\",\"send_date\":\"\"}",
+        )
+
+        armed.set(true)
+        assertTrue(runCatching { faultStore.deleteChatSession("delfail") }.isFailure)
+
+        // JSONL 先删：删除失败时图片与画廊必须原封不动。
+        assertTrue(dir.resolve("delfail.jsonl").exists())
+        assertTrue(imagesDir.resolve("img-keep.png").exists())
+        assertEquals(1, GeneratedImageStore(layout).read("delfail").size)
+    }
+
+    @Test
+    fun `saving a character records the boot-rebuild fingerprint`() = runBlocking {
+        store.saveCharacter(CharacterCard(id = "fp_char", name = "Fingerprint"))
+        val manifest = layout.extensions.resolve("character-assets").resolve("fp_char").resolve("manifest.json")
+        assertTrue(manifest.exists())
+        val raw = FileStDataStore.defaultJson.parseToJsonElement(manifest.readText()).jsonObject
+        assertTrue(
+            "manifest must carry the card fingerprint so the boot rebuild skip survives saves",
+            raw.containsKey("tellev_card_fingerprint"),
+        )
     }
 
     @Test

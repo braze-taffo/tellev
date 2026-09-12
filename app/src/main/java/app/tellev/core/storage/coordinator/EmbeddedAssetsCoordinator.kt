@@ -104,6 +104,9 @@ internal class EmbeddedAssetsCoordinator(
     private fun cardFingerprint(path: Path): String =
         "${java.nio.file.Files.size(path)}-${java.nio.file.Files.getLastModifiedTime(path).toMillis()}"
 
+    /** Public fingerprint for callers that persist cards and want the boot-time skip to survive. */
+    fun cardFingerprintOf(path: Path): String = cardFingerprint(path)
+
     private fun writeCharacterAsset(assetDir: Path, fileName: String, value: JsonElement?) {
         val path = assetDir.resolve(fileName)
         if (value == null || value.isEmptyJsonContainer()) {

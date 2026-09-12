@@ -152,6 +152,10 @@ private fun ChatContentScreen(
     var pendingAttachments by remember { mutableStateOf(listOf<Attachment>()) }
     var showImageDialog by remember { mutableStateOf(false) }
     var showImageGallery by remember(state.currentSession?.id) { mutableStateOf(false) }
+    // 画廊删空后必须复位标志：否则下次生成新图时对话框会凭空自动弹出。
+    LaunchedEffect(state.generatedImages.isEmpty()) {
+        if (state.generatedImages.isEmpty()) showImageGallery = false
+    }
     var showImageDiagnostic by remember { mutableStateOf(false) }
     LaunchedEffect(state.imageGenDiagnostic) {
         if (state.imageGenDiagnostic != null) showImageDiagnostic = true
@@ -185,6 +189,8 @@ private fun ChatContentScreen(
                     if (attachment != null) {
                         pendingAttachments = pendingAttachments + attachment
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     // 磁盘满/写入失败不再让异常逃逸到协程作用域导致崩溃。
                     android.widget.Toast.makeText(
@@ -278,7 +284,10 @@ private fun ChatContentScreen(
                                 DropdownMenuItem(
                                     text = { Text(session.title) },
                                     onClick = {
-                                        viewModel.switchSession(session.id)
+                                        // 点击当前会话不触发切换：切换会停掉进行中的生成。
+                                        if (session.id != state.currentSession?.id) {
+                                            viewModel.switchSession(session.id)
+                                        }
                                         showSessionMenu = false
                                     },
                                     trailingIcon = {

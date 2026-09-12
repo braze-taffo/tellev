@@ -154,7 +154,8 @@ class JournaledFileWriter(
                                 // live targets get trimmed to the retention bound on every sweep.
                                 !live -> runCatching { entry.toFile().deleteRecursively() }
                                 Files.isDirectory(entry) -> runCatching { trimCommitsDir(entry) }
-                                else -> {}
+                                // Corrupted form (a plain file where the records dir belongs): safe to drop.
+                                else -> runCatching { Files.deleteIfExists(entry) }
                             }
                             else -> {}
                         }

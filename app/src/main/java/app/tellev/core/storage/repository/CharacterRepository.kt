@@ -99,7 +99,8 @@ internal class CharacterRepository(
             val jsonStr = exporter.exportToJson(card)
             val pngBytes = PngCardParser.embedCardJson(existingPng.readBytes(), jsonStr)
             existingPng.outputStream().use { it.write(pngBytes) }
-            embeddedCoordinator.saveEmbeddedCharacterAssets(card)
+            // 保存后传入新指纹，启动重建的跳过优化才能跨保存存活。
+            embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(existingPng))
             characterChanges.tryEmit(card.id)
             return@withContext
         }
@@ -110,7 +111,7 @@ internal class CharacterRepository(
             val jsonStr = exporter.exportToJson(card)
             val webpBytes = WebpCardParser.embedCardJson(existingWebp.readBytes(), jsonStr)
             existingWebp.outputStream().use { it.write(webpBytes) }
-            embeddedCoordinator.saveEmbeddedCharacterAssets(card)
+            embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(existingWebp))
             characterChanges.tryEmit(card.id)
             return@withContext
         }
@@ -118,7 +119,7 @@ internal class CharacterRepository(
         val exporter = CharacterExporter(json)
         val path = layout.characters.resolve("${card.id}.json")
         StorageFileOps.durableWriteText(durableFiles, path, exporter.exportToJson(card))
-        embeddedCoordinator.saveEmbeddedCharacterAssets(card)
+        embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(path))
         characterChanges.tryEmit(card.id)
     }
 
@@ -137,14 +138,16 @@ internal class CharacterRepository(
             "png" -> {
                 removeCharacterVariants(card.id, keepExtension = "png")
                 val pngBytes = PngCardParser.embedCardJson(sourceBytes, jsonString)
-                layout.characters.resolve("${card.id}.png").outputStream().use { it.write(pngBytes) }
-                embeddedCoordinator.saveEmbeddedCharacterAssets(card)
+                val pngPath = layout.characters.resolve("${card.id}.png")
+                pngPath.outputStream().use { it.write(pngBytes) }
+                embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(pngPath))
             }
             "webp" -> {
                 removeCharacterVariants(card.id, keepExtension = "webp")
                 val webpBytes = WebpCardParser.embedCardJson(sourceBytes, jsonString)
-                layout.characters.resolve("${card.id}.webp").outputStream().use { it.write(webpBytes) }
-                embeddedCoordinator.saveEmbeddedCharacterAssets(card)
+                val webpPath = layout.characters.resolve("${card.id}.webp")
+                webpPath.outputStream().use { it.write(webpBytes) }
+                embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(webpPath))
             }
             else -> saveCharacter(card)
         }
@@ -164,9 +167,10 @@ internal class CharacterRepository(
         val jsonString = CharacterExporter(json).exportToJson(card)
         val embedded = PngCardParser.embedCardJson(pngBytes, jsonString)
         layout.characters.createDirectories()
-        layout.characters.resolve("$id.png").outputStream().use { it.write(embedded) }
+        val pngPath = layout.characters.resolve("$id.png")
+        pngPath.outputStream().use { it.write(embedded) }
         removeCharacterVariants(id, keepExtension = "png")
-        embeddedCoordinator.saveEmbeddedCharacterAssets(card)
+        embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(pngPath))
         characterChanges.tryEmit(id)
     }
 
