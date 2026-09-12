@@ -74,8 +74,9 @@ internal class ChatRepository(
         chatWrites.withLock {
             val path = StorageFileOps.findByFileName(listOf(layout.chats, layout.groupChats), "${base.id}.jsonl")
                 ?: error("Chat session not found: ${base.id}")
-            val revision = durableFiles.revision(path)
             val merged = applyChatSessionMutation(base, desired, readJsonlChat(path))
+            // Read the revision after parsing: a read-time migration may have just bumped it.
+            val revision = durableFiles.revision(path)
             val receipt = writeChatSession(merged, expectedRevision ?: revision, operationId ?: UUID.randomUUID().toString())
             merged.copy(storageRevision = receipt.revision)
         }
@@ -259,8 +260,12 @@ internal class ChatRepository(
             }
         }
         if (migrated) {
-            durableFiles.write(path, kept.joinToString("\n").toByteArray(Charsets.UTF_8), expectedRevision = initialRevision)
-            return readChatWithoutGeneratedImages(path)
+            // 迁移写失败时退回未迁移的解析结果（请求构建仍兼容 metadata.base64）：
+            // 读取路径不允许因为迁移写而失败。
+            val rewritten = runCatching {
+                durableFiles.write(path, kept.joinToString("\n").toByteArray(Charsets.UTF_8), expectedRevision = initialRevision)
+            }.isSuccess
+            if (rewritten) return readChatWithoutGeneratedImages(path)
         }
 
         return ChatSession(
@@ -300,10 +305,20 @@ internal class ChatRepository(
             ?.replace(Regex("[^a-zA-Z0-9._-]"), "")
             ?.takeIf { it.isNotBlank() }
             ?: "att-${UUID.randomUUID().toString().substring(0, 8)}"
-        val fileName = "att-mig-$attId.jpg"
+        var fileName = "att-mig-$attId.jpg"
+        var target = layout.userImages.resolve(fileName)
+        if (Files.exists(target)) {
+            // 同名文件：内容一致说明是上次迁移中断后的重放，直接复用；
+            // 内容不同说明 id 冲突，改用唯一文件名避免静默覆盖。
+            val identical = runCatching { Files.readAllBytes(target).contentEquals(bytes) }.getOrDefault(false)
+            if (!identical) {
+                fileName = "att-mig-$attId-${UUID.randomUUID().toString().substring(0, 8)}.jpg"
+                target = layout.userImages.resolve(fileName)
+            }
+        }
         return runCatching {
             layout.userImages.createDirectories()
-            java.nio.file.Files.write(layout.userImages.resolve(fileName), bytes)
+            writeImageFileSynced(target, bytes)
             JsonObject(
                 attachment +
                     ("relativePath" to JsonPrimitive("user/images/$fileName")) +
@@ -311,6 +326,18 @@ internal class ChatRepository(
                     ("metadata" to JsonObject(metadata.filterKeys { it != "base64" })),
             )
         }.getOrNull()
+    }
+
+    /**
+     * Migrated images live outside the journal; the JSONL commit that drops the inline
+     * base64 is fsynced by the journal, so the image bytes must hit the disk first or
+     * a power loss after the commit would leave the chat pointing at a missing file.
+     */
+    private fun writeImageFileSynced(target: Path, bytes: ByteArray) {
+        java.io.FileOutputStream(target.toFile()).use { stream ->
+            stream.write(bytes)
+            stream.fd.sync()
+        }
     }
 
     /** Rewrite a message line whose attachments still carry inline base64; null when unchanged. */
@@ -348,7 +375,7 @@ internal class ChatRepository(
             val fileName = "att-mig-$attId.jpg"
             val wrote = runCatching {
                 layout.userImages.createDirectories()
-                java.nio.file.Files.write(layout.userImages.resolve(fileName), bytes)
+                writeImageFileSynced(layout.userImages.resolve(fileName), bytes)
             }.isSuccess
             if (!wrote) {
                 attachment

@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.tellev.LocalTellevGraph
 import app.tellev.core.model.Attachment
+import app.tellev.core.storage.GeneratedImage
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -152,11 +153,20 @@ private fun ChatContentScreen(
     ) { uri ->
         if (uri != null) {
             scope.launch {
-                val attachment = withContext(Dispatchers.IO) {
-                    buildAttachmentFromUri(context, uri, dataRoot)
-                }
-                if (attachment != null) {
-                    pendingAttachments = pendingAttachments + attachment
+                try {
+                    val attachment = withContext(Dispatchers.IO) {
+                        buildAttachmentFromUri(context, uri, dataRoot)
+                    }
+                    if (attachment != null) {
+                        pendingAttachments = pendingAttachments + attachment
+                    }
+                } catch (e: Exception) {
+                    // 磁盘满/写入失败不再让异常逃逸到协程作用域导致崩溃。
+                    android.widget.Toast.makeText(
+                        context,
+                        "保存图片失败：${e.message}",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
                 }
             }
         }
@@ -493,7 +503,8 @@ private fun ChatContentScreen(
                 Text("查看生成图片（${state.generatedImages.size}）")
             }
         }
-        if (showImageGallery) {
+        if (showImageGallery && state.generatedImages.isNotEmpty()) {
+            var imagePendingDelete by remember { mutableStateOf<GeneratedImage?>(null) }
             AlertDialog(
                 onDismissRequest = { showImageGallery = false },
                 title = { Text("生成图片") },
@@ -510,7 +521,7 @@ private fun ChatContentScreen(
                                     TextButton(onClick = { showPrompt = !showPrompt }) {
                                         Text(if (showPrompt) "收起提示词" else "查看图片提示词")
                                     }
-                                    TextButton(onClick = { viewModel.deleteGeneratedImage(image.id) }) {
+                                    TextButton(onClick = { imagePendingDelete = image }) {
                                         Text("删除", color = MaterialTheme.colorScheme.error)
                                     }
                                 }
@@ -523,6 +534,22 @@ private fun ChatContentScreen(
                 },
                 confirmButton = { TextButton(onClick = { showImageGallery = false }) { Text("关闭") } },
             )
+            imagePendingDelete?.let { image ->
+                AlertDialog(
+                    onDismissRequest = { imagePendingDelete = null },
+                    title = { Text("删除图片") },
+                    text = { Text("将永久删除这张图片文件，无法恢复。") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            viewModel.deleteGeneratedImage(image.id)
+                            imagePendingDelete = null
+                        }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { imagePendingDelete = null }) { Text("取消") }
+                    },
+                )
+            }
         }
         sessionPendingDelete?.let { session ->
             AlertDialog(
@@ -566,7 +593,20 @@ private fun ChatContentScreen(
                 )
             },
             onRemoveAttachment = { id ->
+                val removed = pendingAttachments.firstOrNull { it.id == id }
                 pendingAttachments = pendingAttachments.filterNot { it.id == id }
+                // 未发送的附件文件此刻已无任何引用，随移除一起清理，避免孤儿文件累积。
+                if (removed != null && removed.relativePath.startsWith("user/images/")) {
+                    scope.launch(Dispatchers.IO) {
+                        runCatching {
+                            val file = java.io.File(dataRoot, removed.relativePath)
+                            val imagesRoot = java.io.File(dataRoot, "user/images")
+                            if (file.canonicalFile.startsWith(imagesRoot.canonicalFile)) {
+                                file.delete()
+                            }
+                        }
+                    }
+                }
             },
             onSend = {
                 val text = inputText.trim()

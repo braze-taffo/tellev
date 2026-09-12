@@ -406,10 +406,13 @@ class OpenAiCompatibleAdapter(
                                     put("text", JsonPrimitive(promptMessage.content))
                                 })
                                 imageAttachments.forEach { attachment ->
+                                    // 文件缺失（如已被删除）时跳过该图片段，与 Gemini 适配器一致，
+                                    // 不把空 base64 的 data URL 发给服务端。
+                                    val inlineData = visionBase64(attachment) ?: return@forEach
                                     add(buildJsonObject {
                                         put("type", JsonPrimitive("image_url"))
                                         put("image_url", buildJsonObject {
-                                            val dataUrl = "data:${attachment.mimeType};base64,${visionBase64(attachment).orEmpty()}"
+                                            val dataUrl = "data:${attachment.mimeType};base64,$inlineData"
                                             put("url", JsonPrimitive(dataUrl))
                                             attachment.metadata["detail"]?.let {
                                                 put("detail", it)

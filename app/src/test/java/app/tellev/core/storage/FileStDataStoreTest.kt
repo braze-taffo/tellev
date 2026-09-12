@@ -607,10 +607,25 @@ class FileStDataStoreTest {
         assertTrue(file.exists())
         assertEquals("jpeg-bytes", file.readText())
 
-        // Reading again is stable: no duplicated files, same relative path.
-        val again = store.readChatSession("vision")
+        // Reading again from a FRESH store instance (own repository cache) verifies
+        // on-disk idempotency, not just the in-memory cache.
+        val again = FileStDataStore(layout).readChatSession("vision")
         assertEquals(attachment.relativePath, again.messages.single().attachments.single().relativePath)
         assertTrue(file.exists())
+    }
+
+    @Test
+    fun `exportBackup omits the write journal`() = runBlocking {
+        store.saveChatSession(
+            ChatSession("journal-free", "J", "c", null, listOf(ChatMessage("m", MessageRole.User, "You", "hi", 1L))),
+        )
+        val backupFile = tempDir.resolve("no-journal.zip")
+        store.exportBackup(backupFile)
+        val entries = java.util.zip.ZipFile(backupFile.toFile()).use { zip ->
+            zip.entries().asSequence().map { it.name }.toList()
+        }
+        assertTrue(entries.isNotEmpty())
+        assertTrue(entries.none { it.split('/').any { segment -> segment == ".tellev-writes" } })
     }
 
     @Test

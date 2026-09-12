@@ -689,13 +689,23 @@ class ChatViewModel(
         viewModelScope.launch {
             sessionRuntime.sessionTransitions.withLock {
                 try {
-                    retireSessionRuntime()
-                    dataStore.deleteChatSession(sessionId)
                     val character = _uiState.value.selectedCharacter
+                    val deletingCurrent = _uiState.value.currentSession?.id == sessionId
+                    if (deletingCurrent) {
+                        // 停掉进行中的生图，防止完成后给已删除的会话重建画廊与图片文件。
+                        stopImageGeneration()
+                        retireSessionRuntime()
+                    }
+                    dataStore.deleteChatSession(sessionId)
                     val remaining = if (character != null) {
                         dataStore.listChatSessions(characterId = character.id)
                     } else {
                         emptyList()
+                    }
+                    if (!deletingCurrent) {
+                        // 删除的是后台会话：当前会话与其脚本/生成状态保持不动，仅刷新列表。
+                        _uiState.update { it.copy(sessions = remaining) }
+                        return@withLock
                     }
                     if (remaining.isEmpty()) {
                         _uiState.update {
@@ -709,6 +719,7 @@ class ChatViewModel(
                                 sessions = emptyList(),
                             )
                         }
+                        ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.CHAT_CHANGED, "")
                     } else {
                         val next = remaining.first()
                         val token = sessionRuntime.activateSessionWrites(next)
@@ -722,12 +733,23 @@ class ChatViewModel(
                                 generatedImages = emptyList(),
                             )
                         }
+                        character?.let { reloadCharacterTavernHelperScripts(it) }
                         imageGenCoordinator.refreshGeneratedImages(next.id) { targetSessionId, images ->
                             _uiState.update { if (it.currentSession?.id == targetSessionId) it.copy(generatedImages = images) else it }
                         }
                         ChatTavernAdapter.emitChatChanged(extensionHost, next)
+                        ChatTavernAdapter.emitRenderedEventsForMessages(extensionHost, next.messages)
                     }
                 } catch (e: Exception) {
+                    // 删除失败且当前会话的写入环境已被拆除时先把它重建回来，保持会话可用。
+                    runCatching {
+                        _uiState.value.currentSession?.let { current ->
+                            if (sessionRuntime.currentRuntimeToken(current.id) == null) {
+                                val token = sessionRuntime.activateSessionWrites(current)
+                                _uiState.update { it.copy(runtimeGeneration = token.generation) }
+                            }
+                        }
+                    }
                     _uiState.update { it.copy(error = "删除会话失败：${e.message}") }
                 }
             }

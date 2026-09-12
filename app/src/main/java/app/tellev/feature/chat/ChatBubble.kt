@@ -557,13 +557,16 @@ internal fun EditMessageCard(
 @Composable
 internal fun ChatBubbleImage(file: java.io.File) {
     var showFull by remember(file) { mutableStateOf(false) }
-    // 以屏宽作为解码预算：1024² PNG 全尺寸解码会同时打爆内存与磁盘缓存。
+    // 解码预算：宽=屏宽、高=两倍屏宽。Coil 的 size(Int) 是正方形预算，
+    // 竖图会被压进宽×宽的框里再上采样显示；宽高分开给才能保住竖图清晰度，
+    // 同时仍约束住 1024² 大图的内存。
     val context = LocalContext.current
     val decodeWidth = context.resources.displayMetrics.widthPixels
+    val decodeBudget = coil.size.Size(decodeWidth, decodeWidth * 2)
     AsyncImage(
         model = ImageRequest.Builder(context)
             .data(file)
-            .size(decodeWidth)
+            .size(coil.size.SizeResolver(decodeBudget))
             .build(),
         contentDescription = "聊天图片",
         contentScale = ContentScale.FillWidth,
@@ -587,7 +590,7 @@ internal fun ChatBubbleImage(file: java.io.File) {
                 AsyncImage(
                     model = ImageRequest.Builder(context)
                         .data(file)
-                        .size(decodeWidth)
+                        .size(coil.size.SizeResolver(decodeBudget))
                         .build(),
                     contentDescription = null,
                     contentScale = ContentScale.Fit,

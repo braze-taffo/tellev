@@ -149,7 +149,13 @@ class JournaledFileWriter(
                                 runCatching { Files.deleteIfExists(entry) }
                                 runCatching { journal.resolve("$targetKey.commits").toFile().deleteRecursively() }
                             }
-                            ".commits" -> if (!live) runCatching { entry.toFile().deleteRecursively() }
+                            ".commits" -> when {
+                                // Legacy installs accumulated one record per historical write;
+                                // live targets get trimmed to the retention bound on every sweep.
+                                !live -> runCatching { entry.toFile().deleteRecursively() }
+                                Files.isDirectory(entry) -> runCatching { trimCommitsDir(entry) }
+                                else -> {}
+                            }
                             else -> {}
                         }
                     }
