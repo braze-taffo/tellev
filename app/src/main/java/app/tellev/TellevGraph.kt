@@ -140,11 +140,27 @@ class TellevGraph private constructor(
                 .callTimeout(0, TimeUnit.MILLISECONDS)
                 .build()
 
+            // 视觉附件以文件形式存于数据根下，适配器在构建请求时读回并编码为 base64。
+            val resolveAttachmentBytes: (app.tellev.core.model.Attachment) -> ByteArray? = { attachment ->
+                val relative = attachment.relativePath
+                if (relative.isBlank()) {
+                    null
+                } else {
+                    val resolved = layout.root.resolve(relative).normalize()
+                    if (resolved.startsWith(layout.root) && java.nio.file.Files.isRegularFile(resolved)) {
+                        runCatching { java.nio.file.Files.readAllBytes(resolved) }.getOrNull()
+                    } else {
+                        null
+                    }
+                }
+            }
+
             val providerRegistry = ProviderRegistry(
                 adapters = listOf(
-                    OpenAiCompatibleAdapter(client = providerClient),
+                    OpenAiCompatibleAdapter(client = providerClient, resolveAttachmentBytes = resolveAttachmentBytes),
                     OpenAiCompatibleAdapter(
                         client = providerClient,
+                        resolveAttachmentBytes = resolveAttachmentBytes,
                         providerId = ProviderCatalog.DEEPSEEK,
                         providerDisplayName = "DeepSeek",
                         defaultModel = "deepseek-v4-flash",
@@ -153,6 +169,7 @@ class TellevGraph private constructor(
                     ),
                     OpenAiCompatibleAdapter(
                         client = providerClient,
+                        resolveAttachmentBytes = resolveAttachmentBytes,
                         providerId = ProviderCatalog.TELLEVCLICK,
                         providerDisplayName = "tellevclick",
                         modelsPath = "/models",
@@ -160,6 +177,7 @@ class TellevGraph private constructor(
                     ),
                     OpenAiCompatibleAdapter(
                         client = providerClient,
+                        resolveAttachmentBytes = resolveAttachmentBytes,
                         providerId = ProviderCatalog.VOLCENGINE_CODING_PLAN,
                         providerDisplayName = "火山引擎 Coding Plan",
                         modelsPath = "/models",
@@ -167,7 +185,7 @@ class TellevGraph private constructor(
                         supportsModelListing = false,
                     ),
                     AnthropicAdapter(client = providerClient),
-                    GeminiAdapter(client = providerClient),
+                    GeminiAdapter(client = providerClient, resolveAttachmentBytes = resolveAttachmentBytes),
                     OpenRouterAdapter(client = providerClient),
                     OllamaAdapter(client = providerClient),
                     KoboldAdapter(client = providerClient),

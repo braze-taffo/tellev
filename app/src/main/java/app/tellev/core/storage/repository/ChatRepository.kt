@@ -18,7 +18,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -167,20 +169,29 @@ internal class ChatRepository(
         }
 
         val images = messages.filter { it.isGeneratedImage() }
+        var migrated = images.isNotEmpty()
         if (images.isNotEmpty()) {
             fun ChatMessage.field(key: String) = (metadata[key] as? JsonPrimitive)?.content.orEmpty()
             GeneratedImageStore(layout).append(sessionId, images.map {
                 GeneratedImage(it.id, it.createdAtMillis, it.attachments, it.field("image_prompt"),
-                    it.field("image_negative_prompt"), it.field("image_engine"), it)
+                    it.field("image_negative_prompt"), it.field("image_engine"), stripLegacyMessage(it))
             })
-            val kept = lines.take(messageStartIndex) + messages.mapIndexedNotNull { index, message ->
-                if (message.isGeneratedImage()) null else {
-                    val line = lines[messageStartIndex + index]
-                    if (message.raw.isNotEmpty() && "_tellev_message_id" !in message.raw) {
+        }
+        val kept = lines.take(messageStartIndex) + messages.mapIndexedNotNull { index, message ->
+            val line = lines[messageStartIndex + index]
+            when {
+                message.isGeneratedImage() -> null
+                else -> {
+                    val withId = if (message.raw.isNotEmpty() && "_tellev_message_id" !in message.raw) {
                         JsonObject(message.raw + ("_tellev_message_id" to JsonPrimitive(message.id))).toString()
                     } else line
+                    // Substring prefilter: parsing every line twice would double read cost.
+                    val migratedLine = if ("base64" !in withId) null else extractInlineImageAttachments(withId)
+                    migratedLine?.also { migrated = true } ?: withId
                 }
             }
+        }
+        if (migrated) {
             durableFiles.write(path, kept.joinToString("\n").toByteArray(Charsets.UTF_8), expectedRevision = initialRevision)
             return readChatWithoutGeneratedImages(path)
         }
@@ -207,5 +218,81 @@ internal class ChatRepository(
             parent.parent == root -> parentName
             else -> null
         }
+    }
+
+    /**
+     * Move a legacy inline-base64 image attachment out of the JSONL into a file under
+     * user/images and rewrite the attachment object; null when nothing is migratable.
+     * The downsampled bytes are always JPEG by construction, so the stored extension is fixed.
+     */
+    private fun migrateAttachment(attachment: JsonObject): JsonObject? {
+        val metadata = attachment["metadata"] as? JsonObject ?: return null
+        val base64 = (metadata["base64"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull ?: return null
+        val bytes = runCatching { java.util.Base64.getDecoder().decode(base64) }.getOrNull() ?: return null
+        val attId = (attachment["id"] as? JsonPrimitive)?.contentOrNull
+            ?.replace(Regex("[^a-zA-Z0-9._-]"), "")
+            ?.takeIf { it.isNotBlank() }
+            ?: "att-${UUID.randomUUID().toString().substring(0, 8)}"
+        val fileName = "att-mig-$attId.jpg"
+        return runCatching {
+            layout.userImages.createDirectories()
+            java.nio.file.Files.write(layout.userImages.resolve(fileName), bytes)
+            JsonObject(
+                attachment +
+                    ("relativePath" to JsonPrimitive("user/images/$fileName")) +
+                    ("mimeType" to JsonPrimitive("image/jpeg")) +
+                    ("metadata" to JsonObject(metadata.filterKeys { it != "base64" })),
+            )
+        }.getOrNull()
+    }
+
+    /** Rewrite a message line whose attachments still carry inline base64; null when unchanged. */
+    private fun extractInlineImageAttachments(line: String): String? {
+        val obj = runCatching { json.parseToJsonElement(line).jsonObject }.getOrNull() ?: return null
+        val attachments = obj["attachments"] as? JsonArray ?: return null
+        if (attachments.none { it is JsonObject && (it["metadata"] as? JsonObject)?.get("base64") is JsonPrimitive }) return null
+        var changed = false
+        val rewritten = attachments.map { element ->
+            (element as? JsonObject)?.let { migrateAttachment(it) }?.also { changed = true } ?: element
+        }
+        if (!changed) return null
+        return JsonObject(obj + ("attachments" to JsonArray(rewritten))).toString()
+    }
+
+    /** Gallery legacy records must not keep base64 payloads; the bytes live in files. */
+    private fun stripLegacyMessage(message: ChatMessage): ChatMessage {
+        if (message.attachments.none { it.metadata.containsKey("base64") }) return message
+        val rawAttachments = message.raw["attachments"] as? JsonArray
+        var rawChanged = false
+        val cleanRaw = if (rawAttachments != null) {
+            val mapped = rawAttachments.map { element ->
+                (element as? JsonObject)?.let { migrateAttachment(it) }?.also { rawChanged = true } ?: element
+            }
+            if (rawChanged) JsonObject(message.raw + ("attachments" to JsonArray(mapped))) else message.raw
+        } else {
+            message.raw
+        }
+        val cleanAttachments = message.attachments.map { attachment ->
+            val base64 = (attachment.metadata["base64"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+                ?: return@map attachment
+            val bytes = runCatching { java.util.Base64.getDecoder().decode(base64) }.getOrNull() ?: return@map attachment
+            val attId = attachment.id.replace(Regex("[^a-zA-Z0-9._-]"), "")
+                .ifBlank { "att-${UUID.randomUUID().toString().substring(0, 8)}" }
+            val fileName = "att-mig-$attId.jpg"
+            val wrote = runCatching {
+                layout.userImages.createDirectories()
+                java.nio.file.Files.write(layout.userImages.resolve(fileName), bytes)
+            }.isSuccess
+            if (!wrote) {
+                attachment
+            } else {
+                attachment.copy(
+                    relativePath = attachment.relativePath.ifBlank { "user/images/$fileName" },
+                    mimeType = "image/jpeg",
+                    metadata = JsonObject(attachment.metadata.filterKeys { it != "base64" }),
+                )
+            }
+        }
+        return message.copy(attachments = cleanAttachments, raw = cleanRaw)
     }
 }

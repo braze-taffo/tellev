@@ -1,7 +1,6 @@
 package app.tellev.feature.chat
 
 import android.net.Uri
-import android.util.Base64
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,6 +48,7 @@ internal fun ChatInputBar(
     isGenerating: Boolean,
     attachments: List<Attachment>,
     bubbleAlpha: Float,
+    dataRoot: java.io.File,
     imageGenAvailable: Boolean = false,
     isGeneratingImage: Boolean = false,
     imageGenStatus: String? = null,
@@ -100,11 +100,14 @@ internal fun ChatInputBar(
                     val base64 = attachment.metadata["base64"]
                         ?.takeIf { it !is kotlinx.serialization.json.JsonNull }
                         ?.jsonPrimitive?.content
+                    val previewModel: Any? = base64?.let { "data:${attachment.mimeType};base64,$it" }
+                        ?: attachment.relativePath.takeIf { it.isNotBlank() }
+                            ?.let { java.io.File(dataRoot, it).takeIf { file -> file.isFile } }
                     Box(modifier = Modifier.size(72.dp)) {
-                        if (base64 != null) {
+                        if (previewModel != null) {
                             AsyncImage(
                                 model = ImageRequest.Builder(context)
-                                    .data("data:${attachment.mimeType};base64,$base64")
+                                    .data(previewModel)
                                     .build(),
                                 contentDescription = attachment.name,
                                 modifier = Modifier
@@ -224,24 +227,36 @@ internal fun ChatInputBar(
     }
 }
 
-/** Build a vision attachment from a picked image URI: downsample + base64. */
+/**
+ * Build a vision attachment from a picked image URI: downsample to JPEG and store under
+ * the data root instead of inlining base64 into the chat JSONL. The request adapters
+ * read the file back at send time.
+ */
 internal suspend fun buildAttachmentFromUri(
     context: android.content.Context,
     uri: Uri,
+    dataRoot: java.io.File,
 ): Attachment? {
     val mimeType = UriUtils.resolveMimeType(context, uri) ?: "image/jpeg"
     if (!mimeType.startsWith("image/")) return null
     val name = UriUtils.resolveDisplayName(context, uri) ?: "image.jpg"
     val bytes = UriUtils.readAndDownsample(context.contentResolver, uri) ?: return null
-    val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+    val attachmentId = java.util.UUID.randomUUID().toString().substring(0, 8)
+    val imageFileName = "att-${System.currentTimeMillis()}-$attachmentId.jpg"
+    val relativePath = "user/images/$imageFileName"
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val imagesDir = java.io.File(dataRoot, "user/images")
+        imagesDir.mkdirs()
+        java.io.File(imagesDir, imageFileName).writeBytes(bytes)
+    }
     return Attachment(
-        id = "att-${java.util.UUID.randomUUID()}",
+        id = "att-$attachmentId",
         name = name,
-        mimeType = mimeType,
-        relativePath = "",
+        // The downsampled bytes are always JPEG regardless of the source format.
+        mimeType = "image/jpeg",
+        relativePath = relativePath,
         source = AttachmentSource.Chat,
         metadata = buildJsonObject {
-            put("base64", JsonPrimitive(base64))
             put("detail", JsonPrimitive("auto"))
         },
     )

@@ -150,7 +150,7 @@ private fun ChatContentScreen(
         if (uri != null) {
             scope.launch {
                 val attachment = withContext(Dispatchers.IO) {
-                    buildAttachmentFromUri(context, uri)
+                    buildAttachmentFromUri(context, uri, dataRoot)
                 }
                 if (attachment != null) {
                     pendingAttachments = pendingAttachments + attachment
@@ -516,6 +516,7 @@ private fun ChatContentScreen(
             isGenerating = state.isGenerating,
             attachments = pendingAttachments,
             bubbleAlpha = bubbleAlpha,
+            dataRoot = dataRoot,
             imageGenAvailable = state.imageGenAvailable,
             isGeneratingImage = state.isGeneratingImage,
             imageGenStatus = state.imageGenStatus,

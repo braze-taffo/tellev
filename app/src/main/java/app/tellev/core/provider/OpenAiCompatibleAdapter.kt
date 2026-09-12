@@ -37,6 +37,8 @@ class OpenAiCompatibleAdapter(
     private val includeUsageByDefault: Boolean = false,
     private val supportsTopKByDefault: Boolean = false,
     private val maxTokensField: String = "max_tokens",
+    /** Resolves file-backed attachments (relativePath) to raw bytes for vision requests. */
+    private val resolveAttachmentBytes: ((app.tellev.core.model.Attachment) -> ByteArray?)? = null,
 ) : ProviderAdapter {
     override val id: String = providerId
     override val displayName: String = providerDisplayName
@@ -374,6 +376,14 @@ class OpenAiCompatibleAdapter(
             request.preset.raw["response_format"]?.let { put("response_format", it) }
         }
 
+    /** Legacy attachments carry base64 inline; file-backed ones are resolved through the data root. */
+    protected fun visionBase64(attachment: app.tellev.core.model.Attachment): String? {
+        attachment.metadata["base64"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+        if (attachment.relativePath.isBlank()) return null
+        val bytes = resolveAttachmentBytes?.invoke(attachment) ?: return null
+        return java.util.Base64.getEncoder().encodeToString(bytes)
+    }
+
     protected fun buildMessagesArray(config: ProviderConfig, request: GenerateRequest): JsonArray {
         val imageAttachments = if (config.optionBoolean("supportsVision") == true) {
             request.attachments.filter { it.mimeType.startsWith("image/") }
@@ -399,7 +409,7 @@ class OpenAiCompatibleAdapter(
                                     add(buildJsonObject {
                                         put("type", JsonPrimitive("image_url"))
                                         put("image_url", buildJsonObject {
-                                            val dataUrl = "data:${attachment.mimeType};base64,${attachment.metadata["base64"]?.jsonPrimitive?.contentOrNull.orEmpty()}"
+                                            val dataUrl = "data:${attachment.mimeType};base64,${visionBase64(attachment).orEmpty()}"
                                             put("url", JsonPrimitive(dataUrl))
                                             attachment.metadata["detail"]?.let {
                                                 put("detail", it)
