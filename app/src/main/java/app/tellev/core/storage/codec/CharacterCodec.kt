@@ -84,7 +84,8 @@ internal object CharacterCodec {
                 if (name != null) Pair(name, tags.distinct()) else null
             }
             "png" -> {
-                val cardJson = PngCardParser.extractCardJson(path.readBytes()) ?: return null
+                // Streaming extraction: the IDAT bulk of a multi-MB card never enters memory.
+                val cardJson = PngCardParser.extractCardJson(path) ?: return null
                 val data = cardJson["data"]?.jsonObject ?: cardJson
                 val name = data["name"]?.jsonPrimitive?.content
                 val tags = extractTagsList(data) + extractTagsList(cardJson)

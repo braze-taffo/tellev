@@ -162,7 +162,38 @@ internal class ChatRepository(
     }
 
     private fun readJsonlChat(path: Path): ChatSession = GeneratedImageStore(layout).withSessionLock(path.nameWithoutExtension) {
-        readChatWithoutGeneratedImages(path)
+        readJsonlChatCached(path)
+    }
+
+    private data class SessionCacheEntry(
+        val revision: Long,
+        val mtimeMillis: Long,
+        val size: Long,
+        val session: ChatSession,
+    )
+
+    // Opening a character lists (and the UI often re-lists) every session; re-parsing
+    // all JSONL each time is O(history). Entries self-invalidate via revision/mtime/size.
+    private val sessionCache = object : LinkedHashMap<Path, SessionCacheEntry>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Path, SessionCacheEntry>): Boolean = size > 8
+    }
+
+    private fun readJsonlChatCached(path: Path): ChatSession = synchronized(sessionCache) {
+        val revision = durableFiles.revision(path)
+        val mtime = Files.getLastModifiedTime(path).toMillis()
+        val size = Files.size(path)
+        val cached = sessionCache[path]
+        if (cached != null && cached.revision == revision && cached.mtimeMillis == mtime && cached.size == size) {
+            return@synchronized cached.session
+        }
+        val parsed = readChatWithoutGeneratedImages(path)
+        sessionCache[path] = SessionCacheEntry(
+            durableFiles.revision(path),
+            Files.getLastModifiedTime(path).toMillis(),
+            Files.size(path),
+            parsed,
+        )
+        parsed
     }
 
     private fun readChatWithoutGeneratedImages(path: Path): ChatSession {

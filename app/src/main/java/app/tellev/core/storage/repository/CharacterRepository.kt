@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import java.nio.file.Path
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
@@ -36,6 +37,11 @@ internal class CharacterRepository(
 ) {
     private val supportedCharacterExtensions = setOf("png", "webp", "json")
 
+    private data class SummaryCacheEntry(val mtimeMillis: Long, val size: Long, val summary: CharacterSummary)
+
+    // Listing refreshes re-stat every card; unchanged cards must not re-parse (multi-MB PNGs).
+    private val summaryCache = java.util.concurrent.ConcurrentHashMap<Path, SummaryCacheEntry>()
+
     suspend fun listCharacters(): List<CharacterSummary> = withContext(Dispatchers.IO) {
         if (!layout.characters.exists()) return@withContext emptyList()
         layout.characters.listDirectoryEntries()
@@ -43,13 +49,20 @@ internal class CharacterRepository(
             .sortedBy { it.name.lowercase() }
             .map { path ->
                 val id = path.nameWithoutExtension
-                val nameAndTags = CharacterCodec.readCharacterNameAndTags(path, json)
-                CharacterSummary(
-                    id = id,
-                    name = nameAndTags?.first ?: id,
-                    avatarRelativePath = "characters/${path.name}",
-                    tags = nameAndTags?.second ?: emptyList(),
-                )
+                val mtime = java.nio.file.Files.getLastModifiedTime(path).toMillis()
+                val size = java.nio.file.Files.size(path)
+                val cached = summaryCache[path]
+                if (cached != null && cached.mtimeMillis == mtime && cached.size == size) {
+                    cached.summary
+                } else {
+                    val nameAndTags = CharacterCodec.readCharacterNameAndTags(path, json)
+                    CharacterSummary(
+                        id = id,
+                        name = nameAndTags?.first ?: id,
+                        avatarRelativePath = "characters/${path.name}",
+                        tags = nameAndTags?.second ?: emptyList(),
+                    ).also { summaryCache[path] = SummaryCacheEntry(mtime, size, it) }
+                }
             }
     }
 

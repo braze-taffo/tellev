@@ -56,6 +56,48 @@ object PngCardParser {
     }
 
     /**
+     * Streaming variant for files: walks the chunk table with seeks so the IDAT bulk
+     * (nearly the whole file for a multi-MB card) is never read; only text chunks are
+     * buffered. Returns null on any structural surprise.
+     */
+    fun extractCardJson(path: java.nio.file.Path): JsonObject? {
+        java.io.RandomAccessFile(path.toFile(), "r").use { raf ->
+            val signature = ByteArray(PNG_SIGNATURE.size)
+            if (!raf.readFullyOrEnd(signature) || !signature.contentEquals(PNG_SIGNATURE)) return null
+            var charaValue: String? = null
+            var ccv3Value: String? = null
+            val header = ByteArray(8)
+            while (raf.readFullyOrEnd(header)) {
+                val length = readInt32BigEndian(header, 0)
+                if (length < 0 || raf.filePointer + length + 4L > raf.length()) return null
+                val type = header.copyOfRange(4, 8)
+                val isText = type.contentEquals(TEXT_CHUNK_TYPE) ||
+                    type.contentEquals(ITXT_CHUNK_TYPE) ||
+                    type.contentEquals(ZTXT_CHUNK_TYPE)
+                if (isText) {
+                    val data = ByteArray(length)
+                    raf.readFully(data)
+                    decodeTextChunk(PngChunk(type, data))?.let { decoded ->
+                        when (decoded.keyword.lowercase()) {
+                            KEYWORD_CHARA -> charaValue = decoded.text
+                            KEYWORD_CCV3 -> ccv3Value = decoded.text
+                        }
+                    }
+                    raf.seek(raf.filePointer + 4L) // CRC
+                } else {
+                    raf.seek(raf.filePointer + length + 4L)
+                }
+                if (type.contentEquals(IEND_CHUNK_TYPE)) break
+            }
+            val encoded = ccv3Value ?: charaValue ?: return null
+            return decodeCardJson(encoded)
+        }
+    }
+
+    private fun java.io.RandomAccessFile.readFullyOrEnd(buffer: ByteArray): Boolean =
+        runCatching { readFully(buffer); true }.getOrDefault(false)
+
+    /**
      * Embed character card JSON into a PNG file as tEXt chunks.
      * Writes both "chara" (V2) and "ccv3" (V3) keywords.
      * Preserves all existing PNG chunks except old chara/ccv3 tEXt chunks.
