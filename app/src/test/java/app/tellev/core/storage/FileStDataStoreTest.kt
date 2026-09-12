@@ -584,6 +584,35 @@ class FileStDataStoreTest {
         assertEquals("private chain", roundTripped.messages.single().raw["reasoning"]?.jsonPrimitive?.content)
     }
 
+    @Test
+    fun `inline base64 attachments migrate to files on read`() = runBlocking {
+        val payload = java.util.Base64.getEncoder().encodeToString("jpeg-bytes".toByteArray())
+        val dir = layout.chats.resolve("vision").createDirectories()
+        dir.resolve("vision.jsonl").writeText(
+            """
+            {"user_name":"You","character_name":"Vision","chat_metadata":{}}
+            {"name":"You","is_user":true,"is_system":false,"mes":"look","send_date":"2025-01-01T00:00:00Z","attachments":[{"id":"att-abc123","name":"photo.jpg","mimeType":"image/png","relativePath":"","metadata":{"base64":"$payload","detail":"auto"}}]}
+            """.trimIndent(),
+        )
+
+        val session = store.readChatSession("vision")
+
+        val onDisk = dir.resolve("vision.jsonl").readText()
+        assertTrue("migrated JSONL must not inline base64", !onDisk.contains("base64"))
+        val attachment = session.messages.single().attachments.single()
+        assertEquals("user/images/att-mig-att-abc123.jpg", attachment.relativePath)
+        assertEquals("image/jpeg", attachment.mimeType)
+        assertEquals("auto", attachment.metadata["detail"]?.jsonPrimitive?.content)
+        val file = layout.userImages.resolve("att-mig-att-abc123.jpg")
+        assertTrue(file.exists())
+        assertEquals("jpeg-bytes", file.readText())
+
+        // Reading again is stable: no duplicated files, same relative path.
+        val again = store.readChatSession("vision")
+        assertEquals(attachment.relativePath, again.messages.single().attachments.single().relativePath)
+        assertTrue(file.exists())
+    }
+
     // ---- Group Parsing Tests ----
 
     @Test

@@ -67,6 +67,7 @@ import app.tellev.core.model.reasoningParts
 import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.ui.CharacterAvatar
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -558,13 +559,19 @@ internal fun EditMessageCard(
     }
 }
 
-/** A generated-image file inside a chat bubble; tap to view full-screen. */
+/** A chat image file inside a bubble (generated or uploaded); tap to view full-screen. */
 @Composable
 internal fun ChatBubbleImage(file: java.io.File) {
     var showFull by remember(file) { mutableStateOf(false) }
+    // 以屏宽作为解码预算：1024² PNG 全尺寸解码会同时打爆内存与磁盘缓存。
+    val context = LocalContext.current
+    val decodeWidth = context.resources.displayMetrics.widthPixels
     AsyncImage(
-        model = file,
-        contentDescription = "生成的图片",
+        model = ImageRequest.Builder(context)
+            .data(file)
+            .size(decodeWidth)
+            .build(),
+        contentDescription = "聊天图片",
         contentScale = ContentScale.FillWidth,
         modifier = Modifier
             .fillMaxWidth()
@@ -584,7 +591,10 @@ internal fun ChatBubbleImage(file: java.io.File) {
                 contentAlignment = Alignment.Center,
             ) {
                 AsyncImage(
-                    model = file,
+                    model = ImageRequest.Builder(context)
+                        .data(file)
+                        .size(decodeWidth)
+                        .build(),
                     contentDescription = null,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize(),

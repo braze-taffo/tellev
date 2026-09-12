@@ -27,6 +27,8 @@ import kotlin.coroutines.coroutineContext
 class GeminiAdapter(
     private val client: OkHttpClient = OkHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
+    /** Resolves file-backed attachments (relativePath) to raw bytes for vision requests. */
+    private val resolveAttachmentBytes: ((app.tellev.core.model.Attachment) -> ByteArray?)? = null,
 ) : ProviderAdapter {
     override val id: String = ProviderCatalog.GEMINI
     override val displayName: String = "Google Gemini"
@@ -210,6 +212,14 @@ class GeminiAdapter(
         }
     }.flowOn(Dispatchers.IO)
 
+    /** Legacy attachments carry base64 inline; file-backed ones are resolved through the data root. */
+    private fun visionBase64(attachment: app.tellev.core.model.Attachment): String? {
+        attachment.metadata["base64"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+        if (attachment.relativePath.isBlank()) return null
+        val bytes = resolveAttachmentBytes?.invoke(attachment) ?: return null
+        return java.util.Base64.getEncoder().encodeToString(bytes)
+    }
+
     private fun buildContents(request: GenerateRequest): JsonArray {
         val grouped = mutableListOf<GeminiContentBuilder>()
         request.prompt.messages.filter { it.role != MessageRole.System }.forEach { message ->
@@ -223,8 +233,7 @@ class GeminiAdapter(
         val imageParts = request.attachments
             .filter { it.mimeType.startsWith("image/") }
             .mapNotNull { attachment ->
-                val data = attachment.metadata["base64"]?.jsonPrimitive?.contentOrNull
-                    ?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val data = visionBase64(attachment) ?: return@mapNotNull null
                 buildJsonObject {
                     put("inlineData", buildJsonObject {
                         put("mimeType", JsonPrimitive(attachment.mimeType))
