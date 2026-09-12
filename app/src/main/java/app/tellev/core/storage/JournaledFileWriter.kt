@@ -13,7 +13,10 @@ import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.stream.Collectors
 import kotlin.io.path.exists
+import kotlin.io.path.inputStream
+
 import kotlin.io.path.readBytes
 import kotlin.io.path.readText
 
@@ -21,6 +24,9 @@ import kotlin.io.path.readText
  * A write-ahead record contains only bytes and their destination, never executable work.
  * A failed accepted write blocks that destination until explicit recovery succeeds.
  * All files, including temporary replacements, stay on the same filesystem.
+ *
+ * Journal space is bounded: commit records are trimmed to [COMMITS_RETAINED] per target,
+ * `.previous` copies are never written, and [sweep] reclaims orphans at bootstrap.
  */
 class JournaledFileWriter(
     root: Path,
@@ -40,7 +46,7 @@ class JournaledFileWriter(
     )
 
     private val root = root.toAbsolutePath().normalize()
-    private val journal = this.root.resolve(".tellev-writes")
+    private val journal = this.root.resolve(JOURNAL_DIR_NAME)
     private val json = Json { encodeDefaults = true }
     // Multiple FileStDataStore instances within one process must share the lock.
     private val lock = locks.computeIfAbsent(this.root.toString()) { Any() }
@@ -81,17 +87,20 @@ class JournaledFileWriter(
         Files.createDirectories(journal)
         val payload = bytes?.let { key(path) + ".payload" }
         val receipt = Receipt(operationId, revision + 1, digest)
-        val before = path.takeIf { it.exists() }?.readBytes()
+        val beforeSha = shaOf(path)
         // Retain the exact pre-migration file. Subsequent commits do not overwrite it.
         val backup = journal.resolve(key(path) + ".original")
-        if (before != null && !backup.exists()) atomicWrite(backup, before)
-        if (before != null) atomicWrite(journal.resolve(key(path) + ".previous"), before)
+        if (beforeSha != null && !backup.exists()) atomicWrite(backup, path.readBytes())
         if (payload != null) atomicWrite(journal.resolve(payload), bytes)
         fault(Stage.PAYLOAD_SYNCED)
-        val prepared = Prepared(root.relativize(path).toString(), before?.let(::sha), payload, receipt)
+        val prepared = Prepared(root.relativize(path).toString(), beforeSha, payload, receipt)
         atomicWrite(pending, json.encodeToString(prepared).toByteArray(Charsets.UTF_8))
         fault(Stage.PREPARED)
         finish(prepared, path, pending)
+        // The state file survives deletion so revisions stay monotonic across recreate cycles;
+        // only dead-weight copies are dropped and commit history stays bounded.
+        if (bytes == null) Files.deleteIfExists(journal.resolve(key(path) + ".original"))
+        trimCommits(path, completed)
         receipt
     }
 
@@ -106,15 +115,78 @@ class JournaledFileWriter(
                 check(prepared.payload == null || prepared.payload == key(path) + ".payload") { "Invalid journal payload: $pending" }
                 finish(prepared, path, pending)
                 prepared.receipt
-            }.collect(java.util.stream.Collectors.toList())
+            }.collect(Collectors.toList())
         }
+    }
+
+    /**
+     * Reclaim journal space at bootstrap, after [recover]. Legacy installations accumulated
+     * one commit record per write, full-size `.previous` copies, and orphans of deleted
+     * targets; none of those are consulted after a successful recovery.
+     */
+    fun sweep() = synchronized(lock) {
+        if (!Files.isDirectory(journal)) return
+        val liveKeys = liveTargetKeys()
+        val originalCutoff = System.currentTimeMillis() - ORIGINAL_MAX_AGE_MILLIS
+        Files.list(journal).use { entries ->
+            entries.forEach { entry ->
+                val name = entry.fileName.toString()
+                val keyAndSuffix = JOURNAL_SUFFIXES.firstNotNullOfOrNull { suffix ->
+                    name.takeIf { it.endsWith(suffix) }?.let { it.removeSuffix(suffix) to suffix }
+                }
+                when {
+                    name.endsWith(".new") -> runCatching { Files.deleteIfExists(entry) }
+                    keyAndSuffix == null -> {}
+                    else -> {
+                        val (targetKey, suffix) = keyAndSuffix
+                        val live = targetKey in liveKeys
+                        when (suffix) {
+                            ".pending" -> {} // recover() owns pending replays
+                            ".payload" -> if (!journal.resolve("$targetKey.pending").exists()) runCatching { Files.deleteIfExists(entry) }
+                            ".previous" -> runCatching { Files.deleteIfExists(entry) } // never read by any code path
+                            ".original" -> if (!live || Files.getLastModifiedTime(entry).toMillis() < originalCutoff) runCatching { Files.deleteIfExists(entry) }
+                            ".state" -> if (!live) {
+                                runCatching { Files.deleteIfExists(entry) }
+                                runCatching { journal.resolve("$targetKey.commits").toFile().deleteRecursively() }
+                            }
+                            ".commits" -> if (!live) runCatching { entry.toFile().deleteRecursively() }
+                            else -> {}
+                        }
+                    }
+                }
+            }
+        }
+        Unit
+    }
+
+    /** Keys of every file currently present under the root, excluding journal internals and atomic-write temps. */
+    private fun liveTargetKeys(): Set<String> {
+        if (!Files.isDirectory(root)) return emptySet()
+        val keys = mutableSetOf<String>()
+        Files.walk(root).use { stream ->
+            stream.filter { Files.isRegularFile(it) }
+                .filter { !it.fileName.toString().endsWith(".new") }
+                .filter { !it.isInsideJournal() }
+                .forEach { keys.add(key(it)) }
+        }
+        return keys
+    }
+
+    private fun Path.isInsideJournal(): Boolean {
+        var ancestor = parent
+        while (ancestor != null) {
+            if (ancestor.fileName?.toString() == JOURNAL_DIR_NAME) return true
+            if (ancestor == root) return false
+            ancestor = ancestor.parent
+        }
+        return false
     }
 
     private fun finish(prepared: Prepared, path: Path, pending: Path) {
         val payloadPath = prepared.payload?.let(journal::resolve)
         val bytes = payloadPath?.readBytes()
         check(bytes?.let(::sha) == prepared.receipt.sha256) { "Corrupt write payload for ${prepared.target}" }
-        val currentSha = path.takeIf { it.exists() }?.readBytes()?.let(::sha)
+        val currentSha = shaOf(path)
         val currentRevision = revision(path)
         check(currentRevision <= prepared.receipt.revision) { "Refusing to recover an obsolete write: ${prepared.target}" }
         check(currentSha == prepared.beforeSha256 || currentSha == prepared.receipt.sha256) {
@@ -133,6 +205,27 @@ class JournaledFileWriter(
         Files.delete(pending)
         syncDirectory(journal)
         payloadPath?.let { Files.deleteIfExists(it) }
+    }
+
+    /** Keep only the newest [COMMITS_RETAINED] commit records for a target, always retaining [current]. */
+    private fun trimCommits(path: Path, current: Path) {
+        val dir = journal.resolve(key(path) + ".commits")
+        if (!Files.isDirectory(dir)) return
+        trimCommitsDir(dir, reserved = current)
+    }
+
+    private fun trimCommitsDir(dir: Path, reserved: Path? = null) {
+        val records = Files.list(dir).use { stream ->
+            stream.collect(Collectors.toList())
+        }
+        // Atomic-write temps for commit records are always stale under the lock.
+        records.filter { it.fileName.toString().endsWith(".new") }.forEach { runCatching { Files.deleteIfExists(it) } }
+        val dated = records.filter { !it.fileName.toString().endsWith(".new") && it != reserved && Files.isRegularFile(it) }
+        val capacity = COMMITS_RETAINED - (if (reserved != null) 1 else 0)
+        if (dated.size <= capacity) return
+        dated.sortedBy { Files.getLastModifiedTime(it).toMillis() }
+            .take(dated.size - capacity)
+            .forEach { runCatching { Files.deleteIfExists(it) } }
     }
 
     private fun atomicWrite(path: Path, bytes: ByteArray) {
@@ -171,7 +264,21 @@ class JournaledFileWriter(
         journal.resolve(key(path) + ".commits").resolve(sha(operationId.toByteArray(Charsets.UTF_8)) + ".json")
 
     companion object {
+        const val JOURNAL_DIR_NAME = ".tellev-writes"
+        private val JOURNAL_SUFFIXES = listOf(".state", ".pending", ".previous", ".original", ".payload", ".commits")
+        private const val COMMITS_RETAINED = 8
+        private const val ORIGINAL_MAX_AGE_MILLIS = 30L * 24 * 60 * 60 * 1000
         private val locks = ConcurrentHashMap<String, Any>()
         private fun sha(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        private fun shaOf(path: Path): String? = path.takeIf { it.exists() }?.inputStream()?.use { input ->
+            val digest = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        }
     }
 }

@@ -2,6 +2,7 @@ package app.tellev.core.storage
 
 import java.io.IOException
 import java.nio.file.Files
+import kotlin.io.path.createDirectories
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 import org.junit.After
@@ -94,5 +95,97 @@ class JournaledFileWriterTest {
         recovered.write(target, "recreated".toByteArray(), "create", 1)
         recovered.delete(target, "delete")
         assertEquals("recreated", target.readText())
+    }
+
+    @Test fun `writes no longer leave full-size previous copies in the journal`() {
+        val writer = JournaledFileWriter(root)
+        writer.write(target, "one".toByteArray(), "one")
+        writer.write(target, "two".toByteArray(), "two")
+        val journalDir = root.resolve(".tellev-writes")
+        val previous = Files.list(journalDir).use { paths ->
+            paths.filter { it.fileName.toString().endsWith(".previous") }.toList()
+        }
+        assertTrue(previous.isEmpty())
+    }
+
+    @Test fun `commit history is trimmed to the retention bound`() {
+        val writer = JournaledFileWriter(root)
+        repeat(30) { n -> writer.write(target, "v$n".toByteArray(), "op$n") }
+        val journalDir = root.resolve(".tellev-writes")
+        val commitsDirs = Files.list(journalDir).use { paths ->
+            paths.filter { it.fileName.toString().endsWith(".commits") }.toList()
+        }
+        val records = Files.list(commitsDirs.single()).use { paths ->
+            paths.filter { it.fileName.toString().endsWith(".json") }.toList()
+        }
+        assertEquals(8, records.size)
+        assertEquals("v29", target.readText())
+    }
+
+    @Test fun `executed delete drops the original backup but keeps the revision state`() {
+        val writer = JournaledFileWriter(root)
+        writer.write(target, "content".toByteArray(), "create")
+        val revision = writer.revision(target)
+        writer.delete(target, "delete")
+        val journalDir = root.resolve(".tellev-writes")
+        val entries = Files.list(journalDir).use { paths -> paths.map { it.fileName.toString() }.toList() }
+        assertTrue(entries.none { it.endsWith(".original") })
+        assertTrue(entries.none { it.endsWith(".previous") })
+        assertEquals(revision + 1, writer.revision(target))
+    }
+
+    @Test fun `sweep removes orphan journal entries stale previous copies and expired originals`() {
+        val writer = JournaledFileWriter(root)
+        writer.write(target, "content".toByteArray(), "create")
+        writer.write(target, "content2".toByteArray(), "update")
+        val journalDir = root.resolve(".tellev-writes")
+        val targetKey = journalDir.toFile().list().orEmpty()
+            .map { it to it.removeSuffix(".state") }
+            .firstOrNull { (name, _) -> name.endsWith(".state") }!!.second
+
+        // Simulate the legacy accumulation: a .previous copy and an aged .original.
+        val previous = journalDir.resolve("$targetKey.previous")
+        previous.writeText("stale-full-size-copy")
+        val original = journalDir.resolve("$targetKey.original")
+        original.writeText("old-pre-migration-copy")
+        original.toFile().setLastModified(System.currentTimeMillis() - 31L * 24 * 60 * 60 * 1000)
+
+        // Orphan: a second target whose data file is gone but whose journal entries linger.
+        val orphan = root.resolve("chats/gone/removed.jsonl")
+        orphan.parent.createDirectories()
+        writer.write(orphan, "gone".toByteArray(), "gone-op")
+        Files.delete(orphan)
+        val orphanKey = journalDir.toFile().list().orEmpty()
+            .map { it to it.removeSuffix(".state") }
+            .firstOrNull { (name, _) -> name.endsWith(".state") && !name.startsWith(targetKey) }!!.second
+        Files.createDirectories(journalDir.resolve("$orphanKey.commits"))
+        journalDir.resolve("$orphanKey.commits/abc.json").writeText("{}")
+
+        writer.sweep()
+
+        val names = journalDir.toFile().list().orEmpty().toList()
+        assertTrue(names.none { it.endsWith(".previous") })
+        assertTrue(names.none { it.endsWith(".original") })
+        assertTrue(names.none { it.startsWith(orphanKey) })
+        assertTrue(names.any { it == "$targetKey.state" })
+        assertTrue(Files.exists(journalDir.resolve("$targetKey.commits")))
+        assertEquals("content2", target.readText())
+    }
+
+    @Test fun `sweep keeps a fresh original for live targets and ignores pending records`() {
+        target.writeText("pre-existing")
+        val writer = JournaledFileWriter(root)
+        writer.write(target, "content".toByteArray(), "create")
+        val journalDir = root.resolve(".tellev-writes")
+        val targetKey = journalDir.toFile().list().orEmpty()
+            .map { it to it.removeSuffix(".state") }
+            .firstOrNull { (name, _) -> name.endsWith(".state") }!!.second
+        journalDir.resolve("$targetKey.pending").writeText("{}")
+
+        writer.sweep()
+
+        val names = journalDir.toFile().list().orEmpty().toList()
+        assertTrue(names.any { it == "$targetKey.original" })
+        assertTrue(names.any { it == "$targetKey.pending" })
     }
 }

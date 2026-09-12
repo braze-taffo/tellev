@@ -1,6 +1,7 @@
 package app.tellev.core.storage.coordinator
 
 import app.tellev.core.security.SensitiveFieldScanner
+import app.tellev.core.storage.JournaledFileWriter
 import app.tellev.core.storage.StDirectoryLayout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -37,6 +38,9 @@ internal class BackupCoordinator(
                 baseDir.walk().forEach { filePath ->
                     if (filePath.isDirectory()) return@forEach
                     if (filePath.normalize() == targetZip.normalize()) return@forEach
+                    // The write journal is derived state; shipping it would near-double the archive
+                    // and resurrect orphans on restore.
+                    if (baseDir.relativize(filePath).any { it.toString() == JournaledFileWriter.JOURNAL_DIR_NAME }) return@forEach
 
                     val relativePath = baseDir.relativize(filePath).toString().replace('\\', '/')
                     zos.putNextEntry(ZipEntry(relativePath))
@@ -81,6 +85,11 @@ internal class BackupCoordinator(
 
                 if (!targetPath.startsWith(root)) {
                     throw IllegalArgumentException("Path traversal detected in backup entry: $entryName")
+                }
+
+                if (normalizedPath.split('/').any { it == JournaledFileWriter.JOURNAL_DIR_NAME }) {
+                    entry = zis.nextEntry
+                    continue
                 }
 
                 if (entry.isDirectory) {
