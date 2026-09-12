@@ -642,6 +642,11 @@ class ChatViewModel(
     }
 
     fun deleteMessage(messageIndex: Int) {
+        val target = _uiState.value.messages.getOrNull(messageIndex) ?: return
+        val session = _uiState.value.currentSession
+        // 消息删除后的图片级联：删掉消息引用的 user/images 文件与对应画廊记录。
+        val imageRelatives = target.attachments
+            .mapNotNull { it.relativePath.takeIf { rel -> rel.startsWith("user/images/") } }
         messageActions.deleteMessage(
             messageIndex = messageIndex,
             state = _uiState.value,
@@ -655,8 +660,108 @@ class ChatViewModel(
             onError = { err -> _uiState.update { it.copy(error = err) } },
             onDeleteCommitted = {
                 ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.MESSAGE_DELETED, messageIndex)
+                if (imageRelatives.isNotEmpty() && session != null) {
+                    runCatching { deleteImageFilesAndGalleryRecords(session.id, imageRelatives) }
+                        .onFailure { err -> _uiState.update { it.copy(error = "清理消息图片失败：${err.message}") } }
+                    imageGenCoordinator.refreshGeneratedImages(session.id) { targetSessionId, images ->
+                        _uiState.update { if (it.currentSession?.id == targetSessionId) it.copy(generatedImages = images) else it }
+                    }
+                }
             },
         )
+    }
+
+    /** Permanently delete image files under user/images and the gallery records referencing them. */
+    private suspend fun deleteImageFilesAndGalleryRecords(sessionId: String, relativePaths: List<String>) {
+        withContext(Dispatchers.IO) {
+            val store = GeneratedImageStore(dataStore.layout)
+            relativePaths.forEach { relative ->
+                val file = dataStore.layout.root.resolve(relative).normalize()
+                if (file.startsWith(dataStore.layout.userImages)) {
+                    runCatching { java.nio.file.Files.deleteIfExists(file) }
+                }
+            }
+            store.read(sessionId)
+                .filter { record -> record.attachments.any { it.relativePath in relativePaths } }
+                .forEach { store.remove(sessionId, it.id) }
+        }
+    }
+
+    fun deleteSession(sessionId: String) {
+        viewModelScope.launch {
+            sessionRuntime.sessionTransitions.withLock {
+                try {
+                    retireSessionRuntime()
+                    dataStore.deleteChatSession(sessionId)
+                    val character = _uiState.value.selectedCharacter
+                    val remaining = if (character != null) {
+                        dataStore.listChatSessions(characterId = character.id)
+                    } else {
+                        emptyList()
+                    }
+                    if (remaining.isEmpty()) {
+                        _uiState.update {
+                            it.copy(
+                                selectedCharacter = null,
+                                characterAvatarFile = null,
+                                currentSession = null,
+                                chatBackgroundFile = null,
+                                messages = emptyList(),
+                                generatedImages = emptyList(),
+                                sessions = emptyList(),
+                            )
+                        }
+                    } else {
+                        val next = remaining.first()
+                        val token = sessionRuntime.activateSessionWrites(next)
+                        _uiState.update {
+                            it.copy(
+                                runtimeGeneration = token.generation,
+                                currentSession = next,
+                                messages = next.messages,
+                                chatBackgroundFile = ChatSessionAssets.chatBackgroundFileFor(next, dataStore.layout),
+                                sessions = remaining,
+                                generatedImages = emptyList(),
+                            )
+                        }
+                        imageGenCoordinator.refreshGeneratedImages(next.id) { targetSessionId, images ->
+                            _uiState.update { if (it.currentSession?.id == targetSessionId) it.copy(generatedImages = images) else it }
+                        }
+                        ChatTavernAdapter.emitChatChanged(extensionHost, next)
+                    }
+                } catch (e: Exception) {
+                    _uiState.update { it.copy(error = "删除会话失败：${e.message}") }
+                }
+            }
+        }
+    }
+
+    fun deleteGeneratedImage(imageId: String) {
+        val session = _uiState.value.currentSession ?: return
+        viewModelScope.launch {
+            try {
+                val removed = withContext(Dispatchers.IO) {
+                    val store = GeneratedImageStore(dataStore.layout)
+                    val record = store.remove(session.id, imageId)
+                    record?.attachments
+                        ?.mapNotNull { it.relativePath.takeIf { rel -> rel.startsWith("user/images/") } }
+                        ?.forEach { relative ->
+                            val file = dataStore.layout.root.resolve(relative).normalize()
+                            if (file.startsWith(dataStore.layout.userImages)) {
+                                runCatching { java.nio.file.Files.deleteIfExists(file) }
+                            }
+                        }
+                    record
+                }
+                if (removed != null) {
+                    imageGenCoordinator.refreshGeneratedImages(session.id) { targetSessionId, images ->
+                        _uiState.update { if (it.currentSession?.id == targetSessionId) it.copy(generatedImages = images) else it }
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "删除图片失败：${e.message}") }
+            }
+        }
     }
 
     fun setChatBackground(imageBytes: ByteArray) {

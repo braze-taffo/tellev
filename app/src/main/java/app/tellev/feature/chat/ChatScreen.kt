@@ -34,7 +34,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
+import app.tellev.core.model.ChatSession
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -142,6 +144,7 @@ private fun ChatContentScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     var inputText by remember { mutableStateOf("") }
     var showSessionMenu by remember { mutableStateOf(false) }
+    var sessionPendingDelete by remember { mutableStateOf<ChatSession?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var editingMessageIndex by remember { mutableStateOf<Int?>(null) }
     var editTextField by remember { mutableStateOf("") }
@@ -252,7 +255,7 @@ private fun ChatContentScreen(
                 }
             },
             actions = {
-                if (state.sessions.size > 1) {
+                if (state.sessions.isNotEmpty()) {
                     Box {
                         TextButton(onClick = { showSessionMenu = true }) {
                             Text("会话")
@@ -267,6 +270,21 @@ private fun ChatContentScreen(
                                     onClick = {
                                         viewModel.switchSession(session.id)
                                         showSessionMenu = false
+                                    },
+                                    trailingIcon = {
+                                        IconButton(
+                                            onClick = {
+                                                sessionPendingDelete = session
+                                                showSessionMenu = false
+                                            },
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "删除会话",
+                                                modifier = Modifier.size(18.dp),
+                                                tint = MaterialTheme.colorScheme.error,
+                                            )
+                                        }
                                     },
                                 )
                             }
@@ -511,8 +529,13 @@ private fun ChatContentScreen(
                                     if (file.isFile) ChatBubbleImage(file)
                                 }
                                 var showPrompt by remember(image.id) { mutableStateOf(false) }
-                                TextButton(onClick = { showPrompt = !showPrompt }) {
-                                    Text(if (showPrompt) "收起提示词" else "查看图片提示词")
+                                Row {
+                                    TextButton(onClick = { showPrompt = !showPrompt }) {
+                                        Text(if (showPrompt) "收起提示词" else "查看图片提示词")
+                                    }
+                                    TextButton(onClick = { viewModel.deleteGeneratedImage(image.id) }) {
+                                        Text("删除", color = MaterialTheme.colorScheme.error)
+                                    }
                                 }
                                 if (showPrompt) SelectionContainer {
                                     Text(image.prompt, style = MaterialTheme.typography.bodySmall)
@@ -522,6 +545,22 @@ private fun ChatContentScreen(
                     }
                 },
                 confirmButton = { TextButton(onClick = { showImageGallery = false }) { Text("关闭") } },
+            )
+        }
+        sessionPendingDelete?.let { session ->
+            AlertDialog(
+                onDismissRequest = { sessionPendingDelete = null },
+                title = { Text("删除会话") },
+                text = { Text("将永久删除「${session.title}」的全部消息、图片与聊天背景，无法恢复。") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.deleteSession(session.id)
+                        sessionPendingDelete = null
+                    }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { sessionPendingDelete = null }) { Text("取消") }
+                },
             )
         }
         if (state.imageGenError != null && state.imageGenDiagnostic == null) {
