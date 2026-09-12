@@ -73,13 +73,15 @@ internal class EmbeddedAssetsCoordinator(
                 )
             }
 
-        val extensions = card.raw.cardDataObject()["extensions"] as? JsonObject ?: return
+        // Cards without an extensions object still get a manifest (with the fingerprint):
+        // otherwise they re-decode on every boot and the rebuild skip never engages.
+        val extensions = card.raw.cardDataObject()["extensions"] as? JsonObject
         val assetDir = layout.extensions.resolve("character-assets").resolve(card.id)
         assetDir.createDirectories()
 
-        val regexScripts = extensions["regex_scripts"]
-        val tavernHelper = extensions["tavern_helper"]
-        val tavernHelperScripts = extensions["TavernHelper_scripts"] ?: tavernHelper.arrayField("scripts")
+        val regexScripts = extensions?.get("regex_scripts")
+        val tavernHelper = extensions?.get("tavern_helper")
+        val tavernHelperScripts = extensions?.get("TavernHelper_scripts") ?: tavernHelper.arrayField("scripts")
 
         writeCharacterAsset(assetDir, "extensions.json", extensions)
         writeCharacterAsset(assetDir, "regex_scripts.json", regexScripts)

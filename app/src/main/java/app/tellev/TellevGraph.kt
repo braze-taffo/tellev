@@ -131,13 +131,14 @@ class TellevGraph private constructor(
                 .build()
 
             // 视觉附件以文件形式存于数据根下，适配器在构建请求时读回并编码为 base64。
+            // 与删除侧的校验对齐：只允许读取 user/images 下的聊天图片。
             val resolveAttachmentBytes: (app.tellev.core.model.Attachment) -> ByteArray? = { attachment ->
                 val relative = attachment.relativePath
                 if (relative.isBlank()) {
                     null
                 } else {
                     val resolved = layout.root.resolve(relative).normalize()
-                    if (resolved.startsWith(layout.root) && java.nio.file.Files.isRegularFile(resolved)) {
+                    if (resolved.startsWith(layout.userImages) && java.nio.file.Files.isRegularFile(resolved)) {
                         runCatching { java.nio.file.Files.readAllBytes(resolved) }.getOrNull()
                     } else {
                         null

@@ -247,7 +247,12 @@ internal suspend fun buildAttachmentFromUri(
     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val imagesDir = java.io.File(dataRoot, "user/images")
         imagesDir.mkdirs()
-        java.io.File(imagesDir, imageFileName).writeBytes(bytes)
+        // fsync 落盘：消息持久化（journal 已 fsync）引用此文件前先确保字节到盘，
+        // 否则断电后消息可能指向缺失文件。
+        java.io.FileOutputStream(java.io.File(imagesDir, imageFileName)).use { stream ->
+            stream.write(bytes)
+            stream.fd.sync()
+        }
     }
     return Attachment(
         id = "att-$attachmentId",

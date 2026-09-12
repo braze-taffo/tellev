@@ -172,6 +172,25 @@ class JournaledFileWriterTest {
         assertEquals("content2", target.readText())
     }
 
+    @Test fun `sweep trims legacy commit accumulation for live targets`() {
+        target.writeText("pre-existing")
+        val writer = JournaledFileWriter(root)
+        writer.write(target, "one".toByteArray(), "one")
+        val journalDir = root.resolve(".tellev-writes")
+        val targetKey = journalDir.toFile().list().orEmpty()
+            .map { it to it.removeSuffix(".state") }
+            .firstOrNull { (name, _) -> name.endsWith(".state") }!!.second
+        val commitsDir = journalDir.resolve("$targetKey.commits")
+        // 模拟旧版本「每写一条 commit 记录且从不裁剪」的累积。
+        repeat(40) { n -> commitsDir.resolve(String.format("%03d.json", n)).writeText("{}") }
+
+        writer.sweep()
+
+        val remaining = commitsDir.toFile().list().orEmpty().filter { it.endsWith(".json") }
+        assertEquals(8, remaining.size)
+        assertEquals("one", target.readText())
+    }
+
     @Test fun `sweep keeps a fresh original for live targets and ignores pending records`() {
         target.writeText("pre-existing")
         val writer = JournaledFileWriter(root)

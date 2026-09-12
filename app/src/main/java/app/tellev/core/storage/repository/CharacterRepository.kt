@@ -49,10 +49,17 @@ internal class CharacterRepository(
             .sortedBy { it.name.lowercase() }
             .map { path ->
                 val id = path.nameWithoutExtension
-                val mtime = java.nio.file.Files.getLastModifiedTime(path).toMillis()
-                val size = java.nio.file.Files.size(path)
+                // Concurrent delete/replace can remove the file between listing and stat;
+                // reads used to degrade gracefully and must keep doing so.
+                val stats = runCatching {
+                    Triple(
+                        java.nio.file.Files.getLastModifiedTime(path).toMillis(),
+                        java.nio.file.Files.size(path),
+                        true,
+                    )
+                }.getOrNull()
                 val cached = summaryCache[path]
-                if (cached != null && cached.mtimeMillis == mtime && cached.size == size) {
+                if (stats != null && cached != null && cached.mtimeMillis == stats.first && cached.size == stats.second) {
                     cached.summary
                 } else {
                     val nameAndTags = CharacterCodec.readCharacterNameAndTags(path, json)
@@ -61,7 +68,13 @@ internal class CharacterRepository(
                         name = nameAndTags?.first ?: id,
                         avatarRelativePath = "characters/${path.name}",
                         tags = nameAndTags?.second ?: emptyList(),
-                    ).also { summaryCache[path] = SummaryCacheEntry(mtime, size, it) }
+                    ).also { summary ->
+                        if (stats != null) {
+                            summaryCache[path] = SummaryCacheEntry(stats.first, stats.second, summary)
+                        } else {
+                            summaryCache.remove(path)
+                        }
+                    }
                 }
             }
     }
