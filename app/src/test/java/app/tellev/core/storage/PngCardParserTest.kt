@@ -39,6 +39,37 @@ class PngCardParserTest {
     }
 
     @Test
+    fun `streaming file extraction matches in-memory extraction`() {
+        val embedded = PngCardParser.embedCardJson(PngCardParser.createMinimalPng(), testJson)
+        val temp = java.nio.file.Files.createTempFile("tellev-png-stream", ".png")
+        try {
+            java.nio.file.Files.write(temp, embedded)
+            val streamed = PngCardParser.extractCardJson(temp)
+            val inMemory = PngCardParser.extractCardJson(embedded)
+            assertEquals(inMemory, streamed)
+            assertEquals(
+                "Test Char",
+                (streamed!!["data"] as JsonObject)["name"]?.let {
+                    (it as kotlinx.serialization.json.JsonPrimitive).content
+                },
+            )
+        } finally {
+            temp.toFile().delete()
+        }
+    }
+
+    @Test
+    fun `streaming extraction returns null for non-PNG files`() {
+        val temp = java.nio.file.Files.createTempFile("tellev-not-png", ".png")
+        try {
+            java.nio.file.Files.write(temp, "not a png".toByteArray())
+            assertNull(PngCardParser.extractCardJson(temp))
+        } finally {
+            temp.toFile().delete()
+        }
+    }
+
+    @Test
     fun `embedded PNG is still valid PNG with correct signature`() {
         val png = PngCardParser.createMinimalPng()
         val embedded = PngCardParser.embedCardJson(png, testJson)
