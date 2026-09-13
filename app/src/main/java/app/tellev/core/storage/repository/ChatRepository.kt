@@ -187,37 +187,37 @@ internal class ChatRepository(
         val session: ChatSession,
     )
 
+    private data class StatsSnapshot(val revision: Long, val mtimeMillis: Long, val size: Long)
+
     // Opening a character lists (and the UI often re-lists) every session; re-parsing
     // all JSONL each time is O(history). Entries self-invalidate via revision/mtime/size.
     private val sessionCache = object : LinkedHashMap<Path, SessionCacheEntry>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Path, SessionCacheEntry>): Boolean = size > 8
     }
 
+    private fun sampleStats(path: Path): StatsSnapshot? = runCatching {
+        StatsSnapshot(durableFiles.revision(path), Files.getLastModifiedTime(path).toMillis(), Files.size(path))
+    }.getOrNull()
+
     private fun readJsonlChatCached(path: Path): ChatSession = synchronized(sessionCache) {
-        val revision = durableFiles.revision(path)
-        val stats = runCatching {
-            Files.getLastModifiedTime(path).toMillis() to Files.size(path)
-        }.getOrNull()
-        val cached = if (stats != null) sessionCache[path] else null
-        if (cached != null && stats != null &&
-            cached.revision == revision && cached.mtimeMillis == stats.first && cached.size == stats.second
+        val before = sampleStats(path)
+        val cached = if (before != null) sessionCache[path] else null
+        if (cached != null && before != null &&
+            cached.revision == before.revision && cached.mtimeMillis == before.mtimeMillis && cached.size == before.size
         ) {
             return@synchronized cached.session
         }
         val outcome = readChatWithoutGeneratedImages(path)
         // 未落定的读取结果（迁移写失败）不缓存：下一次读取必须重试迁移，
         // 否则缓存会把「内存已剥离、磁盘未迁移」的视图固化。
+        //
+        // 解析期间可能发生并发写：必须前后采样完全一致才允许入缓存，否则会把
+        // 「解析到的旧内容」配上「写入后的新 revision/stat」缓存，后续
+        // commitChatMutation 以它为 current 就可能静默抹掉刚写入的消息。
         if (outcome.settled) {
-            val postStats = runCatching {
-                Files.getLastModifiedTime(path).toMillis() to Files.size(path)
-            }.getOrNull()
-            if (postStats != null) {
-                sessionCache[path] = SessionCacheEntry(
-                    durableFiles.revision(path),
-                    postStats.first,
-                    postStats.second,
-                    outcome.session,
-                )
+            val after = sampleStats(path)
+            if (after != null && before != null && after == before) {
+                sessionCache[path] = SessionCacheEntry(after.revision, after.mtimeMillis, after.size, outcome.session)
             }
         }
         outcome.session

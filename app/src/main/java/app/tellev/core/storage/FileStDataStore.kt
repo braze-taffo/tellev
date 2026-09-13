@@ -170,7 +170,10 @@ class FileStDataStore(
         } else {
             emptyList()
         }
-        sessionIds.forEach { chatRepository.deleteChatSession(it) }
+        sessionIds.forEach {
+            // 逐会话尽力而为：单个删除失败不阻断其余（中途失败只留孤儿，不损坏数据）。
+            runCatching { chatRepository.deleteChatSession(it) }
+        }
     }
 
     override suspend fun replaceCharacterAvatar(id: String, pngBytes: ByteArray) =
