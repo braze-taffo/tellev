@@ -43,26 +43,78 @@ data class UpdateInfo(
 )
 
 /**
+ * A tellev release channel. Every version tag and APK asset name on a channel
+ * carries its [tagSuffix] (`""` for the official app, `"-mnn"` for the MNN
+ * image-gen build), so the two update streams can be told apart from the tag
+ * itself. Matching on the suffix rather than on GitHub's pre-release flag means
+ * a release that was published with the wrong flag still cannot leak across
+ * channels.
+ */
+enum class UpdateChannel(val tagSuffix: String, val displayName: String) {
+    Official("", "正式版"),
+    Mnn("-mnn", "生图版"),
+    ;
+
+    /**
+     * True when version [tag] belongs to this channel: the channel suffix is
+     * stripped off and what remains must be a plain `vX.Y.Z`-style version.
+     * The suffix requirement also rejects unrelated tags such as `nightly`.
+     */
+    fun matchesTag(tag: String): Boolean {
+        val trimmed = tag.trim()
+        val core = when {
+            tagSuffix.isEmpty() -> trimmed
+            trimmed.endsWith(tagSuffix) -> trimmed.dropLast(tagSuffix.length)
+            else -> return false
+        }
+        return PLAIN_VERSION_TAG.matches(core)
+    }
+
+    /**
+     * True when APK asset [name] belongs to this channel. The `-mnn` marker
+     * decides an asset's channel, so an official build never picks up an MNN
+     * APK even if both were attached to one release.
+     */
+    fun matchesApkAsset(name: String): Boolean {
+        if (!name.endsWith(".apk", ignoreCase = true)) return false
+        val assetIsMnn = name.contains(MNN_MARKER, ignoreCase = true)
+        return assetIsMnn == (this == Mnn)
+    }
+
+    private companion object {
+        /** `v` optional, 2-4 numeric dot-groups, no channel suffix. */
+        val PLAIN_VERSION_TAG = Regex("""^v?\d+(\.\d+){1,3}$""")
+
+        /** Marks the MNN image-gen channel in release asset names. */
+        const val MNN_MARKER = "-mnn"
+    }
+}
+
+/**
  * Checks GitHub for a newer tellev release and downloads its APK.
  *
  * Works behind the GFW by trying a direct request first and falling back
  * through [DEFAULT_MIRRORS]; the first mirror that returns a usable response
  * wins. All network calls use the [OkHttpClient] supplied at construction,
  * which should have short timeouts so a dead mirror is abandoned quickly.
+ *
+ * Only releases on [channel] are ever surfaced, so one build can never offer
+ * another channel's APK.
  */
 class UpdateChecker(
     private val client: OkHttpClient,
     private val json: Json = Json { ignoreUnknownKeys = true },
+    private val channel: UpdateChannel = CHANNEL,
 ) {
     /**
-     * Fetches the newest `-mnn` release. 本分支（tellev 生图版）的发行以
-     * pre-release + `-mnn` 后缀 tag 发布，master 正式版走普通 release 并
-     * 占据 releases/latest——两个分发渠道因此互不串台：这里拉列表后按
-     * tag 后缀过滤，而不是取 latest。Returns null only if every mirror was
-     * unreachable or no `-mnn` release parsed (callers show "up to date").
+     * Fetches the newest release on this build's [channel]. Returns null only
+     * if every mirror was unreachable; throws the last error otherwise. The
+     * release list is filtered by tag suffix and APK asset name, so the
+     * official app never offers an MNN build and vice versa — regardless of how
+     * a release's GitHub pre-release flag happens to be set.
      */
     suspend fun fetchLatest(mirrors: List<UpdateMirror>): UpdateInfo? = withContext(Dispatchers.IO) {
-        val apiUrl = "https://api.github.com/repos/braze-taffo/tellev/releases?per_page=30"
+        val apiUrl = "https://api.github.com/repos/braze-taffo/tellev/releases?per_page=100"
         var lastError: Throwable? = null
         for (mirror in mirrors) {
             try {
@@ -78,9 +130,9 @@ class UpdateChecker(
                         return@use
                     }
                     val body = response.body?.string().orEmpty()
-                    val parsed = runCatching { parseLatestMnnRelease(body) }.getOrNull()
+                    val parsed = runCatching { parseLatestChannelRelease(body) }.getOrNull()
                     if (parsed != null) return@withContext parsed
-                    lastError = IllegalStateException("无法解析版本信息")
+                    lastError = IllegalStateException("未找到 ${channel.displayName} 渠道的发行")
                 }
             } catch (e: java.io.IOException) {
                 // Network/timeout/protocol error: try the next mirror.
@@ -94,25 +146,40 @@ class UpdateChecker(
     }
 
     /**
-     * Parses a GitHub `releases` list body and returns the first (newest)
-     * entry whose tag ends with `-mnn`. Throws when none is present.
+     * Parses a GitHub `releases` list body and returns the newest entry whose
+     * tag and APK asset both belong to this build's [channel]. Releases from the
+     * other channel are skipped even when they are newer. Throws when the list
+     * holds no release for this channel.
      */
-    fun parseLatestMnnRelease(body: String): UpdateInfo {
+    fun parseLatestChannelRelease(body: String): UpdateInfo {
         val root = json.parseToJsonElement(body).jsonArray
-        val release = root.firstOrNull { entry ->
-            (entry as? JsonObject)
-                ?.get("tag_name")?.jsonPrimitive?.contentOrNull?.endsWith("-mnn") == true
-        } ?: error("未找到 -mnn 发行")
+        val release = root.firstOrNull { isChannelRelease(it as? JsonObject) }
+            ?: error("未找到 ${channel.displayName} 渠道的发行")
         return parseReleaseObject(release.jsonObject)
     }
 
-    /** Parses a single-release JSON body (e.g. a `releases/latest` response). */
+    /**
+     * True when [entry] is a release on [channel] carrying a [channel] APK. Both
+     * halves are required: a matching tag with only the other channel's APK is
+     * not publishable evidence that this channel has a build.
+     */
+    private fun isChannelRelease(entry: JsonObject?): Boolean {
+        if (entry == null) return false
+        val tag = entry["tag_name"]?.jsonPrimitive?.contentOrNull ?: return false
+        if (!channel.matchesTag(tag)) return false
+        return entry["assets"]?.jsonArray?.any { asset ->
+            val name = asset.jsonObject["name"]?.jsonPrimitive?.contentOrNull
+            name != null && channel.matchesApkAsset(name)
+        } == true
+    }
+
+    /** Parses a single-release JSON body (e.g. a `releases/tags/<tag>` response). */
     fun parseReleaseJson(body: String): UpdateInfo =
         parseReleaseObject(json.parseToJsonElement(body).jsonObject)
 
     /**
-     * Parses a single GitHub release JSON object. Throws if it lacks a tag
-     * or an APK asset.
+     * Parses a single GitHub release JSON object. Throws if it lacks a tag or an
+     * APK asset belonging to this build's [channel].
      */
     fun parseReleaseObject(root: JsonObject): UpdateInfo {
         val tag = root["tag_name"]?.jsonPrimitive?.contentOrNull
@@ -121,8 +188,8 @@ class UpdateChecker(
             ?: error("缺少 assets")
         val apk = assets.firstOrNull { entry ->
             val name = entry.jsonObject["name"]?.jsonPrimitive?.contentOrNull
-            name != null && name.endsWith(".apk", ignoreCase = true)
-        } ?: error("未找到 APK 资产")
+            name != null && channel.matchesApkAsset(name)
+        } ?: error("未找到 ${channel.displayName} 渠道的 APK 资产")
         val apkObj = apk.jsonObject
         return UpdateInfo(
             tagName = tag,
@@ -245,6 +312,12 @@ class UpdateChecker(
     }
 
     companion object {
+        /**
+         * This build's release channel — the one line that differs between the
+         * official (`master`) and MNN (`mnn-image-gen`) worktrees.
+         */
+        val CHANNEL: UpdateChannel = UpdateChannel.Mnn
+
         /**
          * Ordered mirror list: direct first, then community proxies that also
          * front api.github.com and release-asset downloads for users in China.

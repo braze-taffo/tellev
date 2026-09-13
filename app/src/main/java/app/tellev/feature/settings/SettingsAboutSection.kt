@@ -19,6 +19,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,6 +69,23 @@ internal fun LazyListScope.aboutSectionItems(
                     onCheck = updateViewModel::checkNow,
                     onUpdate = updateViewModel::downloadAndInstall,
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "启动时自动检查更新",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            text = "关闭后启动不再联网检查，仍可在此手动检查",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = updateState.autoCheckEnabled,
+                        onCheckedChange = updateViewModel::setAutoCheckEnabled,
+                    )
+                }
                 Text(
                     text = "基于 SillyTavern 的原生 Android 客户端。",
                     style = MaterialTheme.typography.bodySmall,
