@@ -136,8 +136,9 @@ internal class ChatRepository(
      * files, and the per-session background. Only files under user/images are touched;
      * attachments pointing at shared assets stay untouched.
      *
-     * The JSONL is removed first: if that fails nothing else is destroyed. A failure
-     * after it can only leave invisible orphan image files, never a half-deleted chat.
+     * The JSONL is removed first and its failure is the only one reported: past that
+     * point the session is gone and the cascade is best-effort (a mid-way failure can
+     * only leave invisible orphan files, never a half-deleted chat nor destroyed images).
      */
     suspend fun deleteChatSession(id: String): Unit = withContext(Dispatchers.IO) {
         chatWrites.withLock {
@@ -147,13 +148,13 @@ internal class ChatRepository(
             val chatText = runCatching { path.readText() }.getOrDefault("")
             val galleryText = runCatching { galleryStore.galleryFile(id).readText() }.getOrDefault("")
             durableFiles.delete(path)
-            (imagePathsReferencedBy(chatText) + imagePathsReferencedBy(galleryText)).forEach { relative ->
-                val file = layout.root.resolve(relative).normalize()
-                if (file.startsWith(layout.userImages)) runCatching { Files.deleteIfExists(file) }
-            }
-            galleryStore.delete(id)
-            runCatching { Files.deleteIfExists(layout.backgrounds.resolve("$id.png")) }
             runCatching {
+                (imagePathsReferencedBy(chatText) + imagePathsReferencedBy(galleryText)).forEach { relative ->
+                    val file = layout.root.resolve(relative).normalize()
+                    if (file.startsWith(layout.userImages)) Files.deleteIfExists(file)
+                }
+                galleryStore.delete(id)
+                Files.deleteIfExists(layout.backgrounds.resolve("$id.png"))
                 val dir = path.parent
                 if (dir != null && dir != layout.chats && dir != layout.groupChats &&
                     Files.isDirectory(dir) && Files.list(dir).use { !it.findAny().isPresent }
@@ -164,6 +165,11 @@ internal class ChatRepository(
             chatChanges.tryEmit(id)
         }
         Unit
+    }
+
+    /** Cheap existence probe used by UI failure paths to decide whether to restore state. */
+    suspend fun chatSessionExists(id: String): Boolean = withContext(Dispatchers.IO) {
+        StorageFileOps.findByFileName(listOf(layout.chats, layout.groupChats), "$id.jsonl") != null
     }
 
     private fun imagePathsReferencedBy(text: String): Set<String> =
@@ -311,9 +317,16 @@ internal class ChatRepository(
         if (needsRewrite) {
             // 读取路径不允许因为迁移写而失败：写失败时返回与目标状态一致的内存视图，
             // 磁盘保持旧格式等待下次读取重试（base64 附件保留，请求构建仍兼容）。
-            val rewritten = runCatching {
+            var rewritten = runCatching {
                 durableFiles.write(path, kept.joinToString("\n").toByteArray(Charsets.UTF_8), expectedRevision = initialRevision)
             }.isSuccess
+            if (!rewritten) {
+                // 半提交残留的 .pending 会挡住该目标的所有后续写入（直到重启 recover）：
+                // 就地重放一次；只有确实重放了挂起写入（非空回执）才算完成了迁移，
+                // 空恢复说明失败发生在 pending 之前，递归会变成无限重试。
+                val recovered = runCatching { durableFiles.recover() }.getOrNull()
+                rewritten = recovered != null && recovered.isNotEmpty()
+            }
             if (rewritten) return readChatWithoutGeneratedImages(path)
         }
 
@@ -427,10 +440,11 @@ internal class ChatRepository(
             val bytes = runCatching { java.util.Base64.getDecoder().decode(base64) }.getOrNull() ?: return@map attachment
             val attId = attachment.id.replace(Regex("[^a-zA-Z0-9._-]"), "")
                 .ifBlank { "att-${UUID.randomUUID().toString().substring(0, 8)}" }
-            // 与 JSONL 迁移同一条冲突安全的写路径，两条路径不得一高一低。
+            // 与 JSONL 迁移同一条冲突安全的写路径，两条路径不得一高一低；
+            // 迁移成功即统一覆盖 relativePath，与 migrateAttachment 语义一致。
             val relative = writeMigratedImage(attId, bytes) ?: return@map attachment
             attachment.copy(
-                relativePath = attachment.relativePath.ifBlank { relative },
+                relativePath = relative,
                 mimeType = "image/jpeg",
                 metadata = JsonObject(attachment.metadata.filterKeys { it != "base64" }),
             )

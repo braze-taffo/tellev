@@ -35,7 +35,8 @@ internal object ChatSessionAssets {
                 val dir = layout.backgrounds.toFile()
                 dir.mkdirs()
                 val target = File(dir, "${session.id}.png")
-                target.writeBytes(pngBytes)
+                // 与聊天图片同纪律：temp+fsync+原子改名，会话元数据提交引用前字节先落盘。
+                app.tellev.core.storage.DurableFileOps.write(target.toPath(), pngBytes)
                 target
             }
             val updated = session.copy(

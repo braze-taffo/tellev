@@ -542,6 +542,8 @@ class ChatViewModel(
     }
 
     fun sendMessage(text: String, attachments: List<Attachment> = emptyList()): Boolean {
+        // 与消息编辑/滑动删除一致的门禁：会话切换/删除进行中不接受发送。
+        if (_uiState.value.isLoading) return false
         return sendMessageWithRole(text, attachments, MessageRole.User)
     }
 
@@ -694,14 +696,17 @@ class ChatViewModel(
         viewModelScope.launch {
             sessionRuntime.sessionTransitions.withLock {
                 _uiState.update { it.copy(isLoading = true) }
+                val character = _uiState.value.selectedCharacter
+                val deletingCurrent = _uiState.value.currentSession?.id == sessionId
+                // 只停「归属于被删会话」的在途生图：当前会话删除时归属即当前；
+                // 无条件停会误杀属于其他会话（切换前启动）的生成。
+                val imageGenBelongsToSession = imageGenCoordinator.activeImageSessionId() == sessionId
                 // 区分「删除本身失败」与「删除成功后的后续步骤失败」：前者才需要恢复现场。
                 var deleteSucceeded = false
                 try {
-                    val character = _uiState.value.selectedCharacter
-                    val deletingCurrent = _uiState.value.currentSession?.id == sessionId
-                    if (deletingCurrent || imageGenCoordinator.activeImageSessionId() == sessionId) {
-                        // 停掉归属于被删会话的在途生图（含当前会话）：否则完成后会给
-                        // 已删除的会话重建画廊与图片文件，撤销级联清理。
+                    if (imageGenBelongsToSession) {
+                        // 停掉归属于被删会话的在途生图：否则完成后会给已删除的
+                        // 会话重建画廊与图片文件，撤销级联清理。
                         stopImageGeneration()
                     }
                     if (deletingCurrent) {
@@ -720,17 +725,7 @@ class ChatViewModel(
                         return@withLock
                     }
                     if (remaining.isEmpty()) {
-                        _uiState.update {
-                            it.copy(
-                                selectedCharacter = null,
-                                characterAvatarFile = null,
-                                currentSession = null,
-                                chatBackgroundFile = null,
-                                messages = emptyList(),
-                                generatedImages = emptyList(),
-                                sessions = emptyList(),
-                            )
-                        }
+                        clearToNoSession()
                         ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.CHAT_CHANGED, "")
                     } else {
                         val next = remaining.first()
@@ -756,37 +751,54 @@ class ChatViewModel(
                     }
                 } catch (e: Exception) {
                     if (!deleteSucceeded) {
-                        // 删除失败且当前会话的写入环境已被拆除时先把它重建回来，保持会话可用。
-                        runCatching {
-                            _uiState.value.currentSession?.let { current ->
-                                if (sessionRuntime.currentRuntimeToken(current.id) == null) {
+                        // journal 半提交可能令删除抛错但文件已消失：以文件存在性为准，
+                        // 绝不为已删会话重建写入环境（会制造注定失败的存储 owner 卡死切换）。
+                        val stillExists = runCatching { dataStore.chatSessionExists(sessionId) }.getOrDefault(true)
+                        if (stillExists && deletingCurrent) {
+                            runCatching {
+                                val current = _uiState.value.currentSession
+                                if (current != null && sessionRuntime.currentRuntimeToken(sessionId) == null) {
                                     val token = sessionRuntime.activateSessionWrites(current)
                                     _uiState.update { it.copy(runtimeGeneration = token.generation) }
                                 }
+                                // retire 时角色脚本已被卸载，失败恢复需要重新加载。
+                                character?.let { reloadCharacterTavernHelperScripts(it) }
                             }
+                            _uiState.update { it.copy(error = "删除会话失败：${e.message}") }
+                        } else if (stillExists) {
+                            // 后台会话删除失败：只报错，当前会话状态原封不动。
+                            _uiState.update { it.copy(error = "删除会话失败：${e.message}") }
+                        } else {
+                            clearToNoSession()
+                            _uiState.update { it.copy(error = "会话已删除，但清理未完成：${e.message}") }
+                            ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.CHAT_CHANGED, "")
                         }
-                        _uiState.update { it.copy(error = "删除会话失败：${e.message}") }
+                    } else if (!deletingCurrent) {
+                        // 后台会话已删除、仅列表刷新失败：绝不动当前会话视图。
+                        _uiState.update { it.copy(error = "会话已删除，但刷新会话列表失败：${e.message}") }
                     } else {
-                        // 会话已删除但后续刷新失败：绝不为已删会话重建写入环境（会制造
-                        // 注定失败的存储 owner 并卡死后续切换），回到干净的无会话状态。
-                        _uiState.update {
-                            it.copy(
-                                selectedCharacter = null,
-                                characterAvatarFile = null,
-                                currentSession = null,
-                                chatBackgroundFile = null,
-                                messages = emptyList(),
-                                generatedImages = emptyList(),
-                                sessions = emptyList(),
-                                error = "会话已删除，但刷新会话列表失败：${e.message}",
-                            )
-                        }
+                        clearToNoSession()
+                        _uiState.update { it.copy(error = "会话已删除，但刷新会话列表失败：${e.message}") }
                         ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.CHAT_CHANGED, "")
                     }
                 } finally {
                     _uiState.update { it.copy(isLoading = false) }
                 }
             }
+        }
+    }
+
+    private fun clearToNoSession() {
+        _uiState.update {
+            it.copy(
+                selectedCharacter = null,
+                characterAvatarFile = null,
+                currentSession = null,
+                chatBackgroundFile = null,
+                messages = emptyList(),
+                generatedImages = emptyList(),
+                sessions = emptyList(),
+            )
         }
     }
 
