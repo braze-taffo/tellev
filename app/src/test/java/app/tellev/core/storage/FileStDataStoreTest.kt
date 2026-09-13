@@ -694,15 +694,60 @@ class FileStDataStoreTest {
     }
 
     @Test
+    fun `migration pending failure self-heals through in-place recovery`() = runBlocking {
+        // 故障精确落在 PREPARED：.pending 已落盘、迁移字节未应用——这是会挡死该目标
+        // 后续所有写入的半提交形态，读取必须通过就地 recover 自愈而不是无限回退。
+        val armed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val faultWriter = JournaledFileWriter(layout.root) {
+            if (armed.get() && it == JournaledFileWriter.Stage.PREPARED) throw IOException("crash at prepared")
+        }
+        val faultStore = FileStDataStore(layout, durableFiles = faultWriter)
+        faultStore.bootstrap()
+
+        val dir = layout.chats.resolve("migpend").createDirectories()
+        val file = dir.resolve("migpend.jsonl")
+        val payload = java.util.Base64.getEncoder().encodeToString("jpg".toByteArray())
+        file.writeText(
+            "{\"user_name\":\"You\",\"character_name\":\"C\",\"chat_metadata\":{}}\n" +
+                "{\"name\":\"You\",\"is_user\":true,\"is_system\":false,\"mes\":\"look\",\"send_date\":\"\",\"attachments\":[{\"id\":\"att-p1\",\"name\":\"p.jpg\",\"mimeType\":\"image/png\",\"relativePath\":\"\",\"metadata\":{\"base64\":\"$payload\"}}]}",
+        )
+
+        armed.set(true)
+        val session = faultStore.readChatSession("migpend")
+
+        // 读取不抛错，且经过就地 recover 后迁移已实际完成。
+        val attachment = session.messages.single().attachments.single()
+        assertEquals("user/images/att-mig-att-p1.jpg", attachment.relativePath)
+        assertTrue(!file.readText().contains("base64"))
+        assertTrue(layout.userImages.resolve("att-mig-att-p1.jpg").exists())
+    }
+
+    @Test
+    fun `bootstrap removes interrupted atomic-write temp files`() = runBlocking {
+        val imagesDir = layout.userImages.createDirectories()
+        imagesDir.resolve("img-stale.png.new").writeText("half")
+        imagesDir.resolve("att-stale.jpg.new").writeText("half")
+        layout.backgrounds.createDirectories()
+        layout.backgrounds.resolve("bg-stale.png.new").writeText("half")
+        imagesDir.resolve("img-keep.png").writeText("keep")
+
+        store.bootstrap()
+
+        assertTrue(!imagesDir.resolve("img-stale.png.new").exists())
+        assertTrue(!imagesDir.resolve("att-stale.jpg.new").exists())
+        assertTrue(!layout.backgrounds.resolve("bg-stale.png.new").exists())
+        assertTrue(imagesDir.resolve("img-keep.png").exists())
+    }
+
+    @Test
     fun `saving a character records the boot-rebuild fingerprint`() = runBlocking {
         store.saveCharacter(CharacterCard(id = "fp_char", name = "Fingerprint"))
         val manifest = layout.extensions.resolve("character-assets").resolve("fp_char").resolve("manifest.json")
         assertTrue(manifest.exists())
         val raw = FileStDataStore.defaultJson.parseToJsonElement(manifest.readText()).jsonObject
-        assertTrue(
-            "manifest must carry the card fingerprint so the boot rebuild skip survives saves",
-            raw.containsKey("tellev_card_fingerprint"),
-        )
+        val cardFile = layout.characters.resolve("fp_char.json")
+        val expected = "${java.nio.file.Files.size(cardFile)}-${java.nio.file.Files.getLastModifiedTime(cardFile).toMillis()}"
+        assertEquals(expected, raw["tellev_card_fingerprint"]?.jsonPrimitive?.content)
     }
 
     @Test

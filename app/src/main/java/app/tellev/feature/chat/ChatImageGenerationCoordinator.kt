@@ -62,6 +62,10 @@ internal class ChatImageGenerationCoordinator(
     @Volatile
     private var activeImageSessionId: String? = null
 
+    // 单调令牌区分「当前登记」与「已停/已完结的旧 job」：同会话 stop 后立即重开时，
+    // 旧 job 的 finally 按 sessionId 比对会误清新登记，令牌比对不会。
+    private val imageGenToken = java.util.concurrent.atomic.AtomicLong(0)
+
     fun activeImageSessionId(): String? = activeImageSessionId
 
     suspend fun refreshImageGenAvailability(
@@ -81,6 +85,8 @@ internal class ChatImageGenerationCoordinator(
     }
 
     fun stopImageGeneration(onStopped: () -> Unit) {
+        // 先递增令牌：旧 job 的 finally 因令牌不匹配而不再触碰登记。
+        imageGenToken.incrementAndGet()
         imageGenerationJob?.cancel()
         imageGenerationJob = null
         activeImageSessionId = null
@@ -126,9 +132,13 @@ internal class ChatImageGenerationCoordinator(
             return
         }
 
+        // 在 launch 外同步登记（含令牌）：协程体内的赋值可能晚于上一个 job 的
+        // finally 清理；令牌保证旧 job 永远不会抹掉新登记。
+        val jobSessionId = session.id
+        val jobToken = imageGenToken.incrementAndGet()
+        activeImageSessionId = jobSessionId
         imageGenerationJob = scope.launch {
             try {
-                activeImageSessionId = session.id
                 onStatusUpdated(true, "准备生成图片…", null, null)
 
                 val engine = (selectedEngine ?: state.imageEngine)?.let(ChatImageEngine::fromProviderId)
@@ -310,7 +320,8 @@ internal class ChatImageGenerationCoordinator(
             } catch (e: Exception) {
                 onStatusUpdated(false, null, null, "生成图片失败：${e.message}")
             } finally {
-                activeImageSessionId = null
+                // 令牌匹配才清理，避免抹掉后继 job 的归属。
+                if (imageGenToken.get() == jobToken) activeImageSessionId = null
             }
         }
     }

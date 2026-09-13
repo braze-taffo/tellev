@@ -119,6 +119,15 @@ class FileStDataStore(
         layout.allDirectories.forEach { it.createDirectories() }
         durableFiles.recover()
         durableFiles.sweep()
+        // DurableFileOps/atomicWrite 中断残留的 *.new 临时文件：启动期无并发写，
+        // 可安全清理，避免残片进备份、长期累积。
+        runCatching {
+            java.nio.file.Files.walk(layout.root).use { stream ->
+                stream.filter { java.nio.file.Files.isRegularFile(it) }
+                    .filter { it.fileName.toString().endsWith(".new") }
+                    .forEach { runCatching { java.nio.file.Files.deleteIfExists(it) } }
+            }
+        }
         settingsRepository.migrateLegacyRegexActivation(
             readCharacter = { characterRepository.readCharacter(it) },
             saveCharacter = { characterRepository.saveCharacter(it) },
@@ -176,6 +185,9 @@ class FileStDataStore(
 
     override suspend fun deleteChatSession(id: String): Unit =
         chatRepository.deleteChatSession(id)
+
+    override suspend fun chatSessionExists(id: String): Boolean =
+        chatRepository.chatSessionExists(id)
 
     override suspend fun commitChatMutation(
         base: ChatSession,

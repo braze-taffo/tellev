@@ -61,6 +61,9 @@ interface StDataStore {
     suspend fun deleteChatSession(id: String) {
         error("当前存储实现不支持删除聊天会话：$id")
     }
+
+    // Cheap existence probe for UI failure paths deciding whether to restore state.
+    suspend fun chatSessionExists(id: String): Boolean = false
     suspend fun commitChatMutation(base: ChatSession, desired: ChatSession, expectedRevision: Long? = null, operationId: String? = null): ChatSession {
         val merged = applyChatSessionMutation(base, desired, readChatSession(base.id))
         val committed = merged.copy(storageRevision = (expectedRevision ?: base.storageRevision) + 1)
