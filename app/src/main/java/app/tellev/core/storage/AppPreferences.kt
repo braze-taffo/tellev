@@ -18,6 +18,16 @@ class AppPreferences(
         set(value) = prefs.edit().putLong(KEY_LAST_CHECK, value).apply()
 
     /**
+     * Whether every cold start checks for a new release. Defaults to true,
+     * which is the behaviour existing installs already have; turning it off
+     * only skips the automatic launch check — the manual check in 设置 → 关于
+     * keeps working either way.
+     */
+    var autoUpdateCheckEnabled: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_UPDATE_CHECK, DEFAULT_AUTO_UPDATE_CHECK)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_UPDATE_CHECK, value).apply()
+
+    /**
      * Theme preference stored as the enum name so the storage layer stays
      * independent of the UI-layer ThemeMode type; callers parse with
      * [app.tellev.ui.theme.parseThemeMode].
@@ -79,11 +89,15 @@ class AppPreferences(
 
     private companion object {
         const val KEY_LAST_CHECK = "last_update_check_ms"
+        const val KEY_AUTO_UPDATE_CHECK = "auto_update_check"
         const val KEY_PRESET_LIMIT_NOTICE_HANDLED = "preset_limits_1_5_1_notice_handled"
         const val KEY_QQ_GROUP_NOTICE_HANDLED = "qq_group_notice_handled"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_THEME_ACCENT = "theme_accent"
         const val KEY_CHAT_BUBBLE_ALPHA = "chat_bubble_alpha"
+
+        /** Defaults to on so an upgrade keeps the previous launch-check behaviour. */
+        const val DEFAULT_AUTO_UPDATE_CHECK = true
 
         /** Literal "System" — the ThemeMode.System enum name, kept as a
          *  string so this layer does not depend on the UI enum. */

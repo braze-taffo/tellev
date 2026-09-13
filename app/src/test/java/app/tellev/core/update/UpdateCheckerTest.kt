@@ -11,6 +11,10 @@ class UpdateCheckerTest {
 
     private val checker = UpdateChecker(OkHttpClient())
 
+    /** Single-release bodies carry no channel marker of their own, so those
+     *  fixtures are parsed against an explicitly chosen channel. */
+    private val officialChecker = UpdateChecker(OkHttpClient(), channel = UpdateChannel.Official)
+
     @Test
     fun `newer patch version is an update`() {
         assertTrue(checker.isUpdateAvailable("1.4.0", info("1.4.1")))
@@ -74,7 +78,7 @@ class UpdateCheckerTest {
             }
         """.trimIndent()
 
-        val info = checker.parseReleaseJson(json)
+        val info = officialChecker.parseReleaseJson(json)
         assertEquals("v1.4.1", info.tagName)
         assertEquals("1.4.1", info.version)
         assertEquals("v1.4.1 - 修复", info.title)
@@ -102,10 +106,72 @@ class UpdateCheckerTest {
             }
         """.trimIndent()
 
-        val info = checker.parseReleaseJson(json)
+        val info = officialChecker.parseReleaseJson(json)
         assertEquals("1.5.0", info.version)
         assertTrue(info.apkUrl.endsWith("app-release.apk"))
         assertNull(info.sha256)
+    }
+
+    @Test
+    fun `plain version tags match only the official channel`() {
+        assertTrue(UpdateChannel.Official.matchesTag("v1.6.3"))
+        assertTrue(UpdateChannel.Official.matchesTag("1.5.5.1"))
+        assertFalse(UpdateChannel.Official.matchesTag("v1.6.3-mnn"))
+        assertTrue(UpdateChannel.Mnn.matchesTag("v1.6.3-mnn"))
+        assertFalse(UpdateChannel.Mnn.matchesTag("v1.6.3"))
+        assertFalse(UpdateChannel.Mnn.matchesTag("nightly"))
+    }
+
+    @Test
+    fun `apk asset names are channel-scoped`() {
+        assertTrue(UpdateChannel.Official.matchesApkAsset("tellev-1.6.3.apk"))
+        assertFalse(UpdateChannel.Official.matchesApkAsset("tellev-1.6.3-mnn.apk"))
+        assertFalse(UpdateChannel.Official.matchesApkAsset("checksums.txt"))
+        assertTrue(UpdateChannel.Mnn.matchesApkAsset("tellev-1.6.3-mnn.apk"))
+        assertFalse(UpdateChannel.Mnn.matchesApkAsset("tellev-1.6.3.apk"))
+        assertFalse(UpdateChannel.Mnn.matchesApkAsset("checksums.txt"))
+    }
+
+    @Test
+    fun `official list skips -mnn releases even when they are newer`() {
+        val json = """
+            [
+              {
+                "tag_name": "v1.7.0-mnn",
+                "name": "tellev 1.7.0 生图版（预发布）",
+                "assets": [
+                  {"name": "tellev-1.7.0-mnn.apk", "browser_download_url": "https://x/tellev-1.7.0-mnn.apk", "size": 1}
+                ]
+              },
+              {
+                "tag_name": "v1.6.3",
+                "name": "v1.6.3 - 核心模块拆分与回归维护",
+                "assets": [
+                  {"name": "tellev-1.6.3.apk", "browser_download_url": "https://x/tellev-1.6.3.apk", "size": 1}
+                ]
+              }
+            ]
+        """.trimIndent()
+
+        val info = checker.parseLatestChannelRelease(json)
+        assertEquals("v1.6.3", info.tagName)
+        assertTrue(info.apkUrl.endsWith("tellev-1.6.3.apk"))
+        assertTrue(checker.isUpdateAvailable("1.6.2", info))
+        assertFalse(checker.isUpdateAvailable("1.6.3", info))
+    }
+
+    @Test(expected = IllegalStateException::class)
+    fun `official list without an official release throws`() {
+        checker.parseLatestChannelRelease(
+            """[{"tag_name": "v1.7.0-mnn", "assets": [{"name": "tellev-1.7.0-mnn.apk"}]}]""",
+        )
+    }
+
+    @Test(expected = IllegalStateException::class)
+    fun `official release carrying only an mnn apk is skipped`() {
+        checker.parseLatestChannelRelease(
+            """[{"tag_name": "v1.7.0", "assets": [{"name": "tellev-1.7.0-mnn.apk"}]}]""",
+        )
     }
 
     private fun info(version: String) = UpdateInfo(

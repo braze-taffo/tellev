@@ -26,6 +26,8 @@ data class UpdateUiState(
     val progress: Float = 0f,
     /** Set after the install intent has been launched (APK downloaded + handed off). */
     val installStarted: Boolean = false,
+    /** Whether the launch check is enabled (设置 → 关于 switch). */
+    val autoCheckEnabled: Boolean = true,
 )
 
 /**
@@ -41,7 +43,9 @@ class UpdateViewModel(
     private val currentVersion: String,
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(UpdateUiState())
+    private val _uiState = MutableStateFlow(
+        UpdateUiState(autoCheckEnabled = preferences.autoUpdateCheckEnabled),
+    )
     val uiState: StateFlow<UpdateUiState> = _uiState.asStateFlow()
 
     private var launchCheckDone = false
@@ -49,12 +53,26 @@ class UpdateViewModel(
     /**
      * Checks once per process lifetime: survives config changes and
      * recomposition (LaunchedEffect re-runs), re-checks on the next cold
-     * start so a pending update is surfaced on every app open.
+     * start so a pending update is surfaced on every app open. When the
+     * auto-check switch is off the request is skipped, but the once-per-process
+     * guard is still consumed so turning the switch back on mid-session does not
+     * fire an unexpected check.
      */
     fun checkOnLaunch() {
         if (launchCheckDone) return
         launchCheckDone = true
+        if (!preferences.autoUpdateCheckEnabled) return
         checkNow()
+    }
+
+    /**
+     * Persists the launch auto-check switch. Enabling it takes effect on the
+     * next cold start; [checkNow] is never gated by it, so the manual check in
+     * 设置 → 关于 works either way.
+     */
+    fun setAutoCheckEnabled(enabled: Boolean) {
+        preferences.autoUpdateCheckEnabled = enabled
+        _uiState.update { it.copy(autoCheckEnabled = enabled) }
     }
 
     fun checkNow() {
