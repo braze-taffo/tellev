@@ -723,19 +723,25 @@ class FileStDataStoreTest {
     }
 
     @Test
-    fun `bootstrap removes interrupted atomic-write temp files`() = runBlocking {
+    fun `bootstrap removes stale atomic-write temp files only`() = runBlocking {
+        val staleAge = System.currentTimeMillis() - 2L * 60 * 60 * 1000
         val imagesDir = layout.userImages.createDirectories()
-        imagesDir.resolve("img-stale.png.new").writeText("half")
-        imagesDir.resolve("att-stale.jpg.new").writeText("half")
+        val staleImage = imagesDir.resolve("img-stale.png.new")
+        staleImage.writeText("half")
+        staleImage.toFile().setLastModified(staleAge)
         layout.backgrounds.createDirectories()
-        layout.backgrounds.resolve("bg-stale.png.new").writeText("half")
+        val staleBg = layout.backgrounds.resolve("bg-stale.png.new")
+        staleBg.writeText("half")
+        staleBg.toFile().setLastModified(staleAge)
+        // 新鲜 temp 属于在途写（bootstrap 可与运行中写入并发），必须保留。
+        imagesDir.resolve("img-fresh.jpg.new").writeText("in-flight")
         imagesDir.resolve("img-keep.png").writeText("keep")
 
         store.bootstrap()
 
         assertTrue(!imagesDir.resolve("img-stale.png.new").exists())
-        assertTrue(!imagesDir.resolve("att-stale.jpg.new").exists())
         assertTrue(!layout.backgrounds.resolve("bg-stale.png.new").exists())
+        assertTrue(imagesDir.resolve("img-fresh.jpg.new").exists())
         assertTrue(imagesDir.resolve("img-keep.png").exists())
     }
 

@@ -768,6 +768,14 @@ class ChatViewModel(
                         } else if (stillExists) {
                             // 后台会话删除失败：只报错，当前会话状态原封不动。
                             _uiState.update { it.copy(error = "删除会话失败：${e.message}") }
+                        } else if (!deletingCurrent) {
+                            // 后台会话实际已被半提交删除：只报错并尽力刷新列表，
+                            // 当前会话视图绝不动。
+                            runCatching {
+                                val remaining = character?.let { dataStore.listChatSessions(characterId = it.id) }.orEmpty()
+                                _uiState.update { it.copy(sessions = remaining) }
+                            }
+                            _uiState.update { it.copy(error = "会话已删除，但清理未完成：${e.message}") }
                         } else {
                             clearToNoSession()
                             _uiState.update { it.copy(error = "会话已删除，但清理未完成：${e.message}") }

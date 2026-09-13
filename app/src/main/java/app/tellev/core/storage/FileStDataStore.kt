@@ -119,12 +119,16 @@ class FileStDataStore(
         layout.allDirectories.forEach { it.createDirectories() }
         durableFiles.recover()
         durableFiles.sweep()
-        // DurableFileOps/atomicWrite 中断残留的 *.new 临时文件：启动期无并发写，
-        // 可安全清理，避免残片进备份、长期累积。
+        // DurableFileOps/atomicWrite 中断残留的 *.new 临时文件可安全清理：
+        // 排除 journal 目录（sweep 已在锁内处理）且只清超过 1 小时的陈旧残片——
+        // bootstrap 可能与运行中的写入并发（如扩展页触发），新鲜的 temp 属于在途写。
         runCatching {
+            val staleCutoff = System.currentTimeMillis() - 60L * 60 * 1000
             java.nio.file.Files.walk(layout.root).use { stream ->
                 stream.filter { java.nio.file.Files.isRegularFile(it) }
                     .filter { it.fileName.toString().endsWith(".new") }
+                    .filter { !it.toString().contains(JournaledFileWriter.JOURNAL_DIR_NAME) }
+                    .filter { java.nio.file.Files.getLastModifiedTime(it).toMillis() < staleCutoff }
                     .forEach { runCatching { java.nio.file.Files.deleteIfExists(it) } }
             }
         }
