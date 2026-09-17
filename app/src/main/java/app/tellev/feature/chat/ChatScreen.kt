@@ -6,6 +6,11 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.gestures.ScrollableDefaults
+import androidx.compose.foundation.gestures.stopScroll
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -46,14 +51,17 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -124,7 +132,13 @@ private fun ChatContentScreen(
     modifier: Modifier = Modifier,
 ) {
     val runtimeToken = viewModel.currentRuntimeToken(state.currentSession?.id)
-    val listState = rememberLazyListState()
+    val listState = key(state.currentSession?.id) {
+        // Start at the current end; do not compose old HTML cards at the top only
+        // to destroy them immediately when the initial follow effect runs.
+        rememberLazyListState(initialFirstVisibleItemIndex = state.messages.lastIndex.coerceAtLeast(0))
+    }
+    val flingBehavior = ScrollableDefaults.flingBehavior()
+    var followLatest by remember(state.currentSession?.id) { mutableStateOf(true) }
     val keyboardController = LocalSoftwareKeyboardController.current
     var inputText by remember { mutableStateOf("") }
     var showSessionMenu by remember { mutableStateOf(false) }
@@ -140,6 +154,17 @@ private fun ChatContentScreen(
     }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val onHtmlScrollStart: () -> Unit = {
+        followLatest = false
+        scope.launch { listState.stopScroll(MutatePriority.UserInput) }
+    }
+    val onHtmlBoundaryFling: (Float) -> Unit = { velocity ->
+        scope.launch {
+            listState.scroll(MutatePriority.UserInput) {
+                with(flingBehavior) { performFling(velocity) }
+            }
+        }
+    }
     val graph = LocalTellevGraph.current
     // st-data 根：用于把消息里的图片附件相对路径解析成本地文件。
     val dataRoot = graph.dataStore.layout.root.toFile()
@@ -182,30 +207,17 @@ private fun ChatContentScreen(
         }
     }
 
-    // 用户是否正停在列表底部（或非常接近底部）。流式输出时只在"停在底部"
-    // 的情况下才自动下拉，避免用户上滑阅读历史消息时被每个 token 拽回底部。
-    // 容差为 2：刚追加流式气泡时新 item 还没进入视口，此时不应被判定为"已上滑"。
-    val atBottom by remember {
-        derivedStateOf {
-            val layoutInfo = listState.layoutInfo
-            val totalItems = layoutInfo.totalItemsCount
-            val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index
-            lastVisibleIndex == null || lastVisibleIndex >= totalItems - 2
-        }
+    LaunchedEffect(listState) {
+        snapshotFlow { !listState.isScrollInProgress && !listState.canScrollForward }
+            .collect { atEnd -> if (atEnd) followLatest = true }
     }
-
-    // 消息条数变化（发送、生成完成、滑动/编辑/删除、切换会话）：总是滚到底。
-    // 这些是离散事件，不是 token 级别的频繁刷新，不会和用户抢手势。
-    LaunchedEffect(state.messages.size) {
-        if (state.messages.isNotEmpty()) {
-            listState.animateScrollToItem(state.messages.size - 1)
-        }
-    }
-
-    // 流式输出：仅在用户停在底部时跟随，上滑阅读历史时停止强制下拉。
-    LaunchedEffect(state.streamingText) {
-        if (state.streamingText.isNotEmpty() && state.messages.isNotEmpty() && atBottom) {
-            listState.animateScrollToItem(state.messages.size)
+    // A visible last item can still be many screens tall. Scroll to its bottom,
+    // not its top, and never restart a token-level animation over a user's drag.
+    LaunchedEffect(state.currentSession?.id, state.messages.size, state.streamingText, state.streamingReasoning) {
+        if (followLatest && !listState.isScrollInProgress) {
+            val streaming = state.isGenerating && (state.streamingText.isNotEmpty() || state.streamingReasoning.isNotEmpty())
+            val target = if (streaming) state.messages.size else state.messages.lastIndex
+            if (target >= 0) listState.scrollToItem(target, Int.MAX_VALUE)
         }
     }
 
@@ -374,6 +386,12 @@ private fun ChatContentScreen(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
+                    .pointerInput(state.currentSession?.id) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                            followLatest = false
+                        }
+                    }
                     .padding(horizontal = 12.dp),
                 contentPadding = PaddingValues(bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -400,6 +418,8 @@ private fun ChatContentScreen(
                             htmlPanelMaxHeight = htmlPanelMaxHeight,
                             bubbleAlpha = bubbleAlpha,
                             tavernRuntime = TavernMessageRuntime(
+                                onScrollStart = onHtmlScrollStart,
+                                onBoundaryFling = onHtmlBoundaryFling,
                                 token = runtimeToken,
                                 messageIndex = index,
                                 variablesJson = { viewModel.tavernMessageVariablesJson(runtimeToken) },
@@ -442,6 +462,9 @@ private fun ChatContentScreen(
                             userName = state.selectedPersona?.name ?: "User",
                             availableMaxHeight = htmlPanelMaxHeight,
                             tavernRuntime = TavernMessageRuntime(
+                                allowContentUpdates = followLatest,
+                                onScrollStart = onHtmlScrollStart,
+                                onBoundaryFling = onHtmlBoundaryFling,
                                 token = runtimeToken,
                                 messageIndex = state.messages.size,
                                 variablesJson = { viewModel.tavernMessageVariablesJson(runtimeToken) },

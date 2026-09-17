@@ -23,8 +23,9 @@ import java.util.concurrent.Executors
 class ChatWriteLifecycleTest {
     @Test fun `switch waits for accepted edit and variables and cannot overwrite the destination`() = exercise(false)
     @Test fun `failed save keeps dirty state and blocks switching without crashing the UI`() = exercise(true)
+    @Test fun `failed user edit save is reported without launching generation or crashing`() = exercise(true, userEdit = true)
 
-    private fun exercise(fail: Boolean) = runBlocking {
+    private fun exercise(fail: Boolean, userEdit: Boolean = false) = runBlocking {
         val root = Files.createTempDirectory("tellev-chat-lifecycle-")
         val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
         Dispatchers.setMain(main)
@@ -34,7 +35,7 @@ class ChatWriteLifecycleTest {
             val disk = FileStDataStore(StDirectoryLayout.fromRoot(root))
             disk.bootstrap()
             disk.saveCharacter(CharacterCard("fixture", "Fixture"))
-            val message = ChatMessage("stable", MessageRole.Character, "Fixture", "original", 0,
+            val message = ChatMessage("stable", if (userEdit) MessageRole.User else MessageRole.Character, "Fixture", "original", 0,
                 swipes = listOf("original", "alternate"))
             val a = ChatSession("a", "A", "fixture", null, listOf(message))
             val b = ChatSession("b", "B", "fixture", null, listOf(message.copy(id = "other", content = "destination")))
@@ -43,6 +44,8 @@ class ChatWriteLifecycleTest {
             val started = CompletableDeferred<Unit>()
             var pause = false
             val store = object : StDataStore by disk {
+                override suspend fun listChatSessions(characterId: String?, groupId: String?): List<ChatSession> =
+                    error("Chat entry must not load inactive session bodies")
                 override suspend fun commitChatMutation(base: ChatSession, desired: ChatSession,
                     expectedRevision: Long?, operationId: String?): ChatSession {
                     if (pause) { started.complete(Unit); gate.await(); if (fail) throw java.io.IOException("injected disk failure") }
@@ -65,22 +68,27 @@ class ChatWriteLifecycleTest {
             withContext(main) {
                 vm.editMessage(0, "edited")
                 requireNotNull(host.local).update { it["counter"] = JsonPrimitive(7) }
-                assertEquals("edited", vm.uiState.value.messages[0].content)
+                if (userEdit) assertTrue(vm.uiState.value.messages.isEmpty())
+                else assertEquals("edited", vm.uiState.value.messages[0].content)
                 vm.switchSession("b")
             }
             withTimeout(5_000) { started.await() }
             delay(100)
+            if (userEdit) assertEquals(0, host.editEvents.get())
             assertEquals("a", vm.uiState.value.currentSession?.id)
             assertEquals("original", disk.readChatSession("a").messages[0].content)
             gate.complete(Unit)
             if (fail) {
                 waitUntil { vm.uiState.value.error?.contains("injected disk failure") == true }
+                if (userEdit) assertEquals(0, host.editEvents.get())
                 assertEquals("a", vm.uiState.value.currentSession?.id)
-                assertEquals("edited", vm.uiState.value.messages[0].content)
+                if (userEdit) assertTrue(vm.uiState.value.messages.isEmpty())
+                else assertEquals("edited", vm.uiState.value.messages[0].content)
                 assertEquals("original", disk.readChatSession("a").messages[0].content)
                 assertEquals("destination", disk.readChatSession("b").messages[0].content)
                 withContext(main) { vm.editMessage(0, "must not submit") }
-                assertEquals("edited", vm.uiState.value.messages[0].content)
+                if (userEdit) assertTrue(vm.uiState.value.messages.isEmpty())
+                else assertEquals("edited", vm.uiState.value.messages[0].content)
             } else {
             waitUntil { vm.uiState.value.currentSession?.id == "b" }
             val saved = disk.readChatSession("a")
@@ -119,6 +127,7 @@ class ChatWriteLifecycleTest {
     }
 
     private class HostProbe {
+        val editEvents = java.util.concurrent.atomic.AtomicInteger()
         @Volatile var local: LocalVariableBackend? = null
         private val events = MutableSharedFlow<ExtensionEvent>(extraBufferCapacity = 32)
         val api = Proxy.newProxyInstance(ExtensionHost::class.java.classLoader,
@@ -127,7 +136,12 @@ class ChatWriteLifecycleTest {
                 "setLocalVariableBackend" -> { local = args[0] as? LocalVariableBackend; Unit }
                 "setContextProvider", "setMessageVariableBackend", "unload", "flushWrites" -> Unit
                 "getEvents" -> events
-                "emit", "reportHostEvent" -> { events.tryEmit(args[0] as ExtensionEvent); Unit }
+                "emit", "reportHostEvent" -> {
+                    val event = args[0] as ExtensionEvent
+                    if (event.name == StEventCatalog.MESSAGE_EDITED) editEvents.incrementAndGet()
+                    events.tryEmit(event)
+                    Unit
+                }
                 "snapshotExtensionSettings", "collectInjectedPrompts" -> JsonObject(emptyMap())
                 else -> error("Unexpected host call in storage test: ${method.name}")
             }

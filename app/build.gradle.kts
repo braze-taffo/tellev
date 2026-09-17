@@ -26,8 +26,8 @@ android {
         applicationId = "app.tellev"
         minSdk = 31
         targetSdk = 36
-        versionCode = 30
-        versionName = "1.6.4"
+        versionCode = 31
+        versionName = "1.6.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -64,6 +64,10 @@ android {
             initWith(getByName("debug"))
             applicationIdSuffix = ".mvuvalidation"
             matchingFallbacks += listOf("debug")
+        }
+        getByName("debug") {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
         }
         release {
             // R8 code shrinking + resource shrinking. Release APK was ~45MB with

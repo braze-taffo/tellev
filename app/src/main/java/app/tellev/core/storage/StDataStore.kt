@@ -3,6 +3,8 @@ package app.tellev.core.storage
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterSummary
 import app.tellev.core.model.ChatMessage
+import app.tellev.core.model.ChatSessionSummary
+import app.tellev.core.model.toSummary
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.GroupChat
@@ -53,6 +55,8 @@ interface StDataStore {
     }
 
     suspend fun listChatSessions(characterId: String? = null, groupId: String? = null): List<ChatSession>
+    suspend fun listChatSessionSummaries(characterId: String? = null, groupId: String? = null): List<ChatSessionSummary> =
+        listChatSessions(characterId, groupId).map { it.toSummary() }
     suspend fun readChatSession(id: String): ChatSession
     suspend fun saveChatSession(session: ChatSession)
     suspend fun commitChatMutation(base: ChatSession, desired: ChatSession, expectedRevision: Long? = null, operationId: String? = null): ChatSession {

@@ -198,11 +198,13 @@ internal fun ChatBubble(
             }
         }
 
-        val parts = message.reasoningParts()
-        val renderSegments = renderMessageParts(
-            parts, message.role, character, preset, userName, depth,
-            includeNormal = !CharacterRegexApplier.isNormalProcessed(message),
-        )
+        val parts = remember(message) { message.reasoningParts() }
+        val renderSegments = remember(message, character, preset, userName, depth) {
+            renderMessageParts(
+                parts, message.role, character, preset, userName, depth,
+                includeNormal = !CharacterRegexApplier.isNormalProcessed(message),
+            )
+        }
         if (!isUser && parts.body.isBlank() && parts.reasoning.isNotBlank()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("未收到正文", modifier = Modifier.padding(8.dp))
@@ -347,7 +349,9 @@ internal fun TavernMessageContent(
                     // the cheap native Text() to avoid spinning up a WebView per bubble.
                     if (!isUser && MarkdownRenderer.looksLikeMarkdown(text)) {
                         TavernHtmlPanel(
-                            html = MarkdownRenderer.render(text, highlightDialogue = highlightDialogue),
+                            html = remember(text, highlightDialogue) {
+                                MarkdownRenderer.render(text, highlightDialogue = highlightDialogue)
+                            },
                             availableMaxHeight = availableMaxHeight,
                             dialogueQuoteColor = if (highlightDialogue) dialogueColor.toCssHex() else null,
                             tavernRuntime = tavernRuntime,
@@ -453,10 +457,12 @@ internal fun StreamingBubble(
     tavernRuntime: TavernMessageRuntime,
     onHtmlBoundaryDrag: (Float) -> Unit,
 ) {
-    val segments = renderMessageParts(
-        MessageReasoning.fromResponse(text, reasoning), MessageRole.Character,
-        character, preset, userName, 0, includeNormal = true,
-    )
+    val segments = remember(text, reasoning, character, preset, userName) {
+        renderMessageParts(
+            MessageReasoning.fromResponse(text, reasoning), MessageRole.Character,
+            character, preset, userName, 0, includeNormal = true,
+        )
+    }
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.Start,

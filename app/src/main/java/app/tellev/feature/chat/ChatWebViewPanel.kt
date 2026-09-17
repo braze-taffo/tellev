@@ -5,6 +5,8 @@ import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
 import android.view.MotionEvent
+import android.view.VelocityTracker
+import android.view.ViewConfiguration
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -41,6 +43,9 @@ internal data class TavernMessageRuntime(
     val variablesJson: () -> String,
     val contextJson: () -> String,
     val request: (String, String, (Boolean, String) -> Unit) -> Unit,
+    val onScrollStart: () -> Unit = {},
+    val onBoundaryFling: (Float) -> Unit = {},
+    val allowContentUpdates: Boolean = true,
 )
 
 internal class TavernMessageBridge(
@@ -75,8 +80,11 @@ internal class TavernMessageBridge(
     @Volatile private var closed = false
     fun close() { closed = true; mainHandler.removeCallbacksAndMessages(null); webView.clear() }
 
+    fun isClosed(): Boolean = closed
+
     private var lastVariablesJson: String? = null
     fun updateRuntime(value: TavernMessageRuntime) {
+        if (closed) return
         check(runtime.token == value.token) { "Frontend runtime ownership changed without replacing WebView" }
         runtime = value
         val variables = runCatching { value.variablesJson() }.getOrNull() ?: return
@@ -86,7 +94,7 @@ internal class TavernMessageBridge(
         }
     }
 
-    fun shouldLoad(html: String): Boolean = loadTracker.shouldLoad(html)
+    fun shouldLoad(html: String): Boolean = loadTracker.shouldLoad(html, runtime.allowContentUpdates)
 
     /** 新 HTML 即将加载时调用：旧高度门限不能带到新页面。 */
     fun resetDeliveredHeight() {
@@ -95,6 +103,7 @@ internal class TavernMessageBridge(
 
     fun beginNativeTouchGesture() {
         nestedScrollGesture = false
+        runtime.onScrollStart()
     }
 
     fun hasNestedScrollGesture(): Boolean = nestedScrollGesture
@@ -106,8 +115,8 @@ internal class TavernMessageBridge(
 
     @JavascriptInterface
     fun forwardBoundaryDrag(chatScrollDelta: Double) {
-        if (!chatScrollDelta.isFinite() || chatScrollDelta == 0.0) return
-        mainHandler.post { onBoundaryDrag(chatScrollDelta.toFloat()) }
+        if (closed || !chatScrollDelta.isFinite() || chatScrollDelta == 0.0) return
+        mainHandler.post { if (!closed) onBoundaryDrag(chatScrollDelta.toFloat()) }
     }
 
     fun dispatchDocumentBoundaryDrag(chatScrollDelta: Float) {
@@ -115,12 +124,22 @@ internal class TavernMessageBridge(
     }
 
     @JavascriptInterface
+    fun forwardBoundaryFling(velocity: Double) {
+        if (closed || !velocity.isFinite()) return
+        mainHandler.post { if (!closed) runtime.onBoundaryFling(velocity.toFloat()) }
+    }
+
+    fun dispatchBoundaryFling(velocity: Float) {
+        if (!closed) runtime.onBoundaryFling(velocity)
+    }
+
+    @JavascriptInterface
     fun resize(height: Int) {
-        if (height <= 0) return
+        if (closed || height <= 0) return
         // 差值门限：1px 级抖动直接丢弃，不进主线程消息队列。
         if (kotlin.math.abs(height - lastDeliveredHeight) < 2) return
         lastDeliveredHeight = height
-        mainHandler.post { onHeightChanged(height) }
+        mainHandler.post { if (!closed) onHeightChanged(height) }
     }
 
     @JavascriptInterface
@@ -141,6 +160,7 @@ internal class TavernMessageBridge(
             if (closed) return@post
             origin.request(operation, payloadJson) { ok, responseJson ->
                 mainHandler.post {
+                    if (closed) return@post
                     val view = webView.get() ?: return@post
                     val idLiteral = org.json.JSONObject.quote(requestId)
                     val payloadLiteral = org.json.JSONObject.quote(responseJson)
@@ -179,13 +199,11 @@ internal fun TavernHtmlPanel(
             val viewportBound = if (availableMaxHeight > 0.dp) availableMaxHeight else screenBound
             minOf(screenBound, viewportBound).coerceAtLeast(180.dp)
         }
-        val minPanelHeight = remember(html, maxPanelHeight) {
-            if (html.isLargeTavernFrontend()) maxPanelHeight else minOf(240.dp, maxPanelHeight)
-        }
-        var contentHeightPx by remember(html) { mutableIntStateOf(0) }
-        val panelHeight = remember(contentHeightPx, density, minPanelHeight, maxPanelHeight) {
-            val measured = with(density) { contentHeightPx.toDp() }
-            measured.coercePanelHeight(min = minPanelHeight, max = maxPanelHeight)
+        // Keep the same state holder as the AndroidView callback across HTML updates.
+        var contentHeightPx by remember { mutableIntStateOf(0) }
+        val panelHeight = remember(contentHeightPx, density, maxPanelHeight) {
+            if (contentHeightPx == 0) maxPanelHeight
+            else with(density) { contentHeightPx.toDp() }.coercePanelHeight(min = 1.dp, max = maxPanelHeight)
         }
 
         AndroidView(
@@ -195,8 +213,9 @@ internal fun TavernHtmlPanel(
             factory = { context ->
                 val bridge = TavernMessageBridge(
                     onHeightChanged = { height ->
-                        if (kotlin.math.abs(height - contentHeightPx) >= 2) {
-                            contentHeightPx = height
+                        val physicalHeight = (height * density.density).toInt()
+                        if (kotlin.math.abs(physicalHeight - contentHeightPx) >= 2) {
+                            contentHeightPx = physicalHeight
                         }
                     },
                     onBoundaryDrag = onBoundaryDrag,
@@ -208,18 +227,34 @@ internal fun TavernHtmlPanel(
                     isHorizontalScrollBarEnabled = true
                     overScrollMode = WebView.OVER_SCROLL_IF_CONTENT_SCROLLS
                     var lastTouchY = 0f
+                    var velocityTracker: VelocityTracker? = null
+                    var forwardedLastMove = false
+                    val touchConfig = ViewConfiguration.get(context)
                     setOnTouchListener { view, event ->
+                        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                            velocityTracker?.recycle()
+                            velocityTracker = VelocityTracker.obtain()
+                            forwardedLastMove = false
+                        }
+                        // Velocity must use the same screen coordinates as boundary deltas.
+                        val sample = MotionEvent.obtain(event)
+                        sample.offsetLocation(event.rawX - event.x, event.rawY - event.y)
+                        velocityTracker?.addMovement(sample)
+                        sample.recycle()
                         when (event.actionMasked) {
                             MotionEvent.ACTION_DOWN -> {
-                                lastTouchY = event.y
+                                lastTouchY = event.rawY
                                 (view.tag as? TavernMessageBridge)?.beginNativeTouchGesture()
                                 // 先假定由 WebView 接管手势；MOVE 时若 WebView 在该方向上
                                 // 没有可滚动内容，再把拦截权交还给外层聊天列表。
                                 view.parent?.requestDisallowInterceptTouchEvent(true)
                             }
                             MotionEvent.ACTION_MOVE -> {
-                                val dy = event.y - lastTouchY
-                                lastTouchY = event.y
+                                forwardedLastMove = false
+                                // The list moves this WebView during a boundary drag.
+                                // Local y would count that movement again on the next event.
+                                val dy = event.rawY - lastTouchY
+                                lastTouchY = event.rawY
                                 val bridge = view.tag as? TavernMessageBridge
                                 // Element-level scrollers (for example a card's
                                 // `.screen.active`) are invisible to
@@ -247,9 +282,21 @@ internal fun TavernHtmlPanel(
                                         fingerDeltaY = dy,
                                     )
                                     bridge?.dispatchDocumentBoundaryDrag(chatScrollDelta)
+                                    forwardedLastMove = chatScrollDelta != 0f
                                 }
                             }
                             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                val bridge = view.tag as? TavernMessageBridge
+                                if (event.actionMasked == MotionEvent.ACTION_UP && forwardedLastMove &&
+                                    bridge?.hasNestedScrollGesture() != true) {
+                                    velocityTracker?.computeCurrentVelocity(1000, touchConfig.scaledMaximumFlingVelocity.toFloat())
+                                    val velocity = -(velocityTracker?.yVelocity ?: 0f)
+                                    if (kotlin.math.abs(velocity) >= touchConfig.scaledMinimumFlingVelocity) {
+                                        bridge?.dispatchBoundaryFling(velocity)
+                                    }
+                                }
+                                velocityTracker?.recycle()
+                                velocityTracker = null
                                 view.parent?.requestDisallowInterceptTouchEvent(false)
                             }
                         }
@@ -273,6 +320,7 @@ internal fun TavernHtmlPanel(
                             app.tellev.core.extension.CompatAssets.intercept(context, request.url.toString())
                         override fun onPageFinished(view: WebView, url: String?) {
                             view.post {
+                                if (bridge.isClosed()) return@post
                                 val density = view.resources.displayMetrics.density.coerceAtLeast(1f)
                                 val viewportHeight = (view.height / density).toInt()
                                 view.scrollTo(0, 0)
@@ -394,17 +442,19 @@ internal fun tavernResizeScript(): String = """
         var scheduled = false;
         var debounceTimer = 0;
         function pageHeight() {
-            var body = document.body || {};
-            var doc = document.documentElement || {};
-            // NOTE: doc.clientHeight 故意不参与：它是 WebView 视口高度，
-            // Compose 侧 panelHeight 变大 → 视口变大 → clientHeight 变大 →
-            // 再次 post 更大的高度，正反馈一路顶到 maxPanelHeight。
-            return Math.ceil(Math.max(
-                body.scrollHeight || 0,
-                body.offsetHeight || 0,
-                doc.scrollHeight || 0,
-                doc.offsetHeight || 0
-            ));
+            var body = document.body;
+            if (!body) return 1;
+            // Root scrollHeight is at least the viewport height, even after collapse.
+            // Measure rendered content boxes instead, so a panel can shrink again.
+            var bounds = body.getBoundingClientRect();
+            var height = body.offsetHeight || bounds.height || 0;
+            Array.prototype.forEach.call(body.children, function(child) {
+                var style = window.getComputedStyle(child);
+                if (style.display === 'none' || style.position === 'fixed') return;
+                var rect = child.getBoundingClientRect();
+                height = Math.max(height, rect.bottom - bounds.top + (parseFloat(style.marginBottom) || 0));
+            });
+            return Math.max(1, Math.ceil(height));
         }
         function postHeightNow() {
             scheduled = false;

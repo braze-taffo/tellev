@@ -14,6 +14,16 @@ import app.tellev.core.model.MessageRole
 
 class TavernMessageCompatTest {
     @Test
+    fun `streaming frontend keeps reading position by deferring reload until following resumes`() {
+        val tracker = TavernMessageLoadTracker()
+        assertTrue(tracker.shouldLoad("first", allowUpdates = false))
+        assertFalse(tracker.shouldLoad("second", allowUpdates = false))
+        assertFalse(tracker.shouldLoad("third", allowUpdates = false))
+        assertTrue(tracker.shouldLoad("third", allowUpdates = true))
+        assertFalse(tracker.shouldLoad("third", allowUpdates = true))
+    }
+
+    @Test
     fun `message webview reloads only when rendered html changes`() {
         val tracker = TavernMessageLoadTracker()
 
@@ -188,7 +198,7 @@ class TavernMessageCompatTest {
         assertTrue(script.contains("overflowY === 'auto' || overflowY === 'scroll'"))
         assertTrue(script.contains("TellevBridge.setNestedScrollGesture(!!owner)"))
         assertTrue(script.contains("if (!canScrollInDirection)"))
-        assertTrue(script.contains("TellevBridge.forwardBoundaryDrag(-fingerDeltaY)"))
+        assertTrue(script.contains("TellevBridge.forwardBoundaryDrag(-fingerDeltaY * (window.devicePixelRatio || 1))"))
         assertTrue(script.contains("activeScreen.style.setProperty('overflow-y', 'auto'"))
         assertTrue(script.contains("activeScreen.scrollTop = 0"))
         assertTrue(script.contains("activeScreenChanged"))

@@ -48,9 +48,9 @@ object CharacterRegexApplier {
     )
 
     fun isNormalProcessed(message: ChatMessage): Boolean =
-        (message.metadata[NORMAL_PROCESSING_KEY] as? JsonArray)
-            ?.getOrNull(message.swipeIndex)
-            ?.jsonPrimitive?.intOrNull == NORMAL_PROCESSING_VERSION
+        ((message.metadata[NORMAL_PROCESSING_KEY] as? JsonArray)
+            ?.getOrNull(message.swipeIndex) as? JsonPrimitive)
+            ?.intOrNull == NORMAL_PROCESSING_VERSION
 
     fun markNormalProcessed(message: ChatMessage): ChatMessage {
         val versions = ((message.metadata[NORMAL_PROCESSING_KEY] as? JsonArray)?.toMutableList()

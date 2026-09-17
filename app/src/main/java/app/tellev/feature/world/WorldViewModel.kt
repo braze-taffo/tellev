@@ -13,6 +13,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -27,6 +33,7 @@ data class WorldUiState(
     val promptSettings: PromptSettings = PromptSettings(),
     val instructPresets: List<String> = emptyList(),
     val isLoading: Boolean = false,
+    val isSaving: Boolean = false,
     val selectionError: String? = null,
     val error: String? = null,
     val info: String? = null,
@@ -39,6 +46,12 @@ class WorldViewModel(
     private val _uiState = MutableStateFlow(WorldUiState())
     val uiState: StateFlow<WorldUiState> = _uiState.asStateFlow()
 
+    private val writeMutex = Mutex()
+    private var loadJob: Job? = null
+    private var selectionJob: Job? = null
+    private var selectionVersion = 0L
+    private var pendingSaves = 0
+
     init {
         loadBooks()
         viewModelScope.launch {
@@ -47,14 +60,16 @@ class WorldViewModel(
     }
 
     fun loadBooks() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null, selectionError = null) }
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true) }
             try {
                 val books = dataStore.listWorldBooks()
                 val disabledWorldIds = dataStore.readDisabledWorldIds()
                 val worldInfoSettings = dataStore.readWorldInfoSettings()
                 val promptSettings = dataStore.readPromptSettings()
                 val instructPresets = dataStore.listInstructPresets()
+                currentCoroutineContext().ensureActive()
                 _uiState.update {
                     it.copy(
                         worldBooks = books,
@@ -65,6 +80,8 @@ class WorldViewModel(
                         isLoading = false,
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -81,6 +98,8 @@ class WorldViewModel(
             try {
                 dataStore.saveWorldInfoSettings(settings)
                 _uiState.update { it.copy(worldInfoSettings = settings) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(error = "保存世界书设置失败：${e.message}")
@@ -94,6 +113,8 @@ class WorldViewModel(
             try {
                 dataStore.savePromptSettings(settings)
                 _uiState.update { it.copy(promptSettings = settings) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(error = "保存提示词设置失败：${e.message}")
@@ -109,6 +130,8 @@ class WorldViewModel(
             try {
                 dataStore.saveDisabledWorldIds(updated)
                 _uiState.update { it.copy(disabledWorldIds = updated) }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(error = "更新世界书开关失败：${e.message}")
@@ -118,10 +141,13 @@ class WorldViewModel(
     }
 
     fun selectBook(id: String) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null, selectionError = null) }
+        selectionVersion++
+        selectionJob?.cancel()
+        selectionJob = viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, selectedEntry = null, error = null, selectionError = null) }
             try {
                 val book = dataStore.readWorldBook(id)
+                currentCoroutineContext().ensureActive()
                 val query = _uiState.value.searchQuery
                 val filtered = filterEntries(book.entries, query)
                 _uiState.update {
@@ -133,12 +159,15 @@ class WorldViewModel(
                         selectionError = null,
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
                         isLoading = false,
                         selectedBook = null,
                         selectedEntry = null,
+                        filteredEntries = emptyList(),
                         selectionError = "找不到世界书“$id”或文件无法读取。",
                         error = "加载世界书失败：${e.message}",
                     )
@@ -148,6 +177,8 @@ class WorldViewModel(
     }
 
     fun clearSelectedBook() {
+        selectionVersion++
+        selectionJob?.cancel()
         _uiState.update {
             it.copy(
                 selectedBook = null,
@@ -159,25 +190,48 @@ class WorldViewModel(
     }
 
     fun saveBook(book: WorldBook) {
+        if (_uiState.value.isSaving) return
+        persistBook(book.id) { book }
+    }
+
+    // Build entry mutations after earlier writes finish, so a second tap cannot
+    // restore an older snapshot of another entry. Publish only after disk success.
+    private fun persistBook(
+        bookId: String,
+        onSaved: (() -> Unit)? = null,
+        transform: (WorldBook) -> WorldBook,
+    ) {
+        val version = selectionVersion
+        pendingSaves++
+        _uiState.update { it.copy(isSaving = true, error = null) }
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
             try {
-                dataStore.saveWorldBook(book)
-                _uiState.update {
-                    it.copy(
-                        selectedBook = book,
-                        isLoading = false,
-                        info = "世界书已保存。",
-                    )
+                writeMutex.withLock {
+                    val updated = transform(dataStore.readWorldBook(bookId))
+                    dataStore.saveWorldBook(updated)
+                    _uiState.update { current ->
+                        val state = current.copy(worldBooks = current.worldBooks.map {
+                            if (it.id == bookId) updated else it
+                        })
+                        if (version == selectionVersion && state.selectedBook?.id == bookId) {
+                            state.copy(
+                                selectedBook = updated,
+                                filteredEntries = filterEntries(updated.entries, state.searchQuery),
+                                info = "世界书已保存。",
+                            )
+                        } else state
+                    }
                 }
-                loadBooks()
+                if (version == selectionVersion && _uiState.value.selectedBook?.id == bookId) {
+                    onSaved?.invoke()
+                }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        error = "保存世界书失败：${e.message}",
-                    )
-                }
+                _uiState.update { it.copy(error = "保存世界书失败：${e.message}") }
+            } finally {
+                pendingSaves--
+                _uiState.update { it.copy(isSaving = pendingSaves > 0) }
             }
         }
     }
@@ -200,6 +254,8 @@ class WorldViewModel(
                 }
                 loadBooks()
                 selectBook(book.id)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -226,6 +282,8 @@ class WorldViewModel(
                         info = "世界书“${book.name}”已导入。",
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -241,16 +299,17 @@ class WorldViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
-                dataStore.deleteWorldBook(id)
+                writeMutex.withLock { dataStore.deleteWorldBook(id) }
+                if (_uiState.value.selectedBook?.id == id) clearSelectedBook()
                 _uiState.update {
                     it.copy(
-                        selectedBook = null,
-                        selectedEntry = null,
                         isLoading = false,
                         info = "世界书已删除。",
                     )
                 }
                 loadBooks()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -269,11 +328,14 @@ class WorldViewModel(
     }
 
     fun openEntry(bookId: String, entryId: String) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null, selectionError = null) }
+        selectionVersion++
+        selectionJob?.cancel()
+        selectionJob = viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, selectedEntry = null, error = null, selectionError = null) }
             try {
                 val book = _uiState.value.selectedBook?.takeIf { it.id == bookId }
                     ?: dataStore.readWorldBook(bookId)
+                currentCoroutineContext().ensureActive()
                 val entry = if (entryId == "new") {
                     WorldBookEntry(
                         id = "entry_${UUID.randomUUID()}",
@@ -294,11 +356,14 @@ class WorldViewModel(
                         selectionError = null,
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
                         selectedBook = null,
                         selectedEntry = null,
+                        filteredEntries = emptyList(),
                         isLoading = false,
                         selectionError = "找不到世界书条目“$entryId”，它可能已被删除。",
                         error = "加载世界书条目失败：${e.message}",
@@ -309,43 +374,30 @@ class WorldViewModel(
     }
 
     fun clearSelectedEntry() {
+        selectionVersion++
+        selectionJob?.cancel()
         _uiState.update { it.copy(selectedEntry = null) }
     }
 
-    fun saveEntry(bookId: String, entry: WorldBookEntry): Boolean {
-        val book = _uiState.value.selectedBook
-        if (book == null || book.id != bookId) {
-            _uiState.update {
-                it.copy(
-                    selectionError = "当前条目不属于目标世界书，已阻止保存。",
-                    error = "保存失败：世界书上下文已变化，请返回后重新打开条目。",
-                )
-            }
-            return false
+    fun saveEntry(bookId: String, entry: WorldBookEntry, onSaved: (() -> Unit)? = null) {
+        if (_uiState.value.selectedBook?.id != bookId) {
+            _uiState.update { it.copy(error = "保存失败：世界书上下文已变化，请返回后重新打开条目。") }
+            return
         }
-        val existingIndex = book.entries.indexOfFirst { it.id == entry.id }
-        val updatedEntries = if (existingIndex >= 0) {
-            book.entries.toMutableList().apply {
-                this[existingIndex] = entry
-            }
-        } else {
-            book.entries + entry
+        persistBook(bookId, onSaved) { book ->
+            val index = book.entries.indexOfFirst { it.id == entry.id }
+            val entries = if (index >= 0) book.entries.toMutableList().apply { this[index] = entry }
+                else book.entries + entry
+            book.copy(entries = entries)
         }
-        val updatedBook = book.copy(entries = updatedEntries)
-        saveBook(updatedBook)
-        _uiState.update { it.copy(selectedEntry = null) }
-        return true
     }
 
     fun deleteEntry(bookId: String, entryId: String) {
-        val book = _uiState.value.selectedBook?.takeIf { it.id == bookId }
-        if (book == null) {
+        if (_uiState.value.selectedBook?.id != bookId) {
             _uiState.update { it.copy(error = "删除失败：世界书上下文已变化，请重新打开条目。") }
             return
         }
-        val updatedEntries = book.entries.filter { it.id != entryId }
-        val updatedBook = book.copy(entries = updatedEntries)
-        saveBook(updatedBook)
+        persistBook(bookId) { book -> book.copy(entries = book.entries.filterNot { it.id == entryId }) }
     }
 
     fun searchEntries(query: String) {
