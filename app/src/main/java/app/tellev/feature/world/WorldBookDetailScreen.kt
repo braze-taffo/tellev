@@ -102,7 +102,7 @@ fun WorldBookDetailScreen(
                         )
                     }
                     if (book != null) {
-                        IconButton(onClick = { viewModel.saveBook(book) }) {
+                        IconButton(enabled = !state.isSaving, onClick = { viewModel.saveBook(book) }) {
                             Icon(Icons.Default.Save, contentDescription = "保存世界书")
                         }
                     }

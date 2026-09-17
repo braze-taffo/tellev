@@ -181,6 +181,9 @@ class FileStDataStore(
 
     // ── Chat & Group Operations ──
 
+    override suspend fun listChatSessionSummaries(characterId: String?, groupId: String?) =
+        chatRepository.listChatSessionSummaries(characterId, groupId)
+
     override suspend fun listChatSessions(characterId: String?, groupId: String?): List<ChatSession> =
         chatRepository.listChatSessions(characterId, groupId)
 

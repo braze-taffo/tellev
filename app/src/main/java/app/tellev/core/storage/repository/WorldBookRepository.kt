@@ -15,6 +15,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.putJsonArray
 import java.util.UUID
 import kotlin.io.path.createDirectories
@@ -42,7 +43,15 @@ internal class WorldBookRepository(
     }
 
     suspend fun readWorldBook(id: String): WorldBook = withContext(Dispatchers.IO) {
-        listWorldBooks().firstOrNull { it.id == id } ?: error("World book not found: $id")
+        require(id.isNotBlank() && '/' !in id && '\\' !in id) { "Invalid world book id" }
+        val path = layout.worlds.resolve("$id.json")
+        val raw = json.parseToJsonElement(path.readText()).jsonObject
+        WorldBook(
+            id = id,
+            name = raw["name"]?.jsonPrimitive?.content ?: id,
+            entries = WorldBookCodec.parseWorldBookEntries(raw),
+            raw = raw,
+        )
     }
 
     suspend fun saveWorldBook(book: WorldBook): Unit = withContext(Dispatchers.IO) {

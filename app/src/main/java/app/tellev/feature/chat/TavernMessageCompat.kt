@@ -14,7 +14,8 @@ import kotlinx.serialization.json.jsonPrimitive
 internal class TavernMessageLoadTracker {
     private var loadedHtml: String? = null
 
-    fun shouldLoad(html: String): Boolean {
+    fun shouldLoad(html: String, allowUpdates: Boolean = true): Boolean {
+        if (loadedHtml != null && !allowUpdates) return false
         if (loadedHtml == html) return false
         loadedHtml = html
         return true
@@ -263,32 +264,66 @@ internal fun tavernMessageLayoutScript(nativeViewportHeight: Int = 0): String = 
         window.__tellevNestedScrollBridgeInstalled = true;
         var owner = null;
         var lastTouchY = 0;
+        var samples = [];
+        var forwardedLastMove = false;
 
         document.addEventListener('touchstart', function(event) {
           var touch = event.touches && event.touches[0];
-          lastTouchY = touch ? touch.clientY : 0;
+          lastTouchY = touch ? touch.screenY : 0;
           owner = findNestedScrollOwner(event.target);
+          samples = [{ y: lastTouchY, time: event.timeStamp }];
+          forwardedLastMove = false;
           try { TellevBridge.setNestedScrollGesture(!!owner); } catch (_) {}
         }, { capture: true, passive: true });
 
         document.addEventListener('touchmove', function(event) {
           var touch = event.touches && event.touches[0];
           if (!touch) return;
-          var fingerDeltaY = touch.clientY - lastTouchY;
-          lastTouchY = touch.clientY;
+          // screenY stays stable when the outer list moves the WebView.
+          var fingerDeltaY = touch.screenY - lastTouchY;
+          lastTouchY = touch.screenY;
+          samples.push({ y: lastTouchY, time: event.timeStamp });
+          while (samples.length > 2 && event.timeStamp - samples[0].time > 100) samples.shift();
+          forwardedLastMove = false;
           if (!owner || fingerDeltaY === 0) return;
 
-          var canScrollUp = owner.scrollTop > 1;
-          var canScrollDown = owner.scrollTop + owner.clientHeight < owner.scrollHeight - 1;
-          var canScrollInDirection = fingerDeltaY > 0 ? canScrollUp : canScrollDown;
-          if (!canScrollInDirection) {
-            try { TellevBridge.forwardBoundaryDrag(-fingerDeltaY); } catch (_) {}
+          var node = owner;
+          var canScrollInDirection = false;
+          // A nested scroller's edge is not necessarily the document's edge.
+          while (node) {
+            var canScrollUp = node.scrollTop > 1;
+            var canScrollDown = node.scrollTop + node.clientHeight < node.scrollHeight - 1;
+            if (fingerDeltaY > 0 ? canScrollUp : canScrollDown) {
+              canScrollInDirection = true;
+              break;
+            }
+            node = findNestedScrollOwner(node.parentElement);
           }
-        }, { capture: true, passive: true });
+          var root = document.scrollingElement || document.documentElement;
+          if (root && (fingerDeltaY > 0 ? root.scrollTop > 1 :
+              root.scrollTop + root.clientHeight < root.scrollHeight - 1)) {
+            canScrollInDirection = true;
+          }
+          if (!canScrollInDirection) {
+            forwardedLastMove = true;
+            // Compose scroll distances use physical pixels; DOM touch uses CSS pixels.
+            if (event.cancelable) event.preventDefault();
+            try { TellevBridge.forwardBoundaryDrag(-fingerDeltaY * (window.devicePixelRatio || 1)); } catch (_) {}
+          }
+        }, { capture: true, passive: false });
 
-        function finishTouch() {
+        function finishTouch(event) {
+          if (event.type === 'touchend' && owner && forwardedLastMove && samples.length > 1) {
+            var first = samples[0], last = samples[samples.length - 1];
+            var duration = event.timeStamp - first.time;
+            if (duration > 0 && event.timeStamp - last.time < 100) {
+              var velocity = -(last.y - first.y) * 1000 / duration * (window.devicePixelRatio || 1);
+              try { TellevBridge.forwardBoundaryFling(velocity); } catch (_) {}
+            }
+          }
           owner = null;
-          try { TellevBridge.setNestedScrollGesture(false); } catch (_) {}
+          samples = [];
+          // Keep ownership latched through native ACTION_UP; the next DOWN resets it.
         }
         document.addEventListener('touchend', finishTouch, { capture: true, passive: true });
         document.addEventListener('touchcancel', finishTouch, { capture: true, passive: true });
@@ -327,7 +362,6 @@ internal fun tavernMessageLayoutScript(nativeViewportHeight: Int = 0): String = 
         if (hasOversizedFlowChild && (bodyStyle.display === 'flex' || bodyStyle.display === 'inline-flex')) {
           body.style.setProperty('justify-content', 'flex-start', 'important');
           body.style.setProperty('height', 'auto', 'important');
-          body.style.setProperty('min-height', Math.max(1, viewportHeight) + 'px', 'important');
           body.style.setProperty('overflow-y', 'auto', 'important');
         }
 

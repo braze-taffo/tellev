@@ -1,5 +1,6 @@
 package app.tellev.feature.world
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -48,6 +50,16 @@ fun WorldBookEntryEditScreen(
     val state by viewModel.uiState.collectAsState()
     val entry = state.selectedEntry
     val bookId = state.selectedBook?.id
+    var editorActive by remember { mutableStateOf(true) }
+    DisposableEffect(Unit) {
+        editorActive = true
+        onDispose { editorActive = false }
+    }
+    fun leaveEditor() {
+        editorActive = false
+        onBack()
+    }
+    BackHandler { leaveEditor() }
 
     var keys by remember(entry?.id) { mutableStateOf(entry?.keys?.joinToString(", ") ?: "") }
     var secondaryKeys by remember(entry?.id) { mutableStateOf(entry?.secondaryKeys?.joinToString(", ") ?: "") }
@@ -109,15 +121,16 @@ fun WorldBookEntryEditScreen(
             TopAppBar(
                 title = { Text(if (entry?.content?.isBlank() == true || entry?.keys?.isEmpty() == true) "新建条目" else "编辑条目") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = { leaveEditor() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
                 actions = {
                     IconButton(
+                        enabled = !state.isSaving,
                         onClick = {
                             if (entry != null && bookId != null) {
-                                if (viewModel.saveEntry(bookId, buildUpdatedEntry(entry))) onBack()
+                                viewModel.saveEntry(bookId, buildUpdatedEntry(entry), onSaved = { if (editorActive) leaveEditor() })
                             }
                         },
                     ) {
@@ -143,7 +156,7 @@ fun WorldBookEntryEditScreen(
                 } else {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(state.selectionError.orEmpty(), color = MaterialTheme.colorScheme.error)
-                        TextButton(onClick = onBack) { Text("返回世界书") }
+                        TextButton(onClick = { leaveEditor() }) { Text("返回世界书") }
                     }
                 }
             }
@@ -156,6 +169,8 @@ fun WorldBookEntryEditScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+                state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+
                 // Keys
                 OutlinedTextField(
                     value = keys,
@@ -339,16 +354,16 @@ fun WorldBookEntryEditScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     OutlinedButton(
-                        onClick = onBack,
+                        onClick = { leaveEditor() },
                         modifier = Modifier.weight(1f),
                     ) {
                         Text("取消")
                     }
                     FilledTonalButton(
+                        enabled = !state.isSaving,
                         onClick = {
                             if (entry != null && bookId != null) {
-                                viewModel.saveEntry(bookId, buildUpdatedEntry(entry))
-                                onBack()
+                                viewModel.saveEntry(bookId, buildUpdatedEntry(entry), onSaved = { if (editorActive) leaveEditor() })
                             }
                         },
                         modifier = Modifier.weight(1f),

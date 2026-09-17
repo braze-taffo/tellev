@@ -41,6 +41,23 @@ internal class ChatRepository(
     private val chatWrites: Mutex,
     private val chatChanges: MutableSharedFlow<String>,
 ) {
+    suspend fun listChatSessionSummaries(characterId: String?, groupId: String?) = withContext(Dispatchers.IO) {
+        val roots = buildList {
+            if (characterId != null) add(layout.chats.resolve(characterId))
+            if (groupId != null) add(layout.groupChats.resolve(groupId))
+            if (characterId == null && groupId == null) {
+                add(layout.chats)
+                add(layout.groupChats)
+            }
+        }
+        val reader = ChatSessionSummaryReader(json)
+        roots.flatMap { root ->
+            if (!root.exists()) emptyList() else root.listDirectoryEntries("*.jsonl").mapNotNull { path ->
+                runCatching { reader.read(path) }.getOrElse { if (!path.exists()) null else throw it }
+            }
+        }.sortedByDescending { it.lastMessageAtMillis }
+    }
+
     suspend fun listChatSessions(characterId: String?, groupId: String?): List<ChatSession> = withContext(Dispatchers.IO) {
         val roots = buildList {
             if (characterId != null) add(layout.chats.resolve(characterId))

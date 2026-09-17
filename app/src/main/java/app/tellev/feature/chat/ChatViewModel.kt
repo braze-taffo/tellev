@@ -10,6 +10,8 @@ import app.tellev.core.model.Attachment
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterSummary
 import app.tellev.core.model.ChatMessage
+import app.tellev.core.model.ChatSessionSummary
+import app.tellev.core.model.toSummary
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageRole
@@ -64,7 +66,7 @@ data class ChatUiState(
     val disabledWorldIds: Set<String> = emptySet(),
     val presets: List<GenerationPreset> = emptyList(),
     val selectedPreset: GenerationPreset? = null,
-    val sessions: List<ChatSession> = emptyList(),
+    val sessions: List<ChatSessionSummary> = emptyList(),
     val error: String? = null,
     val isLoading: Boolean = false,
     // ── 生图：仅在至少一个引擎已配置时对 UI 可见 ──
@@ -341,18 +343,17 @@ class ChatViewModel(
                     data class Selection(
                         val character: CharacterCard,
                         val session: ChatSession,
-                        val allSessions: List<ChatSession>,
+                        val allSessions: List<ChatSessionSummary>,
                         val disabledWorldIds: Set<String>,
                     )
                     val selection = withContext(Dispatchers.Default) {
                         val character = dataStore.readCharacter(characterId)
-                        val sessions = dataStore.listChatSessions(characterId = characterId)
+                        val sessions = dataStore.listChatSessionSummaries(characterId = characterId)
 
                         val session = if (sessions.isNotEmpty()) {
-                            sessions.first().withCharacterGreetingSwipes(character).let { upgraded ->
-                                if (upgraded != sessions.first()) {
-                                    dataStore.commitChatMutation(sessions.first(), upgraded)
-                                } else upgraded
+                            val loaded = dataStore.readChatSession(sessions.first().id)
+                            loaded.withCharacterGreetingSwipes(character).let { upgraded ->
+                                if (upgraded != loaded) dataStore.commitChatMutation(loaded, upgraded) else upgraded
                             }
                         } else {
                             ChatSessionInit.createSessionForCharacter(
@@ -361,7 +362,8 @@ class ChatViewModel(
                                 dataStore,
                             )
                         }
-                        val allSessions = dataStore.listChatSessions(characterId = characterId)
+                        val allSessions = (listOf(session.toSummary()) + sessions.filterNot { it.id == session.id })
+                            .sortedByDescending { it.lastMessageAtMillis }
 
                         val allWorldBooks = dataStore.listWorldBooks()
                         val embeddedId = StDataStore.embeddedCharacterBookId(characterId)
@@ -462,7 +464,7 @@ class ChatViewModel(
                         dataStore,
                     )
                     val token = sessionRuntime.activateSessionWrites(newSession)
-                    val sessions = dataStore.listChatSessions(characterId = character.id)
+                    val sessions = dataStore.listChatSessionSummaries(characterId = character.id)
 
                     _uiState.update {
                         it.copy(
@@ -622,24 +624,24 @@ class ChatViewModel(
                 ChatTavernAdapter.emitRenderedEventForMessage(extensionHost, messageIndex, updated, "edit")
             },
             onUserMessageEdit = { baseSession, trimmedSession, trimmedMessages, rawContent, attachments, updatedMessage ->
-                _uiState.update {
-                    it.copy(
-                        currentSession = trimmedSession,
-                        messages = trimmedMessages,
-                    )
-                }
-                viewModelScope.launch {
+                val reportError: (String) -> Unit = { error -> _uiState.update { it.copy(error = error) } }
+                val commit = sessionRuntime.scheduleUiMutation(
+                    baseSession, trimmedSession,
+                    onSessionUpdated = { updated ->
+                        _uiState.update {
+                            if (it.currentSession?.id == updated.id) it.copy(currentSession = updated, messages = updated.messages)
+                            else it
+                        }
+                    },
+                    onError = reportError,
+                )
+                if (commit != null) sessionRuntime.launchAfterCommit(viewModelScope, commit, reportError) {
+                    if (_uiState.value.currentSession?.id != baseSession.id) return@launchAfterCommit
                     ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.MESSAGE_EDITED, messageIndex)
                     ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.MESSAGE_UPDATED, messageIndex)
                     ChatTavernAdapter.emitRenderedEventForMessage(extensionHost, messageIndex, updatedMessage, "edit")
+                    sendMessageWithRole(rawContent, attachments, MessageRole.User, regexIsEdit = true)
                 }
-                sessionRuntime.scheduleMetadataSave(baseSession, trimmedSession) { updated ->
-                    _uiState.update {
-                        if (it.currentSession?.id == updated.id) it.copy(currentSession = updated, messages = updated.messages)
-                        else it
-                    }
-                }
-                sendMessageWithRole(rawContent, attachments, MessageRole.User, regexIsEdit = true)
             },
         )
     }
@@ -713,7 +715,7 @@ class ChatViewModel(
                     dataStore.deleteChatSession(sessionId)
                     deleteSucceeded = true
                     val remaining = if (character != null) {
-                        dataStore.listChatSessions(characterId = character.id)
+                        dataStore.listChatSessionSummaries(characterId = character.id)
                     } else {
                         emptyList()
                     }
@@ -726,7 +728,7 @@ class ChatViewModel(
                         clearToNoSession()
                         ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.CHAT_CHANGED, "")
                     } else {
-                        val next = remaining.first()
+                        val next = dataStore.readChatSession(remaining.first().id)
                         val token = sessionRuntime.activateSessionWrites(next)
                         _uiState.update {
                             it.copy(
@@ -770,7 +772,7 @@ class ChatViewModel(
                             // 后台会话实际已被半提交删除：只报错并尽力刷新列表，
                             // 当前会话视图绝不动。
                             runCatching {
-                                val remaining = character?.let { dataStore.listChatSessions(characterId = it.id) }.orEmpty()
+                                val remaining = character?.let { dataStore.listChatSessionSummaries(characterId = it.id) }.orEmpty()
                                 _uiState.update { it.copy(sessions = remaining) }
                             }
                             _uiState.update { it.copy(error = "会话已删除，但清理未完成：${e.message}") }

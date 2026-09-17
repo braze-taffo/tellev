@@ -86,23 +86,7 @@ internal class ChatMessageActions(
             depth = visibleRegexDepth(state.messages, messageIndex),
             isEdit = true,
         )
-        val updatedSwipes = if (message.swipes.isNotEmpty()) {
-            message.swipes.toMutableList().also {
-                if (message.swipeIndex in it.indices) {
-                    it[message.swipeIndex] = processedContent
-                } else {
-                    it.add(processedContent)
-                }
-            }
-        } else {
-            listOf(processedContent)
-        }
-
-        val updatedMessage = CharacterRegexApplier.markNormalProcessed(message.copy(
-            content = processedContent,
-            swipes = updatedSwipes,
-            swipeIndex = if (message.swipes.isEmpty()) 0 else message.swipeIndex,
-        ))
+        val updatedMessage = editedChatMessage(message, processedContent)
         messages[messageIndex] = updatedMessage
 
         val session = state.currentSession ?: return
@@ -236,6 +220,18 @@ internal fun canRegenerateResponse(messages: List<ChatMessage>, messageIndex: In
     val message = messages[messageIndex]
     if (message.role != MessageRole.Character && message.role != MessageRole.Assistant) return false
     return messages.take(messageIndex).any { it.role == MessageRole.User }
+}
+
+internal fun editedChatMessage(message: ChatMessage, content: String): ChatMessage {
+    val swipes = message.swipes.toMutableList()
+    // Legacy/imported chats may carry an invalid swipe_id. Appending without
+    // selecting the appended slot used to crash on negative ids or allocate
+    // metadata up to an arbitrarily large id on the first edit.
+    val index = if (message.swipeIndex in swipes.indices) message.swipeIndex else swipes.size
+    if (index == swipes.size) swipes.add(content) else swipes[index] = content
+    return CharacterRegexApplier.markNormalProcessed(message.copy(
+        content = content, swipes = swipes, swipeIndex = index,
+    ))
 }
 
 internal fun visibleRegexDepth(messages: List<ChatMessage>, messageIndex: Int): Int =
