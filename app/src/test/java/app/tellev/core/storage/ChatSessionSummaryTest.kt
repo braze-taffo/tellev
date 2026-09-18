@@ -28,6 +28,8 @@ class ChatSessionSummaryTest {
                 ChatMessage("new", MessageRole.User, "用户", "新消息", 50000L)))
             store.saveChatSession(updated)
             assertEquals(updated.toSummary(), store.listChatSessionSummaries("card").first())
+            store.deleteChatSession(updated.id)
+            assertFalse(store.listChatSessionSummaries("card").any { it.id == updated.id })
             store.saveChatSession(ChatSession("group", "群聊", null, "party", emptyList()))
             assertEquals("group", store.listChatSessionSummaries(groupId = "party").single().id)
         } finally { root.toFile().deleteRecursively() }

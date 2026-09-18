@@ -715,7 +715,7 @@ class ChatViewModel(
                     dataStore.deleteChatSession(sessionId)
                     deleteSucceeded = true
                     val remaining = if (character != null) {
-                        dataStore.listChatSessions(characterId = character.id)
+                        dataStore.listChatSessionSummaries(characterId = character.id)
                     } else {
                         emptyList()
                     }
@@ -728,7 +728,7 @@ class ChatViewModel(
                         clearToNoSession()
                         ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.CHAT_CHANGED, "")
                     } else {
-                        val next = remaining.first()
+                        val next = dataStore.readChatSession(remaining.first().id)
                         val token = sessionRuntime.activateSessionWrites(next)
                         _uiState.update {
                             it.copy(
@@ -772,7 +772,7 @@ class ChatViewModel(
                             // 后台会话实际已被半提交删除：只报错并尽力刷新列表，
                             // 当前会话视图绝不动。
                             runCatching {
-                                val remaining = character?.let { dataStore.listChatSessions(characterId = it.id) }.orEmpty()
+                                val remaining = character?.let { dataStore.listChatSessionSummaries(characterId = it.id) }.orEmpty()
                                 _uiState.update { it.copy(sessions = remaining) }
                             }
                             _uiState.update { it.copy(error = "会话已删除，但清理未完成：${e.message}") }

@@ -36,7 +36,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
-import app.tellev.core.model.ChatSession
+import app.tellev.core.model.ChatSessionSummary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -145,7 +145,7 @@ private fun ChatContentScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     var inputText by remember { mutableStateOf("") }
     var showSessionMenu by remember { mutableStateOf(false) }
-    var sessionPendingDelete by remember { mutableStateOf<ChatSession?>(null) }
+    var sessionPendingDelete by remember { mutableStateOf<ChatSessionSummary?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var editingMessageIndex by remember { mutableStateOf<Int?>(null) }
     var editTextField by remember { mutableStateOf("") }
