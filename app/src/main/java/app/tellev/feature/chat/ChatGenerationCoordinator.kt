@@ -20,6 +20,7 @@ import app.tellev.feature.chat.ChatSessionInit.generateMessageId
 import app.tellev.feature.chat.ChatSessionInit.withTavernInitVariables
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
@@ -111,7 +112,7 @@ internal class ChatGenerationCoordinator(
             return false
         }
 
-        scope.launch {
+        scope.launch(start = CoroutineStart.LAZY) {
             try {
                 characterScriptJob?.join()
                 sessionRuntime.flushSessionWrites(session.id, extensionHost)
@@ -407,8 +408,18 @@ internal class ChatGenerationCoordinator(
                     )
                 }
                 ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.GENERATION_STOPPED)
+            } finally {
+                // A cancelled request may finish after a new request has started.
+                // Only the job that still owns generation may clear its state.
+                if (generationJob === coroutineContext[Job]) {
+                    generationJob = null
+                    activeRegeneration = null
+                    uiState.update {
+                        it.copy(isGenerating = false, streamingText = "", streamingReasoning = "")
+                    }
+                }
             }
-        }.also { generationJob = it }
+        }.also { generationJob = it; it.start() }
         return true
     }
 

@@ -30,6 +30,44 @@ import org.junit.Test
 
 class OpenAiCompatibleAdapterTest {
     @Test
+    fun `relay error terminates response and a later request can succeed`() = runBlocking {
+        for (stream in listOf(false, true)) for (partial in listOf(false, true)) {
+            var requests = 0
+            val adapter = OpenAiCompatibleAdapter(client = client { chain ->
+                requests++
+                val payload = if (requests == 1) {
+                    if (stream) {
+                        (if (partial) "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n" else "") +
+                            "data: {\"error\":{\"message\":\"upstream unavailable\"}}\n" +
+                            "data: {\"choices\":[{\"delta\":{\"content\":\"must not save\"}}]}\n"
+                    } else """{"error":{"message":"upstream unavailable"}}"""
+                } else if (stream) {
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"recovered\"}}]}\ndata: [DONE]\n"
+                } else """{"choices":[{"message":{"content":"recovered"}}]}"""
+                response(chain, 200, payload, if (stream) "text/event-stream" else "application/json")
+            })
+            val request = generateRequest(stream, GenerationPreset("p", "p", "openai-compatible"))
+            val failed = adapter.streamGenerate(config("test"), request).toList()
+            assertEquals("upstream unavailable", failed.filterIsInstance<GenerateChunk.Failed>().single().error.message)
+            assertTrue(failed.none { it is GenerateChunk.Completed })
+            assertTrue(failed.filterIsInstance<GenerateChunk.Delta>().none { it.text == "must not save" })
+            val recovered = adapter.streamGenerate(config("other-model"), request).toList()
+            assertEquals("recovered", recovered.filterIsInstance<GenerateChunk.Completed>().single().text)
+        }
+    }
+
+    @Test
+    fun `non SSE relay failure cannot become an empty saved reply`() = runBlocking {
+        for (payload in listOf("", "<html>gateway error</html>", """{"error":"overloaded"}""")) {
+            val adapter = OpenAiCompatibleAdapter(client = client { response(it, 200, payload) })
+            val chunks = adapter.streamGenerate(config("test"),
+                generateRequest(true, GenerationPreset("p", "p", "openai-compatible"))).toList()
+            assertEquals(1, chunks.filterIsInstance<GenerateChunk.Failed>().size)
+            assertTrue(chunks.none { it is GenerateChunk.Completed })
+        }
+    }
+
+    @Test
     fun `response diagnostics are opt in and contain response frames rather than credentials`() = runBlocking {
         val wire = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n"
         val adapter = OpenAiCompatibleAdapter(client = client { response(it, 200, wire, "text/event-stream") })
