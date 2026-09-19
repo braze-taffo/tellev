@@ -197,6 +197,10 @@ class OpenAiCompatibleAdapter(
                         if (!line.startsWith("data:")) continue
                         val data = line.removePrefix("data:").trim()
                         if (data == "[DONE]") break
+                        responseError(data)?.let { error ->
+                            emit(GenerateChunk.Failed(error))
+                            return@use
+                        }
                         dataFrames++
                         if (captureDiagnostics && responseSample.length < 12000) {
                             responseSample.appendLine(data.take(12000 - responseSample.length))
@@ -238,6 +242,13 @@ class OpenAiCompatibleAdapter(
                         parsed.usage?.let { lastUsage = it }
                     }
 
+                    if (dataFrames == 0) {
+                        emit(GenerateChunk.Failed(TellevError(
+                            code = "provider_invalid_stream",
+                            message = "服务商未返回有效的流式响应，请检查中转站接口或稍后重试",
+                        )))
+                        return@use
+                    }
                     emit(
                         GenerateChunk.Completed(
                             fullText,
@@ -254,6 +265,10 @@ class OpenAiCompatibleAdapter(
                     )
                 } else {
                     val body = response.body?.string().orEmpty()
+                    responseError(body)?.let { error ->
+                        emit(GenerateChunk.Failed(error))
+                        return@use
+                    }
                     val parsed = parseNonStreamResponse(body)
                     emit(
                         GenerateChunk.Completed(
@@ -431,6 +446,22 @@ class OpenAiCompatibleAdapter(
     }
 
     // -- Response parsing --
+
+    private fun responseError(data: String): TellevError? {
+        val obj = runCatching { json.parseToJsonElement(data) as? JsonObject }.getOrNull()
+            ?: return null
+        val error = obj["error"]?.takeUnless { it is kotlinx.serialization.json.JsonNull }
+            ?: return null
+        val message = when (error) {
+            is JsonObject -> (error["message"] as? JsonPrimitive)?.contentOrNull ?: error.toString()
+            is JsonPrimitive -> error.contentOrNull
+            else -> error.toString()
+        }
+        return TellevError(
+            code = "provider_response_error",
+            message = message?.take(2000)?.takeIf { it.isNotBlank() } ?: "服务商返回生成错误",
+        )
+    }
 
     private fun parseStreamChunk(data: String): StreamChunkParsed {
         return runCatching {

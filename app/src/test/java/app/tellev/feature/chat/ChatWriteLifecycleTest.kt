@@ -9,6 +9,7 @@ import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.json.*
@@ -21,6 +22,46 @@ import java.util.concurrent.Executors
 /** Real JSONL storage and ViewModel; the gate pauses only the disk commit, never the UI. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatWriteLifecycleTest {
+    @Test fun `cancelled generation preparation releases state and permits retry`() = runBlocking {
+        val root = Files.createTempDirectory("tellev-generation-recovery-")
+        val disk = FileStDataStore(StDirectoryLayout.fromRoot(root))
+        val runtime = ChatSessionRuntime(disk)
+        val scope = CoroutineScope(coroutineContext)
+        try {
+            disk.bootstrap()
+            val character = CharacterCard("fixture", "Fixture")
+            disk.saveCharacter(character)
+            disk.saveChatSession(ChatSession("a", "A", character.id, null, emptyList()))
+            val session = disk.readChatSession("a")
+            runtime.activateSessionWrites(session)
+            val state = MutableStateFlow(ChatUiState(selectedCharacter = character, currentSession = session))
+            var attempts = 0
+            val host = HostProbe().api
+            val registry = ProviderRegistry(emptyList())
+            val coordinator = ChatGenerationCoordinator(disk, registry, object : PromptEngine {
+                override fun build(request: PromptBuildRequest): PromptBuildResult {
+                    attempts++
+                    assertTrue(state.value.isGenerating)
+                    throw CancellationException("injected preparation cancellation")
+                }
+            }, host, runtime, app.tellev.core.provider.GenerationRuntimeResolver(disk, registry, TestSecrets()))
+            repeat(2) {
+                assertTrue(coordinator.sendMessageWithRole("hello", emptyList(), MessageRole.User,
+                    uiState = state, scope = scope, characterScriptJob = null))
+                coordinator.generationJob?.join()
+                assertNull(state.value.error)
+                assertFalse(state.value.isGenerating)
+                assertNull(coordinator.generationJob)
+                assertNull(coordinator.activeRegeneration)
+            }
+            assertEquals(2, attempts)
+            assertTrue(state.value.messages.all { it.role == MessageRole.User })
+        } finally {
+            runtime.sessionWriteScope.cancel()
+            root.toFile().deleteRecursively()
+        }
+    }
+
     @Test fun `switch waits for accepted edit and variables and cannot overwrite the destination`() = exercise(false)
     @Test fun `failed save keeps dirty state and blocks switching without crashing the UI`() = exercise(true)
     @Test fun `failed user edit save is reported without launching generation or crashing`() = exercise(true, userEdit = true)
