@@ -86,6 +86,41 @@ class ChatWriteLifecycleTest {
         }
     }
 
+    @Test fun `unreadable recovery keeps the owner blocked but never wedges the transition`() = runBlocking {
+        val root = Files.createTempDirectory("tellev-recovery-read-")
+        val disk = FileStDataStore(StDirectoryLayout.fromRoot(root))
+        var readsBroken = false
+        val store = object : StDataStore by disk {
+            override suspend fun commitChatMutation(base: ChatSession, desired: ChatSession,
+                expectedRevision: Long?, operationId: String?): ChatSession = error("disk failed")
+            override suspend fun readChatSession(id: String): ChatSession {
+                if (readsBroken) throw java.io.IOException("unreadable")
+                return disk.readChatSession(id)
+            }
+        }
+        val runtime = ChatSessionRuntime(store)
+        val host = HostProbe()
+        try {
+            disk.bootstrap()
+            disk.saveChatSession(ChatSession("a", "A", "fixture", null, emptyList()))
+            runtime.activateSessionWrites(disk.readChatSession("a"))
+            val session = disk.readChatSession("a")
+            runCatching { runtime.scheduleMetadataSave(session, session.copy(title = "dirty")) {}.await() }
+            // 磁盘读不动的恢复：仍然阻断当前写入，但绝不能楔死会话切换。
+            readsBroken = true
+            val second = runtime.scheduleMetadataSave(session, session.copy(title = "second")) {}
+            val failure = runCatching { second.await() }.exceptionOrNull()
+            assertTrue(failure?.message?.contains("requires recovery") == true)
+            runtime.retireSessionRuntime(host.api)
+            readsBroken = false
+            runtime.activateSessionWrites(disk.readChatSession("a"))
+            Unit
+        } finally {
+            runtime.sessionWriteScope.cancel()
+            root.toFile().deleteRecursively()
+        }
+    }
+
     private fun exercise(failCount: Int, userEdit: Boolean = false) = runBlocking {
         check(!(userEdit && failCount == 1)) { "组合未定义" }
         val permanentlyBroken = failCount == Int.MAX_VALUE

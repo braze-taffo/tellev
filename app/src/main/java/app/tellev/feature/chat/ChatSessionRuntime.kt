@@ -98,6 +98,9 @@ internal class ChatSessionRuntime(
             onSessionError?.invoke(sessionId, "恢复未保存的会话状态失败：${error.message}")
             return false
         }
+        // A poisoned owner's queued writes are all doomed; settle their deferreds first so
+        // reset cannot race one that is still flipping to its failed state.
+        sessionWrites.awaitSettled(StorageOwner("chat", sessionId))
         val recovered = synchronized(sessionWriteLock) {
             val token = runtimeToken ?: return false
             if (token.sessionId != sessionId) return false
