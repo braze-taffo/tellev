@@ -1,5 +1,6 @@
 package app.tellev.core.extension.router
 
+import app.tellev.core.extension.ExternalChatWritePort
 import app.tellev.core.extension.VirtualApiRequest
 import app.tellev.core.extension.VirtualApiResponse
 import app.tellev.core.model.ChatMessage
@@ -20,6 +21,7 @@ import kotlinx.serialization.json.putJsonArray
 internal class ChatApiHandler(
     private val dataStore: StDataStore,
     private val json: Json,
+    private val externalChatWrites: ExternalChatWritePort = object : ExternalChatWritePort {},
 ) {
     suspend fun handleListChats(request: VirtualApiRequest): VirtualApiResponse {
         val queryParams = parseSimpleQuery(request.path)
@@ -47,7 +49,11 @@ internal class ChatApiHandler(
         request: VirtualApiRequest,
     ): VirtualApiResponse {
         val message = parseBody<ChatMessage>(request, json)
+        // This write bypasses RuntimeWriteCoordinator; quiesce keeps it out of the
+        // coordinator's in-flight tail and notifyWritten re-adopts the bumped revision.
+        externalChatWrites.quiesce(sessionId)
         dataStore.appendMessage(sessionId, message)
+        externalChatWrites.notifyWritten(sessionId)
         return jsonResponse(200, buildJsonObject { put("ok", true) }, json)
     }
 
@@ -86,6 +92,7 @@ internal class ChatApiHandler(
         val messages = stChatArrayToMessages(chatArray, chatId)
         val header = chatArray.firstOrNull() as? JsonObject
         val metadata = (header?.get("chat_metadata") as? JsonObject) ?: session.metadata
+        externalChatWrites.quiesce(chatId)
         dataStore.saveChatSession(
             session.copy(
                 messages = messages,
@@ -93,6 +100,7 @@ internal class ChatApiHandler(
                 rawHeader = header ?: session.rawHeader,
             ),
         )
+        externalChatWrites.notifyWritten(chatId)
         return jsonResponse(200, buildJsonObject { put("ok", true) }, json)
     }
 

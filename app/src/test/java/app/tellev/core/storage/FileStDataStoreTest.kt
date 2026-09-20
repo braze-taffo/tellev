@@ -84,6 +84,24 @@ class FileStDataStoreTest {
         assertEquals("only thought", diagnostics["response"]!!.jsonObject["reasoning"]!!.jsonPrimitive.content)
     }
 
+    @Test fun `commitChatMutation replays a pending journal write instead of failing as unrecovered`() = runBlocking {
+        val session = ChatSession("pending-chat", "Pending", "fixture", null, listOf(ChatMessage("m", MessageRole.Character, "Fixture", "original", 0)))
+        store.saveChatSession(session)
+        val onDisk = store.readChatSession(session.id)
+        // A crashed writer leaves a half-committed record whose payload never landed;
+        // use the real bytes so the replay restores exactly the state that was read.
+        val chatPath = layout.chats.resolve("fixture").resolve("pending-chat.jsonl")
+        val crashedWriter = JournaledFileWriter(layout.root) { if (it == JournaledFileWriter.Stage.PREPARED) throw IOException("crash") }
+        org.junit.Assert.assertThrows(IOException::class.java) {
+            crashedWriter.write(chatPath, java.nio.file.Files.readAllBytes(chatPath), "pending-op")
+        }
+        val committed = store.commitChatMutation(onDisk, onDisk.copy(title = "renamed"), null, "recovering-op")
+        assertTrue(committed.storageRevision >= 2)
+        val reloaded = store.readChatSession(session.id)
+        assertEquals("renamed", reloaded.title)
+        assertEquals("original", reloaded.messages.single().content)
+    }
+
     @Test fun `unrelated edits preserve legacy variable objects null swipe slots and template flags`() = runBlocking {
         val dir = layout.chats.resolve("legacy").createDirectories()
         val file = dir.resolve("legacy.jsonl")

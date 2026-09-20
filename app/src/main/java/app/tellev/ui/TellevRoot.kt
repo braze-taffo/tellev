@@ -104,6 +104,7 @@ fun TellevRoot() {
             secretStore = graph.secretStore,
             extensionHost = graph.extensionHost,
             permissionManager = graph.permissionManager,
+            externalChatWritePort = graph.apiRouter.externalChatWrites,
         ),
     )
 

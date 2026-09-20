@@ -15,6 +15,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -33,6 +34,7 @@ import java.util.UUID
 internal class ChatSessionRuntime(
     private val dataStore: StDataStore,
     private val onSessionError: ((sessionId: String, error: String) -> Unit)? = null,
+    private val onSessionRecovered: ((sessionId: String, truth: ChatSession) -> Unit)? = null,
 ) {
     val sessionWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val sessionWriteLock = Any()
@@ -57,6 +59,56 @@ internal class ChatSessionRuntime(
     }
 
     fun scheduleMetadataSave(
+        base: ChatSession,
+        desired: ChatSession,
+        onSessionUpdated: (ChatSession) -> Unit,
+    ): Deferred<CommitReceipt> {
+        if (!isOwnerPoisoned(StorageOwner("chat", base.id))) {
+            return submitSessionWrite(base, desired, onSessionUpdated)
+        }
+        // Degraded path: a previous write failed and the owner is poisoned. Re-arm it
+        // from disk truth first, then submit against that state. Acceptance of the new
+        // write happens after recovery instead of synchronously — only on this path.
+        return sessionWriteScope.async {
+            recoverPoisonedWrites()
+            submitSessionWrite(base, desired, onSessionUpdated).await()
+        }
+    }
+
+    private fun isOwnerPoisoned(owner: StorageOwner): Boolean = synchronized(sessionWriteLock) {
+        runtimeToken?.sessionId == owner.id && sessionWrites.isPoisoned(owner)
+    }
+
+    /**
+     * Re-arms a poisoned chat owner from disk truth: the coordinator snapshot is reset
+     * to what is actually stored, and the UI is rolled back to the same truth — a
+     * failed write never persisted, so its optimistic view must not survive either.
+     * Returns false when there is nothing to recover or the disk cannot be read;
+     * recovery is never retried in a loop.
+     */
+    suspend fun recoverPoisonedWrites(): Boolean {
+        val sessionId = synchronized(sessionWriteLock) {
+            val token = runtimeToken ?: return false
+            if (!sessionWrites.isPoisoned(StorageOwner("chat", token.sessionId))) return false
+            token.sessionId
+        }
+        val truth = try {
+            dataStore.readChatSession(sessionId)
+        } catch (error: Exception) {
+            onSessionError?.invoke(sessionId, "恢复未保存的会话状态失败：${error.message}")
+            return false
+        }
+        val recovered = synchronized(sessionWriteLock) {
+            val token = runtimeToken ?: return false
+            if (token.sessionId != sessionId) return false
+            if (!sessionWrites.isPoisoned(StorageOwner("chat", sessionId))) return false
+            sessionWrites.reset(StorageOwner("chat", sessionId), truth, truth.storageRevision)
+        }
+        onSessionRecovered?.invoke(sessionId, recovered.value)
+        return true
+    }
+
+    private fun submitSessionWrite(
         base: ChatSession,
         desired: ChatSession,
         onSessionUpdated: (ChatSession) -> Unit,
@@ -136,18 +188,38 @@ internal class ChatSessionRuntime(
 
     suspend fun flushSessionWrites(sessionId: String?, extensionHost: ExtensionHost) {
         if (sessionId == null) return
-        runtimeToken?.takeIf { it.sessionId == sessionId }?.let { sessionWrites.flushWrites(it) }
+        runtimeToken?.takeIf { it.sessionId == sessionId }?.let {
+            if (sessionWrites.isPoisoned(StorageOwner("chat", sessionId))) recoverPoisonedWrites()
+            sessionWrites.flushWrites(it)
+        }
         extensionHost.flushWrites()
     }
 
     suspend fun retireSessionRuntime(extensionHost: ExtensionHost) {
-        extensionHost.flushWrites()
-        val token = runtimeToken ?: return
-        sessionWrites.release(token)
-        synchronized(sessionWriteLock) {
-            sessionWrites.unregister(StorageOwner("chat", token.sessionId))
+        // The token is cleared first: a write racing a transition fails fast instead of
+        // being accepted into a chain that release may never await.
+        val token = synchronized(sessionWriteLock) {
+            val current = runtimeToken
             runtimeToken = null
+            current
         }
+        if (token == null) {
+            runCatching { extensionHost.flushWrites() }
+                .onFailure { error -> onSessionError?.invoke("", "扩展写入收尾失败：${error.message}") }
+            return
+        }
+        // Every step degrades to a single report. A poisoned chain must never abort the
+        // transition itself — that is how one failed write wedged every later switch,
+        // creation and close of a session until process death.
+        runCatching { extensionHost.flushWrites() }
+            .onFailure { error -> onSessionError?.invoke(token.sessionId, "扩展写入收尾失败：${error.message}") }
+        runCatching { sessionWrites.release(token) }
+            .onFailure { error -> onSessionError?.invoke(token.sessionId, "会话写入收尾失败：${error.message}") }
+        // release aborts on the first failure; settle every queued write before
+        // discarding so the cell can actually be removed and the owner re-registered.
+        sessionWrites.awaitSettled(StorageOwner("chat", token.sessionId))
+        runCatching { sessionWrites.unregister(StorageOwner("chat", token.sessionId), discardFailures = true) }
+            .onFailure { error -> onSessionError?.invoke(token.sessionId, "会话写入清理失败：${error.message}") }
     }
 
     fun currentRuntimeToken(sessionId: String?): RuntimeToken? = runtimeToken?.takeIf {
@@ -186,7 +258,15 @@ internal class ChatSessionRuntime(
                 if (scriptOwner != null && scriptCapability != null && extensionHost.capabilityToken(scriptOwner) == scriptCapability) {
                     extensionHost.unload(scriptOwner)
                 }
-                token?.let { sessionWrites.release(it) }
+                token?.let {
+                    try {
+                        sessionWrites.release(it)
+                    } catch (error: Exception) {
+                        onError("退出时仍有未完成写入：${error.message}")
+                    }
+                    sessionWrites.awaitSettled(StorageOwner("chat", it.sessionId))
+                    runCatching { sessionWrites.unregister(StorageOwner("chat", it.sessionId), discardFailures = true) }
+                }
             } catch (error: Exception) {
                 onError("退出时仍有未完成写入：${error.message}")
             } finally {

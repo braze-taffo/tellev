@@ -62,11 +62,35 @@ class ChatWriteLifecycleTest {
         }
     }
 
-    @Test fun `switch waits for accepted edit and variables and cannot overwrite the destination`() = exercise(false)
-    @Test fun `failed save keeps dirty state and blocks switching without crashing the UI`() = exercise(true)
-    @Test fun `failed user edit save is reported without launching generation or crashing`() = exercise(true, userEdit = true)
+    @Test fun `switch waits for accepted edit and variables and cannot overwrite the destination`() = exercise(failCount = 0)
+    @Test fun `failed save no longer blocks switching and rolls back on re-entry`() = exercise(failCount = Int.MAX_VALUE)
+    @Test fun `failed user edit save is reported without launching generation or crashing`() = exercise(failCount = Int.MAX_VALUE, userEdit = true)
+    @Test fun `a single failed save recovers in place on the next edit`() = exercise(failCount = 1)
 
-    private fun exercise(fail: Boolean, userEdit: Boolean = false) = runBlocking {
+    @Test fun `retire tolerates a failing extension host flush and stays reactivatable`() = runBlocking {
+        val root = Files.createTempDirectory("tellev-retire-flush-")
+        val disk = FileStDataStore(StDirectoryLayout.fromRoot(root))
+        val runtime = ChatSessionRuntime(disk)
+        val host = HostProbe()
+        host.failFlush = true
+        try {
+            disk.bootstrap()
+            disk.saveChatSession(ChatSession("a", "A", "fixture", null, emptyList()))
+            runtime.activateSessionWrites(disk.readChatSession("a"))
+            runtime.retireSessionRuntime(host.api) // 扩展宿主收尾失败不得阻断退休
+            runtime.activateSessionWrites(disk.readChatSession("a")) // 上一运行时确已退净
+            Unit
+        } finally {
+            runtime.sessionWriteScope.cancel()
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    private fun exercise(failCount: Int, userEdit: Boolean = false) = runBlocking {
+        check(!(userEdit && failCount == 1)) { "组合未定义" }
+        val permanentlyBroken = failCount == Int.MAX_VALUE
+        val singleFailure = failCount == 1
+        var remainingFailures = failCount
         val root = Files.createTempDirectory("tellev-chat-lifecycle-")
         val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
         Dispatchers.setMain(main)
@@ -89,7 +113,7 @@ class ChatWriteLifecycleTest {
                     error("Chat entry must not load inactive session bodies")
                 override suspend fun commitChatMutation(base: ChatSession, desired: ChatSession,
                     expectedRevision: Long?, operationId: String?): ChatSession {
-                    if (pause) { started.complete(Unit); gate.await(); if (fail) throw java.io.IOException("injected disk failure") }
+                    if (pause) { started.complete(Unit); gate.await(); if (remainingFailures > 0) { remainingFailures--; throw java.io.IOException("injected disk failure") } }
                     return disk.commitChatMutation(base, desired, expectedRevision, operationId)
                 }
             }
@@ -111,40 +135,67 @@ class ChatWriteLifecycleTest {
                 requireNotNull(host.local).update { it["counter"] = JsonPrimitive(7) }
                 if (userEdit) assertTrue(vm.uiState.value.messages.isEmpty())
                 else assertEquals("edited", vm.uiState.value.messages[0].content)
-                vm.switchSession("b")
+                if (!singleFailure) vm.switchSession("b")
             }
             withTimeout(5_000) { started.await() }
             delay(100)
             if (userEdit) assertEquals(0, host.editEvents.get())
-            assertEquals("a", vm.uiState.value.currentSession?.id)
-            assertEquals("original", disk.readChatSession("a").messages[0].content)
+            if (!singleFailure) {
+                assertEquals("a", vm.uiState.value.currentSession?.id)
+                assertEquals("original", disk.readChatSession("a").messages[0].content)
+            }
             gate.complete(Unit)
-            if (fail) {
+            if (failCount == 0) {
+                waitUntil { vm.uiState.value.currentSession?.id == "b" }
+                val saved = disk.readChatSession("a")
+                assertEquals("edited", saved.messages[0].content)
+                assertEquals(JsonPrimitive(7), saved.metadata["variables"]?.jsonObject?.get("counter"))
+                assertEquals("destination", disk.readChatSession("b").messages[0].content)
+                assertNull(disk.readChatSession("b").metadata["variables"])
+                assertEquals("destination", vm.uiState.value.messages[0].content)
+                val lateReply = CompletableDeferred<Boolean>()
+                withContext(main) {
+                    vm.handleTavernMessageRequest("replaceVariables", """{"variables":{"counter":999},"options":{"type":"chat"}}""",
+                        {}, { ok, _ -> lateReply.complete(ok) }, sourceToken)
+                }
+                assertFalse(withTimeout(5_000) { lateReply.await() })
+                assertNull(disk.readChatSession("b").metadata["variables"])
+            } else if (permanentlyBroken) {
                 waitUntil { vm.uiState.value.error?.contains("injected disk failure") == true }
                 if (userEdit) assertEquals(0, host.editEvents.get())
-                assertEquals("a", vm.uiState.value.currentSession?.id)
-                if (userEdit) assertTrue(vm.uiState.value.messages.isEmpty())
-                else assertEquals("edited", vm.uiState.value.messages[0].content)
+                // 一次失败不再把切换卡死：retire 降级为上报，会话照常落到 b。
+                waitUntil { vm.uiState.value.currentSession?.id == "b" }
                 assertEquals("original", disk.readChatSession("a").messages[0].content)
                 assertEquals("destination", disk.readChatSession("b").messages[0].content)
-                withContext(main) { vm.editMessage(0, "must not submit") }
-                if (userEdit) assertTrue(vm.uiState.value.messages.isEmpty())
-                else assertEquals("edited", vm.uiState.value.messages[0].content)
+                assertEquals("destination", vm.uiState.value.messages[0].content)
+                // 重进 a 从磁盘真相起步：失败编辑的脏视图没有存活。
+                withContext(main) { vm.switchSession("a") }
+                waitUntil { vm.uiState.value.currentSession?.id == "a" }
+                assertEquals("original", vm.uiState.value.messages[0].content)
+                if (!userEdit) {
+                    // 磁盘仍在坏：再次编辑仍然失败，但只是一次上报，不再楔死。
+                    withContext(main) { vm.editMessage(0, "still failing") }
+                    waitUntil { vm.uiState.value.messages[0].content == "still failing" }
+                    assertEquals("original", disk.readChatSession("a").messages[0].content)
+                    withContext(main) { vm.switchSession("b") }
+                    waitUntil { vm.uiState.value.currentSession?.id == "b" }
+                }
             } else {
-            waitUntil { vm.uiState.value.currentSession?.id == "b" }
-            val saved = disk.readChatSession("a")
-            assertEquals("edited", saved.messages[0].content)
-            assertEquals(JsonPrimitive(7), saved.metadata["variables"]?.jsonObject?.get("counter"))
-            assertEquals("destination", disk.readChatSession("b").messages[0].content)
-            assertNull(disk.readChatSession("b").metadata["variables"])
-            assertEquals("destination", vm.uiState.value.messages[0].content)
-            val lateReply = CompletableDeferred<Boolean>()
-            withContext(main) {
-                vm.handleTavernMessageRequest("replaceVariables", """{"variables":{"counter":999},"options":{"type":"chat"}}""",
-                    {}, { ok, _ -> lateReply.complete(ok) }, sourceToken)
-            }
-            assertFalse(withTimeout(5_000) { lateReply.await() })
-            assertNull(disk.readChatSession("b").metadata["variables"])
+                // 单次失败：用户留在会话内，下一次动作原地自愈。
+                waitUntil { vm.uiState.value.error?.contains("injected disk failure") == true }
+                assertEquals("original", disk.readChatSession("a").messages[0].content)
+                assertEquals("edited", vm.uiState.value.messages[0].content) // 恢复前的脏视图
+                withContext(main) { vm.editMessage(0, "retry") }
+                // 自愈把视图拉回磁盘真相；带着脏 base 的重放按三方合并如实冲突。
+                waitUntil { vm.uiState.value.messages[0].content == "original" }
+                assertEquals(0, host.editEvents.get())
+                withContext(main) { vm.editMessage(0, "third") }
+                waitUntil { disk.readChatSession("a").messages[0].content == "third" }
+                waitUntil { vm.uiState.value.messages[0].content == "third" }
+                assertEquals(1, host.editEvents.get())
+                withContext(main) { vm.switchSession("b") }
+                waitUntil { vm.uiState.value.currentSession?.id == "b" }
+                assertEquals("destination", disk.readChatSession("b").messages[0].content)
             }
         } finally {
             gate.complete(Unit)
@@ -155,7 +206,7 @@ class ChatWriteLifecycleTest {
         }
     }
 
-    private suspend fun waitUntil(predicate: () -> Boolean) = withTimeout(10_000) {
+    private suspend fun waitUntil(predicate: suspend () -> Boolean) = withTimeout(10_000) {
         while (!predicate()) delay(10)
     }
 
@@ -170,12 +221,14 @@ class ChatWriteLifecycleTest {
     private class HostProbe {
         val editEvents = java.util.concurrent.atomic.AtomicInteger()
         @Volatile var local: LocalVariableBackend? = null
+        @Volatile var failFlush = false
         private val events = MutableSharedFlow<ExtensionEvent>(extraBufferCapacity = 32)
         val api = Proxy.newProxyInstance(ExtensionHost::class.java.classLoader,
             arrayOf(ExtensionHost::class.java)) { _, method, args ->
             when (method.name) {
                 "setLocalVariableBackend" -> { local = args[0] as? LocalVariableBackend; Unit }
-                "setContextProvider", "setMessageVariableBackend", "unload", "flushWrites" -> Unit
+                "setContextProvider", "setMessageVariableBackend", "unload" -> Unit
+                "flushWrites" -> { if (failFlush) throw IllegalStateException("extension flush broken") }
                 "getEvents" -> events
                 "emit", "reportHostEvent" -> {
                     val event = args[0] as ExtensionEvent
