@@ -100,7 +100,11 @@ class ChatViewModel(
         dataStore = dataStore,
         onSessionError = { sessionId, error ->
             _uiState.update { state ->
-                if (state.currentSession?.id == sessionId) state.copy(error = error) else state
+                // Empty id marks a report from a transition without a live token; show it
+                // only when there is no current session to anchor it to.
+                val relevant = state.currentSession?.id == sessionId ||
+                    (sessionId.isEmpty() && state.currentSession == null)
+                if (relevant) state.copy(error = error) else state
             }
         },
         onSessionRecovered = { sessionId, truth ->

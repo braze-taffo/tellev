@@ -86,13 +86,16 @@ internal class ChatApiHandler(
             ?: return errorResponse(400, "Missing file_name", json)
         val chatArray = bodyObj["chat"]?.let { runCatching { it.jsonArray }.getOrNull() }
             ?: return errorResponse(400, "Missing chat array", json)
+        // This whole-file save bypasses RuntimeWriteCoordinator and overwrites without a
+        // revision check; quiesce BEFORE reading so the rewrite is not built on a snapshot
+        // that a coordinated write is about to replace underneath it.
+        externalChatWrites.quiesce(chatId)
         val session = runCatching { dataStore.readChatSession(chatId) }.getOrNull()
             ?: return errorResponse(404, "Chat not found: $chatId", json)
 
         val messages = stChatArrayToMessages(chatArray, chatId)
         val header = chatArray.firstOrNull() as? JsonObject
         val metadata = (header?.get("chat_metadata") as? JsonObject) ?: session.metadata
-        externalChatWrites.quiesce(chatId)
         dataStore.saveChatSession(
             session.copy(
                 messages = messages,
