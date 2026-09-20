@@ -95,10 +95,21 @@ internal class ChatRepository(
         chatWrites.withLock {
             val path = StorageFileOps.findByFileName(listOf(layout.chats, layout.groupChats), "${base.id}.jsonl")
                 ?: error("Chat session not found: ${base.id}")
-            val merged = applyChatSessionMutation(base, desired, readJsonlChat(path))
+            var merged = applyChatSessionMutation(base, desired, readJsonlChat(path))
             // Read the revision after parsing: a read-time migration may have just bumped it.
-            val revision = durableFiles.revision(path)
-            val receipt = writeChatSession(merged, expectedRevision ?: revision, operationId ?: UUID.randomUUID().toString())
+            var receipt = try {
+                writeChatSession(merged, expectedRevision ?: durableFiles.revision(path), operationId ?: UUID.randomUUID().toString())
+            } catch (error: IllegalStateException) {
+                // A half-committed journal record blocks new writes until recover() replays it.
+                // Mirror the read-time migration retry instead of surfacing "Unrecovered write"
+                // up to the coordinator, where it would poison the whole session owner.
+                if (error.message?.contains("Unrecovered write") != true) throw error
+                durableFiles.recover()
+                // The replay may have changed both the bytes and the revision just read,
+                // so redo the three-way merge against what is now on disk.
+                merged = applyChatSessionMutation(base, desired, readJsonlChat(path))
+                writeChatSession(merged, expectedRevision ?: durableFiles.revision(path), operationId ?: UUID.randomUUID().toString())
+            }
             merged.copy(storageRevision = receipt.revision)
         }
     }

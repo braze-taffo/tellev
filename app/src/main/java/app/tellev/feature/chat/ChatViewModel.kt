@@ -2,8 +2,10 @@ package app.tellev.feature.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.tellev.core.extension.ExternalChatWritePort
 import app.tellev.core.extension.ExtensionHost
 import app.tellev.core.extension.ExtensionPermissionManager
+import app.tellev.core.extension.MutableExternalChatWritePort
 import app.tellev.core.extension.RuntimeToken
 import app.tellev.core.extension.StEventCatalog
 import app.tellev.core.model.Attachment
@@ -88,6 +90,7 @@ class ChatViewModel(
     private val secretStore: SecretStore,
     private val extensionHost: ExtensionHost,
     private val permissionManager: ExtensionPermissionManager,
+    private val externalChatWritePort: MutableExternalChatWritePort? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -98,6 +101,21 @@ class ChatViewModel(
         onSessionError = { sessionId, error ->
             _uiState.update { state ->
                 if (state.currentSession?.id == sessionId) state.copy(error = error) else state
+            }
+        },
+        onSessionRecovered = { sessionId, truth ->
+            _uiState.update { state ->
+                if (state.currentSession?.id != sessionId) {
+                    state
+                } else {
+                    // A failed write never persisted; roll the optimistic view back to
+                    // what is actually stored so the next action builds on disk truth.
+                    state.copy(
+                        currentSession = truth,
+                        messages = truth.messages,
+                        error = state.error ?: "上次修改未能保存，已恢复到最近保存的会话",
+                    )
+                }
             }
         },
     )
@@ -116,6 +134,30 @@ class ChatViewModel(
     private var loadedCharacterScriptExtensionId: String? = null
 
     init {
+        // The extension virtual API saves/appends chats straight to storage; these hooks
+        // keep those writes out of the coordinator's in-flight tail and re-adopt the
+        // disk revision afterwards, so a script write can no longer poison the session.
+        externalChatWritePort?.register(object : ExternalChatWritePort {
+            override suspend fun quiesce(sessionId: String) {
+                val token = sessionRuntime.runtimeToken?.takeIf { it.sessionId == sessionId } ?: return
+                // A poisoned chain must not block the script write either; recovery on the
+                // next coordinated action re-arms from whatever this write leaves on disk.
+                runCatching { sessionRuntime.sessionWrites.flushWrites(token) }
+            }
+
+            override suspend fun notifyWritten(sessionId: String) {
+                if (sessionRuntime.runtimeToken?.sessionId != sessionId) return
+                runCatching {
+                    val adopted = sessionRuntime.observePersisted(sessionId, dataStore.readChatSession(sessionId))
+                    if (!_uiState.value.isGenerating) {
+                        _uiState.update {
+                            if (it.currentSession?.id == sessionId) it.copy(currentSession = adopted, messages = adopted.messages) else it
+                        }
+                    }
+                }
+            }
+        })
+
         extensionHost.setContextProvider(
             ChatTavernAdapter.createExtensionContextProvider(
                 getCurrentState = { _uiState.value },
@@ -1035,6 +1077,7 @@ class ChatViewModel(
 
     override fun onCleared() {
         generationCoordinator.clearInterruptionJob()
+        externalChatWritePort?.register(null)
         extensionHost.setContextProvider(null)
         extensionHost.setLocalVariableBackend(null)
         extensionHost.setMessageVariableBackend(null)
@@ -1054,6 +1097,7 @@ class ChatViewModelFactory(
     private val secretStore: SecretStore,
     private val extensionHost: ExtensionHost,
     private val permissionManager: ExtensionPermissionManager,
+    private val externalChatWritePort: MutableExternalChatWritePort? = null,
 ) : androidx.lifecycle.ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -1065,6 +1109,7 @@ class ChatViewModelFactory(
                 secretStore = secretStore,
                 extensionHost = extensionHost,
                 permissionManager = permissionManager,
+                externalChatWritePort = externalChatWritePort,
             ) as T
         }
         throw IllegalArgumentException("未知 ViewModel 类型：${modelClass.name}")

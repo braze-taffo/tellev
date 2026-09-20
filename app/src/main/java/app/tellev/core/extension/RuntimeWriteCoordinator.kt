@@ -53,6 +53,7 @@ class RuntimeWriteCoordinator<T>(
     private val lock = Any()
     private val cells = mutableMapOf<StorageOwner, Cell<T>>()
     private val operations = mutableMapOf<String, Operation>()
+    private val failedOperations = mutableSetOf<String>()
     private var generation = 0L
     private var activeSession: String? = null
 
@@ -141,14 +142,22 @@ class RuntimeWriteCoordinator<T>(
                 }
                 completion.complete(receipt)
             } catch (error: Throwable) {
-                synchronized(lock) { cell.failure = error }
+                synchronized(lock) {
+                    cell.failure = error
+                    failedOperations.add(request.operationId)
+                }
                 completion.completeExceptionally(error)
             }
         }
         // Also resolve callers if the supplied app lifetime scope was cancelled before launch.
+        // Skip when the job body already completed the deferred, so a completed-and-reset
+        // owner cannot be re-poisoned by this late handler.
         job.invokeOnCompletion { error ->
-            if (error != null) {
-                synchronized(lock) { cell.failure = error }
+            if (error != null && !completion.isCompleted) {
+                synchronized(lock) {
+                    cell.failure = error
+                    failedOperations.add(request.operationId)
+                }
                 completion.completeExceptionally(error)
             }
         }
@@ -175,10 +184,53 @@ class RuntimeWriteCoordinator<T>(
         }
     }
 
-    fun unregister(owner: StorageOwner) = synchronized(lock) {
+    /**
+     * Waits until every accepted operation of this owner has reached a terminal state,
+     * without throwing. release() aborts on the first failure and can leave later
+     * queued writes still in flight; a discard must settle them all first.
+     */
+    suspend fun awaitSettled(owner: StorageOwner) {
+        val writes = synchronized(lock) {
+            operations.values.filter { it.token.sessionId == owner.id }.map { it.accepted.committed }
+        }
+        writes.forEach { runCatching { it.await() } }
+    }
+
+    fun unregister(owner: StorageOwner, discardFailures: Boolean = false) = synchronized(lock) {
         val cell = cells[owner] ?: return@synchronized
-        check(cell.failure == null && cell.tail?.isCompleted != false) { "Cannot discard uncommitted state: $owner" }
+        check(cell.tail?.isCompleted != false) { "Cannot discard uncommitted state: $owner" }
+        if (!discardFailures) check(cell.failure == null) { "Cannot discard uncommitted state: $owner" }
         cells.remove(owner)
+    }
+
+    fun isPoisoned(owner: StorageOwner): Boolean = synchronized(lock) {
+        cells[owner]?.failure != null
+    }
+
+    /**
+     * Re-arms an owner whose persistence failed: the snapshot becomes the caller-supplied
+     * disk truth at its own revision, so later writes build on what is actually stored.
+     * Failed operations stop shadowing new writes; successful ones keep their receipts.
+     * A clean owner is left untouched, so a repeated recovery can never clobber writes
+     * accepted since the first. The caller supplies the reload; recovery never guesses.
+     */
+    fun reset(owner: StorageOwner, value: T, revision: Long): Snapshot<T> = synchronized(lock) {
+        val cell = cells[owner] ?: error("Unknown storage owner: $owner")
+        if (cell.failure == null) return@synchronized cell.snapshot
+        check(cell.tail?.isCompleted != false) { "Cannot reset while writes are pending: $owner" }
+        cell.snapshot = Snapshot(value, revision)
+        cell.failure = null
+        cell.tail = null
+        if (failedOperations.isNotEmpty()) {
+            val failedForOwner = operations.entries.filter {
+                it.value.token.sessionId == owner.id && it.key in failedOperations
+            }
+            failedForOwner.forEach {
+                operations.remove(it.key)
+                failedOperations.remove(it.key)
+            }
+        }
+        cell.snapshot
     }
 
     private fun requireActive(token: RuntimeToken) {

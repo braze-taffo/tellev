@@ -85,4 +85,74 @@ class RuntimeWriteCoordinatorTest {
         assertThrows(IllegalStateException::class.java) { coordinator.submit(request(token, 2)) { it + 1 } }
         assertEquals(2, coordinator.snapshot(owner).value) // Dirty recoverable memory is retained.
     }
+
+    @Test fun `reset re-arms a failed owner at the supplied revision so new writes proceed`() = runBlocking {
+        var diskBroken = true
+        val coordinator = RuntimeWriteCoordinator<Int>(this) { request, _ ->
+            if (diskBroken) error("disk failed") else CommitReceipt(request.operationId, request.baseRevision + 1, true)
+        }
+        coordinator.register(owner, 0, 0)
+        val token = coordinator.activate("a", "script")
+        coordinator.submit(request(token, 0)) { it + 1 }
+        yield()
+        assertTrue(coordinator.isPoisoned(owner))
+        val snapshot = coordinator.reset(owner, 5, 3)
+        assertEquals(RuntimeWriteCoordinator.Snapshot(5, 3), snapshot)
+        assertFalse(coordinator.isPoisoned(owner))
+        diskBroken = false
+        val accepted = coordinator.submit(request(token, 3)) { it + 1 }
+        assertEquals(4L, accepted.revision)
+        coordinator.flushWrites(token)
+        assertEquals(6, coordinator.snapshot(owner).value)
+    }
+
+    @Test fun `a failed operation stops shadowing retransmission after reset`() = runBlocking {
+        var diskBroken = true
+        val coordinator = RuntimeWriteCoordinator<Int>(this) { request, _ ->
+            if (diskBroken) error("disk failed") else CommitReceipt(request.operationId, request.baseRevision + 1, true)
+        }
+        coordinator.register(owner, 0, 0)
+        val token = coordinator.activate("a", "script")
+        val failedRequest = request(token, 0)
+        coordinator.submit(failedRequest) { it + 1 }
+        yield()
+        assertTrue(coordinator.isPoisoned(owner))
+        coordinator.reset(owner, 0, 0)
+        diskBroken = false
+        // Same operation ID, judged as a fresh submission instead of returning the old failure.
+        coordinator.submit(failedRequest) { it + 1 }
+        coordinator.flushWrites(token)
+        assertEquals(1, coordinator.snapshot(owner).value)
+        assertFalse(coordinator.isPoisoned(owner))
+    }
+
+    @Test fun `reset on a clean owner is a no-op that preserves accepted writes`() = runBlocking {
+        val coordinator = RuntimeWriteCoordinator<Int>(this) { request, _ -> CommitReceipt(request.operationId, request.baseRevision + 1, true) }
+        coordinator.register(owner, 0, 0)
+        val token = coordinator.activate("a", "script")
+        coordinator.submit(request(token, 0)) { it + 1 }
+        coordinator.flushWrites(token)
+        // A repeated recovery carrying stale disk truth must never clobber newer state.
+        assertEquals(RuntimeWriteCoordinator.Snapshot(1, 1), coordinator.reset(owner, 99, 5))
+        coordinator.submit(request(token, 1)) { it + 1 }
+        coordinator.flushWrites(token)
+        assertEquals(2, coordinator.snapshot(owner).value)
+    }
+
+    @Test fun `unregister discards a failed owner only when asked and never while writes pend`() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        val coordinator = RuntimeWriteCoordinator<Int>(this) { _, _ -> gate.await(); error("disk failed") }
+        coordinator.register(owner, 0, 0)
+        val token = coordinator.activate("a", "script")
+        val accepted = coordinator.submit(request(token, 0)) { it + 1 }
+        assertThrows(IllegalStateException::class.java) { coordinator.unregister(owner, discardFailures = true) }
+        gate.complete(Unit)
+        runCatching { accepted.committed.await() }
+        assertTrue(coordinator.isPoisoned(owner))
+        assertThrows(IllegalStateException::class.java) { coordinator.unregister(owner) }
+        coordinator.unregister(owner, discardFailures = true)
+        assertFalse(coordinator.isPoisoned(owner))
+        coordinator.register(owner, 7, 3)
+        assertEquals(RuntimeWriteCoordinator.Snapshot(7, 3), coordinator.snapshot(owner))
+    }
 }

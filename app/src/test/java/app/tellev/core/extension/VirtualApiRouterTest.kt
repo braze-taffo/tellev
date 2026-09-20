@@ -444,6 +444,47 @@ class VirtualApiRouterTest {
     }
 
     @Test
+    fun `chat saves and appends route through the external write port`() = runBlocking {
+        // Direct chat writes from scripts must go quiesce → write → notify so they stay
+        // out of the coordinator's in-flight tail and the bumped revision is re-adopted.
+        val calls = mutableListOf<String>()
+        router.externalChatWrites.register(object : ExternalChatWritePort {
+            override suspend fun quiesce(sessionId: String) { calls.add("quiesce:$sessionId") }
+            override suspend fun notifyWritten(sessionId: String) { calls.add("notify:$sessionId") }
+        })
+        saveSessionFor("port")
+        val chatId = "chat-port"
+
+        val get = router.route(VirtualApiRequest("POST", "/api/chats/get", body = """{"file_name":"$chatId"}"""))
+        assertEquals(200, get.status)
+        val rows = json.parseToJsonElement(get.body).jsonArray
+        val saveBody = buildString {
+            append("""{"file_name":"$chatId","chat":[""")
+            append(rows[0])
+            append(",")
+            append(rows[1].jsonObject.toMutableMap().let { row ->
+                row["mes"] = kotlinx.serialization.json.JsonPrimitive("edited text")
+                kotlinx.serialization.json.JsonObject(row)
+            })
+            append("]}")
+        }
+        assertEquals(200, router.route(VirtualApiRequest("POST", "/api/chats/save", body = saveBody)).status)
+
+        val append = router.route(
+            VirtualApiRequest(
+                "POST", "/api/chats/$chatId/messages",
+                body = """{"id":"m-append","role":"user","name":"Bob","content":"appended","createdAtMillis":3}""",
+            ),
+        )
+        assertEquals(200, append.status)
+
+        assertEquals(listOf("quiesce:$chatId", "notify:$chatId", "quiesce:$chatId", "notify:$chatId"), calls)
+        val reloaded = store.readChatSession(chatId)
+        assertEquals("edited text", reloaded.messages[0].content)
+        assertEquals("appended", reloaded.messages[1].content)
+    }
+
+    @Test
     fun `POST chats_get returns ST-shaped bare array with metadata header`() = runBlocking {
         store.saveChatSession(
             ChatSession(

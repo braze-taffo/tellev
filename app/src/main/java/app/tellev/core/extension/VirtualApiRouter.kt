@@ -40,8 +40,11 @@ class VirtualApiRouter(
     private val settingsStore: ExtensionSettingsStore? = null,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
 ) {
+    /** Barrier port for the chat handlers' direct writes; the chat runtime registers into it. */
+    val externalChatWrites = MutableExternalChatWritePort()
+
     private val characterHandler = CharacterApiHandler(dataStore, json)
-    private val chatHandler = ChatApiHandler(dataStore, json)
+    private val chatHandler = ChatApiHandler(dataStore, json, externalChatWrites)
     private val worldBookHandler = WorldBookApiHandler(dataStore, json)
     private val presetHandler = PresetApiHandler(dataStore, json)
     private val providerHandler = ProviderApiHandler(providerRegistry, secretStore, json)
