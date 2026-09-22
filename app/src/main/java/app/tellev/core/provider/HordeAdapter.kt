@@ -3,6 +3,7 @@ package app.tellev.core.provider
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.TellevError
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -104,6 +105,10 @@ class HordeAdapter(
 
         var requestId: String = ""
         val submitCall = client.newCall(submitRequest)
+        // guard 子 Job 无协程体可等：取消级联到达的瞬间即终结并断开连接，
+        // 让阻塞中的 body 读立即抛错，而不是等到读超时（生产配置 5 分钟）。
+        val submitCallGuard = Job(coroutineContext[Job])
+        submitCallGuard.invokeOnCompletion { if (!submitCall.isCanceled()) submitCall.cancel() }
 
         try {
             submitCall.execute().use { response ->
@@ -157,6 +162,7 @@ class HordeAdapter(
             )
             return@flow
         }
+        submitCallGuard.complete()
 
         // Step 2: Poll for completion
         val maxAttempts = 120 // 10 minutes at 5-second intervals
