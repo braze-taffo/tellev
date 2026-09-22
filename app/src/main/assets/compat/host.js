@@ -120,7 +120,10 @@
     return this;
   };
   window.__tellevReady = async () => {
-    for (let index = 0; index < ready.length; index++) await ready[index];
+    // 一个抛错的 ready 处理器不得永久毒化事件总线：逐个等待并吞掉失败，后续派发照常进行。
+    for (let index = 0; index < ready.length; index++) {
+      try { await ready[index]; } catch (error) { console.error('[tellev] ready handler failed:', error); }
+    }
   };
   window.__tellevScriptApi = script => {
     const option = o => o?.type === 'script' ? {...o,script_id:script.id} : o;

@@ -381,7 +381,13 @@ class WebViewJsExtensionHost(
         val payload = json.encodeToString(JsonObject.serializer(), event.payload)
         for (id in webViews.keys.toList()) {
             if (id == excludeExtensionId) continue
-            evaluateRuntime(id, "window.__tellevDispatch(" + JsonPrimitive(event.name) + "," + JsonPrimitive(payload) + ")")
+            // 单个扩展的派发失败（脚本 ready 处理器抛错、MVU 提交超时、运行时已卸载）
+            // 只记录并继续：既不能中断其余扩展的事件，也不允许未捕获异常击穿进程。
+            runCatching {
+                evaluateRuntime(id, "window.__tellevDispatch(" + JsonPrimitive(event.name) + "," + JsonPrimitive(payload) + ")")
+            }.onFailure { failure ->
+                android.util.Log.w("tellev-ext", "Event dispatch to $id failed: ${failure.message}")
+            }
         }
     }
 
