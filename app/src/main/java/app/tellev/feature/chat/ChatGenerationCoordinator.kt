@@ -311,6 +311,21 @@ internal class ChatGenerationCoordinator(
                             uiState.update { it.copy(streamingText = accumulatedText, streamingReasoning = accumulatedReasoning) }
                         }
                         is GenerateChunk.Completed -> {
+                            // 服务商 HTTP 200 但响应体为空（网关/中转站错误帧被适配器吞掉、
+                            // 内容拦截等）：显式报错，不再把空气泡持久化进会话。
+                            if (chunk.text.isBlank() && chunk.reasoning.isBlank()) {
+                                activeRegeneration = null
+                                uiState.update {
+                                    it.copy(
+                                        isGenerating = false,
+                                        streamingText = "",
+                                        streamingReasoning = "",
+                                        error = "生成失败：服务商未返回有效回复内容（可能是网关/中转站错误或内容拦截）",
+                                    )
+                                }
+                                ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.GENERATION_STOPPED)
+                                return@collect
+                            }
                             val rawFinalText = chunk.text
                             val parts = MessageReasoning.fromResponse(rawFinalText, chunk.reasoning)
                             val finalText = CharacterRegexApplier.applyNormal(
