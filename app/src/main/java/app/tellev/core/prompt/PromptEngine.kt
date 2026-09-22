@@ -4,6 +4,7 @@ import app.tellev.core.extension.EjsTemplateSettings
 import app.tellev.core.extension.LocalVariableBackend
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.MessageRole
+import app.tellev.core.model.WorldBookEntry
 import app.tellev.core.model.reasoningParts
 import app.tellev.core.prompt.PromptInjectionProcessor.hasJailbreakSlot
 import app.tellev.core.regex.CharacterRegexApplier
@@ -117,6 +118,11 @@ class DefaultPromptEngine(
         // 4. Activate world book entries with depth/position support
         val worldInfoRecursive = request.metadata["worldInfoRecursive"]?.jsonPrimitive?.booleanOrNull ?: false
         val worldInfoMaxRecursionSteps = request.metadata["worldInfoMaxRecursionSteps"]?.jsonPrimitive?.intOrNull ?: 0
+        // 条目内容的宏展开每次构建只允许发生一次：incvar/setvar 等副作用宏若在
+        // 扫描、catalog、激活列表三处重复执行，变量会在一轮生成里被多次累加。
+        val expandedWorldContent = mutableMapOf<WorldBookEntry, String>()
+        fun expandWorldContentOnce(entry: WorldBookEntry): String =
+            expandedWorldContent.getOrPut(entry) { macroEngine.expand(entry.content, macroContext) }
         val worldScanner = WorldInfoScanner(
             maxRecursionSteps = if (worldInfoRecursive) {
                 if (worldInfoMaxRecursionSteps > 0) worldInfoMaxRecursionSteps else Int.MAX_VALUE
@@ -133,7 +139,7 @@ class DefaultPromptEngine(
                     PromptTemplateWorldEntry(
                         id = it.id,
                         content = CharacterRegexApplier.applyWorldInfoForPrompt(
-                            text = macroEngine.expand(it.content, macroContext),
+                            text = expandWorldContentOnce(it),
                             character = request.character,
                             userName = request.persona?.name ?: "User",
                             preset = request.preset,
@@ -154,7 +160,7 @@ class DefaultPromptEngine(
             PromptTemplateWorldEntry(
                 id = entry.id,
                 content = CharacterRegexApplier.applyWorldInfoForPrompt(
-                    text = macroEngine.expand(entry.content, macroContext),
+                    text = expandWorldContentOnce(entry),
                     character = request.character,
                     userName = request.persona?.name ?: "User",
                     preset = request.preset,
