@@ -62,7 +62,7 @@ class WorldInfoScannerTest {
         random: () -> Double = { 0.0 },
         maxRecursion: Int = 5,
     ) = WorldInfoScanner(random = random, maxRecursionSteps = maxRecursion)
-        .scan(entries, text, expand = { it.content })
+        .scan(entries, text, expand = { _, content -> content })
 
     private fun ids(activated: List<WorldInfoScanner.ActivatedEntry>) = activated.map { it.entry.id }.toSet()
 
@@ -181,7 +181,7 @@ class WorldInfoScannerTest {
         val a = entry("a", keys = listOf("start"), content = "dragon")
         val b = entry("b", keys = listOf("dragon"), content = "dragon lore")
         val result = WorldInfoScanner(random = { 0.0 })
-            .scan(listOf(a, b), "start", expand = { it.content })
+            .scan(listOf(a, b), "start", expand = { _, content -> content })
 
         assertEquals(setOf("a"), ids(result.allActivated))
     }
@@ -278,7 +278,7 @@ class WorldInfoScannerTest {
         val low = entry("low", keys = listOf("k"), content = "aaaa", insertionOrder = 1)
         val high = entry("high", keys = listOf("k"), content = "bbbb", insertionOrder = 9)
         val result = WorldInfoScanner(random = { 0.0 }, maxContentTokens = 2)
-            .scan(listOf(low, high), "k", expand = { it.content })
+            .scan(listOf(low, high), "k", expand = { _, content -> content })
         assertEquals(setOf("high"), ids(result.allActivated))
     }
 
@@ -322,7 +322,7 @@ class WorldInfoScannerTest {
     fun `primary keys are macro-expanded before matching`() {
         val e = entry("e", keys = listOf("{{k}}"))
         val result = WorldInfoScanner(random = { 0.0 }, maxRecursionSteps = 0)
-            .scan(listOf(e), "dragon lore", expand = { it.content }, keyExpand = { if (it == "{{k}}") "dragon" else it })
+            .scan(listOf(e), "dragon lore", expand = { _, content -> content }, keyExpand = { if (it == "{{k}}") "dragon" else it })
         assertEquals(setOf("e"), ids(result.allActivated))
         // Without expansion the raw "{{k}}" key does not match.
         assertTrue(scan(listOf(e), "dragon lore").allActivated.isEmpty())
@@ -332,7 +332,7 @@ class WorldInfoScannerTest {
     fun `secondary keys are macro-expanded before matching`() {
         val e = entry("e", keys = listOf("alpha"), secondaryKeys = listOf("{{s}}"), selective = true, selectiveLogic = 0)
         val result = WorldInfoScanner(random = { 0.0 }, maxRecursionSteps = 0)
-            .scan(listOf(e), "alpha beta", expand = { it.content }, keyExpand = { if (it == "{{s}}") "beta" else it })
+            .scan(listOf(e), "alpha beta", expand = { _, content -> content }, keyExpand = { if (it == "{{s}}") "beta" else it })
         assertEquals(setOf("e"), ids(result.allActivated))
     }
 
@@ -359,7 +359,7 @@ class WorldInfoScannerTest {
             ignoreBudget = true,
         )
         val result = WorldInfoScanner(random = { 0.0 }, maxContentTokens = 1)
-            .scan(listOf(regular, forced), "", expand = { it.content })
+            .scan(listOf(regular, forced), "", expand = { _, content -> content })
 
         assertEquals(setOf("forced"), ids(result.allActivated))
     }
@@ -382,7 +382,7 @@ class WorldInfoScannerTest {
             content = "forced", ignoreBudget = true,
         )
         val result = WorldInfoScanner(random = { 0.0 }, maxContentTokens = 50)
-            .scan(listOf(big, smallLater, forcedLater), "", expand = { it.content })
+            .scan(listOf(big, smallLater, forcedLater), "", expand = { _, content -> content })
 
         // `big` (order 3, scanned first) crosses the 50-token budget: dropped,
         // and `smallLater` is dropped with it despite fitting on its own.

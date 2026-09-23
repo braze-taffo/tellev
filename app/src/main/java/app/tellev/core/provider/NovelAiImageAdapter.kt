@@ -432,25 +432,31 @@ class NovelAiImageAdapter(
                 .header("Content-Type", "application/json")
                 .build(),
         )
-        // 协程取消 → 断开连接，停止等待 NovelAI 的长耗时生成。
-        coroutineContext[Job]?.invokeOnCompletion { if (!call.isCanceled()) call.cancel() }
-        call.execute().use { response ->
-            if (!response.isSuccessful) {
-                val text = response.body?.string().orEmpty()
-                throw NovelAiHttpException(
-                    code = "novelai_http_${response.code}",
-                    message = friendlyMessage(response.code, text),
-                    retryable = response.code in 429..599,
-                )
+        // 空 guard 子 Job 无协程体可等：取消级联到达的瞬间即终结并断开连接，
+        // 停止等待 NovelAI 的长耗时生成（默认参 invokeOnCompletion 只在终态触发，阻塞读等不到）。
+        val callGuard = Job(coroutineContext[Job])
+        callGuard.invokeOnCompletion { if (!call.isCanceled()) call.cancel() }
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) {
+                    val text = response.body?.string().orEmpty()
+                    throw NovelAiHttpException(
+                        code = "novelai_http_${response.code}",
+                        message = friendlyMessage(response.code, text),
+                        retryable = response.code in 429..599,
+                    )
+                }
+                val zip = response.body?.bytes()
+                    ?: throw NovelAiHttpException("novelai_no_image_data", "NovelAI 响应为空", retryable = true)
+                return NovelAiImageProtocol.extractFirstPng(zip)
+                    ?: throw NovelAiHttpException(
+                        "novelai_no_png",
+                        "NovelAI 返回的压缩包中没有 PNG 图片",
+                        retryable = false,
+                    )
             }
-            val zip = response.body?.bytes()
-                ?: throw NovelAiHttpException("novelai_no_image_data", "NovelAI 响应为空", retryable = true)
-            return NovelAiImageProtocol.extractFirstPng(zip)
-                ?: throw NovelAiHttpException(
-                    "novelai_no_png",
-                    "NovelAI 返回的压缩包中没有 PNG 图片",
-                    retryable = false,
-                )
+        } finally {
+            callGuard.complete()
         }
     }
 

@@ -3,9 +3,11 @@ package app.tellev.core.provider
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.TellevError
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlin.coroutines.coroutineContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -104,7 +106,12 @@ class OpenRouterAdapter(
             .post(payload.toString().toRequestBody(JSON_TYPE))
             .build()
 
-        client.newCall(httpRequest).execute().use { response ->
+        val call = client.newCall(httpRequest)
+        // guard 子 Job 无协程体可等：取消级联到达的瞬间即终结并断开连接，
+        // 让阻塞中的 body 读立即抛错，而不是等到读超时（生产配置 5 分钟）。
+        val callGuard = Job(coroutineContext[Job])
+        callGuard.invokeOnCompletion { if (!call.isCanceled()) call.cancel() }
+        call.execute().use { response ->
             if (!response.isSuccessful) {
                 emit(GenerateChunk.Failed(TellevError(
                     code = "openrouter_http_${response.code}",
@@ -143,6 +150,7 @@ class OpenRouterAdapter(
                 emit(GenerateChunk.Completed(text))
             }
         }
+        callGuard.complete()
     }.flowOn(Dispatchers.IO)
 
     private fun Request.Builder.applyHeaders(config: ProviderConfig): Request.Builder = apply {

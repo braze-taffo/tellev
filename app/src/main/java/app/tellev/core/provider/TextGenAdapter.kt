@@ -3,6 +3,7 @@ package app.tellev.core.provider
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.TellevError
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -86,6 +87,10 @@ class TextGenAdapter(
             .build()
 
         val call = client.newCall(httpRequest)
+        // guard 子 Job 无协程体可等：取消级联到达的瞬间即终结并断开连接，
+        // 让阻塞中的 body 读立即抛错，而不是等到读超时（生产配置 5 分钟）。
+        val callGuard = Job(coroutineContext[Job])
+        callGuard.invokeOnCompletion { if (!call.isCanceled()) call.cancel() }
 
         try {
             call.execute().use { response ->
@@ -153,6 +158,7 @@ class TextGenAdapter(
                 ),
             )
         }
+        callGuard.complete()
     }.flowOn(Dispatchers.IO)
 
     // -- Payload construction --

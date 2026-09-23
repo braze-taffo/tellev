@@ -379,10 +379,16 @@ class WebViewJsExtensionHost(
     ) {
         publishLocalEvent(event)
         val payload = json.encodeToString(JsonObject.serializer(), event.payload)
-        for (id in webViews.keys.toList()) {
-            if (id == excludeExtensionId) continue
-            evaluateRuntime(id, "window.__tellevDispatch(" + JsonPrimitive(event.name) + "," + JsonPrimitive(payload) + ")")
-        }
+        dispatchExtensionEventToRuntimes(
+            extensionIds = webViews.keys.toList(),
+            excludeExtensionId = excludeExtensionId,
+            dispatch = { id ->
+                evaluateRuntime(id, "window.__tellevDispatch(" + JsonPrimitive(event.name) + "," + JsonPrimitive(payload) + ")")
+            },
+            onFailure = { id, failure ->
+                android.util.Log.w("tellev-ext", "Event dispatch to $id failed: ${failure.message}")
+            },
+        )
     }
 
     suspend fun evaluateRuntime(extensionId: String, expression: String): String {

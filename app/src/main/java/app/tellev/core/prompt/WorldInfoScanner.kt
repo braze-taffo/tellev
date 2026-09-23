@@ -73,15 +73,16 @@ class WorldInfoScanner(
 
     /**
      * Scan [entries] against [searchText]. [expand] is applied to each entry's
-     * content when it is activated (so recursion feeds expanded text and the
-     * returned [ActivatedEntry] carries the expanded content).
+     * stripped content when it is activated (so recursion feeds expanded text and
+     * the returned [ActivatedEntry] carries the expanded content). The original
+     * entry is passed as well so callers can cache expansion by entry identity.
      * [keyExpand] is applied to primary/secondary keys before matching,
      * mirroring ST's substituteParams on keys (world-info.js:4803-4804,4835).
      */
     fun scan(
         entries: List<WorldBookEntry>,
         searchText: String,
-        expand: (WorldBookEntry) -> String,
+        expand: (WorldBookEntry, String) -> String,
         keyExpand: (String) -> String = { it },
     ): ScanResult {
         // SillyTavern always rejects disabled entries before considering the
@@ -109,7 +110,7 @@ class WorldInfoScanner(
             for (entry in survivors) {
                 if (activated.containsKey(entry)) continue
                 if (passesProbability(entry)) {
-                    activated[entry] = expand(stripped.getValue(entry))
+                    activated[entry] = expand(entry, stripped.getValue(entry).content)
                     nextNew.add(entry)
                 } else {
                     failedProbability.add(entry)
