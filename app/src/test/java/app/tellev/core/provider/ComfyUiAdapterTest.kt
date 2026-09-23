@@ -5,8 +5,12 @@ import app.tellev.core.model.MessageRole
 import app.tellev.core.prompt.PromptBuildResult
 import app.tellev.core.prompt.PromptDiagnostics
 import app.tellev.core.prompt.PromptMessage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -22,8 +26,47 @@ import okio.Buffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class ComfyUiAdapterTest {
+
+    @Test fun `cancelling blocked history read ends generation promptly`() =
+        assertBlockedStageCancelsPromptly("history")
+
+    @Test fun `cancelling blocked image download ends generation promptly`() =
+        assertBlockedStageCancelsPromptly("view")
+
+    private fun assertBlockedStageCancelsPromptly(blockedStage: String) = runBlocking {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        BlockingProviderHttpServer { exchange ->
+            when (exchange.requestPath) {
+                "/prompt" -> exchange.respondJson("""{"prompt_id":"job-1","node_errors":{}}""")
+                "/history/job-1" -> if (blockedStage == "history") {
+                    exchange.stallBody(started, release)
+                } else {
+                    exchange.respondJson("""{"job-1":{"status":{"completed":true},"outputs":{"9":{"images":[{"filename":"image.png","type":"output"}]}}}}""")
+                }
+                "/view" -> exchange.stallBody(started, release)
+                else -> exchange.respondJson("{}")
+            }
+        }.use { server ->
+            val adapter = ComfyUiAdapter(client = OkHttpClient.Builder()
+                .readTimeout(30, TimeUnit.SECONDS).build())
+            val localConfig = config().copy(baseUrl = server.baseUrl)
+            val job = launch(Dispatchers.Default) {
+                adapter.streamGenerate(localConfig, request(ComfyUiSettings(workflowJson = workflow))).toList()
+            }
+            try {
+                assertTrue("$blockedStage request was not reached", started.await(5, TimeUnit.SECONDS))
+                withTimeout(3_000) { job.cancelAndJoin() }
+            } finally {
+                release.countDown()
+                withTimeout(3_000) { job.cancelAndJoin() }
+            }
+        }
+    }
 
     private val workflow = """
         {

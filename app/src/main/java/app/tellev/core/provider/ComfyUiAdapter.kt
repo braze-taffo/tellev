@@ -3,7 +3,6 @@ package app.tellev.core.provider
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.TellevError
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -328,34 +327,26 @@ class ComfyUiAdapter(
             .apply { config.headers.forEach { (name, value) -> header(name, value) } }
             .build()
 
-        val call = client.newCall(request)
-        // guard 子 Job 无协程体可等：取消级联到达的瞬间即终结并断开连接。
-        val callGuard = Job(coroutineContext[Job])
-        callGuard.invokeOnCompletion { if (!call.isCanceled()) call.cancel() }
-        try {
-            call.execute().use { response ->
-                val text = response.body?.string().orEmpty()
-                if (!response.isSuccessful) {
-                    throw ComfyHttpException(
-                        code = "comfy_http_${response.code}",
-                        message = extractError(text).ifBlank { "HTTP ${response.code}" },
-                        retryable = response.code in 429..599,
-                    )
-                }
-                val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
-                    ?: throw ComfyHttpException("comfy_bad_response", "ComfyUI 响应无法解析：$text", retryable = true)
-                val nodeErrors = root["node_errors"]?.jsonObject
-                if (!nodeErrors.isNullOrEmpty()) {
-                    throw ComfyHttpException(
-                        code = "comfy_node_errors",
-                        message = "工作流节点校验失败：$nodeErrors",
-                        retryable = false,
-                    )
-                }
-                return root["prompt_id"]?.jsonPrimitive?.contentOrNull
+        return client.newCall(request).executeCancellable { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw ComfyHttpException(
+                    code = "comfy_http_${response.code}",
+                    message = extractError(text).ifBlank { "HTTP ${response.code}" },
+                    retryable = response.code in 429..599,
+                )
             }
-        } finally {
-            callGuard.complete()
+            val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
+                ?: throw ComfyHttpException("comfy_bad_response", "ComfyUI 响应无法解析：$text", retryable = true)
+            val nodeErrors = root["node_errors"]?.jsonObject
+            if (!nodeErrors.isNullOrEmpty()) {
+                throw ComfyHttpException(
+                    code = "comfy_node_errors",
+                    message = "工作流节点校验失败：$nodeErrors",
+                    retryable = false,
+                )
+            }
+            root["prompt_id"]?.jsonPrimitive?.contentOrNull
         }
     }
 
@@ -377,7 +368,7 @@ class ComfyUiAdapter(
                 .url(config.endpoint("/history/$promptId"))
                 .get()
                 .build()
-            val entry = client.newCall(request).execute().use { response ->
+            val entry = client.newCall(request).executeCancellable { response ->
                 if (!response.isSuccessful) {
                     throw ComfyHttpException(
                         code = "comfy_http_${response.code}",
@@ -422,7 +413,7 @@ class ComfyUiAdapter(
         }
     }
 
-    private fun downloadImage(config: ProviderConfig, image: ComfyOutputImage): ByteArray {
+    private suspend fun downloadImage(config: ProviderConfig, image: ComfyOutputImage): ByteArray {
         val url = config.endpoint("").toHttpUrl().newBuilder()
             .addPathSegment("view")
             .addQueryParameter("filename", image.filename)
@@ -435,7 +426,7 @@ class ComfyUiAdapter(
             .apply { config.headers.forEach { (name, value) -> header(name, value) } }
             .build()
 
-        client.newCall(request).execute().use { response ->
+        return client.newCall(request).executeCancellable { response ->
             if (!response.isSuccessful) {
                 throw ComfyHttpException(
                     code = "comfy_http_${response.code}",
@@ -443,7 +434,7 @@ class ComfyUiAdapter(
                     retryable = response.code in 429..599,
                 )
             }
-            return response.body?.bytes()
+            response.body?.bytes()
                 ?: throw ComfyHttpException("comfy_no_image_data", "图片响应为空", retryable = true)
         }
     }

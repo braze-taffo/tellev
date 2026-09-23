@@ -20,9 +20,14 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -169,102 +174,109 @@ class HordeAdapter(
         val maxAttempts = 120 // 10 minutes at 5-second intervals
         var attempts = 0
 
-        while (attempts < maxAttempts) {
-            coroutineContext.ensureActive()
+        try {
+            while (attempts < maxAttempts) {
+                coroutineContext.ensureActive()
 
-            delay(POLL_INTERVAL_MS)
-            attempts++
+                delay(POLL_INTERVAL_MS)
+                attempts++
 
-            val statusRequest = Request.Builder()
-                .url("$HORDE_BASE_URL/generate/text/status/$requestId")
-                .applyHeaders(config)
-                .get()
-                .build()
+                val statusRequest = Request.Builder()
+                    .url("$HORDE_BASE_URL/generate/text/status/$requestId")
+                    .applyHeaders(config)
+                    .get()
+                    .build()
 
-            val statusCall = client.newCall(statusRequest)
-            try {
-                statusCall.execute().use { response ->
-                    if (!response.isSuccessful) {
-                        if (response.code == 404) {
+                val statusCall = client.newCall(statusRequest)
+                val statusCallGuard = Job(coroutineContext[Job])
+                statusCallGuard.invokeOnCompletion { if (!statusCall.isCanceled()) statusCall.cancel() }
+                try {
+                    statusCall.execute().use { response ->
+                        if (!response.isSuccessful) {
+                            if (response.code == 404) {
+                                emit(
+                                    GenerateChunk.Failed(
+                                        TellevError(
+                                            code = "horde_not_found",
+                                            message = "Request not found - may have expired",
+                                            retryable = true,
+                                        ),
+                                    ),
+                                )
+                                return@flow
+                            }
+                            return@use // Retry on transient errors
+                        }
+
+                        val body = response.body?.string().orEmpty()
+                        val statusObj = json.parseToJsonElement(body).jsonObject
+
+                        val done = statusObj["done"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+                        val faulted = statusObj["faulted"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+
+                        if (faulted) {
                             emit(
                                 GenerateChunk.Failed(
                                     TellevError(
-                                        code = "horde_not_found",
-                                        message = "Request not found - may have expired",
+                                        code = "horde_faulted",
+                                        message = "Request faulted on Horde",
                                         retryable = true,
                                     ),
                                 ),
                             )
                             return@flow
                         }
-                        return@use // Retry on transient errors
-                    }
 
-                    val body = response.body?.string().orEmpty()
-                    val statusObj = json.parseToJsonElement(body).jsonObject
+                        if (done) {
+                            val generations = statusObj["generations"]?.jsonArray
+                            val text = generations?.firstOrNull()?.jsonObject
+                                ?.get("text")?.jsonPrimitive?.contentOrNull.orEmpty()
 
-                    val done = statusObj["done"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
-                    val faulted = statusObj["faulted"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
-
-                    if (faulted) {
-                        emit(
-                            GenerateChunk.Failed(
-                                TellevError(
-                                    code = "horde_faulted",
-                                    message = "Request faulted on Horde",
-                                    retryable = true,
-                                ),
-                            ),
-                        )
-                        return@flow
-                    }
-
-                    if (done) {
-                        val generations = statusObj["generations"]?.jsonArray
-                        val text = generations?.firstOrNull()?.jsonObject
-                            ?.get("text")?.jsonPrimitive?.contentOrNull.orEmpty()
-
-                        if (text.isEmpty()) {
-                            emit(
-                                GenerateChunk.Failed(
-                                    TellevError(
-                                        code = "horde_empty",
-                                        message = "Horde returned an empty response",
-                                        retryable = true,
+                            if (text.isEmpty()) {
+                                emit(
+                                    GenerateChunk.Failed(
+                                        TellevError(
+                                            code = "horde_empty",
+                                            message = "Horde returned an empty response",
+                                            retryable = true,
+                                        ),
                                     ),
-                                ),
-                            )
-                        } else {
-                            emit(GenerateChunk.Completed(text))
+                                )
+                            } else {
+                                emit(GenerateChunk.Completed(text))
+                            }
+                            return@flow
                         }
-                        return@flow
+
+                        // Still processing - emit a status update as empty delta (optional)
+                        val waitTime = statusObj["wait_time"]?.jsonPrimitive?.contentOrNull
+                        val queuePosition = statusObj["queue_position"]?.jsonPrimitive?.contentOrNull
+                        // Could emit a progress indicator here if needed
                     }
-
-                    // Still processing - emit a status update as empty delta (optional)
-                    val waitTime = statusObj["wait_time"]?.jsonPrimitive?.contentOrNull
-                    val queuePosition = statusObj["queue_position"]?.jsonPrimitive?.contentOrNull
-                    // Could emit a progress indicator here if needed
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // OkHttp reports a cancelled body read as IOException.
+                    coroutineContext.ensureActive()
+                    // A live request may retry after a transient network error.
+                } finally {
+                    statusCallGuard.complete()
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                statusCall.cancel()
-                // Try to cancel the remote request
-                cancelRemoteRequest(config, requestId)
-                throw e
-            } catch (_: Exception) {
-                // Network error during polling, retry
             }
-        }
 
-        // Timeout
-        emit(
-            GenerateChunk.Failed(
-                TellevError(
-                    code = "horde_timeout",
-                    message = "Horde request timed out after ${maxAttempts * POLL_INTERVAL_MS / 1000}s",
-                    retryable = true,
+            // Timeout
+            emit(
+                GenerateChunk.Failed(
+                    TellevError(
+                        code = "horde_timeout",
+                        message = "Horde request timed out after ${maxAttempts * POLL_INTERVAL_MS / 1000}s",
+                        retryable = true,
+                    ),
                 ),
-            ),
-        )
+            )
+        } finally {
+            if (coroutineContext[Job]?.isCancelled == true) cancelRemoteRequest(config, requestId)
+        }
     }.flowOn(Dispatchers.IO)
 
     // -- Payload construction --
@@ -322,7 +334,13 @@ class HordeAdapter(
                 .applyHeaders(config)
                 .delete()
                 .build()
-            client.newCall(cancelRequest).execute().close()
+            client.newCall(cancelRequest).apply {
+                timeout().timeout(5, TimeUnit.SECONDS)
+                enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) = Unit
+                    override fun onResponse(call: Call, response: Response) = response.close()
+                })
+            }
         }
     }
 
