@@ -28,7 +28,13 @@ function injectPrompt(key, prompt, order = 100, sticky = 0, uid = '') {
   return '';
 }
 
-function getPromptsInjected(key, postprocess = [], outlet = false) {
+// ST generate-phase semantics (inject.ts:56 + handler.ts:247): with
+// forceOutlet active, getPromptsInjected returns a placeholder instead of
+// collecting inline, so injections registered later in the pass are still
+// collected by the end-of-build scan (handler.ts:380). Every Tellev render
+// happens inside the generate pass, so the default is outlet-on here;
+// explicit arguments still win.
+function getPromptsInjected(key, postprocess = [], outlet = true) {
   if (outlet && (!Array.isArray(postprocess) || postprocess.length <= 0)) {
     return `{{outletPromptsInjected:${key}}}`;
   }
@@ -68,12 +74,16 @@ function deactivatePrompts(count = 1) {
 }
 
 // ST applyOutletPromptsInjected (inject.ts:85): resolve
-// {{outletPromptsInjected:key}} repeatedly until none remain.
-function applyOutletPrompts(content, recursion = 41) {
+// {{outletPromptsInjected:key}} repeatedly until none remain. ST bounds this
+// by world_info_max_recursion_steps + 1 (default 100 → 101) and turns
+// forceOutlet OFF before scanning (handler.ts:376) — the resolver therefore
+// collects inline (outlet=false), otherwise each pass would re-emit the
+// placeholder it just consumed.
+function applyOutletPrompts(content, recursion = 101) {
   let result = String(content ?? '');
   for (let i = 0; i < recursion; i++) {
     if (!result.includes('{{outletPromptsInjected:')) break;
-    result = result.replace(/\{\{outletPromptsInjected:(.+?)\}\}/g, (_, key) => getPromptsInjected(key));
+    result = result.replace(/\{\{outletPromptsInjected:(.+?)\}\}/g, (_, key) => getPromptsInjected(key, [], false));
   }
   return result;
 }
@@ -196,6 +206,9 @@ window.__tellevTemplate = async function (request) {
     // internals, so stub it to a permissive empty context — bare references
     // and getContext() survive, deeper property access yields undefined.
     SillyTavern: { getContext: () => ({}) },
+    // ST execute() runs STscript; Tellev has no STscript engine, so calls
+    // resolve to an empty pipe instead of a ReferenceError.
+    execute: async () => '',
     // faker is not bundled; declaring it prevents a ReferenceError on bare
     // references (property access still throws, matching an absent lib).
     faker: undefined,

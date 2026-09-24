@@ -58,7 +58,11 @@ class WebViewTemplateEvaluator(private val context: Context) : PromptTemplateJsB
     }
 
     override fun replaceOutletPlaceholders(content: String): String {
-        if (!content.contains(OUTLET_MARKER) || view == null) return content
+        if (!content.contains(OUTLET_MARKER)) return content
+        // No WebView yet means nothing ever rendered, so the registry is empty
+        // and every placeholder resolves to '' — strip them instead of leaking
+        // the literal marker into the prompt (ST handler.ts:380 has no such gap).
+        val view = this.view ?: return OUTLET_PATTERN.replace(content, "")
         check(Looper.myLooper() != Looper.getMainLooper()) { "Template evaluation must run off the UI thread" }
         return runBlocking {
             withTimeout(30_000) {
@@ -69,8 +73,8 @@ class WebViewTemplateEvaluator(private val context: Context) : PromptTemplateJsB
                     pending[id] = result
                     try {
                         withContext(Dispatchers.Main) {
-                            view!!.evaluateJavascript(
-                                "window.__tellevTemplateOutlet(${jsString(content)})" +
+                            view.evaluateJavascript(
+                                "Promise.resolve(window.__tellevTemplateOutlet(${jsString(content)}))" +
                                     ".then(v=>({content:v})).then(" +
                                     "v=>TemplateNative.complete('$id',true,JSON.stringify(v))," +
                                     "e=>TemplateNative.complete('$id',false,String(e.stack||e)))", null)
@@ -132,6 +136,7 @@ class WebViewTemplateEvaluator(private val context: Context) : PromptTemplateJsB
 
     private companion object {
         const val OUTLET_MARKER = "{{outletPromptsInjected:"
+        val OUTLET_PATTERN = Regex("""\{\{outletPromptsInjected:(.+?)\}\}""")
 
         // kotlinx escapes control characters but not U+2028/2029, which are
         // legal JSON but terminate a JS string literal in older parsers.

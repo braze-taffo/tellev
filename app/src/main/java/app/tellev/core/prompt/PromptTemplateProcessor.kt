@@ -63,14 +63,13 @@ class DefaultPromptTemplateProcessor(
             emptyList()
         }
 
-        // Fast path for content without EJS or instruction markers — but
-        // outlet placeholders must still resolve here: a plain message can
-        // collect injections registered by an earlier build's sticky entries
-        // without containing any EJS itself.
+        // Fast path for content without EJS, outlet placeholders, or
+        // instruction markers. Marker-bearing requests route to the full path
+        // so the end-of-build scan below resolves them (ST handler.ts:380).
         if (!request.messages.any { it.content.contains("<%") || it.content.contains(OUTLET_MARKER) || PromptTemplateParser.hasInstructionMarker(it.content) } &&
             activeBlocks.isEmpty()
         ) {
-            return PromptTemplateResult(messages = resolveOutletPlaceholders(request.messages))
+            return PromptTemplateResult(messages = request.messages)
         }
 
         val scopes = PromptTemplateExpressionEvaluator.extractVariableScopes(request.metadata)

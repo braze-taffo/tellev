@@ -35,6 +35,11 @@ class TemplateConstantsCompatTest {
             context = context,
             metadata = buildJsonObject { },
             currentWorldBookId = "char-book",
+            // charLoreBook only binds when the catalog actually has the book
+            // (bookless cards must see falsy, like ST's undefined).
+            worldCatalog = listOf(
+                PromptTemplateWorldEntry(id = "e1", content = "WI", bookId = "char-book"),
+            ),
         ),
     ).messages.single().content
 
