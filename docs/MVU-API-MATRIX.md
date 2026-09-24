@@ -420,3 +420,52 @@ A placeholder candidate is a static heuristic, not proof that the entire method 
 | `window.updateVariablesWith` | 2 | No | js-slash-runner/src/function/variables.ts:203<br>js-slash-runner/src/function/variables.ts:207<br>js-slash-runner/src/function/variables.ts:211 | Pending |
 | `window.updateWorldbookWith` | 0 | Yes | js-slash-runner/src/function/worldbook.ts:432 | Pending |
 | `window.waitGlobalInitialized` | 1 | No | js-slash-runner/src/function/global.ts:17<br>js-slash-runner/src/function/global.ts:28 | Pending |
+
+## EJS template bare functions (ST-Prompt-Template prepareContext surface)
+
+Names available inside `<% %>` templates per ST-Prompt-Template `ejs.ts` prepareContext + SHARE_CONTEXT. Same-name script-extension APIs (`TavernHelper.injectPrompts` plural, `window.getChatMessages`) are different namespaces — do not conflate.
+
+| Name | Status | Notes |
+| --- | --- | --- |
+| `getvar` | implemented | reads merged cache (global<local<message); options: scope shorthand/flags/merge/results/defaults |
+| `setvar` | implemented | ST default scope = message (variables.ts:307) |
+| `getLocalVar / getGlobalVar / getMessageVar` | implemented | — |
+| `setLocalVar / setGlobalVar / setMessageVar` | implemented | — |
+| `incvar / decvar` | implemented | read cache, write message by default |
+| `incLocalVar / incGlobalVar / incMessageVar` | implemented | — |
+| `decLocalVar / decGlobalVar / decMessageVar` | implemented | — |
+| `delvar / delLocalVar / delGlobalVar / delMessageVar` | implemented | delvar defaults to message scope |
+| `insvar / insertLocalVar / insertGlobalVar / insertMessageVar` | implemented | array push / index splice |
+| `define` | implemented | — |
+| `getwi / getWorldInfo` | implemented | no RegExp entry matching, no data-bound activation context (ST diverges) |
+| `injectPrompt / getPromptsInjected / hasPromptsInjected` | implemented | module-level registry in template.js; sticky decayed once per build; forceOutlet generate-phase semantics (handler.ts:247/376) |
+| `parseJSON` | implemented | repair subset of jsonrepair: trailing commas, unquoted keys, single quotes |
+| `jsonPatch` | implemented | RFC 6902 incl. "-" append; test failure returns original doc |
+| `patchVariables` | implemented | read-patch-write; default message scope |
+| `getChatMessage / getChatMessages / matchChatMessages` | implemented | chat floors passed by PromptEngine; content macro-expanded; regex re-application not replicated |
+| `getVar / setVar / getAllVariables` | implemented | Tellev extras (ST aliases/none) |
+| `include` | divergent | Tellev renders a worldbook entry by name; ST include is an unimplemented stub returning empty |
+| `SillyTavern` | stub | empty context; getContext() returns {} |
+| `execute` | stub | async () => ''; no STscript engine |
+| `faker` | stub | declared undefined; lib not bundled |
+| `print` | implemented | EJS outputFunctionName built-in |
+| `activateRegex / activateWorldInfo / activewi / activateWorldInfoByKeywords / selectActivatedEntries` | missing | worldbook activation family |
+| `getWorldInfoData / getWorldInfoActivatedData / getEnabledWorldInfoEntries / getEnabledLoreBooks` | missing | worldbook data family |
+| `getCharData / getCharaData / getchar / getchr / getChara` | missing | character data family |
+| `getpreset / getprp / getPresetPrompt` | missing | preset prompt family |
+| `getqr / getQuickReply / getQuickReplyData` | missing | quick reply family |
+| `evalTemplate` | missing | nested template evaluation (EjsTemplate.evalTemplate exists script-side) |
+| `setVariableSchema / findVariables / applyVarYamlAnnotate` | missing | variable schema/annotation family |
+| `userName / charName / assistantName / name1 / name2 / user / char` | implemented | constants |
+| `lastMessage / lastUserMessage / lastCharMessage` | implemented | constants |
+| `lastMessageId / lastUserMessageId / lastCharMessageId` | implemented | numbers; visible-message index base (ST uses full chat) |
+| `characterId / chatId / model / runType / generateType` | implemented | chatId empty; runType always "generate"; generateType always "normal" (no swipe/continue distinction) |
+| `charLoreBook / userLoreBook / chatLoreBook` | implemented | charLoreBook binds only when the card ships an embedded book; others null |
+| `groups / groupId` | implemented | empty stubs |
+| `charAvatar / userAvatar` | implemented | empty-string stubs |
+| `variables` | implemented | live cache object (setvar-synced); message/local/global layers merged |
+| `LAST_SEND_TOKENS / LAST_SEND_CHARS / LAST_RECEIVE_TOKENS / LAST_RECEIVE_CHARS` | missing | written post-generation in ST |
+| `message_id / swipe_id / is_last / is_user / is_system / name (render phase)` | missing | ST render-phase per-floor fields |
+| `prompt_template_prepare event` | missing | script hook into context preparation |
+
+Coverage 2026-09-25: 38 of 62 function names implemented on the production WebView path (was 12); constants declared except the four LAST_* counters and render-phase fields.
