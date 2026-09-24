@@ -131,6 +131,7 @@ fun TellevRoot() {
             themeModeFlow = graph.themeModeFlow,
             themeAccentFlow = graph.themeAccentFlow,
             chatBubbleAlphaFlow = graph.chatBubbleAlphaFlow,
+            chatFontSizeSpFlow = graph.chatFontSizeSpFlow,
             localDreamModelsRoot = java.io.File(
                 graph.dataStore.layout.root.toFile(),
                 app.tellev.core.ldream.LocalDreamCore.LOCAL_DREAM_MODELS_DIR_NAME,
@@ -238,10 +239,12 @@ fun TellevRoot() {
             // Chat tab - single screen
             composable(TellevTab.Chat.route) {
                 val bubbleAlpha by graph.chatBubbleAlphaFlow.collectAsState()
+                val chatFontSizeSp by graph.chatFontSizeSpFlow.collectAsState()
                 ChatScreen(
                     viewModel = chatViewModel,
                     bottomBarReserve = innerPadding.calculateBottomPadding(),
                     bubbleAlpha = bubbleAlpha,
+                    chatFontSizeSp = chatFontSizeSp,
                 )
             }
 

@@ -173,7 +173,9 @@ internal object ExtensionScriptTemplate {
         // Kotlin block comments by the compiler.
         internal const val HTML_TEMPLATE: String = "<!doctype html><html data-extension-id=\"__EXTENSION_ID__\"><head>" +
             "<meta charset=\"utf-8\">" +
-            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https: blob:; style-src 'unsafe-inline' https:; connect-src 'self' https:; img-src https: data:; media-src https: data:; font-src https: data:;\">" +
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
+            "<style>html,body{background:transparent;margin:0;min-height:100%;}</style>" +
+            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https: blob:; style-src 'unsafe-inline' https:; connect-src 'self' https:; img-src https: data:; media-src https: data:; font-src https: data:; frame-src 'self' blob:;\">" +
             "<script src=\"https://extensions.tellev.local/compat/globals.js\"></script>" +
             "</head><body><script>\n" +
             "__SHOWDOWN_SOURCE__\n" +

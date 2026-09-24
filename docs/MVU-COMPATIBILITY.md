@@ -1,5 +1,11 @@
 # tellev MVU 兼容实施与验收记录
 
+## 2026-09-24 角色脚本容器更新
+
+《玄浑纪》卡的脚本现运行于独立同源 iframe，父 WebView 开启按扩展源隔离的 DOM Storage；聊天页可打开该运行时的全屏界面。
+真实卡的七段脚本、MVU 初始化和状态栏 iframe 已在浏览器回放中验证。
+本次无连接设备，Android 仪器测试仅编译完成。详见[角色卡兼容记录](CHARACTER-TAVERN-HELPER-COMPAT.md)。
+
 ## 2026-09-07 对话保存冲突修复
 
 使用真实 JSONL 存储复现了生成完成后 MVU 改写正文触发的 `Conflicting stale update at message[reply].raw.mes`。生成更新 `content`，导入快照 `raw.mes` 保留旧值；落盘会将正文覆盖到 `mes`，后续 MVU 同时改写正文和快照时产生假冲突。三方合并现在用各自的实际正文校正该冗余字段，保留空 swipe 的字段缺省语义及真正正文冲突检查。
@@ -60,7 +66,7 @@
 
 ## 尚未达到验收条件的范围
 
-1. `TavernSessionRuntime` 父 WebView＋脚本/消息 iframe 尚未落地。现有跨 WebView 复制事件对象、模块注入同名变量、脚本 data/文件夹/按钮/Schema/待处理调用的完整生命周期仍需重构。
+1. 角色脚本已有父 WebView 与独立 iframe；`TavernSessionRuntime` 的消息 iframe、聊天 DOM 联动、脚本 data/文件夹/按钮/Schema/待处理调用的完整生命周期仍未落地，跨 WebView 事件对象传递仍需对照上游。
 2. character、preset、script、extension 的正式归属与唯一归属旧设置迁移没有完成；global/chat/message 的后台、前端、模板全部同步/异步契约仍需统一。所有资源保存入口尚未纳入同一个协调器。
 3. 当前 MVU 收包完成判断仍含正文长度、stat_data 和 15 秒等待，原生初始化旧分支仍存在；真实事件结束/写入屏障替代、慢监听器/异常/嵌套事件/中断/重算语义未全部完成。
 4. 414 个已公开入口的完整行为、异常、同步返回与 `_bind` 契约尚未全部实现和验收，155 个静态占位候选待逐一处理；不会将改成抛错计为实现完成。

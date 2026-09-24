@@ -86,6 +86,7 @@ internal fun ChatBubble(
     depth: Int,
     htmlPanelMaxHeight: Dp,
     bubbleAlpha: Float,
+    chatFontSizeSp: Int,
     tavernRuntime: TavernMessageRuntime,
     onHtmlBoundaryDrag: (Float) -> Unit,
     onSwipeLeft: () -> Unit,
@@ -259,6 +260,7 @@ internal fun ChatBubble(
                 isUser = isUser,
                 highlightDialogue = message.role != MessageRole.System,
                 bubbleAlpha = bubbleAlpha,
+                chatFontSizeSp = chatFontSizeSp,
                 modifier = Modifier.fillMaxWidth(),
                 tavernRuntime = tavernRuntime,
                 onHtmlBoundaryDrag = onHtmlBoundaryDrag,
@@ -270,6 +272,7 @@ internal fun ChatBubble(
                 isUser = isUser,
                 highlightDialogue = message.role != MessageRole.System,
                 bubbleAlpha = bubbleAlpha,
+                chatFontSizeSp = chatFontSizeSp,
                 modifier = Modifier
                     .fillMaxWidth()
                     // 半透明气泡：背景图透出 40%，前端卡片分支保持无底板。
@@ -311,6 +314,7 @@ internal fun ChatBubble(
                         isUser = isUser,
                         highlightDialogue = message.role != MessageRole.System,
                         bubbleAlpha = bubbleAlpha,
+                        chatFontSizeSp = chatFontSizeSp,
                         modifier = Modifier.fillMaxWidth(),
                         tavernRuntime = tavernRuntime,
                         onHtmlBoundaryDrag = onHtmlBoundaryDrag,
@@ -335,6 +339,7 @@ internal fun TavernMessageContent(
     isUser: Boolean,
     highlightDialogue: Boolean,
     bubbleAlpha: Float,
+    chatFontSizeSp: Int,
     modifier: Modifier = Modifier,
     tavernRuntime: TavernMessageRuntime,
     onHtmlBoundaryDrag: (Float) -> Unit,
@@ -355,6 +360,7 @@ internal fun TavernMessageContent(
                             },
                             availableMaxHeight = availableMaxHeight,
                             dialogueQuoteColor = if (highlightDialogue) dialogueColor.toCssHex() else null,
+                            baseFontSizePx = chatFontSizeSp,
                             tavernRuntime = tavernRuntime,
                             onBoundaryDrag = onHtmlBoundaryDrag,
                         )
@@ -362,7 +368,10 @@ internal fun TavernMessageContent(
                         SelectionContainer {
                             Text(
                                 text = dialogueAnnotatedString(text, dialogueColor, highlightDialogue),
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * (chatFontSizeSp / 16f),
+                                    lineHeight = MaterialTheme.typography.bodyLarge.lineHeight * (chatFontSizeSp / 16f),
+                                ),
                                 modifier = Modifier.padding(
                                     start = 12.dp,
                                     top = if (index == 0) 12.dp else 8.dp,
@@ -378,6 +387,7 @@ internal fun TavernMessageContent(
                         content = segment.content,
                         highlightDialogue = highlightDialogue,
                         bubbleAlpha = bubbleAlpha,
+                        chatFontSizeSp = chatFontSizeSp,
                     )
                 }
                 is TavernRenderSegment.Frontend -> {
@@ -394,7 +404,7 @@ internal fun TavernMessageContent(
 }
 
 @Composable
-internal fun ReasoningBlock(content: String, highlightDialogue: Boolean, bubbleAlpha: Float) {
+internal fun ReasoningBlock(content: String, highlightDialogue: Boolean, bubbleAlpha: Float, chatFontSizeSp: Int) {
     var expanded by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
@@ -432,7 +442,10 @@ internal fun ReasoningBlock(content: String, highlightDialogue: Boolean, bubbleA
                         MaterialTheme.colorScheme.primary,
                         highlightDialogue,
                     ),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = MaterialTheme.typography.bodySmall.fontSize * (chatFontSizeSp / 16f),
+                        lineHeight = MaterialTheme.typography.bodySmall.lineHeight * (chatFontSizeSp / 16f),
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(
                         start = 10.dp,
@@ -453,6 +466,7 @@ internal fun StreamingBubble(
     character: CharacterCard?,
     preset: GenerationPreset?,
     bubbleAlpha: Float,
+    chatFontSizeSp: Int,
     userName: String,
     availableMaxHeight: Dp,
     tavernRuntime: TavernMessageRuntime,
@@ -480,6 +494,7 @@ internal fun StreamingBubble(
             isUser = false,
             highlightDialogue = true,
             bubbleAlpha = bubbleAlpha,
+            chatFontSizeSp = chatFontSizeSp,
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))

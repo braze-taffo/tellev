@@ -271,6 +271,7 @@ fun SettingsScreen(
                         onSetThemeMode = viewModel::setThemeMode,
                         onSetThemeAccent = viewModel::setThemeAccent,
                         onSetChatBubbleAlpha = viewModel::setChatBubbleAlpha,
+                        onSetChatFontSizeSp = viewModel::setChatFontSizeSp,
                     )
 
                     backupSectionItems(

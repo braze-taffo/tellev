@@ -29,12 +29,20 @@ class ExtensionHostPolicyTest {
 
     @Test
     fun `navigation stays on the owning extension origin`() {
-        assertTrue(isAllowedExtensionNavigation("demo", "https://extensions.tellev.local/demo/"))
-        assertFalse(isAllowedExtensionNavigation("demo", "https://extensions.tellev.local/demo/settings"))
-        assertFalse(isAllowedExtensionNavigation("demo", "https://extensions.tellev.local/other/"))
+        val origin = extensionBaseUrl("demo")
+        assertTrue(origin.matches(Regex("https://e-[0-9a-f]{40}\\.extensions\\.tellev\\.local/")))
+        assertEquals(origin, extensionBaseUrl("demo"))
+        assertFalse(origin == extensionBaseUrl("other"))
+        assertTrue(isAllowedExtensionNavigation("demo", origin))
+        assertFalse(isAllowedExtensionNavigation("demo", "${origin}settings"))
+        assertFalse(isAllowedExtensionNavigation("demo", extensionBaseUrl("other")))
+        assertFalse(isAllowedExtensionNavigation("demo", "https://extensions.tellev.local/demo/"))
         assertFalse(isAllowedExtensionNavigation("demo", "https://example.com/demo/"))
-        assertFalse(isAllowedExtensionNavigation("demo", "http://extensions.tellev.local/demo/"))
+        assertFalse(isAllowedExtensionNavigation("demo", origin.replace("https:", "http:")))
         assertFalse(isAllowedExtensionNavigation("demo", "javascript:alert(1)"))
+        assertTrue(isAllowedExtensionFrameNavigation("demo", "about:srcdoc"))
+        assertTrue(isAllowedExtensionFrameNavigation("demo", "blob:${origin}script-id"))
+        assertFalse(isAllowedExtensionFrameNavigation("demo", "https://example.com/frame"))
     }
 
     @Test

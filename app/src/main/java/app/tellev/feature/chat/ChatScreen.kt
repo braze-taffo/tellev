@@ -74,6 +74,7 @@ import androidx.compose.ui.text.font.FontWeight.Companion.Bold
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.tellev.LocalTellevGraph
+import app.tellev.core.extension.WebViewJsExtensionHost
 import app.tellev.core.model.Attachment
 import app.tellev.core.storage.GeneratedImage
 import coil.compose.AsyncImage
@@ -87,6 +88,7 @@ fun ChatScreen(
     viewModel: ChatViewModel,
     bottomBarReserve: Dp = 0.dp,
     bubbleAlpha: Float = 0.6f,
+    chatFontSizeSp: Int = 16,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -119,6 +121,7 @@ fun ChatScreen(
                 viewModel = viewModel,
                 bottomBarReserve = bottomBarReserve,
                 bubbleAlpha = bubbleAlpha,
+                chatFontSizeSp = chatFontSizeSp,
                 modifier = Modifier.padding(padding),
             )
         }
@@ -132,6 +135,7 @@ private fun ChatContentScreen(
     viewModel: ChatViewModel,
     bottomBarReserve: Dp,
     bubbleAlpha: Float,
+    chatFontSizeSp: Int,
     modifier: Modifier = Modifier,
 ) {
     val runtimeToken = viewModel.currentRuntimeToken(state.currentSession?.id)
@@ -147,6 +151,10 @@ private fun ChatContentScreen(
     var showSessionMenu by remember { mutableStateOf(false) }
     var sessionPendingDelete by remember { mutableStateOf<ChatSessionSummary?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var showCharacterInterface by remember(state.currentSession?.id) { mutableStateOf(false) }
+    LaunchedEffect(state.characterUiExtensionId) {
+        if (state.characterUiExtensionId == null) showCharacterInterface = false
+    }
     var editingMessageIndex by remember { mutableStateOf<Int?>(null) }
     var editTextField by remember { mutableStateOf("") }
     var pendingAttachments by remember { mutableStateOf(listOf<Attachment>()) }
@@ -271,6 +279,11 @@ private fun ChatContentScreen(
                 }
             },
             actions = {
+                if (state.characterUiExtensionId != null) {
+                    TextButton(onClick = { showCharacterInterface = true }) {
+                        Text("卡片界面")
+                    }
+                }
                 if (state.sessions.isNotEmpty()) {
                     Box {
                         TextButton(onClick = { showSessionMenu = true }) {
@@ -454,6 +467,7 @@ private fun ChatContentScreen(
                             depth = visibleRegexDepth(state.messages, index),
                             htmlPanelMaxHeight = htmlPanelMaxHeight,
                             bubbleAlpha = bubbleAlpha,
+                            chatFontSizeSp = chatFontSizeSp,
                             tavernRuntime = TavernMessageRuntime(
                                 onScrollStart = onHtmlScrollStart,
                                 onBoundaryFling = onHtmlBoundaryFling,
@@ -496,6 +510,7 @@ private fun ChatContentScreen(
                             character = state.selectedCharacter,
                             preset = state.selectedPreset,
                             bubbleAlpha = bubbleAlpha,
+                            chatFontSizeSp = chatFontSizeSp,
                             userName = state.selectedPersona?.name ?: "User",
                             availableMaxHeight = htmlPanelMaxHeight,
                             tavernRuntime = TavernMessageRuntime(
@@ -686,6 +701,14 @@ private fun ChatContentScreen(
                 },
                 dismissButton = { TextButton(onClick = { showImageDiagnostic = false }) { Text("关闭") } },
             )
+        }
+        if (showCharacterInterface) {
+            val runtimeView = state.characterUiExtensionId?.let { id ->
+                (graph.extensionHost as? WebViewJsExtensionHost)?.webViewForUi(id)
+            }
+            if (runtimeView != null) {
+                CharacterCardInterfaceDialog(runtimeView) { showCharacterInterface = false }
+            }
         }
     }
 }

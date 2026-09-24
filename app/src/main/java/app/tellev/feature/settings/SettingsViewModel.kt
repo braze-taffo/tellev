@@ -66,6 +66,7 @@ data class SettingsUiState(
     val themeMode: ThemeMode = ThemeMode.System,
     val themeAccent: ThemeAccent = ThemeAccent.Warm,
     val chatBubbleAlpha: Float = 0.6f,
+    val chatFontSizeSp: Int = 16,
     val isLoading: Boolean = false,
     val error: String? = null,
     val info: String? = null,
@@ -101,6 +102,7 @@ class SettingsViewModel(
     private val themeModeFlow: MutableStateFlow<ThemeMode>,
     private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
     private val chatBubbleAlphaFlow: MutableStateFlow<Float>,
+    private val chatFontSizeSpFlow: MutableStateFlow<Int>,
     private val localDreamModelsRoot: java.io.File,
     private val contentResolver: android.content.ContentResolver,
     private val assets: android.content.res.AssetManager?,
@@ -146,6 +148,7 @@ class SettingsViewModel(
         themeModeFlow = themeModeFlow,
         themeAccentFlow = themeAccentFlow,
         chatBubbleAlphaFlow = chatBubbleAlphaFlow,
+        chatFontSizeSpFlow = chatFontSizeSpFlow,
         stateFlow = _uiState,
     )
 
@@ -230,6 +233,7 @@ class SettingsViewModel(
                         themeMode = parseThemeMode(appPreferences.themeModeName),
                         themeAccent = parseThemeAccent(appPreferences.themeAccentName),
                         chatBubbleAlpha = appPreferences.chatBubbleAlpha,
+                        chatFontSizeSp = appPreferences.chatFontSizeSp,
                         baseUrl = fields.baseUrl,
                         apiKey = fields.apiKey,
                         model = fields.model,
@@ -478,6 +482,7 @@ class SettingsViewModel(
     fun setThemeMode(mode: ThemeMode) = appearanceController.setThemeMode(mode)
     fun setThemeAccent(accent: ThemeAccent) = appearanceController.setThemeAccent(accent)
     fun setChatBubbleAlpha(alpha: Float) = appearanceController.setChatBubbleAlpha(alpha)
+    fun setChatFontSizeSp(size: Int) = appearanceController.setChatFontSizeSp(size)
 
     // ── Backup Actions ──
 
@@ -503,6 +508,7 @@ class SettingsViewModelFactory(
     private val themeModeFlow: MutableStateFlow<ThemeMode>,
     private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
     private val chatBubbleAlphaFlow: MutableStateFlow<Float>,
+    private val chatFontSizeSpFlow: MutableStateFlow<Int>,
     private val localDreamModelsRoot: java.io.File,
     private val contentResolver: android.content.ContentResolver,
     private val assets: android.content.res.AssetManager?,
@@ -518,6 +524,7 @@ class SettingsViewModelFactory(
                 themeModeFlow = themeModeFlow,
                 themeAccentFlow = themeAccentFlow,
                 chatBubbleAlphaFlow = chatBubbleAlphaFlow,
+                chatFontSizeSpFlow = chatFontSizeSpFlow,
                 localDreamModelsRoot = localDreamModelsRoot,
                 contentResolver = contentResolver,
                 assets = assets,

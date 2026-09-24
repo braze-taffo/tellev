@@ -85,6 +85,7 @@ class TellevGraph private constructor(
      * so ChatScreen recomposes without reaching into SettingsViewModel.
      */
     val chatBubbleAlphaFlow = MutableStateFlow(appPreferences.chatBubbleAlpha)
+    val chatFontSizeSpFlow = MutableStateFlow(appPreferences.chatFontSizeSp)
 
     /**
      * Persist updated compat-module settings and push them to every
