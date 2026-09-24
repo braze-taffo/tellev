@@ -17,6 +17,20 @@ data class PromptTemplateRequest(
      * this from the last message carrying variables / the card's init vars.
      */
     val messageVariables: JsonObject? = null,
+    /**
+     * Visible chat floors in ST's message shape for the getChatMessage(s) /
+     * matchChatMessages template family (ST-Prompt-Template chat.ts).
+     */
+    val chat: List<PromptTemplateChatMessage> = emptyList(),
+)
+
+/** ST `chat` entry subset used by the chat-reading template functions. */
+data class PromptTemplateChatMessage(
+    val id: Int,
+    val isUser: Boolean,
+    val isSystem: Boolean,
+    val name: String? = null,
+    val content: String,
 )
 
 data class PromptTemplateWorldEntry(
@@ -64,6 +78,7 @@ internal data class TemplateState(
     val initialMessageVariables: Map<String, Any?> = emptyMap(),
     val worldCatalog: List<PromptTemplateWorldEntry>,
     val currentWorldBookId: String?,
+    val chatMessages: List<PromptTemplateChatMessage> = emptyList(),
     val worldInfoStack: MutableList<String> = mutableListOf(),
     val variables: MutableMap<String, Any?> = linkedMapOf(),
     val locals: MutableMap<String, Any?> = mutableMapOf(),

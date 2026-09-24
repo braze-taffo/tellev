@@ -85,6 +85,7 @@ class DefaultPromptTemplateProcessor(
             initialMessageVariables = PromptTemplateExpressionEvaluator.messageVariableMap(request.messageVariables),
             worldCatalog = request.worldCatalog.ifEmpty { request.worldEntries },
             currentWorldBookId = request.currentWorldBookId,
+            chatMessages = request.chat,
         ).also(PromptTemplateExpressionEvaluator::refreshMergedVariables)
 
         val injectedMessages = PromptTemplateInstructionApplier.applyInstructionBlocks(

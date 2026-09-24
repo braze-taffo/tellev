@@ -1,5 +1,6 @@
 package app.tellev.core.prompt
 
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -38,6 +39,15 @@ internal object PromptTemplateExpressionEvaluator {
                 put("context", toJsonObject(templateContextMap(state)))
                 put("currentWorldBookId", state.currentWorldBookId?.let(::JsonPrimitive) ?: JsonNull)
                 put("isolated", JsonPrimitive(isolated))
+                put("chat", JsonArray(state.chatMessages.map { message ->
+                    buildJsonObject {
+                        put("id", JsonPrimitive(message.id))
+                        put("is_user", JsonPrimitive(message.isUser))
+                        put("is_system", JsonPrimitive(message.isSystem))
+                        message.name?.let { put("name", JsonPrimitive(it)) }
+                        put("mes", JsonPrimitive(message.content))
+                    }
+                }))
                 put("worldCatalog", JsonArray(state.worldCatalog.map { entry ->
                     toJsonObject(mapOf("id" to entry.id, "comment" to entry.comment,
                         "title" to entry.title, "content" to entry.content, "bookId" to entry.bookId, "bookName" to entry.bookName))
@@ -428,6 +438,54 @@ internal object PromptTemplateExpressionEvaluator {
             "hasPromptsInjected" -> PromptInjectedRegistry.has(stringify(args.getOrNull(0)))
             "SillyTavern.getContext" -> emptyMap<String, Any?>()
             "execute" -> ""
+            // ST-Prompt-Template json-patch.ts / chat.ts parity; the WebView
+            // path implements the same functions in template.js.
+            "parseJSON" -> parseJsonTolerant(stringify(args.getOrNull(0)))
+            "jsonPatch" -> applyJsonPatch(args.getOrNull(0), args.getOrNull(1))
+            "patchVariables" -> {
+                val key = stringify(args.getOrNull(0))
+                val hints = varOptionHints(args.getOrNull(2))
+                val doc = getPath(scopeMap(state, hints.scope), key) ?: linkedMapOf<String, Any?>()
+                val change = args.getOrNull(1)
+                val patch = if (change is String) parseJsonTolerant(change) else change
+                setVariableScoped(state, key, applyJsonPatch(doc, patch), hints)
+            }
+            "getChatMessage" -> {
+                val index = args.getOrNull(0)?.let { numeric(it).toInt() } ?: 0
+                val role = args.getOrNull(1)?.let { stringify(it) }
+                chatMessages(state, role).getOrNull(if (index > -1) index else chatMessages(state, role).size + index)
+                    ?.content.orEmpty()
+            }
+            "getChatMessages" -> {
+                // ST overloads: (count) / (count, role) / (start, end) / (start, end, role).
+                // Returns a list of contents; <%= %> renders it comma-joined
+                // like Array.toString.
+                val role = (args.getOrNull(1) as? String) ?: args.getOrNull(2)?.let { stringify(it) }
+                val messages = chatMessages(state, role)
+                val first = args.getOrNull(0)?.let { numeric(it).toInt() } ?: messages.size
+                val end = args.getOrNull(1) as? Number
+                sliceChat(messages, first, end?.toInt()).map { it.content }
+            }
+            "matchChatMessages" -> {
+                val patterns = when (val pattern = args.getOrNull(0)) {
+                    is List<*> -> pattern.map { stringify(it) }
+                    null -> emptyList()
+                    else -> listOf(stringify(pattern))
+                }
+                val options = args.getOrNull(1) as? Map<*, *>
+                val role = options?.get("role")?.let { stringify(it) }
+                val messages = chatMessages(state, role)
+                val window = sliceChat(
+                    messages,
+                    (options?.get("start") as? Number)?.toInt() ?: -2,
+                    (options?.get("end") as? Number)?.toInt(),
+                ).map { it.content }
+                val and = options?.get("and") == true
+                window.any { message ->
+                    if (and) patterns.all { message.contains(it) }
+                    else patterns.any { message.contains(it) }
+                }
+            }
             else -> {
                 state.warn("Unsupported prompt template function: $name")
                 UnsupportedExpression
@@ -625,6 +683,157 @@ internal object PromptTemplateExpressionEvaluator {
     }
 
     // ── ST variables.ts option/scope model ───────────────────────────────
+
+    private fun chatMessages(state: TemplateState, role: String?): List<PromptTemplateChatMessage> =
+        state.chatMessages.filter { message ->
+            when (role) {
+                null -> true
+                "user" -> message.isUser
+                "system" -> message.isSystem
+                "assistant" -> !message.isUser && !message.isSystem
+                else -> true
+            }
+        }
+
+    /** ST slice semantics: positive = from start, negative = from end; (start, end) range. */
+    private fun sliceChat(
+        messages: List<PromptTemplateChatMessage>,
+        startOrCount: Int,
+        end: Int?,
+    ): List<PromptTemplateChatMessage> = when {
+        startOrCount > 0 && end != null -> messages.sliceSafe(startOrCount, end)
+        startOrCount > 0 -> messages.take(startOrCount)
+        startOrCount < 0 && end != null -> messages.sliceSafe(messages.size + startOrCount, messages.size + end)
+        startOrCount < 0 -> messages.takeLast(-startOrCount)
+        else -> emptyList()
+    }
+
+    private fun <T> List<T>.sliceSafe(start: Int, end: Int): List<T> {
+        val from = start.coerceIn(0, size)
+        val to = end.coerceIn(from, size)
+        return subList(from, to)
+    }
+
+    /**
+     * Tolerant JSON parse (ST uses the jsonrepair lib): strict first, then
+     * trailing-comma / unquoted-key / single-quote repairs, each validated by
+     * a full reparse before acceptance.
+     */
+    private fun parseJsonTolerant(text: String): Any? {
+        val trimmed = text.trim()
+        try {
+            return toKotlinValue(Json.parseToJsonElement(trimmed))
+        } catch (_: Exception) {}
+        val noTrailing = trimmed.replace(Regex(",\\s*([}\\]])"), "$1")
+        val unquotedKeys = noTrailing.replace(Regex("([{,]\\s*)([A-Za-z_$][\\w$]*)\\s*:"), "$1\"$2\":")
+        val singleQuoted = unquotedKeys.replace(Regex("'((?:[^'\"\\\\]|\\\\.)*)'"), "\"$1\"")
+        for (attempt in listOf(noTrailing, unquotedKeys, singleQuoted)) {
+            try {
+                return toKotlinValue(Json.parseToJsonElement(attempt))
+            } catch (_: Exception) {}
+        }
+        throw IllegalArgumentException("parseJSON: unable to repair input")
+    }
+
+    /** RFC 6902 JSON Patch over Kotlin maps/lists (ST jsonPatch, lodash-backed). */
+    private fun applyJsonPatch(doc: Any?, patches: Any?): Any? {
+        val working = deepCopyValue(doc)
+        val operations = patches as? List<*> ?: return working
+        for (operation in operations) {
+            val patch = operation as? Map<*, *> ?: continue
+            val op = patch["op"] as? String ?: continue
+            val path = patch["path"]?.toString() ?: continue
+            val fromPath = patch["from"]?.toString()
+            when (op) {
+                "add", "replace", "set", "assign" -> setPointer(working, path, patch["value"])
+                "remove" -> removePointer(working, path)
+                "move" -> {
+                    val from = fromPath ?: continue
+                    val moved = getPointer(working, from)
+                    if (moved != null) {
+                        removePointer(working, from)
+                        setPointer(working, path, moved)
+                    }
+                }
+                "copy" -> {
+                    val from = fromPath ?: continue
+                    getPointer(working, from)?.let { setPointer(working, path, it) }
+                }
+                "test" -> {
+                    // ST: test failure aborts and returns the ORIGINAL document.
+                    if (!jsonEquals(getPointer(working, path), patch["value"])) return doc
+                }
+            }
+        }
+        return working
+    }
+
+    private fun pointerSegments(pointer: String): List<String> {
+        if (pointer.isEmpty()) return emptyList()
+        if (!pointer.startsWith("/")) throw IllegalArgumentException("Invalid JSON Pointer: must start with \"/\".")
+        return pointer.substring(1).split("/").map { it.replace("~1", "/").replace("~0", "~") }
+    }
+
+    private fun getPointer(doc: Any?, pointer: String): Any? {
+        var current: Any? = doc
+        for (segment in pointerSegments(pointer)) {
+            current = when (current) {
+                is Map<*, *> -> current[segment]
+                is List<*> -> segment.toIntOrNull()?.let { current.getOrNull(it) }
+                else -> return null
+            }
+        }
+        return current
+    }
+
+    private fun setPointer(doc: Any?, pointer: String, value: Any?) {
+        val segments = pointerSegments(pointer)
+        if (segments.isEmpty()) return
+        if (segments.last() == "-") {
+            val parent = getPointer(doc, parentPointer(segments))
+            if (parent is MutableList<*>) {
+                @Suppress("UNCHECKED_CAST")
+                (parent as MutableList<Any?>).add(value)
+            }
+            return
+        }
+        val parent = getPointer(doc, parentPointer(segments)) ?: return
+        when (parent) {
+            is MutableMap<*, *> -> @Suppress("UNCHECKED_CAST") (parent as MutableMap<String, Any?>)[segments.last()] = value
+            is MutableList<*> -> segments.last().toIntOrNull()?.let { index ->
+                @Suppress("UNCHECKED_CAST")
+                val list = parent as MutableList<Any?>
+                while (list.size < index) list.add(null)
+                if (index == list.size) list.add(value) else list[index] = value
+            }
+        }
+    }
+
+    private fun removePointer(doc: Any?, pointer: String): Boolean {
+        val segments = pointerSegments(pointer)
+        if (segments.isEmpty()) return false
+        val parent = getPointer(doc, parentPointer(segments)) ?: return false
+        return when (parent) {
+            is MutableMap<*, *> -> @Suppress("UNCHECKED_CAST") (parent as MutableMap<String, Any?>).remove(segments.last()) != null
+            is MutableList<*> -> segments.last().toIntOrNull()?.let { index ->
+                if (index in parent.indices) { @Suppress("UNCHECKED_CAST") (parent as MutableList<Any?>).removeAt(index); true } else false
+            } ?: false
+            else -> false
+        }
+    }
+
+    private fun parentPointer(segments: List<String>): String {
+        val parent = segments.dropLast(1)
+        // Empty pointer = the whole document (root-level key).
+        if (parent.isEmpty()) return ""
+        return "/" + parent.joinToString("/")
+    }
+
+    private fun jsonEquals(left: Any?, right: Any?): Boolean {
+        val leftNormalized = if (left is Number) left.toDouble() else left
+        val rightNormalized = if (right is Number) right.toDouble() else right
+        return leftNormalized == rightNormalized
+    }
 
     private class VarOptionHints(
         val scope: String? = null,

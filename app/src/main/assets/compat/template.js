@@ -88,6 +88,89 @@ function applyOutletPrompts(content, recursion = 101) {
   return result;
 }
 
+// ── JSON utilities (ST-Prompt-Template json-patch.ts parity) ─────────────
+// parseJSON tries strict JSON first, then progressively tolerant repairs
+// (trailing commas → unquoted keys → single-quoted strings). ST bundles the
+// full jsonrepair lib; this subset covers the common LLM-output breakage.
+function parseJSON(json) {
+  const text = String(json ?? '').trim();
+  try { return JSON.parse(text); } catch (_) {}
+  const noTrailing = () => text.replace(/,\s*([}\]])/g, '$1');
+  const unquotedKeys = () => noTrailing().replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":');
+  const singleQuoted = () => unquotedKeys().replace(/'((?:[^'"\\]|\\.)*)'/g, '"$1"');
+  for (const attempt of [noTrailing, unquotedKeys, singleQuoted]) {
+    try { return JSON.parse(attempt()); } catch (_) {}
+  }
+  throw new SyntaxError('parseJSON: unable to repair input');
+}
+
+// RFC 6901 JSON Pointer → lodash path segments (~0 → ~, ~1 → /).
+function pointerToPath(pointer) {
+  if (typeof pointer !== 'string') throw new Error('Path must be a string.');
+  if (pointer === '') return [];
+  if (pointer.charAt(0) !== '/') throw new Error('Invalid JSON Pointer: must start with "/".');
+  return pointer.substring(1).split('/').map(segment => segment.replace(/~1/g, '/').replace(/~0/g, '~'));
+}
+
+function jsonPatch(doc, patches) {
+  const newDoc = _.cloneDeep(doc);
+  for (const patch of (patches || [])) {
+    const { op, path, value } = patch;
+    const fromPath = patch.from != null ? pointerToPath(patch.from) : undefined;
+    const lodashPath = pointerToPath(path);
+    switch (op) {
+      case 'set': case 'assign': case 'add': case 'replace': {
+        // RFC 6902 "-" appends to the end of an array.
+        if (lodashPath[lodashPath.length - 1] === '-') {
+          const parent = _.get(newDoc, lodashPath.slice(0, -1));
+          if (Array.isArray(parent)) parent.push(value);
+          else if (typeof toastr !== 'undefined') toastr.error(`Cannot push to a non-array value at path: ${lodashPath.slice(0, -1).join('.')}`, 'JSON Patch');
+        } else {
+          _.set(newDoc, lodashPath, value);
+        }
+        break;
+      }
+      case 'remove': {
+        if (!_.unset(newDoc, lodashPath) && typeof toastr !== 'undefined') {
+          toastr.warn(`Path "${path}" could not be removed.`, 'JSON Patch');
+        }
+        break;
+      }
+      case 'move': {
+        const moved = _.get(newDoc, fromPath);
+        if (moved === undefined) break;
+        _.unset(newDoc, fromPath);
+        _.set(newDoc, lodashPath, moved);
+        break;
+      }
+      case 'copy': {
+        const copied = _.get(newDoc, fromPath);
+        if (copied === undefined) break;
+        _.set(newDoc, lodashPath, copied);
+        break;
+      }
+      case 'test': {
+        if (!_.isEqual(_.get(newDoc, lodashPath), value)) return doc;
+        break;
+      }
+      default: break;
+    }
+  }
+  return newDoc;
+}
+
+// ── Chat message reads (ST-Prompt-Template chat.ts parity) ───────────────
+// The request carries the visible chat floors with ST's message shape
+// (id/is_user/is_system/name/mes); ST additionally re-applies regex and
+// macros here, which Tellev already applied upstream. The functions are
+// bound per call inside __tellevTemplate (they close over request.chat).
+function roleMatches(message, role) {
+  return !role
+    || (role === 'user' && message.is_user)
+    || (role === 'system' && message.is_system)
+    || (role === 'assistant' && !message.is_user && !message.is_system);
+}
+
 window.__tellevTemplateDeactivate = function (count) { return deactivatePrompts(count || 1); };
 window.__tellevTemplateOutlet = function (content) { return applyOutletPrompts(content); };
 
@@ -126,8 +209,38 @@ function deepMergeValues(dst, src) {
 window.__tellevTemplate = async function (request) {
   const local = request.local || {}, global = request.global || {}, definitions = request.definitions || {};
   const message = request.messageVariables || {};
+  const request_chat = request.chat || [];
   const cache = Object.assign({}, global, local, message);
   const stack = [];
+  // getChatMessage(s) / matchChatMessages (ST chat.ts): role-filtered reads
+  // over the visible chat floors.
+  const getChatMessage = (idx, role) => {
+    const list = request_chat.filter(m => roleMatches(m, role));
+    const message = list[idx > -1 ? idx : list.length + idx];
+    return message ? (message.mes ?? '') : '';
+  };
+  const getChatMessages = (startOrCount = undefined, endOrRole, role) => {
+    const filtered = request_chat.filter(m => roleMatches(m, endOrRole || role));
+    if (endOrRole == null || typeof endOrRole === 'string') {
+      if (startOrCount == null) return filtered.map(m => m.mes ?? '');
+      return (startOrCount > 0
+        ? filtered.slice(0, startOrCount)
+        : startOrCount < 0 ? filtered.slice(startOrCount) : [])
+        .map(m => m.mes ?? '');
+    }
+    return (startOrCount > 0
+      ? filtered.slice(startOrCount, endOrRole)
+      : startOrCount < 0 ? filtered.slice(startOrCount, endOrRole) : [])
+      .map(m => m.mes ?? '');
+  };
+  const matchChatMessages = (pattern, options = {}) => {
+    const start = options.start ?? -2;
+    const messages = getChatMessages(start, options.end, options.role);
+    const patterns = Array.isArray(pattern) ? pattern : [pattern];
+    return messages.some(m => options.and
+      ? patterns.every(p => m.match(p))
+      : patterns.some(p => m.match(p)));
+  };
   const scopeObject = s => s === 'global' ? global : s === 'local' ? local : s === 'message' ? message : undefined;
   const getvar = (key, options = {}) => {
     const o = normalizeVarOptions(options);
@@ -185,6 +298,11 @@ window.__tellevTemplate = async function (request) {
     _.unset(cache, k);
     return '';
   };
+  const patchVariables = (key, change, options = {}) => {
+    const doc = getvar(key, options);
+    const patched = jsonPatch(doc, typeof change === 'string' ? parseJSON(change) : change);
+    return setvar(key, patched, options);
+  };
   const insvar = (k, v, i, o = {}) => {
     const opts = normalizeVarOptions(o);
     const target = scopeObject(opts.scope || 'message');
@@ -237,6 +355,8 @@ window.__tellevTemplate = async function (request) {
     getAllVariables: () => cache,
     define: (name,value) => { _.set(definitions,name,value); _.set(env,name,value); return ''; },
     injectPrompt, getPromptsInjected, hasPromptsInjected,
+    parseJSON, jsonPatch, patchVariables,
+    getChatMessage, getChatMessages, matchChatMessages,
   });
   const render = async (content, extra = {}) => {
     const data = Object.assign(env, extra);
