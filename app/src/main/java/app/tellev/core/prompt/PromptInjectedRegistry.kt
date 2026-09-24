@@ -111,7 +111,9 @@ internal object PromptTemplateOutlet {
     private const val MARKER = "{{outletPromptsInjected:"
     private val pattern = Regex("""\{\{outletPromptsInjected:(.+?)\}\}""")
 
-    // ST bounds recursion by world_info_max_recursion_steps + 1 (default 101).
+    // ST bounds recursion by world_info_max_recursion_steps + 1 (that setting
+    // defaults to 3, slider cap 100); a fixed superset of 101 covers every
+    // reachable configuration.
     fun apply(content: String, recursion: Int = 101): String {
         var result = content
         repeat(recursion) {

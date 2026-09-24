@@ -415,23 +415,25 @@ internal object PromptTemplateExpressionEvaluator {
             "getPromptsInjected" -> {
                 val key = stringify(args.getOrNull(0))
                 // ST generate-phase default (inject.ts:56 + handler.ts:247):
-                // outlet on, collected by the end-of-build scan.
+                // outlet on, collected by the end-of-build scan. A non-empty
+                // postprocess forces inline collection even when outlet is on
+                // (inject.ts:59-60) — the scan cannot postprocess.
+                @Suppress("UNCHECKED_CAST")
+                val postprocess = (args.getOrNull(1) as? List<Any?>)?.mapNotNull { pp ->
+                    (pp as? Map<*, *>)?.let { m ->
+                        val search = m["search"]
+                        val replace = stringify(m["replace"] ?: "")
+                        when (search) {
+                            is Regex -> search to replace
+                            null -> null
+                            else -> stringify(search) to replace
+                        }
+                    }
+                } ?: emptyList()
                 val outlet = args.getOrNull(2)?.let { truthy(it) } ?: true
-                if (outlet) {
+                if (outlet && postprocess.isEmpty()) {
                     "{{outletPromptsInjected:${key}}}"
                 } else {
-                    @Suppress("UNCHECKED_CAST")
-                    val postprocess = (args.getOrNull(1) as? List<Any?>)?.mapNotNull { pp ->
-                        (pp as? Map<*, *>)?.let { m ->
-                            val search = m["search"]
-                            val replace = stringify(m["replace"] ?: "")
-                            when (search) {
-                                is Regex -> search to replace
-                                null -> null
-                                else -> stringify(search) to replace
-                            }
-                        }
-                    } ?: emptyList()
                     PromptInjectedRegistry.get(key, postprocess)
                 }
             }

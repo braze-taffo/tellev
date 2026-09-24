@@ -155,6 +155,32 @@ class PromptInjectionCompatTest {
     }
 
     @Test
+    fun `isolated floor self-collection survives the registry rollback`() {
+        // A historical floor that injects AND collects within itself: ST keeps
+        // registrations alive until the end-of-pass scan, so the isolation must
+        // resolve the floor's own placeholders before rolling back.
+        val result = processor().process(
+            PromptTemplateRequest(
+                messages = listOf(
+                    PromptMessage(role = MessageRole.System, content = "sys"),
+                    PromptMessage(
+                        role = MessageRole.Assistant,
+                        channel = "chat",
+                        content = "<% injectPrompt('mid', 'V_FROM_MID') %>[<%= getPromptsInjected('mid') %>]",
+                    ),
+                    PromptMessage(role = MessageRole.User, channel = "chat", content = "tail"),
+                ),
+                context = MacroContext(),
+                metadata = buildJsonObject { },
+            ),
+        )
+
+        assertEquals("[V_FROM_MID]", result.messages[1].content)
+        // The rollback still happened: nothing leaked to the persistent scope.
+        assertFalse(PromptInjectedRegistry.has("mid"))
+    }
+
+    @Test
     fun `disabled settings skip decay entirely`() {
         renderOne("<% injectPrompt('keep', 'v') %>")
         val processor = DefaultPromptTemplateProcessor(

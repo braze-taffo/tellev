@@ -241,6 +241,20 @@ test('matchChatMessages scans the default last-two window', async () => {
   assert.equal(out, 'true|false');
 });
 
+test('isolated floor self-collection survives the registry rollback', async () => {
+  // A historical floor that injects AND collects within itself: ST keeps
+  // registrations alive until the end-of-pass scan, so isolation must resolve
+  // the floor's own placeholders before rolling the registry back.
+  const out = await window.__tellevTemplate({
+    template: "<% injectPrompt('mid', 'V_FROM_MID') %>[<%= getPromptsInjected('mid') %>]",
+    local: {}, global: {}, definitions: {}, context: {},
+    worldCatalog: [], currentWorldBookId: null, chat: [], isolated: true,
+  });
+  assert.equal(out.content, '[V_FROM_MID]');
+  // The rollback still happened: nothing leaked into later renders.
+  assert.equal(await render("<%= getPromptsInjected('mid', [], false) %>"), '');
+});
+
 let failed = 0;
 for (const { name, fn } of tests) {
   try {

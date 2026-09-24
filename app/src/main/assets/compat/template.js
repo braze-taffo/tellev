@@ -75,7 +75,8 @@ function deactivatePrompts(count = 1) {
 
 // ST applyOutletPromptsInjected (inject.ts:85): resolve
 // {{outletPromptsInjected:key}} repeatedly until none remain. ST bounds this
-// by world_info_max_recursion_steps + 1 (default 100 → 101) and turns
+// by world_info_max_recursion_steps + 1 (that setting defaults to 3 with a
+// slider cap of 100); Tellev fixes a safety superset of 101. ST turns
 // forceOutlet OFF before scanning (handler.ts:376) — the resolver therefore
 // collects inline (outlet=false), otherwise each pass would re-emit the
 // placeholder it just consumed.
@@ -396,10 +397,17 @@ window.__tellevTemplate = async function (request) {
   // Isolated renders (historical floors) must not leave side effects behind:
   // restore the injection registry afterwards; variable scopes are discarded
   // by the caller (DefaultPromptTemplateProcessor renders them on a snapshot).
+  // A floor that injects AND collects within itself must still see its own
+  // content: resolve its placeholders before the rollback, matching ST where
+  // registrations stay alive until the end-of-pass scan.
   if (request.isolated) {
     const snapshot = new Map();
     promptInjected.forEach((inner, key) => snapshot.set(key, new Map(inner)));
-    try { return await doRender(); }
+    try {
+      const result = await doRender();
+      result.content = applyOutletPrompts(result.content);
+      return result;
+    }
     finally { promptInjected.clear(); snapshot.forEach((inner, key) => promptInjected.set(key, inner)); }
   }
   return doRender();
