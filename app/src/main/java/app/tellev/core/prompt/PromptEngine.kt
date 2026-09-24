@@ -187,6 +187,18 @@ class DefaultPromptEngine(
 
         // 6. Build prompt messages
         val visibleHistory = request.messages.filterNot { it.isHidden }
+        // ST chat.ts reads operate on the raw chat floors; expose them to the
+        // template environment with ST's message shape (id/is_user/is_system/
+        // name/mes). Content is macro-expanded like ST's processMessage.
+        val chatSnippets = visibleHistory.mapIndexed { index, message ->
+            PromptTemplateChatMessage(
+                id = index,
+                isUser = message.role == MessageRole.User,
+                isSystem = message.role == MessageRole.System,
+                name = message.name,
+                content = macroEngine.expand(message.reasoningParts().body, macroContext),
+            )
+        }
         val groupNames = PromptMacroContextBuilder.groupMemberNamesList(request.metadata)
         val newChatMarker = if (groupNames.size > 1) {
             request.preset.raw["new_group_chat_prompt"]?.jsonPrimitive?.contentOrNull
@@ -292,6 +304,7 @@ class DefaultPromptEngine(
                 worldCatalog = promptTemplateWorldCatalog,
                 currentWorldBookId = StDataStore.embeddedCharacterBookId(request.character.id),
                 messageVariables = macroContext.messageVariables,
+                chat = chatSnippets,
             ),
         )
         val templatedMessages = promptTemplateResult.messages

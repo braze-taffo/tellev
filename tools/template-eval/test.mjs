@@ -50,6 +50,12 @@ globalThis._ = {
   isPlainObject(v) {
     return v !== null && typeof v === 'object' && !Array.isArray(v);
   },
+  cloneDeep(v) {
+    return v === undefined ? undefined : JSON.parse(JSON.stringify(v));
+  },
+  isEqual(a, b) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  },
 };
 
 // Real ejs build used inside the app (bundled by globals.js).
@@ -190,6 +196,49 @@ test('faker is declared but unbundled', async () => {
 
 test('execute stub resolves to empty pipe', async () => {
   assert.equal(await render("<%- await execute('/echo hi') %>after"), 'after');
+});
+
+test('parseJSON repairs trailing commas and unquoted keys', async () => {
+  assert.equal(await render("<%= parseJSON('{\"a\": 5,}').a %>"), '5');
+  assert.equal(await render("<% const p = parseJSON('{status: \"ok\"}') %><%= p.status %>"), 'ok');
+});
+
+test('jsonPatch applies RFC 6902 ops without mutating the source', async () => {
+  const out = await render(
+    "<% const doc = {a: 1, list: ['x']} %>" +
+    "<% const patched = jsonPatch(doc, [{op: 'replace', path: '/a', value: 2}, {op: 'add', path: '/list/-', value: 'y'}]) %>" +
+    "<%= patched.a %><%= patched.list[1] %><%= doc.a %>");
+  assert.equal(out, '2y1');
+});
+
+test('patchVariables writes the patched document', async () => {
+  const out = await render(
+    "<% setvar('stat', {hp: 10}) %>" +
+    "<% patchVariables('stat', [{op: 'replace', path: '/hp', value: 88}]) %>" +
+    "<%= getvar('stat').hp %>");
+  assert.equal(out, '88');
+});
+
+test('getChatMessages reads request chat floors', async () => {
+  const out = await render("<%= getChatMessage(0, 'user') %>|<%= getChatMessages(-1) %>", {
+    chat: [
+      { id: 0, is_user: false, is_system: false, name: '玄泽', mes: 'greeting' },
+      { id: 1, is_user: true, is_system: false, mes: 'hello there' },
+    ],
+  });
+  assert.equal(out, 'hello there|hello there');
+});
+
+test('matchChatMessages scans the default last-two window', async () => {
+  const out = await render("<%= matchChatMessages('hello') %>|<%= matchChatMessages('greeting') %>", {
+    chat: [
+      { id: 0, is_user: false, is_system: false, mes: 'greeting' },
+      { id: 1, is_user: true, is_system: false, mes: 'hello there' },
+      { id: 2, is_user: false, is_system: false, mes: 'reply two' },
+    ],
+  });
+  // Default window is the last 2 messages (start=-2): greeting is outside.
+  assert.equal(out, 'true|false');
 });
 
 let failed = 0;
