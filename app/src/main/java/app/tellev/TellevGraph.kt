@@ -119,7 +119,7 @@ class TellevGraph private constructor(
             val macroEngine = DefaultMacroEngine()
             val templateEvaluator = app.tellev.core.prompt.WebViewTemplateEvaluator(context)
             val promptEngine = DefaultPromptEngine(macroEngine,
-                app.tellev.core.prompt.DefaultPromptTemplateProcessor(javascriptEvaluator = templateEvaluator::evaluate))
+                app.tellev.core.prompt.DefaultPromptTemplateProcessor(javascriptEvaluator = templateEvaluator))
             // Model directories for the on-device MNN image engine (st-data/user/models-mnn).
             val localDreamModelsRoot = layout.root
                 .resolve(app.tellev.core.ldream.LocalDreamCore.LOCAL_DREAM_MODELS_DIR_NAME)

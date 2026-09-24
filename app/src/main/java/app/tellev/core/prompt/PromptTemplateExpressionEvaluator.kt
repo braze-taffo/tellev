@@ -24,10 +24,10 @@ internal object PromptTemplateExpressionEvaluator {
     fun renderTemplate(
         template: String,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): String {
         if (!template.contains("<%")) return template
-        javascriptEvaluator?.let { evaluate ->
+        javascriptEvaluator?.let { bridge ->
             val request = buildJsonObject {
                 put("template", JsonPrimitive(template))
                 put("local", toJsonObject(state.localVariables))
@@ -43,7 +43,7 @@ internal object PromptTemplateExpressionEvaluator {
                         "title" to entry.title, "content" to entry.content, "bookId" to entry.bookId, "bookName" to entry.bookName))
                 }))
             }
-            val result = evaluate(request)
+            val result = bridge.evaluate(request)
             fun replace(target: MutableMap<String, Any?>, field: String) {
                 val values = result[field] as? JsonObject ?: return
                 target.clear()
@@ -64,7 +64,7 @@ internal object PromptTemplateExpressionEvaluator {
         start: Int,
         end: Int,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): String {
         val out = StringBuilder()
         var index = start
@@ -122,7 +122,7 @@ internal object PromptTemplateExpressionEvaluator {
     private fun executeCode(
         code: String,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): String {
         val output = StringBuilder()
         val statements = splitTopLevel(code, ';').map { it.trim() }.filter { it.isNotEmpty() }
@@ -157,7 +157,7 @@ internal object PromptTemplateExpressionEvaluator {
     private fun evaluateList(
         expression: String,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): List<Any?> {
         return when (val value = evaluate(expression, state, javascriptEvaluator)) {
             is List<*> -> value
@@ -173,7 +173,7 @@ internal object PromptTemplateExpressionEvaluator {
     fun evaluate(
         rawExpression: String,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): Any? {
         var expression = rawExpression.trim().removeSuffix(";").trim()
         if (expression.startsWith("await ")) expression = expression.removePrefix("await ").trim()
@@ -242,7 +242,7 @@ internal object PromptTemplateExpressionEvaluator {
         name: String,
         args: List<Any?>,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): Any? {
         return when (name) {
             "getwi", "getWorldInfo" -> resolveWorldInfo(args, state, javascriptEvaluator)
@@ -338,6 +338,23 @@ internal object PromptTemplateExpressionEvaluator {
                 root
             }
             "_.has" -> getPath(args.getOrNull(0), stringify(args.getOrNull(1))) != null
+            // ST-Prompt-Template inject.ts parity; the WebView path implements
+            // the same trio in template.js (see PromptInjectedRegistry docs).
+            "injectPrompt" -> {
+                val key = stringify(args.getOrNull(0))
+                val prompt = stringify(args.getOrNull(1))
+                val order = (args.getOrNull(2) as? Number)?.toInt() ?: 100
+                val sticky = (args.getOrNull(3) as? Number)?.toInt() ?: 0
+                val uid = args.getOrNull(4)?.let { stringify(it) } ?: ""
+                PromptInjectedRegistry.inject(key, prompt, order, sticky, uid)
+                ""
+            }
+            "getPromptsInjected" -> {
+                val key = stringify(args.getOrNull(0))
+                val outlet = args.getOrNull(2)?.let { truthy(it) } ?: false
+                if (outlet) "{{outletPromptsInjected:${key}}}" else PromptInjectedRegistry.get(key)
+            }
+            "hasPromptsInjected" -> PromptInjectedRegistry.has(stringify(args.getOrNull(0)))
             else -> {
                 state.warn("Unsupported prompt template function: $name")
                 UnsupportedExpression
@@ -348,7 +365,7 @@ internal object PromptTemplateExpressionEvaluator {
     private fun resolveWorldInfo(
         args: List<Any?>,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): String {
         val requestedBook = args.getOrNull(0)?.let(::stringify)?.takeIf { it.isNotBlank() }
         val query = args.getOrNull(1)?.let(::stringify)?.trim().orEmpty()
@@ -523,7 +540,7 @@ internal object PromptTemplateExpressionEvaluator {
     private fun parseArrayLiteral(
         expression: String,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): List<Any?>? {
         if (!expression.startsWith("[") || !expression.endsWith("]")) return null
         val inner = expression.drop(1).dropLast(1)
