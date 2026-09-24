@@ -25,6 +25,7 @@ internal object PromptTemplateExpressionEvaluator {
         template: String,
         state: TemplateState,
         javascriptEvaluator: PromptTemplateJsBridge? = null,
+        isolated: Boolean = false,
     ): String {
         if (!template.contains("<%")) return template
         javascriptEvaluator?.let { bridge ->
@@ -32,9 +33,11 @@ internal object PromptTemplateExpressionEvaluator {
                 put("template", JsonPrimitive(template))
                 put("local", toJsonObject(state.localVariables))
                 put("global", toJsonObject(state.globalVariables))
+                put("messageVariables", toJsonObject(state.messageVariables))
                 put("definitions", toJsonObject(state.locals))
                 put("context", toJsonObject(templateContextMap(state)))
                 put("currentWorldBookId", state.currentWorldBookId?.let(::JsonPrimitive) ?: JsonNull)
+                put("isolated", JsonPrimitive(isolated))
                 put("worldCatalog", JsonArray(state.worldCatalog.map { entry ->
                     toJsonObject(mapOf("id" to entry.id, "comment" to entry.comment,
                         "title" to entry.title, "content" to entry.content, "bookId" to entry.bookId, "bookName" to entry.bookName))
@@ -48,6 +51,7 @@ internal object PromptTemplateExpressionEvaluator {
             }
             replace(state.localVariables, "local")
             replace(state.globalVariables, "global")
+            replace(state.messageVariables, "message")
             replace(state.locals, "definitions")
             refreshMergedVariables(state)
             return (result["content"] as? JsonPrimitive)?.content.orEmpty()
@@ -215,6 +219,7 @@ internal object PromptTemplateExpressionEvaluator {
         expression.toDoubleOrNull()?.let { return it }
 
         parseArrayLiteral(expression, state, javascriptEvaluator)?.let { return it }
+        parseObjectLiteral(expression, state, javascriptEvaluator)?.let { return it }
 
         includesPattern.matchEntire(expression)?.let { match ->
             val target = stringify(evaluate(match.groupValues[1], state, javascriptEvaluator))
@@ -243,75 +248,124 @@ internal object PromptTemplateExpressionEvaluator {
     ): Any? {
         return when (name) {
             "getwi", "getWorldInfo" -> resolveWorldInfo(args, state, javascriptEvaluator)
-            // ST-Prompt-Template exposes both lowercase aliases (legacy) and the
-            // camelCase scope-explicit family (ejs.ts:279-307); accept both.
-            "getvar", "getchatvar", "getLocalVar" -> {
+            // ST-Prompt-Template variables.ts family. Second arguments are
+            // OPTIONS (string shorthand / map), not default values — ST only
+            // accepts defaults via {defaults: ...}. Scope defaults follow ST:
+            // reads default to the merged cache, writes default to message.
+            "getvar", "getchatvar" -> {
                 val key = stringify(args.getOrNull(0))
-                val fallback = args.getOrNull(1)
-                getPath(state.localVariables, key) ?: fallback ?: ""
+                val hints = varOptionHints(args.getOrNull(1))
+                getPath(scopeMap(state, hints.scope), key) ?: hints.defaults
+            }
+            "getLocalVar" -> {
+                val key = stringify(args.getOrNull(0))
+                val hints = varOptionHints(args.getOrNull(1))
+                getPath(state.localVariables, key) ?: hints.defaults
             }
             "getglobalvar", "getGlobalVar" -> {
                 val key = stringify(args.getOrNull(0))
-                val fallback = args.getOrNull(1)
-                getPath(state.globalVariables, key) ?: fallback ?: ""
+                val hints = varOptionHints(args.getOrNull(1))
+                getPath(state.globalVariables, key) ?: hints.defaults
             }
-            "setvar", "setchatvar", "setLocalVar" -> {
+            "getMessageVar" -> {
                 val key = stringify(args.getOrNull(0))
-                setLocalVariable(state, key, args.getOrNull(1))
-                ""
+                val hints = varOptionHints(args.getOrNull(1))
+                getPath(state.messageVariables, key) ?: hints.defaults
+            }
+            "setvar" -> {
+                val key = stringify(args.getOrNull(0))
+                setVariableScoped(state, key, args.getOrNull(1), varOptionHints(args.getOrNull(2)))
+            }
+            "setchatvar", "setLocalVar" -> {
+                val key = stringify(args.getOrNull(0))
+                setVariableScoped(state, key, args.getOrNull(1), varOptionHints(args.getOrNull(2)), forcedScope = "local")
             }
             "setglobalvar", "setGlobalVar" -> {
                 val key = stringify(args.getOrNull(0))
-                setGlobalVariable(state, key, args.getOrNull(1))
-                ""
+                setVariableScoped(state, key, args.getOrNull(1), varOptionHints(args.getOrNull(2)), forcedScope = "global")
             }
-            "incvar", "incLocalVar" -> {
+            "setMessageVar" -> {
+                val key = stringify(args.getOrNull(0))
+                setVariableScoped(state, key, args.getOrNull(1), varOptionHints(args.getOrNull(2)), forcedScope = "message")
+            }
+            "incvar" -> {
                 val key = stringify(args.getOrNull(0))
                 val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
-                val next = numeric(getPath(state.localVariables, key)) + amount
-                setLocalVariable(state, key, next)
-                formatNumber(next)
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)))
             }
-            "decvar", "decLocalVar" -> {
+            "incLocalVar" -> {
                 val key = stringify(args.getOrNull(0))
                 val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
-                val next = numeric(getPath(state.localVariables, key)) - amount
-                setLocalVariable(state, key, next)
-                formatNumber(next)
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)), forcedOutscope = "local")
             }
             "incglobalvar", "incGlobalVar" -> {
                 val key = stringify(args.getOrNull(0))
                 val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
-                val next = numeric(getPath(state.globalVariables, key)) + amount
-                setGlobalVariable(state, key, next)
-                formatNumber(next)
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)), forcedOutscope = "global")
+            }
+            "incMessageVar" -> {
+                val key = stringify(args.getOrNull(0))
+                val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)), forcedOutscope = "message")
+            }
+            "decvar" -> {
+                val key = stringify(args.getOrNull(0))
+                val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)), decrease = true)
+            }
+            "decLocalVar" -> {
+                val key = stringify(args.getOrNull(0))
+                val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)), forcedOutscope = "local", decrease = true)
             }
             "decglobalvar", "decGlobalVar" -> {
                 val key = stringify(args.getOrNull(0))
                 val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
-                val next = numeric(getPath(state.globalVariables, key)) - amount
-                setGlobalVariable(state, key, next)
-                formatNumber(next)
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)), forcedOutscope = "global", decrease = true)
             }
-            "delvar", "delLocalVar" -> {
+            "decMessageVar" -> {
                 val key = stringify(args.getOrNull(0))
-                deletePath(state.localVariables, key)
-                refreshMergedVariables(state)
+                val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)), forcedOutscope = "message", decrease = true)
+            }
+            "delvar" -> {
+                deleteVariableScoped(state, stringify(args.getOrNull(0)), varOptionHints(args.getOrNull(1)))
+                ""
+            }
+            "delLocalVar" -> {
+                deleteVariableScoped(state, stringify(args.getOrNull(0)), varOptionHints(args.getOrNull(1)), forcedScope = "local")
                 ""
             }
             "delGlobalVar" -> {
-                val key = stringify(args.getOrNull(0))
-                deletePath(state.globalVariables, key)
-                refreshMergedVariables(state)
+                deleteVariableScoped(state, stringify(args.getOrNull(0)), varOptionHints(args.getOrNull(1)), forcedScope = "global")
+                ""
+            }
+            "delMessageVar" -> {
+                deleteVariableScoped(state, stringify(args.getOrNull(0)), varOptionHints(args.getOrNull(1)), forcedScope = "message")
                 ""
             }
             // ST insertVariable (variables.ts:559): array -> push / splice at
             // index (negative counts from the end); otherwise assign.
-            "insvar", "insertLocalVar" -> {
-                insertVariable(state.localVariables, args) { path, value -> setLocalVariable(state, path, value) }
+            "insvar" -> {
+                val hints = varOptionHints(args.getOrNull(3))
+                insertVariable(scopeMap(state, hints.scope ?: "message"), args) { path, value ->
+                    setVariableScoped(state, path, value, VarOptionHints(scope = hints.scope ?: "message"))
+                }
+            }
+            "insertLocalVar" -> {
+                insertVariable(state.localVariables, args) { path, value ->
+                    setVariableScoped(state, path, value, VarOptionHints(scope = "local"))
+                }
             }
             "insertGlobalVar" -> {
-                insertVariable(state.globalVariables, args) { path, value -> setGlobalVariable(state, path, value) }
+                insertVariable(state.globalVariables, args) { path, value ->
+                    setVariableScoped(state, path, value, VarOptionHints(scope = "global"))
+                }
+            }
+            "insertMessageVar" -> {
+                insertVariable(state.messageVariables, args) { path, value ->
+                    setVariableScoped(state, path, value, VarOptionHints(scope = "message"))
+                }
             }
             "String" -> stringify(args.getOrNull(0))
             "Number" -> numeric(args.getOrNull(0))
@@ -521,6 +575,9 @@ internal object PromptTemplateExpressionEvaluator {
         )
     }
 
+    /** Initial message-scope variables for the current generation. */
+    fun messageVariableMap(element: JsonObject?): Map<String, Any?> = variableMap(element)
+
     private fun variableMap(element: JsonElement?): Map<String, Any?> {
         return (element?.let(::toKotlinValue) as? Map<*, *>)
             ?.mapNotNull { (key, value) -> (key as? String)?.let { it to value } }
@@ -532,6 +589,151 @@ internal object PromptTemplateExpressionEvaluator {
         state.variables.clear()
         state.variables.putAll(deepCopyMap(state.globalVariables))
         state.variables.putAll(deepCopyMap(state.localVariables))
+        // ST merges the message layer on top (variables.ts:52-59): message >
+        // local > global. Floors' own snapshots are not tracked per message.
+        state.variables.putAll(deepCopyMap(state.messageVariables))
+    }
+
+    // ── ST variables.ts option/scope model ───────────────────────────────
+
+    private class VarOptionHints(
+        val scope: String? = null,
+        val inscope: String? = null,
+        val outscope: String? = null,
+        val flags: String? = null,
+        val results: String? = null,
+        val merge: Boolean = false,
+        val defaults: Any? = null,
+    )
+
+    /** ST optionsConverter (variables.ts:744): string shorthand / boolean / map. */
+    private fun varOptionHints(arg: Any?): VarOptionHints = when (arg) {
+        null -> VarOptionHints()
+        is String -> when (arg) {
+            "old", "new", "fullcache" -> VarOptionHints(results = arg)
+            "nx", "xx", "nxs", "xxs", "n" -> VarOptionHints(flags = arg)
+            "cache", "global", "local", "message", "initial" ->
+                VarOptionHints(scope = arg, inscope = arg, outscope = arg)
+            else -> VarOptionHints()
+        }
+        // ST: dryRun=true permits writing during the preparation phase; there
+        // is no separate preparation phase here, so it is a no-op.
+        is Boolean -> VarOptionHints()
+        is Map<*, *> -> VarOptionHints(
+            scope = arg["scope"] as? String,
+            inscope = (arg["inscope"] ?: arg["scope"]) as? String,
+            outscope = (arg["outscope"] ?: arg["scope"]) as? String,
+            flags = arg["flags"] as? String,
+            results = arg["results"] as? String,
+            merge = arg["merge"] == true,
+            defaults = arg["defaults"],
+        )
+        else -> VarOptionHints()
+    }
+
+    /** Read scope resolution: null/'cache' → merged snapshot (ST default 'cache'). */
+    private fun scopeMap(state: TemplateState, scope: String?): MutableMap<String, Any?> = when (scope) {
+        "global" -> state.globalVariables
+        "local" -> state.localVariables
+        "message" -> state.messageVariables
+        else -> state.variables
+    }
+
+    private fun setVariableScoped(
+        state: TemplateState,
+        key: String,
+        value: Any?,
+        hints: VarOptionHints,
+        forcedScope: String? = null,
+    ): Any? {
+        // ST setVariable: switch (scope || 'message') — bare setvar defaults
+        // to the message layer (variables.ts:307).
+        val scope = forcedScope ?: hints.scope ?: "message"
+        val target = when (scope) {
+            "global" -> state.globalVariables
+            "local" -> state.localVariables
+            "message" -> state.messageVariables
+            else -> null
+        }
+        // ST checks nxs/xxs via getVariable with the same options: the write
+        // scope when explicit, the cache for the default scope.
+        val checkSource = target ?: state.variables
+        val oldValue = if (hints.results == "old" || hints.merge) getPath(state.variables, key) else null
+        if (hints.flags == "nxs" && getPath(checkSource, key) != null) {
+            return if (hints.results == "old") oldValue else null
+        }
+        if (hints.flags == "xxs" && getPath(checkSource, key) == null) {
+            return if (hints.results == "old") oldValue else null
+        }
+        var newValue = value
+        if (hints.merge) newValue = mergeValues(oldValue, value)
+        if (target != null) {
+            if (newValue == null) deletePath(target, key) else setPath(target, key, newValue)
+            refreshMergedVariables(state)
+        } else if (newValue != null) {
+            // scope 'cache'/'initial': cache-sync only (ST has no write case).
+            setPath(state.variables, key, newValue)
+        }
+        return when (hints.results) {
+            "old" -> oldValue
+            "fullcache" -> state.variables
+            else -> newValue
+        }
+    }
+
+    /** ST increaseVariable/decreaseVariable: reads inscope (default cache), writes outscope (default message). */
+    private fun changeVariableScoped(
+        state: TemplateState,
+        key: String,
+        amount: Double,
+        hints: VarOptionHints,
+        forcedOutscope: String? = null,
+        decrease: Boolean = false,
+    ): String {
+        val source = scopeMap(state, hints.inscope)
+        val target = scopeMap(state, forcedOutscope ?: hints.outscope ?: "message")
+        val current = numeric(getPath(source, key))
+        val next = if (decrease) current - amount else current + amount
+        setPath(target, key, next)
+        refreshMergedVariables(state)
+        return formatNumber(next)
+    }
+
+    private fun deleteVariableScoped(
+        state: TemplateState,
+        key: String,
+        hints: VarOptionHints,
+        forcedScope: String? = null,
+    ) {
+        val scope = forcedScope ?: hints.scope ?: "message"
+        val target = scopeMap(state, scope)
+        deletePath(target, key)
+        if (scope != "cache") refreshMergedVariables(state)
+    }
+
+    /** ST merge option: arrays concat onto arrays, otherwise lodash-style deep merge with arrays replaced. */
+    private fun mergeValues(oldValue: Any?, value: Any?): Any? = when {
+        (oldValue == null || oldValue is List<*>) && value is List<*> -> {
+            val list = (oldValue as? List<*>)?.toMutableList() ?: mutableListOf()
+            list.addAll(value)
+            list
+        }
+        oldValue is MutableMap<*, *> && value is Map<*, *> -> deepMergeMaps(oldValue, value)
+        else -> value
+    }
+
+    private fun deepMergeMaps(dst: MutableMap<*, *>, src: Map<*, *>): Any? {
+        @Suppress("UNCHECKED_CAST")
+        val out = deepCopyMap(dst as Map<String, Any?>)
+        src.forEach { (key, srcValue) ->
+            val dstValue = out[key.toString()]
+            out[key.toString()] = if (dstValue is MutableMap<*, *> && srcValue is Map<*, *>) {
+                deepMergeMaps(dstValue, srcValue)
+            } else {
+                srcValue
+            }
+        }
+        return out
     }
 
     private fun setLocalVariable(state: TemplateState, path: String, value: Any?) {
@@ -596,6 +798,32 @@ internal object PromptTemplateExpressionEvaluator {
         val inner = expression.drop(1).dropLast(1)
         if (inner.isBlank()) return emptyList()
         return splitArguments(inner).map { evaluate(it, state, javascriptEvaluator) }
+    }
+
+    /**
+     * Simple `{key: value}` literals — enough for ST variable options
+     * (`{defaults: 0}`, `{scope: 'global'}`, `{flags: 'nxs'}`). Keys are bare
+     * identifiers or quoted strings; values are full expressions.
+     */
+    private fun parseObjectLiteral(
+        expression: String,
+        state: TemplateState,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
+    ): Map<String, Any?>? {
+        if (!expression.startsWith("{") || !expression.endsWith("}")) return null
+        val inner = expression.drop(1).dropLast(1).trim()
+        val out = linkedMapOf<String, Any?>()
+        if (inner.isEmpty()) return out
+        for (part in splitTopLevel(inner, ',')) {
+            val pair = splitTopLevel(part.trim(), ':')
+            if (pair.size != 2) return null
+            val rawKey = pair[0].trim()
+            val key = parseStringLiteral(rawKey)
+                ?: rawKey.takeIf { Regex("[A-Za-z_$][\\w$]*").matches(it) }
+                ?: return null
+            out[key] = evaluate(pair[1].trim(), state, javascriptEvaluator)
+        }
+        return out
     }
 
     private fun getPath(root: Any?, path: String): Any? {
