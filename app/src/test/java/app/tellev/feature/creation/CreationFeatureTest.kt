@@ -157,4 +157,60 @@ class CreationFeatureTest {
         assertTrue(provider.lastRequest?.prompt?.messages?.first()?.content.orEmpty().contains("第三人称限知"))
         assertTrue(provider.lastRequest?.preset?.prompts.isNullOrEmpty())
     }
+
+    @Test
+    fun malformedExampleJsonIsRepairedOnceBeforeApplyingDraft() = runBlocking {
+        val malformed = """{"assistant_message":"已写好",\"card":{"exampleMessages":"<START>\n{{user}}: 你好"}}"""
+        val repaired = """{"assistant_message":"已写好","card":{"exampleMessages":"<START>\n{{user}}: 你好"}}"""
+        val responses = ArrayDeque(listOf(malformed, repaired))
+        val requests = mutableListOf<GenerateRequest>()
+        val provider = object : ProviderAdapter {
+            override val id = "openai-compatible"
+            override val displayName = "Fake"
+            override val capabilities = setOf(ProviderCapability.Chat)
+            override suspend fun checkStatus(config: ProviderConfig) = ProviderStatus(true, "ok")
+            override suspend fun listModels(config: ProviderConfig): List<ProviderModel> = emptyList()
+            override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> {
+                requests += request
+                return flowOf(GenerateChunk.Completed(responses.removeFirst()))
+            }
+        }
+        val secrets = object : SecretStore {
+            override suspend fun putSecret(id: String, value: String) = Unit
+            override suspend fun readSecret(id: String): String? = null
+            override suspend fun deleteSecret(id: String) = Unit
+            override suspend fun listSecretIds(): List<String> = emptyList()
+        }
+        val reply = CreationEngine(secrets, ProviderRegistry(listOf(provider)))
+            .converse(CreationSession(kind = CreationKind.Character), "写一段示例对话")
+        val card = CreationReplyParser.apply(CreationSession(kind = CreationKind.Character), reply).card
+        assertEquals("<START>\n{{user}}: 你好", card.exampleMessages)
+        assertEquals(2, requests.size)
+        assertEquals(0.0, requests.last().preset.temperature)
+        assertTrue(requests.last().prompt.messages.first().content.contains("JSON 格式修复器"))
+    }
+
+    @Test
+    fun repeatedMalformedReplyReportsRetryWithoutRawJson() = runBlocking {
+        val provider = object : ProviderAdapter {
+            override val id = "openai-compatible"
+            override val displayName = "Fake"
+            override val capabilities = setOf(ProviderCapability.Chat)
+            override suspend fun checkStatus(config: ProviderConfig) = ProviderStatus(true, "ok")
+            override suspend fun listModels(config: ProviderConfig): List<ProviderModel> = emptyList()
+            override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> =
+                flowOf(GenerateChunk.Completed("{invalid}"))
+        }
+        val secrets = object : SecretStore {
+            override suspend fun putSecret(id: String, value: String) = Unit
+            override suspend fun readSecret(id: String): String? = null
+            override suspend fun deleteSecret(id: String) = Unit
+            override suspend fun listSecretIds(): List<String> = emptyList()
+        }
+        val failure = runCatching {
+            CreationEngine(secrets, ProviderRegistry(listOf(provider)))
+                .converse(CreationSession(kind = CreationKind.Character), "写一段示例对话")
+        }.exceptionOrNull()
+        assertEquals("AI 连续两次返回无效的草稿格式；本轮未应用，请点击「重试上一轮」。", failure?.message)
+    }
 }

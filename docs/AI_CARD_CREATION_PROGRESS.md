@@ -17,6 +17,7 @@
 - 本地 SillyTavern 源码显示：首条消息支持 HTML，但消息渲染受 DOMPurify 与“显示标签”用户设置影响。当前生成范围采用无需酒馆助手/提示词模板的静态 HTML 和原生 `<details>` 交互。
 - 在隔离的 SillyTavern 1.18.0 实例中，用测试夹具导入 V2 角色卡；导出结果保留首条消息 HTML、示例对话和内嵌世界书。打开角色聊天时，世界书出现导入提示；首条消息中的 `<details>` 可以点击展开并显示内容。夹具不是模型实际生成的角色卡。
 - ADB 将 `app.tellev.debug`（1.6.6-debug）安装到设备 `HA25GHH4`，返回 `Success`；核对了已安装 APK 路径及 `app.tellev.MainActivity` 启动入口。功能由用户在设备上测试。
+- 用户设备截图发现创作 agent 的 `exampleMessages` 输出存在非法 JSON 转义。现已要求模型明确遵守字符串转义，解析失败时独立调用一次格式修复；连续失败会提示重试，不应用该轮草稿。相关回归测试与 `assembleDebug` 通过，更新包已通过 `adb install -r` 安装到同一设备。
 
 ## 尚未完成的验收
 
