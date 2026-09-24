@@ -8,9 +8,30 @@ interface PromptTemplateProcessor {
     fun systemPromptContentFor(entry: PromptTemplateWorldEntry): String = entry.content
 }
 
+/**
+ * Bridge to the production EJS renderer running on the template WebView.
+ *
+ * [evaluate] mirrors ST-Prompt-Template's `evalTemplate`; the two lifecycle
+ * hooks give [DefaultPromptTemplateProcessor] the per-generation controls ST
+ * performs in handler.ts — sticky-injection decay (handler.ts:403) and outlet
+ * placeholder resolution (handler.ts:382).
+ */
+interface PromptTemplateJsBridge {
+    fun evaluate(request: JsonObject): JsonObject
+
+    /** Decrement sticky counters on injected prompts; called once per prompt build. */
+    fun deactivateInjectedPrompts() {}
+
+    /**
+     * Resolve `{{outletPromptsInjected:key}}` placeholders in content that did
+     * not go through EJS rendering; rendered content is already resolved.
+     */
+    fun replaceOutletPlaceholders(content: String): String = content
+}
+
 class DefaultPromptTemplateProcessor(
     @Volatile var ejsSettings: EjsTemplateSettings = EjsTemplateSettings.DEFAULT,
-    private val javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+    private val javascriptEvaluator: PromptTemplateJsBridge? = null,
 ) : PromptTemplateProcessor {
 
     override fun process(request: PromptTemplateRequest): PromptTemplateResult {
@@ -18,6 +39,16 @@ class DefaultPromptTemplateProcessor(
         // skip all template processing and return messages unchanged.
         if (!ejsSettings.enabled) {
             return PromptTemplateResult(messages = request.messages)
+        }
+
+        // ST decays sticky injections once per generation (handler.ts:403).
+        // Decaying at the start of each build keeps the same observable
+        // lifetime: entries registered during this build stay available for
+        // this build's outlet collection, then expire per their sticky count.
+        if (javascriptEvaluator != null) {
+            javascriptEvaluator.deactivateInjectedPrompts()
+        } else {
+            PromptInjectedRegistry.deactivate()
         }
 
         val entryParses = request.worldEntries.map { PromptTemplateParser.parseWorldEntry(it) }
@@ -32,10 +63,14 @@ class DefaultPromptTemplateProcessor(
             emptyList()
         }
 
-        if (!request.messages.any { it.content.contains("<%") || PromptTemplateParser.hasInstructionMarker(it.content) } &&
+        // Fast path for content without EJS or instruction markers — but
+        // outlet placeholders must still resolve here: a plain message can
+        // collect injections registered by an earlier build's sticky entries
+        // without containing any EJS itself.
+        if (!request.messages.any { it.content.contains("<%") || it.content.contains(OUTLET_MARKER) || PromptTemplateParser.hasInstructionMarker(it.content) } &&
             activeBlocks.isEmpty()
         ) {
-            return PromptTemplateResult(messages = request.messages)
+            return PromptTemplateResult(messages = resolveOutletPlaceholders(request.messages))
         }
 
         val scopes = PromptTemplateExpressionEvaluator.extractVariableScopes(request.metadata)
@@ -67,7 +102,7 @@ class DefaultPromptTemplateProcessor(
         }
 
         return PromptTemplateResult(
-            messages = rendered,
+            messages = resolveOutletPlaceholders(rendered),
             warnings = state.warnings.toList(),
             variableUpdates = PromptTemplateVariableUpdates(
                 local = state.localVariables
@@ -80,6 +115,29 @@ class DefaultPromptTemplateProcessor(
         )
     }
 
+    /**
+     * ST resolves {{outletPromptsInjected:key}} across message content after
+     * the whole generate pass (handler.ts:382) — entries injected by the
+     * worldbook entries rendered inside the system prompt must be visible to
+     * placeholders sitting in plain messages that never went through EJS.
+     */
+    private fun resolveOutletPlaceholders(messages: List<PromptMessage>): List<PromptMessage> {
+        if (messages.none { it.content.contains(OUTLET_MARKER) }) return messages
+        return messages.map { message ->
+            if (message.content.contains(OUTLET_MARKER)) {
+                message.copy(
+                    content = if (javascriptEvaluator != null) {
+                        javascriptEvaluator.replaceOutletPlaceholders(message.content)
+                    } else {
+                        PromptTemplateOutlet.apply(message.content)
+                    },
+                )
+            } else {
+                message
+            }
+        }
+    }
+
     override fun systemPromptContentFor(entry: PromptTemplateWorldEntry): String =
         if (!ejsSettings.enabled || !ejsSettings.generateLoaderEnabled) {
             // When disabled, return the raw content unchanged so world
@@ -89,3 +147,5 @@ class DefaultPromptTemplateProcessor(
             PromptTemplateParser.parseWorldEntry(entry).normalText.trim()
         }
 }
+
+private const val OUTLET_MARKER = "{{outletPromptsInjected:"

@@ -1,4 +1,86 @@
 // EJS compilation options and unescaped output follow ST-Prompt-Template/ejs.ts.
+
+// ── Prompt-injection registry (ST-Prompt-Template inject.ts parity) ──────
+// Module-level state on purpose: it must survive across __tellevTemplate calls
+// so a worldbook entry can injectPrompt() during the system-prompt render and a
+// later message — or a later build when sticky > 0 — can collect it with
+// getPromptsInjected(). ST clears expired entries once per generation
+// (handler.ts:403); Tellev calls __tellevTemplateDeactivate() once per prompt
+// build from DefaultPromptTemplateProcessor, which gives the same observable
+// lifetime for entries registered during that build.
+const promptInjected = new Map();
+
+// FNV-1a 32-bit — uids only need to be stable within this registry for dedup;
+// they never cross to ST or to the JVM fallback registry.
+function hashUid(text) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return ('0000000' + hash.toString(16)).slice(-8);
+}
+
+function injectPrompt(key, prompt, order = 100, sticky = 0, uid = '') {
+  if (!promptInjected.has(key)) promptInjected.set(key, new Map());
+  if (!uid) uid = hashUid(`${key}#${prompt}`);
+  promptInjected.get(key).set(uid, { prompt, order, sticky, uid });
+  return '';
+}
+
+function getPromptsInjected(key, postprocess = [], outlet = false) {
+  if (outlet && (!Array.isArray(postprocess) || postprocess.length <= 0)) {
+    return `{{outletPromptsInjected:${key}}}`;
+  }
+  const inner = promptInjected.get(key);
+  if (!inner) return '';
+  let combined = Array.from(inner.values())
+    .sort((a, b) => a.order - b.order)
+    .map(p => p.prompt)
+    .join('\n');
+  for (const pp of (postprocess || [])) {
+    if (!pp || typeof pp !== 'object') continue;
+    combined = combined.replace(pp.search, pp.replace);
+  }
+  return combined;
+}
+
+function hasPromptsInjected(key) {
+  return promptInjected.has(key);
+}
+
+// ST deactivatePromptInjection (inject.ts:102): sticky >= 0 survives, else dropped.
+function deactivatePrompts(count = 1) {
+  for (const key of Array.from(promptInjected.keys())) {
+    const inner = promptInjected.get(key);
+    const expired = [];
+    inner.forEach((entry, uid) => {
+      const next = entry.sticky - count;
+      if (next >= 0) entry.sticky = next; else expired.push(uid);
+    });
+    if (expired.length === inner.size) promptInjected.delete(key);
+    else {
+      expired.forEach(uid => inner.delete(uid));
+      if (inner.size === 0) promptInjected.delete(key);
+    }
+  }
+  return '';
+}
+
+// ST applyOutletPromptsInjected (inject.ts:85): resolve
+// {{outletPromptsInjected:key}} repeatedly until none remain.
+function applyOutletPrompts(content, recursion = 41) {
+  let result = String(content ?? '');
+  for (let i = 0; i < recursion; i++) {
+    if (!result.includes('{{outletPromptsInjected:')) break;
+    result = result.replace(/\{\{outletPromptsInjected:(.+?)\}\}/g, (_, key) => getPromptsInjected(key));
+  }
+  return result;
+}
+
+window.__tellevTemplateDeactivate = function (count) { return deactivatePrompts(count || 1); };
+window.__tellevTemplateOutlet = function (content) { return applyOutletPrompts(content); };
+
 window.__tellevTemplate = async function (request) {
   const local = request.local || {}, global = request.global || {}, definitions = request.definitions || {};
   const stack = [];
@@ -21,6 +103,7 @@ window.__tellevTemplate = async function (request) {
     delvar: (k,o) => _.unset(scope(o),k),
     getAllVariables: merged,
     define: (name,value) => { _.set(definitions,name,value); _.set(env,name,value); return ''; },
+    injectPrompt, getPromptsInjected, hasPromptsInjected,
   });
   const render = async (content, extra = {}) => {
     const data = Object.assign(env, extra);
