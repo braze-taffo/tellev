@@ -93,6 +93,13 @@ window.__tellevTemplate = async function (request) {
   };
   const env = Object.assign({}, request.context, definitions, {
     variables: merged(), getvar, setvar,
+    // ST exposes SillyTavern.getContext() to templates; Tellev has no ST
+    // internals, so stub it to a permissive empty context — bare references
+    // and getContext() survive, deeper property access yields undefined.
+    SillyTavern: { getContext: () => ({}) },
+    // faker is not bundled; declaring it prevents a ReferenceError on bare
+    // references (property access still throws, matching an absent lib).
+    faker: undefined,
     getVar: getvar, setVar: setvar,
     getLocalVar: (k, o) => getvar(k, {...o,scope:'local'}),
     getGlobalVar: (k, o) => getvar(k, {...o,scope:'global'}),

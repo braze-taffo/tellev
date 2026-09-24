@@ -59,6 +59,11 @@ internal object PromptMacroContextBuilder {
             lastUserMessage = lastUserMessage,
             lastCharMessage = lastCharMessage,
             lastMessageId = visible.lastIndex.toString(),
+            lastUserMessageId = visible.indexOfLast { it.role == MessageRole.User },
+            lastCharMessageId = visible.indexOfLast {
+                it.role == MessageRole.Character || it.role == MessageRole.Assistant
+            },
+            characterId = request.character.id,
             alternateGreetings = request.character.alternateGreetings,
             messageVariables = messageVariables,
             characterVariables = extractCharacterVariables(request.character),
