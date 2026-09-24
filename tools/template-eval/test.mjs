@@ -83,22 +83,28 @@ const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
 test('injectPrompt registers and getPromptsInjected collects in order', async () => {
+  // ST generate-phase default: bare calls return the placeholder; the
+  // end-of-build outlet scan collects. Pass outlet=false for inline reads.
   const out = await render(
     "<% injectPrompt('cot', 'second', 200) %><% injectPrompt('cot', 'first', 100) %>" +
     "<%= getPromptsInjected('cot') %>");
-  assert.equal(out, 'first\nsecond');
+  assert.equal(window.__tellevTemplateOutlet(out), 'first\nsecond');
+  const inline = await render(
+    "<% injectPrompt('cot2', 'second', 200) %><% injectPrompt('cot2', 'first', 100) %>" +
+    "<%= getPromptsInjected('cot2', [], false) %>");
+  assert.equal(inline, 'first\nsecond');
 });
 
 test('injectPrompt deduplicates identical content by uid', async () => {
   const out = await render(
-    "<% injectPrompt('k', 'same') %><% injectPrompt('k', 'same') %><%= getPromptsInjected('k') %>");
+    "<% injectPrompt('k', 'same') %><% injectPrompt('k', 'same') %><%= getPromptsInjected('k', [], false) %>");
   assert.equal(out, 'same');
 });
 
 test('explicit uid overrides content hash dedup', async () => {
   const out = await render(
     "<% injectPrompt('k2', 'a', 100, 0, 'u1') %><% injectPrompt('k2', 'b', 100, 0, 'u1') %>" +
-    "<%= getPromptsInjected('k2') %>");
+    "<%= getPromptsInjected('k2', [], false) %>");
   assert.equal(out, 'b');
 });
 
@@ -110,17 +116,17 @@ test('hasPromptsInjected reflects registry state', async () => {
 
 test('sticky decay across deactivate calls', async () => {
   await render("<% injectPrompt('s', 'persist', 100, 1) %>");
-  assert.equal(await render("<%= getPromptsInjected('s') %>"), 'persist');
+  assert.equal(await render("<%= getPromptsInjected('s', [], false) %>"), 'persist');
   window.__tellevTemplateDeactivate();
-  assert.equal(await render("<%= getPromptsInjected('s') %>"), 'persist');
+  assert.equal(await render("<%= getPromptsInjected('s', [], false) %>"), 'persist');
   window.__tellevTemplateDeactivate();
-  assert.equal(await render("<%= getPromptsInjected('s') %>"), '');
+  assert.equal(await render("<%= getPromptsInjected('s', [], false) %>"), '');
 });
 
 test('sticky zero entry dropped by one deactivate', async () => {
   await render("<% injectPrompt('once', 'v') %>");
   window.__tellevTemplateDeactivate();
-  assert.equal(await render("<%= getPromptsInjected('once') %>"), '');
+  assert.equal(await render("<%= getPromptsInjected('once', [], false) %>"), '');
 });
 
 test('outlet flag emits placeholder and __tellevTemplateOutlet resolves it', async () => {
@@ -139,19 +145,19 @@ test('outlet resolution recurses until stable', async () => {
 test('getPromptsInjected postprocess replaces first occurrence', async () => {
   await render("<% injectPrompt('pp', 'a-b-c') %>");
   const out = await render(
-    "<%= getPromptsInjected('pp', [{search: '-', replace: '+'}]) %>");
+    "<%= getPromptsInjected('pp', [{search: '-', replace: '+'}], false) %>");
   assert.equal(out, 'a+b-c');
 });
 
 test('postprocess accepts RegExp search', async () => {
   await render("<% injectPrompt('pp2', 'x123y') %>");
   const out = await render(
-    "<%= getPromptsInjected('pp2', [{search: /\\d+/, replace: 'N'}]) %>");
+    "<%= getPromptsInjected('pp2', [{search: /\\d+/, replace: 'N'}], false) %>");
   assert.equal(out, 'xNy');
 });
 
 test('unknown key collects to empty string', async () => {
-  assert.equal(await render("<%= getPromptsInjected('never') %>"), '');
+  assert.equal(await render("<%= getPromptsInjected('never', [], false) %>"), '');
 });
 
 test('regression: getvar/setvar survive the additions', async () => {
@@ -179,7 +185,11 @@ test('SillyTavern stub survives getContext calls', async () => {
 });
 
 test('faker is declared but unbundled', async () => {
-  assert.equal(await render("<%= typeof faker === 'undefined' ? 'declared' : 'present' %>"), 'declared');
+  assert.equal(await render("<%= faker ?? 'x' %>"), 'x');
+});
+
+test('execute stub resolves to empty pipe', async () => {
+  assert.equal(await render("<%- await execute('/echo hi') %>after"), 'after');
 });
 
 let failed = 0;

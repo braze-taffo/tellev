@@ -189,7 +189,8 @@ internal object PromptTemplateExpressionEvaluator {
 
         splitByOperator(expression, "??")?.let { (left, right) ->
             val leftValue = evaluate(left, state, javascriptEvaluator)
-            return if (leftValue == null || leftValue == "") evaluate(right, state, javascriptEvaluator) else leftValue
+            // JS ?? only falls through on null/undefined — empty strings pass.
+            return if (leftValue == null) evaluate(right, state, javascriptEvaluator) else leftValue
         }
         splitByOperator(expression, "||")?.let { (left, right) ->
             val leftValue = evaluate(left, state, javascriptEvaluator)
@@ -394,19 +395,39 @@ internal object PromptTemplateExpressionEvaluator {
             "injectPrompt" -> {
                 val key = stringify(args.getOrNull(0))
                 val prompt = stringify(args.getOrNull(1))
-                val order = (args.getOrNull(2) as? Number)?.toInt() ?: 100
-                val sticky = (args.getOrNull(3) as? Number)?.toInt() ?: 0
+                // Coerce numeric strings like JS arithmetic does ("2" → 2).
+                val order = args.getOrNull(2)?.let { numeric(it).toInt() } ?: 100
+                val sticky = args.getOrNull(3)?.let { numeric(it).toInt() } ?: 0
                 val uid = args.getOrNull(4)?.let { stringify(it) } ?: ""
                 PromptInjectedRegistry.inject(key, prompt, order, sticky, uid)
                 ""
             }
             "getPromptsInjected" -> {
                 val key = stringify(args.getOrNull(0))
-                val outlet = args.getOrNull(2)?.let { truthy(it) } ?: false
-                if (outlet) "{{outletPromptsInjected:${key}}}" else PromptInjectedRegistry.get(key)
+                // ST generate-phase default (inject.ts:56 + handler.ts:247):
+                // outlet on, collected by the end-of-build scan.
+                val outlet = args.getOrNull(2)?.let { truthy(it) } ?: true
+                if (outlet) {
+                    "{{outletPromptsInjected:${key}}}"
+                } else {
+                    @Suppress("UNCHECKED_CAST")
+                    val postprocess = (args.getOrNull(1) as? List<Any?>)?.mapNotNull { pp ->
+                        (pp as? Map<*, *>)?.let { m ->
+                            val search = m["search"]
+                            val replace = stringify(m["replace"] ?: "")
+                            when (search) {
+                                is Regex -> search to replace
+                                null -> null
+                                else -> stringify(search) to replace
+                            }
+                        }
+                    } ?: emptyList()
+                    PromptInjectedRegistry.get(key, postprocess)
+                }
             }
             "hasPromptsInjected" -> PromptInjectedRegistry.has(stringify(args.getOrNull(0)))
             "SillyTavern.getContext" -> emptyMap<String, Any?>()
+            "execute" -> ""
             else -> {
                 state.warn("Unsupported prompt template function: $name")
                 UnsupportedExpression
@@ -462,9 +483,10 @@ internal object PromptTemplateExpressionEvaluator {
      * ST-Prompt-Template prepareContext (ejs.ts:211) constants that Tellev can
      * source from existing data. These become bare identifiers inside EJS
      * (`_with` scope); a missing name is a hard ReferenceError, so every name
-     * a card might reference is declared even when the value has to be null.
-     * Names Tellev cannot source (faker, avatars, SillyTavern internals) are
-     * deliberately absent here and stubbed on the JS side in template.js.
+     * a card might reference is declared even when the value has to be null or
+     * empty. Names Tellev cannot source meaningfully (faker, SillyTavern
+     * internals, the execute STscript runner) are stubbed JS-side in
+     * template.js.
      */
     private fun templateContextMap(state: TemplateState): Map<String, Any?> = mapOf(
         "user" to state.context.userName,
@@ -481,12 +503,17 @@ internal object PromptTemplateExpressionEvaluator {
         "lastUserMessageId" to state.context.lastUserMessageId,
         "lastCharMessageId" to state.context.lastCharMessageId,
         "characterId" to state.context.characterId,
+        "chatId" to "",
+        "charAvatar" to "",
+        "userAvatar" to "",
         "model" to state.context.modelName,
         "runType" to "generate",
         "generateType" to "normal",
         // ST binds the char-embedded lorebook name; Tellev's currentWorldBookId
-        // is the same book. User/chat lorebooks have no Tellev equivalent yet.
-        "charLoreBook" to state.currentWorldBookId,
+        // is the same book — but only when the card actually ships one
+        // (embeddedCharacterBookId synthesizes an id even for bookless cards).
+        "charLoreBook" to state.currentWorldBookId
+            ?.takeIf { id -> state.worldCatalog.any { it.bookId == id } },
         "userLoreBook" to null,
         "chatLoreBook" to null,
         "groups" to emptyList<Any?>(),
@@ -517,10 +544,13 @@ internal object PromptTemplateExpressionEvaluator {
             "lastUserMessageId" -> state.context.lastUserMessageId
             "lastCharMessageId" -> state.context.lastCharMessageId
             "characterId" -> state.context.characterId
+            "chatId", "charAvatar", "userAvatar" -> ""
+            "faker" -> null
             "model" -> state.context.modelName
             "runType" -> "generate"
             "generateType" -> "normal"
             "charLoreBook" -> state.currentWorldBookId
+                ?.takeIf { id -> state.worldCatalog.any { it.bookId == id } }
             "userLoreBook", "chatLoreBook" -> null
             "groups" -> emptyList<Any?>()
             "groupId" -> ""
