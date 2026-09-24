@@ -138,17 +138,120 @@
         getVariables({type:'script',script_id:script.id}),getVariables({type:'chat'})),
     };
   };
+  // TavernHelper scripts run in distinct same-origin iframes. A module imported
+  // in this parent window has no frameElement, and its parent.document points
+  // at the hidden runtime itself instead of a script's shared host document.
+  function scriptFrameBootstrap() {
+    const frame = window.frameElement;
+    const info = { id: frame.dataset.scriptId, name: frame.dataset.scriptName };
+    const token = frame.dataset.loadToken;
+    const host = window.parent;
+    const api = host.__tellevScriptApi(info);
+    // js-slash-runner's parent_jquery.js shares these globals with the host.
+    // In particular, $('#tavern_helper') must query the parent registration DOM.
+    window.$ = host.$;
+    window.jQuery = host.jQuery;
+    window._ = host._;
+    window.EjsTemplate = host.EjsTemplate;
+    window.YAML = host.YAML;
+    window.showdown = host.showdown;
+    window.z = host.z;
+    window.Tellev = host.Tellev;
+    window.SillyTavern = host.SillyTavern;
+    window.eventSource = host.eventSource;
+    window.event_types = host.event_types;
+    window.tavern_events = host.tavern_events;
+    window.getContext = host.getContext;
+    window.fetch = host.fetch;
+    window.registerVariableSchema = host.registerVariableSchema;
+    window.__tellevScriptApi = host.__tellevScriptApi;
+    if (!window.tellevNative) window.tellevNative = host.tellevNative;
+    if (!window.toastr) window.toastr = host.toastr;
+    const helper = window.TavernHelper = Object.assign(Object.create(host.TavernHelper), api);
+    helper._bind = Object.assign({}, host.TavernHelper._bind, {
+      _getIframeName: () => frame.id,
+      _getScriptId: () => info.id,
+      _getScriptName: () => info.name,
+      _reloadIframe: () => window.location.reload(),
+    });
+    for (const key of Object.keys(host.TavernHelper)) {
+      if (typeof helper[key] === 'function' && window[key] === undefined) window[key] = helper[key];
+    }
+    for (const [key, value] of Object.entries(helper._bind)) {
+      if (typeof value === 'function') {
+        const global = key.replace(/^_/, '');
+        if (window[global] === undefined) window[global] = value.bind(window);
+      }
+    }
+    Object.assign(window, api);
+    Object.defineProperty(window, 'Mvu', {
+      configurable: true, get: () => host.Mvu, set: value => { host.Mvu = value; },
+    });
+    window.addEventListener('error', e => {
+      host.__tellevScriptFailed(token, e.error?.stack || e.message || 'Script error');
+    });
+    window.addEventListener('unhandledrejection', e => {
+      host.__tellevScriptFailed(token, e.reason?.stack || e.reason || 'Unhandled promise rejection');
+    });
+    import(frame.dataset.moduleUrl).then(
+      () => host.__tellevScriptLoaded(token),
+      error => host.__tellevScriptFailed(token, error?.stack || error),
+    );
+  }
+  let scriptLoadSerial = 0;
+  const pendingScriptLoads = new Map();
+  window.__tellevScriptLoaded = token => {
+    const pending = pendingScriptLoads.get(token);
+    if (!pending) return;
+    pendingScriptLoads.delete(token);
+    pending.resolve();
+  };
+  window.__tellevScriptFailed = (token, error) => {
+    const pending = pendingScriptLoads.get(token);
+    if (!pending) {
+      tellevNative.log('error', String(error));
+      return;
+    }
+    pendingScriptLoads.delete(token);
+    pending.reject(new Error(`${pending.name}: ${error}`));
+  };
+  // Cards commonly put MVU and schema setup first; later scripts read Mvu
+  // synchronously while evaluating. Respect the card's enabled-script order.
   window.__tellevLoadScripts = async scripts => {
-    try {
-      await Promise.all(scripts.map(async script => {
-        const entry=document.createElement('div'); entry.dataset.scriptId=script.id; registry.append(entry);
-        const api=window.__tellevScriptApi(script);
-        const prelude=`const {${Object.keys(api).join(',')}}=window.__tellevScriptApi(${JSON.stringify({id:script.id,name:script.name})});\n`;
-        const url=URL.createObjectURL(new Blob([prelude,script.content],{type:'application/javascript'}));
-        try { await import(url); } catch(error) { throw new Error(`${script.name}: ${error.stack||error}`); }
-        finally { URL.revokeObjectURL(url); }
-      }));
-    } catch(error) { throw error; }
+    for (const script of scripts) {
+    const token = `script_${++scriptLoadSerial}`;
+    const api = window.__tellevScriptApi(script);
+    const prelude = `const {${Object.keys(api).join(',')}}=window.__tellevScriptApi({id:${JSON.stringify(script.id)},name:${JSON.stringify(script.name)}});\n`;
+    const url = URL.createObjectURL(new Blob([prelude, script.content], { type: 'application/javascript' }));
+    // Upstream helper modules choose the active script from these registrations.
+    const entry = document.createElement('div');
+    entry.dataset.scriptId = script.id;
+    registry.append(entry);
+    const frame = document.createElement('iframe');
+    frame.id = `TH-script--${script.name}--${script.id}`;
+    frame.name = frame.id;
+    frame.style.display = 'none';
+    frame.dataset.scriptId = script.id;
+    frame.dataset.scriptName = script.name;
+    frame.dataset.loadToken = token;
+    frame.dataset.moduleUrl = url;
+    // Avoid a literal closing script tag in this file: it is inlined into the
+    // extension HTML template and would terminate its enclosing script.
+    const endScript = '</scr' + 'ipt>';
+    frame.srcdoc = '<!doctype html><html><head><meta charset="utf-8">' +
+      '<script src="https://extensions.tellev.local/compat/globals.js">' + endScript +
+      '</head><body><script>try{(' + scriptFrameBootstrap.toString() + ')()}' +
+      'catch(error){parent.__tellevScriptFailed(' + JSON.stringify(token) + ',error?.stack||error)}' + endScript +
+      '</body></html>';
+    const result = new Promise((resolve, reject) => {
+      pendingScriptLoads.set(token, { resolve, reject, name: script.name });
+    });
+    registry.append(frame);
+      try {
+        await result;
+        await window.__tellevReady();
+      } finally { URL.revokeObjectURL(url); }
+    }
   };
   window.__tellevDispatch = async (name, payload) => {
     window.__tellevInvalidateContext();

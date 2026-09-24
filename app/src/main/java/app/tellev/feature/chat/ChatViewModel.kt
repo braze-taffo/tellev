@@ -48,6 +48,8 @@ data class ChatUiState(
     // Card file per character id for the character picker list (card = avatar).
     val characterAvatarFiles: Map<String, File?> = emptyMap(),
     val selectedCharacter: CharacterCard? = null,
+    /** Available after the selected card's TavernHelper runtime has loaded. */
+    val characterUiExtensionId: String? = null,
     // The selected character's card file (PNG/WebP/JSON): the card image is
     // the avatar. Null when no character is selected or the card file is gone;
     // JSON cards fall back to the initials badge on decode failure.
@@ -580,7 +582,10 @@ class ChatViewModel(
         ChatTavernAdapter.unloadCharacterTavernHelperScripts(
             extensionHost,
             loadedCharacterScriptExtensionId,
-        ) { loadedCharacterScriptExtensionId = it }
+        ) {
+            loadedCharacterScriptExtensionId = it
+            _uiState.update { state -> state.copy(characterUiExtensionId = it) }
+        }
         _uiState.value.selectedCharacter?.let {
             extensionHost.unload(ChatTavernAdapter.characterScriptExtensionId(it.id))
         }
@@ -1035,7 +1040,10 @@ class ChatViewModel(
             extensionHost = extensionHost,
             permissionManager = permissionManager,
             currentLoadedId = loadedCharacterScriptExtensionId,
-            onLoadedIdChanged = { loadedCharacterScriptExtensionId = it },
+            onLoadedIdChanged = { id ->
+                loadedCharacterScriptExtensionId = id
+                _uiState.update { it.copy(characterUiExtensionId = id) }
+            },
             onError = { err -> _uiState.update { it.copy(error = err) } },
         )
     }

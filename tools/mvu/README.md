@@ -19,6 +19,9 @@ Results are under ignored `build/mvu-oracle/results`. Full upstream generation r
 
 ## Card script regression replay
 
+For the newer TavernHelper iframe and Web Storage checks, see
+[`docs/CHARACTER-TAVERN-HELPER-COMPAT.md`](../../docs/CHARACTER-TAVERN-HELPER-COMPAT.md).
+
 After exporting the production host with the JVM tests, run `node tools/mvu/replay-card.mjs <extracted-card.json> <preset.json>`.
 The input files remain outside the repository. The replay executes the card's Schema and maintenance scripts with the pinned real MVU bundle, checks every greeting and two synthetic reply cycles, and checks that the greeting variables remain intact. Recognized MVU and Zod imports use the local pinned bundles; other imports fail explicitly. When a card references a moving branch such as `@beta`, verify its downloaded source hash against `tools/mvu/vendor/SHA256.json` before using this replay as evidence.
 

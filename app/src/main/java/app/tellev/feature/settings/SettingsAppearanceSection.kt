@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import app.tellev.ui.theme.ThemeAccent
 import app.tellev.ui.theme.ThemeMode
 import app.tellev.ui.theme.lightColors
+import kotlin.math.roundToInt
 
 @Composable
 internal fun ThemeOption(
@@ -136,6 +137,7 @@ internal fun LazyListScope.appearanceSectionItems(
     onSetThemeMode: (ThemeMode) -> Unit,
     onSetThemeAccent: (ThemeAccent) -> Unit,
     onSetChatBubbleAlpha: (Float) -> Unit,
+    onSetChatFontSizeSp: (Int) -> Unit,
 ) {
     item(key = "theme_header") {
         SectionHeader(
@@ -203,6 +205,29 @@ internal fun LazyListScope.appearanceSectionItems(
                 value = state.chatBubbleAlpha,
                 onValueChange = onSetChatBubbleAlpha,
                 valueRange = 0f..1f,
+            )
+        }
+    }
+
+    item(key = "chat_font_size") {
+        Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+            Text("对话字号：${state.chatFontSizeSp} sp", style = MaterialTheme.typography.bodyMedium)
+            Slider(
+                value = state.chatFontSizeSp.toFloat(),
+                onValueChange = { onSetChatFontSizeSp((it / 2).roundToInt() * 2) },
+                valueRange = 14f..20f,
+                steps = 2,
+            )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                listOf(14, 16, 18, 20).forEach { Text("$it", style = MaterialTheme.typography.labelSmall) }
+            }
+            Text(
+                "预览：这是一段对话文字",
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = MaterialTheme.typography.bodyLarge.fontSize * (state.chatFontSizeSp / 16f),
+                    lineHeight = MaterialTheme.typography.bodyLarge.lineHeight * (state.chatFontSizeSp / 16f),
+                ),
+                modifier = Modifier.padding(top = 8.dp),
             )
         }
     }

@@ -181,14 +181,15 @@ internal fun TavernHtmlPanel(
     html: String,
     availableMaxHeight: Dp,
     dialogueQuoteColor: String? = null,
+    baseFontSizePx: Int? = null,
     tavernRuntime: TavernMessageRuntime,
     onBoundaryDrag: (Float) -> Unit,
 ) {
     if (tavernRuntime.token == null) return
     androidx.compose.runtime.key(tavernRuntime.token) {
         val themeOnSurface = MaterialTheme.colorScheme.onSurface.toCssHex()
-        val wrappedHtml = remember(html, themeOnSurface, dialogueQuoteColor) {
-            wrapTavernHtml(html, themeOnSurface, dialogueQuoteColor)
+        val wrappedHtml = remember(html, themeOnSurface, dialogueQuoteColor, baseFontSizePx) {
+            wrapTavernHtml(html, themeOnSurface, dialogueQuoteColor, baseFontSizePx)
         }
         val density = LocalDensity.current
         val configuration = LocalConfiguration.current
@@ -379,10 +380,13 @@ internal fun wrapTavernHtml(
     html: String,
     themeOnSurface: String,
     dialogueQuoteColor: String? = null,
+    baseFontSizePx: Int? = null,
 ): String {
     val dialogueQuoteCss = dialogueQuoteColor?.let { color ->
         "q { color: $color; } q::before, q::after { content: none; }"
     }.orEmpty()
+    // Only Markdown message bodies pass a size. Authored frontend cards keep their own CSS.
+    val fontSizeCss = baseFontSizePx?.let { "body { font-size: ${it.coerceIn(14, 20)}px; }" }.orEmpty()
     val hostHead = """
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
         <script src="https://extensions.tellev.local/compat/globals.js"></script>
@@ -408,6 +412,7 @@ internal fun wrapTavernHtml(
                 overflow-x: hidden !important;
             }
             $dialogueQuoteCss
+            $fontSizeCss
         </style>
     """.trimIndent()
 

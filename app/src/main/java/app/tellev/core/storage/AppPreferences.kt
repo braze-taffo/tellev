@@ -55,6 +55,11 @@ class AppPreferences(
         get() = prefs.getFloat(KEY_CHAT_BUBBLE_ALPHA, DEFAULT_CHAT_BUBBLE_ALPHA)
         set(value) = prefs.edit().putFloat(KEY_CHAT_BUBBLE_ALPHA, value).apply()
 
+    /** Chat message body size in sp. The old bodyLarge size is 16 sp. */
+    var chatFontSizeSp: Int
+        get() = prefs.getInt(KEY_CHAT_FONT_SIZE, DEFAULT_CHAT_FONT_SIZE).coerceIn(14, 20)
+        set(value) = prefs.edit().putInt(KEY_CHAT_FONT_SIZE, value.coerceIn(14, 20)).apply()
+
     fun shouldShowPresetLimitUpgradeNotice(
         firstInstallTime: Long,
         lastUpdateTime: Long,
@@ -95,6 +100,7 @@ class AppPreferences(
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_THEME_ACCENT = "theme_accent"
         const val KEY_CHAT_BUBBLE_ALPHA = "chat_bubble_alpha"
+        const val KEY_CHAT_FONT_SIZE = "chat_font_size_sp"
 
         /** Defaults to on so an upgrade keeps the previous launch-check behaviour. */
         const val DEFAULT_AUTO_UPDATE_CHECK = true
@@ -110,6 +116,7 @@ class AppPreferences(
         /** Legacy hardcoded bubble alpha in ChatScreen; keep as default so
          *  existing installs see no visual change. */
         const val DEFAULT_CHAT_BUBBLE_ALPHA = 0.6f
+        const val DEFAULT_CHAT_FONT_SIZE = 16
     }
 }
 

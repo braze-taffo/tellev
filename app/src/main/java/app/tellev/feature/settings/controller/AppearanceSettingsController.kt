@@ -12,6 +12,7 @@ internal class AppearanceSettingsController(
     private val themeModeFlow: MutableStateFlow<ThemeMode>,
     private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
     private val chatBubbleAlphaFlow: MutableStateFlow<Float>,
+    private val chatFontSizeSpFlow: MutableStateFlow<Int>,
     private val stateFlow: MutableStateFlow<SettingsUiState>,
 ) {
     fun setThemeMode(mode: ThemeMode) {
@@ -43,6 +44,13 @@ internal class AppearanceSettingsController(
         stateFlow.update {
             it.copy(chatBubbleAlpha = coerced)
         }
+    }
+
+    fun setChatFontSizeSp(size: Int) {
+        val selected = size.coerceIn(14, 20)
+        appPreferences.chatFontSizeSp = selected
+        chatFontSizeSpFlow.value = selected
+        stateFlow.update { it.copy(chatFontSizeSp = selected) }
     }
 
     private fun ThemeMode.displayName(): String = when (this) {

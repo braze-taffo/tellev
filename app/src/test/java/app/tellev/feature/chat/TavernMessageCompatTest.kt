@@ -158,6 +158,15 @@ class TavernMessageCompatTest {
     }
 
     @Test
+    fun `chat size changes markdown body without changing custom frontend styles`() {
+        val markdown = wrapTavernHtml("<p>hello</p>", "#111111", baseFontSizePx = 20)
+        val frontend = wrapTavernHtml("<div class='card'>hello</div>", "#111111")
+
+        assertTrue(markdown.contains("body { font-size: 20px; }"))
+        assertFalse(frontend.contains("body { font-size:"))
+    }
+
+    @Test
     fun `resize script breaks viewport feedback loop and throttles posts`() {
         val script = tavernResizeScript()
 

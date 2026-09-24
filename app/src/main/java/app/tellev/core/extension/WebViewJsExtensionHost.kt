@@ -2,6 +2,8 @@ package app.tellev.core.extension
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Color
+import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
@@ -75,6 +77,15 @@ class WebViewJsExtensionHost(
     override val events: SharedFlow<ExtensionEvent> = mutableEvents
 
     private val webViews = ConcurrentHashMap<String, WebView>()
+
+    /** The loaded runtime is also the character card's interactive surface. Call on the UI thread. */
+    fun webViewForUi(extensionId: String): WebView? = webViews[extensionId]
+
+    private fun destroyRuntimeWebView(view: WebView) {
+        (view.parent as? ViewGroup)?.removeView(view)
+        view.stopLoading()
+        view.destroy()
+    }
     private val capabilityTokens = ConcurrentHashMap<String, String>()
     private val declaredPermissions = ConcurrentHashMap<String, Set<ExtensionPermission>>()
     private val slashCommands = ConcurrentHashMap<String, RegisteredCommand>()
@@ -208,7 +219,7 @@ class WebViewJsExtensionHost(
         val readySignal = CompletableDeferred<Unit>()
         val handle = try {
             withContext(Dispatchers.Main) {
-                webViews.remove(manifest.id)?.destroy()
+                webViews.remove(manifest.id)?.let(::destroyRuntimeWebView)
                 requests.pendingLoads.remove(manifest.id)?.cancel()
                 requests.pendingLoadFailures.remove(manifest.id)
 
@@ -233,12 +244,15 @@ class WebViewJsExtensionHost(
                 )
 
                 val webView = WebView(context.applicationContext).apply {
+                    setBackgroundColor(Color.TRANSPARENT)
                     settings.javaScriptEnabled = true
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
                     settings.allowFileAccessFromFileURLs = false
                     settings.allowUniversalAccessFromFileURLs = false
-                    settings.domStorageEnabled = false
+                    // Character modules use localStorage at module evaluation time.
+                    // Each extension has a distinct HTTPS origin (see extensionBaseUrl).
+                    settings.domStorageEnabled = true
                     settings.databaseEnabled = false
                     settings.javaScriptCanOpenWindowsAutomatically = false
                     settings.setSupportMultipleWindows(false)
@@ -251,8 +265,11 @@ class WebViewJsExtensionHost(
                             view: WebView,
                             request: WebResourceRequest,
                         ): Boolean {
-                            if (!request.isForMainFrame) return false
-                            val blocked = !isAllowedExtensionNavigation(manifest.id, request.url.toString())
+                            val blocked = if (request.isForMainFrame) {
+                                !isAllowedExtensionNavigation(manifest.id, request.url.toString())
+                            } else {
+                                !isAllowedExtensionFrameNavigation(manifest.id, request.url.toString())
+                            }
                             if (blocked) reportExtensionLog(
                                 manifest.id,
                                 "warning",
@@ -284,7 +301,7 @@ class WebViewJsExtensionHost(
                     addJavascriptInterface(Bridge(manifest.id, token), "tellevNative")
 
                     loadDataWithBaseURL(
-                        "https://extensions.tellev.local/${manifest.id}/",
+                        extensionBaseUrl(manifest.id),
                         ExtensionScriptTemplate.buildExtensionHtml(
                             context = context,
                             extensionId = manifest.id,
@@ -316,25 +333,30 @@ class WebViewJsExtensionHost(
             capabilityTokens.remove(manifest.id)
             declaredPermissions.remove(manifest.id)
             settingsCache.remove(manifest.id)
-            withContext(Dispatchers.Main) { webViews.remove(manifest.id)?.destroy() }
+            withContext(Dispatchers.Main) { webViews.remove(manifest.id)?.let(::destroyRuntimeWebView) }
             throw e
         }
 
-        val becameReady = withTimeoutOrNull(scriptReadyTimeoutMs) {
+        // Character cards may load several CDN modules in order. Keep the
+        // ordinary extension deadline while allowing that larger bootstrap.
+        val loadTimeoutMs = if (manifest.version == "character-card") {
+            maxOf(scriptReadyTimeoutMs, CHARACTER_SCRIPT_READY_TIMEOUT_MS)
+        } else scriptReadyTimeoutMs
+        val becameReady = withTimeoutOrNull(loadTimeoutMs) {
             readySignal.await()
             true
         } ?: false
         requests.pendingLoads.remove(manifest.id, readySignal)
         val scriptFailure = requests.pendingLoadFailures.remove(manifest.id)
         if (!becameReady || scriptFailure != null) {
-            withContext(Dispatchers.Main) { webViews.remove(manifest.id)?.destroy() }
+            withContext(Dispatchers.Main) { webViews.remove(manifest.id)?.let(::destroyRuntimeWebView) }
             capabilityTokens.remove(manifest.id)
             declaredPermissions.remove(manifest.id)
             settingsCache.remove(manifest.id)
             slashCommands.entries.removeIf { it.value.extensionId == manifest.id }
             virtualRoutes.entries.removeIf { it.value.extensionId == manifest.id }
             promptStore.clearExtension(manifest.id)
-            val message = scriptFailure ?: "Module did not report ready within ${scriptReadyTimeoutMs} ms"
+            val message = scriptFailure ?: "Module did not report ready within ${loadTimeoutMs} ms"
             publishLocalEvent(
                 ExtensionEvent(
                     name = "extension_load_failed",
@@ -350,7 +372,7 @@ class WebViewJsExtensionHost(
 
     override suspend fun unload(extensionId: String) {
         withContext(Dispatchers.Main) {
-            webViews.remove(extensionId)?.destroy()
+            webViews.remove(extensionId)?.let(::destroyRuntimeWebView)
         }
         capabilityTokens.remove(extensionId)
         declaredPermissions.remove(extensionId)
@@ -1234,6 +1256,7 @@ class WebViewJsExtensionHost(
             ExtensionScriptTemplate.EXTENSION_LOAD_GUARDS
 
         internal const val DEFAULT_SCRIPT_READY_TIMEOUT_MS: Long = 30_000L
+        internal const val CHARACTER_SCRIPT_READY_TIMEOUT_MS: Long = 90_000L
 
         internal val TAVERN_CONTEXT_TICK_CACHE_JS: String =
             ExtensionScriptTemplate.TAVERN_CONTEXT_TICK_CACHE_JS
