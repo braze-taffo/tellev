@@ -1,0 +1,160 @@
+package app.tellev.feature.creation
+
+import app.tellev.core.storage.CharacterExporter
+import app.tellev.core.storage.CharacterImporter
+import app.tellev.core.storage.codec.WorldBookCodec
+import app.tellev.core.provider.GenerateChunk
+import app.tellev.core.provider.GenerateRequest
+import app.tellev.core.provider.ProviderAdapter
+import app.tellev.core.provider.ProviderCapability
+import app.tellev.core.provider.ProviderConfig
+import app.tellev.core.provider.ProviderModel
+import app.tellev.core.provider.ProviderRegistry
+import app.tellev.core.provider.ProviderStatus
+import app.tellev.core.security.SecretStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import app.tellev.feature.chat.TavernRenderParser
+import app.tellev.feature.chat.TavernRenderSegment
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.nio.file.Files
+
+class CreationFeatureTest {
+    @Test
+    fun sourceChunkingCoversEveryCharacterAndPreservesFinalTail() {
+        val source = (1..350).joinToString("\n") { "第${it}段：${"设定".repeat(30)}" } + "\n最后一句。"
+        val chunks = mutableListOf<SourceChunk>()
+        var cursor = 0
+        while (true) {
+            val chunk = nextSourceChunk(source, cursor, maxChars = 1_200) ?: break
+            assertEquals(cursor, chunk.start)
+            assertTrue(chunk.end > cursor)
+            chunks += chunk
+            cursor = chunk.end
+        }
+        assertEquals(source.length, cursor)
+        assertEquals(source, chunks.joinToString("") { it.text })
+        assertTrue(chunks.size > 10)
+    }
+
+    @Test
+    fun agentPatchPreservesUnmentionedCardFieldsAndLore() {
+        val original = CreationSession(
+            kind = CreationKind.Character,
+            card = CharacterDraft(name = "旧名", scenario = "保留的场景"),
+            lore = listOf(LoreDraft("城市", listOf("云城"), "云城在山中。")),
+        )
+        val reply = CreationReplyParser.parse("""{"assistant_message":"已修改","card":{"name":"新名"},"lore":[{"title":"组织","keys":["夜巡"],"content":"夜巡守城。"}]}""")
+        val updated = CreationReplyParser.apply(original, reply)
+        assertEquals("新名", updated.card.name)
+        assertEquals("保留的场景", updated.card.scenario)
+        assertEquals(listOf("城市", "组织"), updated.lore.map { it.title })
+    }
+
+    @Test
+    fun exportedCharacterRoundTripsOpeningFrontendAndEmbeddedLore() {
+        val html = "<details class=\"card\"><summary>状态</summary>平静</details>"
+        val session = CreationSession(
+            kind = CreationKind.Character,
+            card = CharacterDraft(
+                name = "林月", firstMessage = "你走进茶馆。", frontendHtml = html,
+                systemPrompt = "保持第三人称限知。",
+            ),
+            lore = listOf(LoreDraft("茶馆", listOf("茶馆"), "茶馆位于城南。")),
+        )
+        val exported = CharacterExporter().exportToJson(session.toCharacterCard())
+        val imported = CharacterImporter().importFromJson(exported)
+        assertTrue(imported.firstMessage.contains(html))
+        assertTrue(TavernRenderParser.parseBody(imported.firstMessage).any { it is TavernRenderSegment.Frontend })
+        assertTrue(imported.firstMessage.contains("你走进茶馆。"))
+        assertEquals("茶馆位于城南。", imported.characterBook?.entries?.single()?.content)
+        assertTrue(exported.contains("保持第三人称限知。"))
+        assertTrue(portableFrontendIssues(html).isEmpty())
+        assertFalse(portableFrontendIssues("<script>run()</script>").isEmpty())
+    }
+
+    @Test
+    fun sourceArchiveAndCursorSurviveDraftReload() = runBlocking {
+        val root = Files.createTempDirectory("tellev-creation-test").toFile()
+        try {
+            val repo = CreationRepository(root)
+            val text = "远山。\n旧城有钟楼。"
+            val session = CreationSession(kind = CreationKind.WorldBook)
+            val (hash, length) = repo.saveSource(session.id, text)
+            assertEquals(text, repo.readSource(session.id, hash))
+            val saved = session.copy(sourceSha256 = hash, sourceLength = length, sourceCursor = 3)
+            repo.save(saved)
+            assertEquals(3, repo.load(session.id).sourceCursor)
+            assertEquals(hash, repo.list().single().sourceSha256)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun extractedLoreRequiresExactSourceEvidence() {
+        val chunk = SourceChunk(100, 116, "旧城有一座钟楼。夜里鸣钟。")
+        val accepted = verifiedLoreFromChunk(
+            chunk,
+            listOf(
+                LoreDraft("钟楼", listOf("钟楼"), "旧城有钟楼。", sourceQuote = "旧城有一座钟楼"),
+                LoreDraft("臆测", listOf("国王"), "国王建造了钟楼。", sourceQuote = "国王建造了钟楼"),
+            ),
+            "设定.txt", "abc",
+        )
+        assertEquals(1, accepted.size)
+        assertEquals(100, accepted.single().sourceOffset)
+        assertEquals("设定.txt", accepted.single().sourceName)
+    }
+
+    @Test
+    fun worldBookRoundTripsTriggerFields() {
+        val session = CreationSession(
+            kind = CreationKind.WorldBook,
+            worldName = "北境",
+            lore = listOf(LoreDraft(
+                title = "城门", keys = listOf("城门"), secondaryKeys = listOf("夜晚"),
+                content = "夜晚城门关闭。", selective = true, depth = 2,
+            )),
+        )
+        val serialized = WorldBookCodec.serializeWorldBook(session.toWorldBook())
+        val restored = WorldBookCodec.parseWorldBookEntries(serialized).single()
+        assertEquals(listOf("城门"), restored.keys)
+        assertEquals(listOf("夜晚"), restored.secondaryKeys)
+        assertTrue(restored.selective)
+        assertEquals(2, restored.depth)
+        assertEquals("夜晚城门关闭。", restored.content)
+    }
+
+    @Test
+    fun creationAgentOwnsItsPromptAndPreset() = runBlocking {
+        val provider = object : ProviderAdapter {
+            override val id = "openai-compatible"
+            override val displayName = "Fake"
+            override val capabilities = setOf(ProviderCapability.Chat)
+            var lastRequest: GenerateRequest? = null
+            override suspend fun checkStatus(config: ProviderConfig) = ProviderStatus(true, "ok")
+            override suspend fun listModels(config: ProviderConfig): List<ProviderModel> = emptyList()
+            override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> {
+                lastRequest = request
+                return flowOf(GenerateChunk.Completed("""{"assistant_message":"想先确定视角吗？","card":{"name":"林月"}}"""))
+            }
+        }
+        val secrets = object : SecretStore {
+            override suspend fun putSecret(id: String, value: String) = Unit
+            override suspend fun readSecret(id: String): String? = null
+            override suspend fun deleteSecret(id: String) = Unit
+            override suspend fun listSecretIds(): List<String> = emptyList()
+        }
+        val reply = CreationEngine(secrets, ProviderRegistry(listOf(provider)))
+            .converse(CreationSession(kind = CreationKind.Character), "写一个人物")
+        assertEquals("想先确定视角吗？", reply.message)
+        assertEquals("ai-creation-agent", provider.lastRequest?.preset?.id)
+        assertTrue(provider.lastRequest?.prompt?.messages?.first()?.content.orEmpty().contains("第三人称限知"))
+        assertTrue(provider.lastRequest?.preset?.prompts.isNullOrEmpty())
+    }
+}

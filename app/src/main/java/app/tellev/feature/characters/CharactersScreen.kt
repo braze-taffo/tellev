@@ -95,6 +95,7 @@ import kotlinx.coroutines.withContext
 fun CharactersListScreen(
     viewModel: CharactersViewModel,
     onCharacterClick: (String) -> Unit,
+    onCreateWithAi: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -146,6 +147,7 @@ fun CharactersListScreen(
             TopAppBar(
                 title = { Text("角色") },
                 actions = {
+                    TextButton(onClick = onCreateWithAi) { Text("AI 创建") }
                     IconButton(onClick = { searchActive = !searchActive }) {
                         Icon(
                             if (searchActive) Icons.Default.Close else Icons.Default.Search,
