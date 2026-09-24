@@ -63,7 +63,17 @@ const render = async (template, extra = {}) => {
   const result = await window.__tellevTemplate({
     template,
     local: {}, global: {}, definitions: {},
-    context: {}, worldCatalog: [], currentWorldBookId: null,
+    context: {
+      user: '旅人', name1: '旅人', userName: '旅人',
+      char: '玄泽', name2: '玄泽', charName: '玄泽', assistantName: '玄泽',
+      lastMessage: 'hi', lastUserMessage: 'hi', lastCharMessage: 'greet',
+      lastMessageId: 3, lastUserMessageId: 2, lastCharMessageId: 3,
+      characterId: 'char-1', model: 'test-model',
+      runType: 'generate', generateType: 'normal',
+      charLoreBook: 'char-book', userLoreBook: null, chatLoreBook: null,
+      groups: [], groupId: '',
+    },
+    worldCatalog: [], currentWorldBookId: null,
     ...extra,
   });
   return result.content;
@@ -155,6 +165,21 @@ test('regression: getwi renders worldbook entries', async () => {
     worldCatalog: [{ id: 'e1', bookId: 'book1', bookName: 'book1', comment: 'entry', title: '', content: 'WI' }],
   });
   assert.equal(out, 'XWIY');
+});
+
+test('constants are bare identifiers with ST values', async () => {
+  assert.equal(await render('<%= userName %> <%= charName %> <%= assistantName %>'), '旅人 玄泽 玄泽');
+  assert.equal(await render('<%= lastMessageId + 1 %>'), '4');
+  assert.equal(await render('<%= runType %>'), 'generate');
+  assert.equal(await render('<%= charLoreBook %>'), 'char-book');
+});
+
+test('SillyTavern stub survives getContext calls', async () => {
+  assert.equal(await render("<%= typeof SillyTavern.getContext() === 'object' ? 'ok' : 'bad' %>"), 'ok');
+});
+
+test('faker is declared but unbundled', async () => {
+  assert.equal(await render("<%= typeof faker === 'undefined' ? 'declared' : 'present' %>"), 'declared');
 });
 
 let failed = 0;

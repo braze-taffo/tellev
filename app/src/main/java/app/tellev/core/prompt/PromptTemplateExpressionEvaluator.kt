@@ -33,10 +33,7 @@ internal object PromptTemplateExpressionEvaluator {
                 put("local", toJsonObject(state.localVariables))
                 put("global", toJsonObject(state.globalVariables))
                 put("definitions", toJsonObject(state.locals))
-                put("context", toJsonObject(mapOf(
-                    "user" to state.context.userName, "char" to state.context.characterName,
-                    "name1" to state.context.userName, "name2" to state.context.characterName,
-                )))
+                put("context", toJsonObject(templateContextMap(state)))
                 put("currentWorldBookId", state.currentWorldBookId?.let(::JsonPrimitive) ?: JsonNull)
                 put("worldCatalog", JsonArray(state.worldCatalog.map { entry ->
                     toJsonObject(mapOf("id" to entry.id, "comment" to entry.comment,
@@ -355,6 +352,7 @@ internal object PromptTemplateExpressionEvaluator {
                 if (outlet) "{{outletPromptsInjected:${key}}}" else PromptInjectedRegistry.get(key)
             }
             "hasPromptsInjected" -> PromptInjectedRegistry.has(stringify(args.getOrNull(0)))
+            "SillyTavern.getContext" -> emptyMap<String, Any?>()
             else -> {
                 state.warn("Unsupported prompt template function: $name")
                 UnsupportedExpression
@@ -406,6 +404,41 @@ internal object PromptTemplateExpressionEvaluator {
         }
     }
 
+    /**
+     * ST-Prompt-Template prepareContext (ejs.ts:211) constants that Tellev can
+     * source from existing data. These become bare identifiers inside EJS
+     * (`_with` scope); a missing name is a hard ReferenceError, so every name
+     * a card might reference is declared even when the value has to be null.
+     * Names Tellev cannot source (faker, avatars, SillyTavern internals) are
+     * deliberately absent here and stubbed on the JS side in template.js.
+     */
+    private fun templateContextMap(state: TemplateState): Map<String, Any?> = mapOf(
+        "user" to state.context.userName,
+        "name1" to state.context.userName,
+        "userName" to state.context.userName,
+        "char" to state.context.characterName,
+        "name2" to state.context.characterName,
+        "charName" to state.context.characterName,
+        "assistantName" to state.context.characterName,
+        "lastMessage" to state.context.lastMessage,
+        "lastUserMessage" to state.context.lastUserMessage,
+        "lastCharMessage" to state.context.lastCharMessage,
+        "lastMessageId" to (state.context.lastMessageId.toIntOrNull() ?: state.context.lastMessageId),
+        "lastUserMessageId" to state.context.lastUserMessageId,
+        "lastCharMessageId" to state.context.lastCharMessageId,
+        "characterId" to state.context.characterId,
+        "model" to state.context.modelName,
+        "runType" to "generate",
+        "generateType" to "normal",
+        // ST binds the char-embedded lorebook name; Tellev's currentWorldBookId
+        // is the same book. User/chat lorebooks have no Tellev equivalent yet.
+        "charLoreBook" to state.currentWorldBookId,
+        "userLoreBook" to null,
+        "chatLoreBook" to null,
+        "groups" to emptyList<Any?>(),
+        "groupId" to "",
+    )
+
     private fun JsonObject.stringContent(key: String): String? =
         (this[key] as? JsonPrimitive)?.content
 
@@ -417,12 +450,29 @@ internal object PromptTemplateExpressionEvaluator {
         return when (expression) {
             "char", "name2", "charName", "characterName" -> state.context.characterName
             "user", "name1", "userName" -> state.context.userName
+            "assistantName" -> state.context.characterName
             "description", "charDescription" -> state.context.characterDescription
             "personality" -> state.context.characterPersonality
             "scenario" -> state.context.characterScenario
             "mes_example", "dialogueExamples" -> state.context.exampleMessages
             "firstMessage" -> state.context.firstMessage
             "lastMessage" -> state.context.lastMessage
+            "lastUserMessage" -> state.context.lastUserMessage
+            "lastCharMessage" -> state.context.lastCharMessage
+            "lastMessageId" -> (state.context.lastMessageId.toIntOrNull() ?: state.context.lastMessageId)
+            "lastUserMessageId" -> state.context.lastUserMessageId
+            "lastCharMessageId" -> state.context.lastCharMessageId
+            "characterId" -> state.context.characterId
+            "model" -> state.context.modelName
+            "runType" -> "generate"
+            "generateType" -> "normal"
+            "charLoreBook" -> state.currentWorldBookId
+            "userLoreBook", "chatLoreBook" -> null
+            "groups" -> emptyList<Any?>()
+            "groupId" -> ""
+            // ST exposes SillyTavern.getContext(); Tellev stubs it to a
+            // permissive empty context (template.js does the same on WebView).
+            "SillyTavern" -> emptyMap<String, Any?>()
             "group" -> state.context.groupMemberNames
             "variables", "vars" -> state.variables
             else -> {
