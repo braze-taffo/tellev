@@ -120,9 +120,9 @@ fun CreationEditorScreen(
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (state.error != null) {
                 Text(state.error.orEmpty(), color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp))
-                if (session.turns.lastOrNull()?.role == "user" && !state.busy) {
-                    TextButton(onClick = viewModel::retry) { Text("重试上一轮") }
-                }
+            }
+            if (session.turns.lastOrNull()?.role == "user" && !state.busy) {
+                TextButton(onClick = viewModel::retry) { Text("重试上一轮") }
             }
             state.info?.let { Text(it, modifier = Modifier.padding(horizontal = 12.dp)) }
             if (state.busy) {
