@@ -298,6 +298,7 @@ class DefaultPromptEngine(
                 worldEntries = promptTemplateWorldEntries,
                 worldCatalog = promptTemplateWorldCatalog,
                 currentWorldBookId = StDataStore.embeddedCharacterBookId(request.character.id),
+                messageVariables = macroContext.messageVariables,
             ),
         )
         val templatedMessages = promptTemplateResult.messages

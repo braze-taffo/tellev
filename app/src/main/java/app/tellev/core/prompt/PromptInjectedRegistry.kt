@@ -60,6 +60,29 @@ internal object PromptInjectedRegistry {
     @Synchronized
     fun clear() = lists.clear()
 
+    /**
+     * Render a historical floor without leaving side effects: ST executes a
+     * message's template once at creation, so re-running it on every build
+     * must not re-register its injections (uid-dedup would otherwise refresh
+     * sticky counters and make them immortal). Registrations made inside
+     * [block] are rolled back; entries present before it stay untouched.
+     */
+    fun <T> withIsolatedSnapshot(block: () -> T): T {
+        val snapshot = synchronized(this) {
+            LinkedHashMap<String, LinkedHashMap<String, Injected>>().also { snapshot ->
+                lists.forEach { (key, inner) -> snapshot[key] = LinkedHashMap(inner) }
+            }
+        }
+        try {
+            return block()
+        } finally {
+            synchronized(this) {
+                lists.clear()
+                lists.putAll(snapshot)
+            }
+        }
+    }
+
     private fun replaceFirstLiteral(text: String, search: String, replace: String): String {
         if (search.isEmpty()) return text
         val index = text.indexOf(search)

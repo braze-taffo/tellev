@@ -78,8 +78,12 @@ class DefaultPromptTemplateProcessor(
             context = request.context,
             localVariables = PromptTemplateExpressionEvaluator.deepCopyMap(scopes.local),
             globalVariables = PromptTemplateExpressionEvaluator.deepCopyMap(scopes.global),
+            messageVariables = PromptTemplateExpressionEvaluator.deepCopyMap(
+                PromptTemplateExpressionEvaluator.messageVariableMap(request.messageVariables),
+            ),
             initialLocalVariables = PromptTemplateExpressionEvaluator.deepCopyMap(scopes.local),
             initialGlobalVariables = PromptTemplateExpressionEvaluator.deepCopyMap(scopes.global),
+            initialMessageVariables = PromptTemplateExpressionEvaluator.messageVariableMap(request.messageVariables),
             worldCatalog = request.worldCatalog.ifEmpty { request.worldEntries },
             currentWorldBookId = request.currentWorldBookId,
         ).also(PromptTemplateExpressionEvaluator::refreshMergedVariables)
@@ -94,8 +98,30 @@ class DefaultPromptTemplateProcessor(
         // message content.  Instruction blocks are still applied above
         // because they are part of the generate phase, not the render phase.
         val rendered = if (ejsSettings.renderEnabled) {
-            injectedMessages.map { message ->
-                message.copy(content = PromptTemplateExpressionEvaluator.renderTemplate(message.content, state, javascriptEvaluator))
+            // Side-effect isolation: ST renders each historical floor once at
+            // creation (is_ejs_processed guard, handler.ts:443-446), so its
+            // setvar/incvar apply exactly once. Tellev must re-render floors
+            // every build for fresh output — without isolation a `<% incvar %>`
+            // in any history message would accumulate on every generation.
+            // Only the system prompt (the worldbook generate phase, where the
+            // current turn's message has not been rendered yet) and the last
+            // chat message (the current turn) persist writes.
+            val lastChatIndex = injectedMessages.indexOfLast { it.channel != CHANNEL_MARKER }
+            injectedMessages.mapIndexed { index, message ->
+                val persistent = index == 0 || index == lastChatIndex
+                val content = if (persistent) {
+                    PromptTemplateExpressionEvaluator.renderTemplate(message.content, state, javascriptEvaluator)
+                } else {
+                    val isolatedState = state.isolatedSnapshot()
+                    val isolatedContent = PromptInjectedRegistry.withIsolatedSnapshot {
+                        PromptTemplateExpressionEvaluator.renderTemplate(
+                            message.content, isolatedState, javascriptEvaluator, isolated = true,
+                        )
+                    }
+                    state.warnings.addAll(isolatedState.warnings)
+                    isolatedContent
+                }
+                message.copy(content = content)
             }
         } else {
             injectedMessages
@@ -110,6 +136,9 @@ class DefaultPromptTemplateProcessor(
                     ?.let(PromptTemplateExpressionEvaluator::toJsonObject),
                 global = state.globalVariables
                     .takeIf { it != state.initialGlobalVariables }
+                    ?.let(PromptTemplateExpressionEvaluator::toJsonObject),
+                message = state.messageVariables
+                    .takeIf { it != state.initialMessageVariables }
                     ?.let(PromptTemplateExpressionEvaluator::toJsonObject),
             ),
         )
