@@ -114,9 +114,13 @@ class DefaultPromptTemplateProcessor(
                 } else {
                     val isolatedState = state.isolatedSnapshot()
                     val isolatedContent = PromptInjectedRegistry.withIsolatedSnapshot {
-                        PromptTemplateExpressionEvaluator.renderTemplate(
+                        val rendered = PromptTemplateExpressionEvaluator.renderTemplate(
                             message.content, isolatedState, javascriptEvaluator, isolated = true,
                         )
+                        // A floor that injects AND collects within itself must
+                        // still see its own content: resolve its placeholders
+                        // inside the snapshot scope, before the rollback.
+                        PromptTemplateOutlet.apply(rendered)
                     }
                     state.warnings.addAll(isolatedState.warnings)
                     isolatedContent
