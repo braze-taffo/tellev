@@ -94,6 +94,50 @@ class CreationToolProtocolTest {
         assertEquals("开头", proseWithoutToolBlocks("开头<tool_call>{\"partial"))
     }
 
+    // 真机观测：上游把 </tool_call> 当停止符吞掉，内容只剩一段完整 JSON。
+    @Test
+    fun trailingBlockWithoutClosingTagStillRunsWhenJsonIsComplete() {
+        val result = parseToolCallBlocks("<tool_call>{\"name\":\"read_card\",\"arguments\":{}}")
+        val call = (result.blocks.single() as ToolCallBlock.Valid).call
+        assertEquals("read_card", call.name)
+        assertTrue(call.arguments.isEmpty())
+        assertEquals("", result.prose)
+        assertFalse(result.hasUnclosedBlock)
+        assertTrue(result.recoveredUnclosedBlock)
+    }
+
+    @Test
+    fun recoveredTailKeepsEarlierCompleteBlocksInOrder() {
+        val text = "先看现状。<tool_call>{\"name\":\"read_card\"}</tool_call><tool_call>{\"name\":\"list_lore\"}"
+        val result = parseToolCallBlocks(text)
+        assertEquals(
+            listOf("read_card", "list_lore"),
+            result.blocks.map { (it as ToolCallBlock.Valid).call.name },
+        )
+        assertEquals("先看现状。", result.prose)
+        assertFalse(result.hasUnclosedBlock)
+        assertTrue(result.recoveredUnclosedBlock)
+    }
+
+    @Test
+    fun partialClosingTagAndFencedTailAreBothRecovered() {
+        val partialClose = parseToolCallBlocks("<tool_call>{\"name\":\"read_card\",\"arguments\":{}}</tool_call")
+        assertEquals("read_card", (partialClose.blocks.single() as ToolCallBlock.Valid).call.name)
+        assertTrue(partialClose.recoveredUnclosedBlock)
+
+        val fenced = parseToolCallBlocks("<tool_call>```json\n{\"name\":\"list_lore\",\"arguments\":{\"limit\":5}}\n```")
+        assertEquals("list_lore", (fenced.blocks.single() as ToolCallBlock.Valid).call.name)
+        assertTrue(fenced.recoveredUnclosedBlock)
+    }
+
+    @Test
+    fun trailingBlockWithLeftoverTextStaysUnclosedInsteadOfRunning() {
+        val result = parseToolCallBlocks("<tool_call>{\"name\":\"read_card\",\"arguments\":{}} 随后继续写正文")
+        assertEquals(0, result.blocks.size)
+        assertTrue(result.hasUnclosedBlock)
+        assertFalse(result.recoveredUnclosedBlock)
+    }
+
     @Test
     fun parsesObservedDoubledPipeDsmlReadCard() {
         val raw = """

@@ -460,6 +460,26 @@ class OpenAiCompatibleAdapterTest {
     }
 
     @Test
+    fun `terminal chunk without delta still reports its finish reason`() = runBlocking {
+        val client = client { chain ->
+            response(
+                chain,
+                200,
+                "data: {\"choices\":[{\"delta\":{\"content\":\"<tool_call>{\\\"name\\\":\\\"read_card\\\"}\"}}]}\n" +
+                    "data: {\"choices\":[{\"finish_reason\":\"stop\"}]}\n",
+                "text/event-stream",
+            )
+        }
+        val completed = OpenAiCompatibleAdapter(client = client).streamGenerate(
+            config(model = "custom-model"),
+            generateRequest(stream = true, preset = GenerationPreset("p", "p", "openai-compatible")),
+        ).toList().filterIsInstance<GenerateChunk.Completed>().single()
+
+        assertEquals("stop", completed.finishReason)
+        assertEquals("<tool_call>{\"name\":\"read_card\"}", completed.text)
+    }
+
+    @Test
     fun `creation native tool contract cannot be replaced by chat extra body`() = runBlocking {
         var captured = ""
         val adapter = OpenAiCompatibleAdapter(client = client { chain ->

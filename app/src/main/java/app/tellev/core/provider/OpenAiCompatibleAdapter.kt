@@ -495,16 +495,17 @@ class OpenAiCompatibleAdapter(
 
             val choice = obj["choices"]?.jsonArray?.firstOrNull()?.jsonObject
                 ?: return@runCatching StreamChunkParsed(usage = usage)
+            // Read the terminal marker before requiring a delta: a relay that
+            // sends {"finish_reason":"stop"} with no delta object would otherwise
+            // lose the marker and look like a stream cut off before completion.
+            val finishReason = choice["finish_reason"]?.jsonPrimitive?.contentOrNull
             val delta = choice["delta"]?.jsonObject
-                ?: return@runCatching StreamChunkParsed(usage = usage)
+                ?: return@runCatching StreamChunkParsed(finishReason = finishReason, usage = usage)
 
             val content = delta["content"]?.jsonPrimitive?.contentOrNull.orEmpty()
 
             // Reasoning content (DeepSeek R1, OpenAI o-series)
             val reasoningContent = delta["reasoning_content"]?.jsonPrimitive?.contentOrNull.orEmpty()
-
-            // Finish reason
-            val finishReason = choice["finish_reason"]?.jsonPrimitive?.contentOrNull
 
             // Tool calls
             val toolCalls = parseToolCallDeltas(delta["tool_calls"])

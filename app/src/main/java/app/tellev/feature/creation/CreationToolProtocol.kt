@@ -28,6 +28,8 @@ internal data class ToolBlocksParseResult(
     /** Text outside complete blocks; an unclosed trailing block is cut away too. */
     val prose: String,
     val hasUnclosedBlock: Boolean,
+    /** The trailing block lost its closing tag but its JSON was complete, so it still ran. */
+    val recoveredUnclosedBlock: Boolean = false,
 )
 
 private val completeBlockRegex = Regex("""$TOOL_CALL_OPEN([\s\S]*?)$TOOL_CALL_CLOSE""")
@@ -117,45 +119,55 @@ private fun parseDsmlWrapper(match: MatchResult, json: Json): List<ToolCallBlock
     return blocks
 }
 
+/** Shared by closed blocks and by a trailing block whose closing tag never arrived. */
+private fun parseBlockBody(raw: String, json: Json, reported: String = raw): ToolCallBlock {
+    val inner = raw.trim()
+        .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+    if (inner.isEmpty()) return ToolCallBlock.Invalid("工具块内容为空", reported)
+    val root = runCatching { json.parseToJsonElement(inner).jsonObject }.getOrNull()
+        ?: return ToolCallBlock.Invalid("工具块内不是合法 JSON 对象", reported)
+    // jsonPrimitive throws on non-primitive values; a bad block must stay a
+    // recoverable Invalid instead of killing the round.
+    val name = (root["name"] as? JsonPrimitive)?.contentOrNull
+    if (name.isNullOrBlank()) return ToolCallBlock.Invalid("缺少 name 字段", reported)
+    val arguments = root["arguments"] as? JsonObject
+    if (root.containsKey("arguments") && arguments == null) {
+        return ToolCallBlock.Invalid("arguments 必须是 JSON 对象", reported)
+    }
+    return ToolCallBlock.Valid(ToolCallRequest(name, arguments ?: JsonObject(emptyMap())))
+}
+
+/**
+ * Some relays end generation at the closing tag and drop it from the content
+ * (the tag doubles as their stop token), so a perfectly usable call can arrive
+ * as `<tool_call>{...}` with no close. Recovering it beats burning a bad round.
+ */
+private fun recoverUnclosedTrailingBlock(tail: String, json: Json): ToolCallBlock.Valid? {
+    if (!tail.startsWith(TOOL_CALL_OPEN)) return null
+    val body = tail.removePrefix(TOOL_CALL_OPEN).substringBefore("</tool_call")
+    return parseBlockBody(body, json, tail) as? ToolCallBlock.Valid
+}
+
 internal fun parseToolCallBlocks(body: String): ToolBlocksParseResult {
     val normalized = normalizeDsmlTags(body)
     val indexedBlocks = mutableListOf<Pair<Int, ToolCallBlock>>()
     val json = Json { ignoreUnknownKeys = true }
     for (match in completeBlockRegex.findAll(normalized)) {
-        val inner = match.groupValues[1].trim()
-            .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
-        if (inner.isEmpty()) {
-            indexedBlocks += match.range.first to ToolCallBlock.Invalid("工具块内容为空", match.value)
-            continue
-        }
-        val parsed = runCatching { json.parseToJsonElement(inner).jsonObject }
-        val root = parsed.getOrNull()
-        if (root == null) {
-            indexedBlocks += match.range.first to ToolCallBlock.Invalid("工具块内不是合法 JSON 对象", match.value)
-            continue
-        }
-        // jsonPrimitive throws on non-primitive values; a bad block must stay a
-        // recoverable Invalid instead of killing the round.
-        val name = (root["name"] as? JsonPrimitive)?.contentOrNull
-        if (name.isNullOrBlank()) {
-            indexedBlocks += match.range.first to ToolCallBlock.Invalid("缺少 name 字段", match.value)
-            continue
-        }
-        val arguments = root["arguments"] as? JsonObject
-        if (root.containsKey("arguments") && arguments == null) {
-            indexedBlocks += match.range.first to ToolCallBlock.Invalid("arguments 必须是 JSON 对象", match.value)
-            continue
-        }
-        indexedBlocks += match.range.first to ToolCallBlock.Valid(ToolCallRequest(name, arguments ?: JsonObject(emptyMap())))
+        indexedBlocks += match.range.first to parseBlockBody(match.groupValues[1], json, match.value)
     }
     for (match in dsmlWrapperRegex.findAll(normalized)) {
         indexedBlocks += parseDsmlWrapper(match, json).map { match.range.first to it }
     }
     val remainder = removeCompleteToolBlocks(normalized)
+    val tailStart = firstToolStart(remainder)
+    val unclosedTail = if (tailStart < remainder.length) remainder.substring(tailStart) else null
+    val recovered = unclosedTail?.let { recoverUnclosedTrailingBlock(it, json) }
+    if (recovered != null) indexedBlocks += remainder.length to recovered
     return ToolBlocksParseResult(
         blocks = indexedBlocks.sortedBy { it.first }.map { it.second },
         prose = proseWithoutToolBlocks(body),
-        hasUnclosedBlock = firstToolStart(remainder) < remainder.length,
+        hasUnclosedBlock = unclosedTail != null && recovered == null,
+        recoveredUnclosedBlock = recovered != null,
     )
 }
 

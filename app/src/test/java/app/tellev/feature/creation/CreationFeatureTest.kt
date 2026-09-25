@@ -353,6 +353,26 @@ class CreationFeatureTest {
     }
 
     @Test
+    fun relaySwallowedClosingTagStillRunsTheToolCall() = runBlocking {
+        // 真机再现：上游把 </tool_call> 当停止符吞掉，模型只送回完整 JSON。
+        val requests = mutableListOf<GenerateRequest>()
+        val provider = fakeProvider(
+            listOf(
+                "<tool_call>{\"name\":\"set_card_fields\",\"arguments\":{\"name\":\"林月\"}}",
+                "已把主角命名为林月。",
+            ),
+            requests = requests,
+        )
+        val reply = engine(provider)
+            .converse(CreationSession(kind = CreationKind.Character), "写一个人物")
+        assertEquals("林月", reply.session.card.name)
+        assertEquals("已把主角命名为林月。", reply.message)
+        assertEquals(2, requests.size)
+        val feedback = requests[1].prompt.messages.first { it.content.contains("<tool_result") }
+        assertTrue(feedback.content.contains("闭合标签没有传回"))
+    }
+
+    @Test
     fun completedToolWriteIsCheckpointedBeforeLaterStreamFailure() = runBlocking {
         val checkpoints = mutableListOf<CreationSession>()
         val provider = object : ProviderAdapter {

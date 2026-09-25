@@ -320,6 +320,12 @@ internal class CreationEngine(
                 feedback.appendLine("<tool_result name=\"system\" ok=\"false\">" +
                     "{\"error\":\"输出被长度上限截断，最后的工具块不完整；请拆成更小的批量重发\"}</tool_result>")
             }
+            if (parsed.recoveredUnclosedBlock) {
+                // The relay swallowed the closing tag but the JSON arrived whole.
+                // Tell the model the call ran, so it does not keep re-sending it.
+                feedback.appendLine("<tool_result name=\"system\" ok=\"true\">" +
+                    "{\"notice\":\"上一个工具块的 </tool_call> 闭合标签没有传回，JSON 完整已按原样执行；请继续按完整格式输出\"}</tool_result>")
+            }
             var wroteDraft = false
             for (call in validCalls) {
                 onProgress(CreationStreamUpdate("第 $round 轮：执行工具 ${call.name}"))
