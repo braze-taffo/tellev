@@ -4,11 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.tellev.core.model.CharacterCard
+import app.tellev.core.model.WorldBook
 import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.CharacterExporter
 import app.tellev.core.storage.CharacterImporter
+import app.tellev.core.storage.FileStDataStore
 import app.tellev.core.storage.StDataStore
+import app.tellev.core.storage.codec.WorldBookCodec
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,6 +23,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
 import java.io.File
 import java.util.UUID
 
@@ -45,6 +49,17 @@ data class CreationUiState(
 )
 
 enum class CharacterExportFormat { Json, Png }
+
+/** Serialize a world book to SillyTavern-compatible JSON, verifying it reads back. */
+internal fun worldBookExportBytes(book: WorldBook): ByteArray {
+    val serialized = WorldBookCodec.serializeWorldBook(book)
+    require(WorldBookCodec.parseWorldBookEntries(serialized).size == book.entries.size) {
+        "世界书导出回读失败。"
+    }
+    return FileStDataStore.defaultJson
+        .encodeToString(JsonObject.serializer(), serialized)
+        .toByteArray(Charsets.UTF_8)
+}
 
 class CreationViewModel(
     private val repository: CreationRepository,
@@ -342,6 +357,13 @@ class CreationViewModel(
         }
     }
 
+    /** Export the draft as a standalone SillyTavern world book JSON file. */
+    suspend fun exportWorldBook(): ByteArray = withContext(Dispatchers.IO) {
+        val session = _state.value.current ?: error("请先打开世界书草稿。")
+        require(session.kind == CreationKind.WorldBook && !_state.value.busy) { "当前无法导出世界书。" }
+        worldBookExportBytes(checkedWorldBook(session))
+    }
+
     fun editWorldName(name: String) {
         if (_state.value.busy) return
         _state.update { it.copy(current = it.current?.copy(worldName = name, updatedAt = System.currentTimeMillis()), info = null) }
@@ -391,13 +413,7 @@ class CreationViewModel(
                     } else store.saveCharacter(card)
                     card.id
                 } else {
-                    require(prepared.lore.all { it.content.isNotBlank() && (it.constant || it.keys.any(String::isNotBlank)) }) {
-                        "世界书有空条目或缺少触发词。"
-                    }
-                    require(prepared.worldName.isNotBlank() && prepared.lore.isNotEmpty()) {
-                        "请填写世界书名称并至少保留一个条目。"
-                    }
-                    val book = prepared.toWorldBook()
+                    val book = checkedWorldBook(prepared)
                     store.saveWorldBook(book)
                     book.id
                 }
@@ -430,6 +446,16 @@ class CreationViewModel(
         val issues = portableFrontendIssues(session.card.frontendHtml)
         require(issues.isEmpty()) { "前端不符合当前可移植约束：${issues.joinToString()}" }
         return session.toCharacterCard()
+    }
+
+    private fun checkedWorldBook(session: CreationSession): WorldBook {
+        require(session.worldName.isNotBlank() && session.lore.isNotEmpty()) {
+            "请填写世界书名称并至少保留一个条目。"
+        }
+        require(session.lore.all { it.content.isNotBlank() && (it.constant || it.keys.any(String::isNotBlank)) }) {
+            "世界书有空条目或缺少触发词。"
+        }
+        return session.toWorldBook()
     }
 
     private fun persist(session: CreationSession?) {

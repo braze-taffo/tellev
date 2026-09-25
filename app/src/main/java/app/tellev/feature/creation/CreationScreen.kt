@@ -129,6 +129,9 @@ fun CreationHomeScreen(
     }
 }
 
+/** Which export flow a pending file write belongs to. */
+private enum class ExportKind { CharacterJson, CharacterPng, WorldBookJson }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreationEditorScreen(
@@ -140,9 +143,9 @@ fun CreationEditorScreen(
     val session = state.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var pendingExport by remember(session?.id) { mutableStateOf<Pair<CharacterExportFormat, ByteArray>?>(null) }
-    fun writeExport(uri: Uri?, format: CharacterExportFormat) {
-        val bytes = pendingExport?.takeIf { it.first == format }?.second
+    var pendingExport by remember(session?.id) { mutableStateOf<Pair<ExportKind, ByteArray>?>(null) }
+    fun writeExport(uri: Uri?, kind: ExportKind) {
+        val bytes = pendingExport?.takeIf { it.first == kind }?.second
         pendingExport = null
         if (uri == null || bytes == null) return
         scope.launch {
@@ -151,17 +154,26 @@ fun CreationEditorScreen(
                     context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
                         ?: error("无法写入所选文件")
                 }
-                viewModel.showInfo(if (format == CharacterExportFormat.Png) "PNG 角色卡已导出。" else "JSON 角色卡已导出。")
+                viewModel.showInfo(
+                    when (kind) {
+                        ExportKind.CharacterPng -> "PNG 角色卡已导出。"
+                        ExportKind.WorldBookJson -> "世界书 JSON 已导出，可直接导入 SillyTavern。"
+                        else -> "JSON 角色卡已导出。"
+                    },
+                )
             } catch (e: Exception) {
                 viewModel.showError("导出失败：${e.message}")
             }
         }
     }
     val jsonExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) {
-        writeExport(it, CharacterExportFormat.Json)
+        writeExport(it, ExportKind.CharacterJson)
     }
     val pngExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) {
-        writeExport(it, CharacterExportFormat.Png)
+        writeExport(it, ExportKind.CharacterPng)
+    }
+    val worldBookJsonExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) {
+        writeExport(it, ExportKind.WorldBookJson)
     }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch {
@@ -181,14 +193,26 @@ fun CreationEditorScreen(
     }
     fun safeExportName(): String = session?.card?.name.orEmpty()
         .replace(Regex("""[\\/:*?"<>|]"""), "_").trim().take(80).ifBlank { "character" }
+    fun safeWorldBookName(): String = session?.worldName.orEmpty()
+        .replace(Regex("""[\\/:*?"<>|]"""), "_").trim().take(80).ifBlank { "worldbook" }
     fun prepareExport(format: CharacterExportFormat) {
         scope.launch {
             try {
                 val bytes = viewModel.exportCharacter(format)
-                pendingExport = format to bytes
+                pendingExport = (if (format == CharacterExportFormat.Png) ExportKind.CharacterPng else ExportKind.CharacterJson) to bytes
                 val name = safeExportName()
                 if (format == CharacterExportFormat.Png) pngExport.launch("$name.png")
                 else jsonExport.launch("$name.json")
+            } catch (e: Exception) {
+                viewModel.showError("导出失败：${e.message}")
+            }
+        }
+    }
+    fun prepareWorldBookExport() {
+        scope.launch {
+            try {
+                pendingExport = ExportKind.WorldBookJson to viewModel.exportWorldBook()
+                worldBookJsonExport.launch("${safeWorldBookName()}.json")
             } catch (e: Exception) {
                 viewModel.showError("导出失败：${e.message}")
             }
@@ -254,7 +278,7 @@ fun CreationEditorScreen(
                     onExportJson = { prepareExport(CharacterExportFormat.Json) },
                     onExportPng = { prepareExport(CharacterExportFormat.Png) },
                 )
-                2 -> WorldDraftEditor(session, viewModel, state.busy)
+                2 -> WorldDraftEditor(session, viewModel, state.busy, onExportJson = { prepareWorldBookExport() })
                 3 -> FrontendPreview(session.card, viewModel, state.busy)
             }
         }
@@ -462,7 +486,12 @@ private fun CharacterDraftEditor(
 }
 
 @Composable
-private fun WorldDraftEditor(session: CreationSession, viewModel: CreationViewModel, busy: Boolean) {
+private fun WorldDraftEditor(
+    session: CreationSession,
+    viewModel: CreationViewModel,
+    busy: Boolean,
+    onExportJson: () -> Unit = {},
+) {
     var pastedSource by remember(session.id) { mutableStateOf("") }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -491,6 +520,9 @@ private fun WorldDraftEditor(session: CreationSession, viewModel: CreationViewMo
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         DraftField("世界书名称", session.worldName, busy) { viewModel.editWorldName(it) }
+        OutlinedButton(onClick = onExportJson, enabled = !busy) {
+            Text("导出世界书 JSON 文件")
+        }
         OutlinedTextField(
             value = pastedSource, onValueChange = { pastedSource = it }, modifier = Modifier.fillMaxWidth(),
             label = { Text("粘贴原文（可选）") }, minLines = 3, maxLines = 6, enabled = !busy,

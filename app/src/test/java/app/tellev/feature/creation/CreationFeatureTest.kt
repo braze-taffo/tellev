@@ -195,6 +195,29 @@ class CreationFeatureTest {
     }
 
     @Test
+    fun worldBookExportProducesStJsonReadableBySillyTavern() {
+        val session = CreationSession(
+            kind = CreationKind.WorldBook,
+            worldName = "北境",
+            lore = listOf(
+                LoreDraft("城门", listOf("城门"), "城门夜里关。", secondaryKeys = listOf("夜晚"), selective = true),
+                LoreDraft("王法", listOf("王法"), "王法如山。", constant = true, insertionOrder = 20),
+            ),
+        )
+        val bytes = worldBookExportBytes(session.toWorldBook())
+        val root = Json.parseToJsonElement(bytes.decodeToString()).jsonObject
+        assertEquals("北境", root["name"]!!.jsonPrimitive.content)
+        val entries = WorldBookCodec.parseWorldBookEntries(root)
+        assertEquals(2, entries.size)
+        val gate = entries.first { it.keys == listOf("城门") }
+        assertEquals(listOf("夜晚"), gate.secondaryKeys)
+        assertTrue(gate.selective)
+        val law = entries.first { it.keys == listOf("王法") }
+        assertTrue(law.constant)
+        assertEquals(20, law.insertionOrder)
+    }
+
+    @Test
     fun worldBookRoundTripsTriggerFields() {
         val session = CreationSession(
             kind = CreationKind.WorldBook,
