@@ -19,10 +19,12 @@ class PromptTemplateBridgeHookTest {
         val evaluated = mutableListOf<String>()
         var deactivates = 0
         val outletCalls = mutableListOf<String>()
+        var lastRequest: JsonObject? = null
 
         override fun evaluate(request: JsonObject): JsonObject {
             val template = request["template"].toString()
             evaluated += template
+            lastRequest = request
             // Minimal echo of the JS contract: report empty scopes and content.
             return buildJsonObject {
                 put("content", kotlinx.serialization.json.JsonPrimitive(""))
@@ -106,5 +108,37 @@ class PromptTemplateBridgeHookTest {
 
         assertEquals(0, bridge.deactivates)
         assertTrue(bridge.evaluated.isEmpty())
+    }
+
+    @Test
+    fun `render request carries the active character for the getchr family`() {
+        val bridge = RecordingBridge()
+        val processor = DefaultPromptTemplateProcessor(javascriptEvaluator = bridge)
+
+        processor.process(
+            PromptTemplateRequest(
+                messages = listOf(PromptMessage(role = MessageRole.System, content = "A<%= 1 %>B")),
+                context = MacroContext(
+                    characterName = "玄泽",
+                    characterDescription = "描述",
+                    characterPersonality = "性格",
+                    characterScenario = "场景",
+                    firstMessage = "开场",
+                    exampleMessages = "示例",
+                    alternateGreetings = listOf("g1"),
+                ),
+                metadata = buildJsonObject { },
+            ),
+        )
+
+        val character = bridge.lastRequest?.get("character") as? JsonObject
+        assertEquals("玄泽", character?.get("name")?.toString()?.trim('"'))
+        assertEquals("描述", character?.get("description")?.toString()?.trim('"'))
+        assertEquals("性格", character?.get("personality")?.toString()?.trim('"'))
+        assertEquals("场景", character?.get("scenario")?.toString()?.trim('"'))
+        assertEquals("开场", character?.get("first_mes")?.toString()?.trim('"'))
+        assertEquals("示例", character?.get("mes_example")?.toString()?.trim('"'))
+        val data = character?.get("data") as? JsonObject
+        assertEquals("[\"g1\"]", data?.get("alternate_greetings").toString())
     }
 }

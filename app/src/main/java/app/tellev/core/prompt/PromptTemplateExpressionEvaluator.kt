@@ -37,6 +37,7 @@ internal object PromptTemplateExpressionEvaluator {
                 put("messageVariables", toJsonObject(state.messageVariables))
                 put("definitions", toJsonObject(state.locals))
                 put("context", toJsonObject(templateContextMap(state)))
+                put("character", toJsonObject(characterContextMap(state)))
                 put("currentWorldBookId", state.currentWorldBookId?.let(::JsonPrimitive) ?: JsonNull)
                 put("isolated", JsonPrimitive(isolated))
                 put("chat", JsonArray(state.chatMessages.map { message ->
@@ -579,6 +580,37 @@ internal object PromptTemplateExpressionEvaluator {
         "groups" to emptyList<Any?>(),
         "groupId" to "",
     )
+
+    /**
+     * ST templates read the character roster through `characters[]` and the
+     * getchr()/getCharaData() family (ST-Prompt-Template characters.ts).
+     * Tellev's render path only knows the active character, so the roster
+     * carries that one card shaped like the v1CharData fields those helpers
+     * consume; lookups for other characters resolve to null instead of
+     * throwing (a missing helper is a hard ReferenceError under EJS `_with`).
+     */
+    private fun characterContextMap(state: TemplateState): Map<String, Any?> {
+        val c = state.context
+        return mapOf(
+            "name" to c.characterName,
+            "description" to c.characterDescription,
+            "personality" to c.characterPersonality,
+            "scenario" to c.characterScenario,
+            "first_mes" to c.firstMessage,
+            "mes_example" to c.exampleMessages,
+            "creatorcomment" to "",
+            "avatar" to "",
+            "tags" to emptyList<Any?>(),
+            "data" to mapOf(
+                "creator_notes" to "",
+                "system_prompt" to "",
+                "post_history_instructions" to "",
+                "alternate_greetings" to c.alternateGreetings,
+                "creator" to "",
+                "depth_prompt" to null,
+            ),
+        )
+    }
 
     private fun JsonObject.stringContent(key: String): String? =
         (this[key] as? JsonPrimitive)?.content

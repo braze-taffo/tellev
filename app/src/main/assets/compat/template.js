@@ -89,6 +89,27 @@ function applyOutletPrompts(content, recursion = 101) {
   return result;
 }
 
+// ST substituteParams subset for nested-template helpers (boundedCharDef /
+// boundedEvalTemplate re-substitute these two macros against the resolved
+// character). The Kotlin macro engine already expanded the remaining macros
+// upstream; replacing again is idempotent.
+function substituteCharMacros(text, charName, userName) {
+  return String(text ?? '')
+    .replace(/\{\{char\}\}/gi, charName ?? '')
+    .replace(/\{\{user\}\}/gi, userName ?? '');
+}
+
+// ST DEFAULT_CHAR_DEFINE (characters.ts): backslashes are line continuations
+// in the upstream template literal, so output lines join without blanks.
+const DEFAULT_CHAR_DEFINE = '<% if (name) { %><<%- name %>>\n' +
+  '<% if (system_prompt) { %>System: <%- system_prompt %>\n<% } %>' +
+  'name: <%- name %>\n' +
+  '<% if (personality) { %>personality: <%- personality %>\n<% } %>' +
+  '<% if (description) { %>description: <%- description %>\n<% } %>' +
+  '<% if (message_example) { %>example:\n<%- message_example %>\n<% } %>' +
+  '<% if (depth_prompt) { %>System: <%- depth_prompt %>\n<% } %>' +
+  '</<%- name %>><% } %>';
+
 // ── JSON utilities (ST-Prompt-Template json-patch.ts parity) ─────────────
 // parseJSON tries strict JSON first, then progressively tolerant repairs
 // (trailing commas → unquoted keys → single-quoted strings). ST bundles the
@@ -390,6 +411,120 @@ window.__tellevTemplate = async function (request) {
     finally { stack.pop(); env.world_info = previous; }
   };
   Object.assign(env, { getwi, getWorldInfo: getwi, include });
+
+  // ── Character data (ST-Prompt-Template characters.ts parity) ───────────
+  // The render request carries only the active character; ST reads the whole
+  // roster, so lookups for other characters return null instead of throwing.
+  const characters = request.character ? [request.character] : [];
+  const getCharacterData = (name) => {
+    if (name == null || name === '') name = 0;
+    return characters[name]
+      ?? characters.find(c => c.name === name || (name instanceof RegExp && c.name && c.name.match(name)))
+      ?? null;
+  };
+  const getCharacterDefine = (name) => {
+    const char = getCharacterData(name);
+    if (!char) return null;
+    const data = char.data || {};
+    let example = String(char.mes_example ?? '').trim();
+    if (example.startsWith('<START>')) example = example.slice(7).trim();
+    example = example.replace('<START>', '```\n```');
+    if (example && example.includes('```')) example += '\n```';
+    return {
+      name: char.name,
+      description: char.description,
+      personality: char.personality,
+      scenario: char.scenario,
+      first_message: char.first_mes,
+      message_example: example,
+      creator_notes: data.creator_notes,
+      creatorcomment: char.creatorcomment,
+      system_prompt: data.system_prompt,
+      post_history_instructions: data.post_history_instructions,
+      alternate_greetings: data.alternate_greetings,
+      depth_prompt: data.depth_prompt,
+      creator: data.creator,
+    };
+  };
+  // getchr/getchar/getChara are boundedCharDef (render the character define
+  // through an EJS template), NOT data accessors — the data accessors are
+  // getCharaData/getCharData (ejs.ts SHARE_CONTEXT).
+  const getchr = async (name, template = DEFAULT_CHAR_DEFINE, data = {}) => {
+    const defs = getCharacterDefine(name);
+    if (!defs) { console.warn(`[Prompt Template] character ${name} not found`); return ''; }
+    const rendered = await render(template, Object.assign({}, data, defs, { chara_name: defs.name }));
+    return substituteCharMacros(rendered, defs.name, env.user);
+  };
+  const getCharaData = (name) => getCharacterData(name);
+  // ST binds BOTH spellings to the data accessor in the template namespace
+  // (ejs.ts SHARE_CONTEXT); TavernHelper.getCharData(charId, field) is a
+  // different function in a different namespace.
+  const getCharData = (name) => getCharacterData(name);
+
+  // Preset prompts / quick replies have no Tellev pipeline counterpart in the
+  // template path. ST returns '' for a missing name; Tellev has no source at
+  // all, so the honest result is the same '' with a one-time warning instead
+  // of a ReferenceError.
+  const warnMissingSource = (label) => {
+    if (!warnMissingSource.warned) {
+      warnMissingSource.warned = true;
+      console.warn(`[tellev] ${label}: no matching data source in template rendering, returning empty`);
+    }
+  };
+  const getprp = async (name) => { warnMissingSource('getprp/getpreset'); return ''; };
+  const getqr = async (name, label) => { warnMissingSource('getqr/getQuickReply'); return ''; };
+
+  // Nested template evaluation (ejs.ts boundedEvalTemplate): merges data into
+  // the live env — later scriptlets see it — and re-substitutes char/user.
+  const evalTemplate = async (content, data = {}) => {
+    if (typeof content !== 'string') return content;
+    if (!content.includes('<%')) return content;
+    return substituteCharMacros(await render(content, data), env.char, env.user);
+  };
+
+  // Schema-annotated YAML dump (variables.ts dumpYamlWithSchema): the schema
+  // tree seeds structure, the variable values fill it in.
+  const applyVarYamlAnnotate = (key = null, schema = '') => {
+    const value = getvar(key);
+    if (!schema) return YAML.stringify(value ?? null);
+    const tree = YAML.parseDocument(String(schema));
+    const deepSet = (path, update) => {
+      if (update === null || update === undefined) return;
+      if (_.isPlainObject(update)) {
+        for (const [k, v] of Object.entries(update)) deepSet(path.concat(k), v);
+      } else if (!path.length) {
+        try { tree.contents = update; } catch (_) { /* keep the schema tree */ }
+      } else {
+        tree.setIn(path, update);
+      }
+    };
+    deepSet([], value ?? {});
+    return tree.toString();
+  };
+  const setVariableSchema = (schema) => {
+    warnMissingSource('setVariableSchema');
+    return undefined;
+  };
+  // Historical floors carry no per-floor variables in the render request, so
+  // the backward search has nothing to find — an honest empty result.
+  const findVariables = () => ({});
+
+  Object.assign(env, {
+    characters,
+    getCharacterData, getCharaData, getCharData,
+    getCharacterDefine,
+    getchr, getchar: getchr, getChara: getchr,
+    getprp, getpreset: getprp, getPresetPrompt: getprp,
+    getqr, getQuickReply: getqr,
+    getQuickReplyData: () => { warnMissingSource('getQuickReplyData'); return null; },
+    getUserAvatarURL: () => '',
+    // ST spells it "Avater"; keep the typo for source compatibility.
+    getCharacterAvaterURL: () => '',
+    evalTemplate,
+    applyVarYamlAnnotate,
+    setVariableSchema,
+    findVariables,
+  });
   const doRender = async () => {
     const content = await render(request.template);
     return {content, local, global, message, definitions};

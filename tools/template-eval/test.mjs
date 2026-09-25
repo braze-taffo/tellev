@@ -62,6 +62,18 @@ globalThis._ = {
 const ejsModule = require(path.resolve(repoRoot, '../ST-Prompt-Template/src/3rdparty/ejs.js'));
 globalThis.ejs = ejsModule.default ?? ejsModule;
 
+// globals.js bundles the `yaml` package as window.YAML. The harness takes a
+// real yaml from whichever local install exists (tools/mvu needs `npm i` once;
+// the main checkout usually has it).
+const yamlCandidates = [
+  path.resolve(repoRoot, 'tools/mvu/node_modules/yaml'),
+  path.resolve(repoRoot, '../tellev/tools/mvu/node_modules/yaml'),
+];
+const yamlPath = yamlCandidates.find(p => { try { require.resolve(p); return true; } catch (_) { return false; } });
+if (!yamlPath) throw new Error('yaml package not found; run `npm i yaml` in tools/mvu');
+const yamlModule = require(yamlPath);
+globalThis.YAML = yamlModule.default ?? yamlModule;
+
 // Load the production script (plain script: assigns window.__tellevTemplate…).
 new Function(readFileSync(path.join(repoRoot, 'app/src/main/assets/compat/template.js'), 'utf8'))();
 
@@ -253,6 +265,97 @@ test('isolated floor self-collection survives the registry rollback', async () =
   assert.equal(out.content, '[V_FROM_MID]');
   // The rollback still happened: nothing leaked into later renders.
   assert.equal(await render("<%= getPromptsInjected('mid', [], false) %>"), '');
+});
+
+// ── Part A1: character data + nested-template helpers ──────────────────────
+const CHARACTER = {
+  name: '玄泽', description: 'desc-text', personality: 'personality-text',
+  scenario: 'scenario-text', first_mes: 'hi', mes_example: '<START>\n{{user}}: hi\n{{char}}: yo',
+  creatorcomment: 'note', data: {
+    system_prompt: 'sys', post_history_instructions: 'phi',
+    alternate_greetings: ['g1'], creator: 'someone', depth_prompt: null,
+  },
+};
+
+test('getCharacterData resolves the active character; unknown names are null', async () => {
+  const out = await render(
+    "[<%= JSON.stringify(getCharacterData()?.name) %>]" +
+    "[<%= JSON.stringify(getCharacterData('玄泽')?.name) %>]" +
+    "[<%= JSON.stringify(getCharacterData(0)?.name) %>]" +
+    "[<%= JSON.stringify(getCharacterData('别人')) %>]" +
+    "[<%= JSON.stringify(getCharaData(0)?.name) %>]" +
+    "[<%= JSON.stringify(getCharData(0)?.name) %>]",
+    { character: CHARACTER });
+  assert.equal(out, '["玄泽"]["玄泽"]["玄泽"][null]["玄泽"]["玄泽"]');
+  // Bare getCharData must not throw when no character is in the request.
+  assert.equal(await render("<%= JSON.stringify(getCharacterData()) %>"), 'null');
+});
+
+test('getCharacterDefine maps v1 fields and keeps mes_example macros raw', async () => {
+  const out = await render(
+    "<% const d = getCharacterDefine('玄泽') %>" +
+    "[<%= d.name %>][<%= d.description %>][<%= d.scenario %>][<%= d.first_message %>]" +
+    "[<%= d.system_prompt %>][<%= d.creator %>][<%= JSON.stringify(d.alternate_greetings) %>]\n" +
+    "EXAMPLE:<%= d.message_example %>",
+    { character: CHARACTER });
+  assert.equal(out,
+    '[玄泽][desc-text][scenario-text][hi][sys][someone][["g1"]]\n' +
+    'EXAMPLE:{{user}}: hi\n{{char}}: yo');
+});
+
+test('getchr renders the default define with macros substituted', async () => {
+  const out = await render("<%- await getchr() %>", { character: CHARACTER });
+  assert.equal(out,
+    '<玄泽>\nSystem: sys\nname: 玄泽\npersonality: personality-text\n' +
+    'description: desc-text\nexample:\n旅人: hi\n玄泽: yo\n</玄泽>');
+});
+
+test('getchr accepts a custom template plus data and returns empty for unknown', async () => {
+  const out = await render(
+    "<%- await getchr('玄泽', 'NAME=<%= chara_name %> USER={{user}} EXTRA=<%= extra %>', { extra: 'E1' }) %>" +
+    "|<%= JSON.stringify(await getchr('不存在')) %>",
+    { character: CHARACTER });
+  assert.equal(out, 'NAME=玄泽 USER=旅人 EXTRA=E1|""');
+});
+
+test('getchar and getChara are getchr aliases', async () => {
+  const out = await render("<%- await getchar() %><%- await getChara() %>", { character: CHARACTER });
+  assert.equal(out, await render("<%- await getchr() %><%- await getchr() %>", { character: CHARACTER }));
+});
+
+test('preset prompt and quick reply helpers degrade to empty results', async () => {
+  const out = await render(
+    "[<%- await getprp('主提示') %>][<%- await getpreset('主提示') %>][<%- await getPresetPrompt('主提示') %>]" +
+    "[<%- await getqr('集合', '标签') %>][<%- await getQuickReply('集合', '标签') %>]" +
+    "[<%= JSON.stringify(getQuickReplyData('集合')) %>]",
+    { character: CHARACTER });
+  assert.equal(out, '[][][][][][null]');
+});
+
+test('evalTemplate evaluates nested templates and passes data', async () => {
+  const out = await render(
+    "[<%= await evalTemplate('<%= 1+1 %>') %>]" +
+    "[<%= await evalTemplate(42) %>]" +
+    "[<%= await evalTemplate('no markers') %>]" +
+    "[<%= await evalTemplate('<%= v %>+<%= char %>', { v: 7 }) %>]",
+    { character: CHARACTER });
+  assert.equal(out, '[2][42][no markers][7+玄泽]');
+});
+
+test('applyVarYamlAnnotate dumps values and fills a schema document', async () => {
+  const out = await render(
+    "<% setvar('state', { hp: 30 }) %>" +
+    "[<%= applyVarYamlAnnotate('state.hp') %>]" +
+    "[<%= applyVarYamlAnnotate('state', 'hp: 0\\nmp: 0') %>]");
+  assert.equal(out, '[30\n][hp: 30\nmp: 0\n]');
+});
+
+test('setVariableSchema and findVariables degrade without throwing', async () => {
+  const out = await render(
+    "[<%= JSON.stringify(setVariableSchema({})) %>]" +
+    "[<%= JSON.stringify(findVariables('x', 2)) %>]" +
+    "[<%= getUserAvatarURL() %>][<%= getCharacterAvaterURL() %>]");
+  assert.equal(out, '[][{}][][]');
 });
 
 let failed = 0;
