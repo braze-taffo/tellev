@@ -288,6 +288,9 @@ window.__tellevTemplate = async function (request) {
   const local = request.local || {}, global = request.global || {}, definitions = request.definitions || {};
   const message = request.messageVariables || {};
   const request_chat = request.chat || [];
+  // Per-floor render fields (ST handler.ts:43): set for chat floors, unset
+  // for the system prompt's generate-before environment.
+  const mc = request.messageContext || {};
   const cache = Object.assign({}, global, local, message);
   const stack = [];
   // getChatMessage(s) / matchChatMessages (ST chat.ts): role-filtered reads
@@ -397,7 +400,16 @@ window.__tellevTemplate = async function (request) {
     return '';
   };
   const env = Object.assign({}, request.context, definitions, {
-    variables: cache, getvar, setvar,
+    variables: cache,
+    // ST render-phase fields: undefined on the system prompt (no
+    // messageContext), floor-scoped on chat floors.
+    message_id: mc.message_id,
+    swipe_id: mc.swipe_id,
+    is_last: mc.is_last,
+    is_user: mc.is_user,
+    is_system: mc.is_system,
+    name: mc.name,
+    getvar, setvar,
     // ST exposes SillyTavern.getContext() to templates; Tellev has no ST
     // internals, so stub it to a permissive empty context — bare references
     // and getContext() survive, deeper property access yields undefined.

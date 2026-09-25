@@ -27,6 +27,7 @@ internal object PromptTemplateExpressionEvaluator {
         state: TemplateState,
         javascriptEvaluator: PromptTemplateJsBridge? = null,
         isolated: Boolean = false,
+        messageContext: PromptTemplateMessageContext? = null,
     ): String {
         if (!template.contains("<%")) return template
         javascriptEvaluator?.let { bridge ->
@@ -40,6 +41,16 @@ internal object PromptTemplateExpressionEvaluator {
                 put("character", toJsonObject(characterContextMap(state)))
                 put("currentWorldBookId", state.currentWorldBookId?.let(::JsonPrimitive) ?: JsonNull)
                 put("isolated", JsonPrimitive(isolated))
+                messageContext?.let { mc ->
+                    put("messageContext", buildJsonObject {
+                        mc.messageId?.let { put("message_id", JsonPrimitive(it)) }
+                        mc.swipeId?.let { put("swipe_id", JsonPrimitive(it)) }
+                        mc.isLast?.let { put("is_last", JsonPrimitive(it)) }
+                        mc.isUser?.let { put("is_user", JsonPrimitive(it)) }
+                        mc.isSystem?.let { put("is_system", JsonPrimitive(it)) }
+                        mc.name?.let { put("name", JsonPrimitive(it)) }
+                    })
+                }
                 put("chat", JsonArray(state.chatMessages.map { message ->
                     buildJsonObject {
                         put("id", JsonPrimitive(message.id))

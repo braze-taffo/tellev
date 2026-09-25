@@ -17,6 +17,7 @@ class PromptTemplateBridgeHookTest {
 
     private class RecordingBridge : PromptTemplateJsBridge {
         val evaluated = mutableListOf<String>()
+        val requests = mutableListOf<JsonObject>()
         var deactivates = 0
         val outletCalls = mutableListOf<String>()
         var lastRequest: JsonObject? = null
@@ -25,6 +26,7 @@ class PromptTemplateBridgeHookTest {
             val template = request["template"].toString()
             evaluated += template
             lastRequest = request
+            requests += request
             // Minimal echo of the JS contract: report empty scopes and content.
             return buildJsonObject {
                 put("content", kotlinx.serialization.json.JsonPrimitive(""))
@@ -140,6 +142,36 @@ class PromptTemplateBridgeHookTest {
         assertEquals("示例", character?.get("mes_example")?.toString()?.trim('"'))
         val data = character?.get("data") as? JsonObject
         assertEquals("[\"g1\"]", data?.get("alternate_greetings").toString())
+    }
+
+    @Test
+    fun `render request carries per-floor context for chat floors only`() {
+        val bridge = RecordingBridge()
+        val processor = DefaultPromptTemplateProcessor(javascriptEvaluator = bridge)
+
+        processor.process(
+            PromptTemplateRequest(
+                messages = listOf(
+                    PromptMessage(role = MessageRole.System, content = "sys<%= 1 %>", channel = CHANNEL_MAIN),
+                    PromptMessage(role = MessageRole.User, content = "u<%= 1 %>", name = "旅人", channel = CHANNEL_CHAT),
+                    PromptMessage(role = MessageRole.Assistant, content = "a<%= 1 %>", name = "玄泽", channel = CHANNEL_CHAT),
+                ),
+                context = MacroContext(),
+                metadata = buildJsonObject { },
+            ),
+        )
+
+        // System layer renders without floor fields (ST generate-before env).
+        assertEquals(null, bridge.requests[0]["messageContext"])
+        fun contextOf(i: Int) = bridge.requests[i]["messageContext"] as? JsonObject
+        assertEquals("0", contextOf(1)?.get("message_id").toString())
+        assertEquals("true", contextOf(1)?.get("is_user").toString())
+        assertEquals("false", contextOf(1)?.get("is_system").toString())
+        assertEquals("旅人", contextOf(1)?.get("name")?.toString()?.trim('"'))
+        assertEquals("false", contextOf(1)?.get("is_last").toString())
+        assertEquals("1", contextOf(2)?.get("message_id").toString())
+        assertEquals("false", contextOf(2)?.get("is_user").toString())
+        assertEquals("true", contextOf(2)?.get("is_last").toString())
     }
 
     @Test

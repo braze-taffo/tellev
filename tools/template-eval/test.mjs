@@ -460,6 +460,16 @@ test('activateWorldInfo registers entries readable through getActivatedWIEntries
   assert.equal(out, '[3][1][0]');
 });
 
+test('render-time fields come from messageContext and stay unset for system', async () => {
+  const out = await render(
+    "[<%= message_id %>][<%= is_user %>][<%= is_system %>][<%= name %>][<%= is_last %>]",
+    { messageContext: { message_id: 2, is_user: true, is_system: false, name: '旅人', is_last: false } });
+  assert.equal(out, '[2][true][false][旅人][false]');
+  const sys = await render(
+    "[<%= message_id %>][<%= is_user %>][<%= name %>]");
+  assert.equal(sys, '[][][]');
+});
+
 test('per-build deactivate hook clears the activation registry', async () => {
   await render("<% await activewi('世界书', '世界设定') %>", { worldCatalog: BOOK_ENTRIES });
   assert.equal(await render("<%= getActivatedWIEntries().length %>"), '1');
