@@ -161,6 +161,13 @@ internal class CreationEngine(
         /** Safety valve against tool loops that never converge, not a work quota. */
         internal const val TOOL_ROUND_LIMIT = 32
         internal const val TOOL_ROUND_WARNING_FROM = 30
+
+        /**
+         * Reasoning models spend their completion budget on thinking first; an
+         * 8K cap died mid-thought (~1900 streamed chunks). 32K leaves room for
+         * reasoning plus a batched tool round.
+         */
+        internal const val MAX_OUTPUT_TOKENS = 32_768
     }
 
     // Keep the creation agent's transport separate from chat. Some compatible
@@ -209,17 +216,20 @@ internal class CreationEngine(
                         capped = false,
                     )
                 }
-                val truncated = generation.finishReason == "length" && parsed.hasUnclosedBlock
+                val truncated = generation.finishReason == "length"
+                val truncatedMidBlock = truncated && parsed.hasUnclosedBlock
+                val truncatedEmptyBody = truncated && parsed.prose.isBlank() && parsed.blocks.isEmpty()
                 val reason = when {
-                    truncated -> "输出被长度上限截断，最后的工具块不完整"
+                    truncatedMidBlock -> "输出被长度上限截断，最后的工具块不完整"
+                    truncatedEmptyBody -> "输出被长度上限截断（推理思考耗尽了输出额度，正文为空）"
                     parsed.hasUnclosedBlock -> "最后一个工具块没有闭合"
                     parsed.blocks.isNotEmpty() -> "全部工具块都无法解析"
                     else -> "没有返回内容"
                 }
-                val guidance = if (truncated) {
-                    "请拆成更小的批量重发（例如一次只写 2-3 条条目）"
-                } else {
-                    "请重发完整的 <tool_call>{\\\"name\\\":\\\"...\\\",\\\"arguments\\\":{...}}</tool_call> 块，或直接输出给用户的纯文本"
+                val guidance = when {
+                    truncatedMidBlock -> "请拆成更小的批量重发（例如一次只写 2-3 条条目）"
+                    truncatedEmptyBody -> "请大幅精简思考，直接输出完整的工具块或给用户的简短文本"
+                    else -> "请重发完整的 <tool_call>{\\\"name\\\":\\\"...\\\",\\\"arguments\\\":{...}}</tool_call> 块，或直接输出给用户的纯文本"
                 }
                 history += PromptMessage(MessageRole.Assistant, content = generation.text)
                 history += PromptMessage(MessageRole.User, content = buildString {
@@ -280,6 +290,7 @@ internal class CreationEngine(
         - 条目用 id（形如 "L3"）定位。修改已有条目只写要改的字段，未写的字段保持原样；新建条目不带 id。
         - 批量写入时一次打包多条（建议 5-10 条），减少轮数消耗。
         - 工具块内的 JSON 必须完整合法：字符串内换行写作 \n、双引号写作 \"。
+        - 回复保持精炼：思考过程尽量短，正文只包含工具块与必要说明；过长的思考会耗尽单轮输出额度导致截断。
         - 不需要工具时，直接输出给用户的纯文本回复；除工具块外不要输出 JSON。
 
         可用工具（arguments 一律是 JSON 对象）：
@@ -387,14 +398,14 @@ internal class CreationEngine(
             category = presetCategoryForProvider(config.providerType),
             temperature = temperature,
             maxContextTokens = 1_000_000,
-            maxCompletionTokens = 8_192,
+            maxCompletionTokens = MAX_OUTPUT_TOKENS,
         )
         val prompt = PromptBuildResult(
             // Defensive copy: the loop keeps mutating its history list; a request
             // must not alias it or later rounds rewrite earlier requests.
             messages = messages.toList(),
             stop = emptyList(),
-            maxTokens = 8_192,
+            maxTokens = MAX_OUTPUT_TOKENS,
             providerType = config.providerType,
             diagnostics = PromptDiagnostics(emptyList()),
         )
@@ -448,7 +459,14 @@ internal class CreationEngine(
             }
         }
         val raw = (completed?.takeIf(String::isNotBlank) ?: deltas.toString())
-            .takeIf(String::isNotBlank) ?: error("模型未返回内容")
+        if (raw.isBlank()) {
+            val reasoning = completedReasoning?.takeIf(String::isNotBlank) ?: reasoningDeltas.toString()
+            if (reasoning.isBlank()) error("模型未返回内容")
+            // Reasoning consumed the whole output budget and no body arrived:
+            // hand the truncation to the loop's feedback path instead of
+            // failing the turn with a confusing "no content" error.
+            return RawGeneration(text = "", finishReason = completedFinishReason ?: "length")
+        }
         val visible = visibleCreationStream(raw, completedReasoning?.takeIf(String::isNotBlank) ?: reasoningDeltas.toString())
         onProgress(visible.copy(
             phase = "${phasePrefix}校验结构化草稿",

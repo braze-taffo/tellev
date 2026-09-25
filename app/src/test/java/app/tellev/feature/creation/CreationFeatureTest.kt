@@ -287,6 +287,38 @@ class CreationFeatureTest {
     }
 
     @Test
+    fun reasoningOnlyLengthRoundAsksForTerseRetry() = runBlocking {
+        val requests = mutableListOf<GenerateRequest>()
+        val provider = object : ProviderAdapter {
+            private var calls = 0
+            override val id = "openai-compatible"
+            override val displayName = "Fake"
+            override val capabilities = setOf(ProviderCapability.Chat)
+            override suspend fun checkStatus(config: ProviderConfig) = ProviderStatus(true, "ok")
+            override suspend fun listModels(config: ProviderConfig): List<ProviderModel> = emptyList()
+            override fun streamGenerate(config: ProviderConfig, request: GenerateRequest) =
+                kotlinx.coroutines.flow.flow {
+                    requests += request
+                    if (++calls == 1) {
+                        emit(GenerateChunk.Completed("", reasoning = "思考".repeat(400), finishReason = "length"))
+                    } else {
+                        emit(GenerateChunk.Completed("先聊聊视角。"))
+                    }
+                }
+        }
+        val reply = engine(provider)
+            .converse(CreationSession(kind = CreationKind.Character), "写一个人物")
+        assertEquals("先聊聊视角。", reply.message)
+        assertEquals(2, requests.size)
+        // 思考耗尽输出额度、正文为空：不能直接报「模型未返回内容」，要引导精简思考重发。
+        val feedback = requests[1].prompt.messages.last().content
+        assertTrue(feedback.contains("推理思考耗尽了输出额度"))
+        assertTrue(feedback.contains("精简思考"))
+        assertEquals(CreationEngine.MAX_OUTPUT_TOKENS, requests[0].prompt.maxTokens)
+        assertEquals(CreationEngine.MAX_OUTPUT_TOKENS, requests[0].preset.maxCompletionTokens)
+    }
+
+    @Test
     fun creationAgentPublishesProviderReasoningAndProseWhileStreaming() = runBlocking {
         val first = "已把主角命名"
         val response = first + "为林月。"
