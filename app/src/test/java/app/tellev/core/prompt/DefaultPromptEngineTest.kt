@@ -1083,4 +1083,30 @@ class DefaultPromptEngineTest {
         assertTrue(result.messages.first().content.contains("FORCED LORE"))
         assertFalse(result.messages.first().content.contains("@@activate"))
     }
+
+    @Test
+    fun `decorated world entry expands side effect macro once per build`() {
+        var expansions = 0
+        val macros = DefaultMacroEngine().apply {
+            registerCustomMacro("count_lore") { (++expansions).toString() }
+        }
+        val result = DefaultPromptEngine(macroEngine = macros).build(
+            PromptBuildRequest(
+                character = CharacterCard(id = "alice", name = "Alice"),
+                persona = null,
+                messages = emptyList(),
+                worldBooks = listOf(WorldBook("world", "World", listOf(
+                    WorldBookEntry(
+                        id = "forced", keys = emptyList(),
+                        content = "@@activate\nLORE {{count_lore}}",
+                    ),
+                ))),
+                preset = GenerationPreset(id = "d", name = "D", providerType = "openai-compatible"),
+                userInput = "Hello",
+                providerType = "openai-compatible",
+            ),
+        )
+        assertEquals(1, expansions)
+        assertTrue(result.messages.first().content.contains("LORE 1"))
+    }
 }

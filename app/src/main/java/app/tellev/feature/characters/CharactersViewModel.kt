@@ -128,6 +128,42 @@ class CharactersViewModel(
         _uiState.update { it.copy(selectedCharacter = null, worldBooks = emptyList()) }
     }
 
+    fun loadWorldBooks() {
+        viewModelScope.launch {
+            val books = runCatching { dataStore.listWorldBooks() }.getOrDefault(emptyList())
+            _uiState.update { it.copy(worldBooks = books) }
+        }
+    }
+
+    suspend fun createCharacter(card: CharacterCard, avatarPng: ByteArray?): Boolean {
+        if (card.name.isBlank()) return false
+        _uiState.update { it.copy(isLoading = true, error = null) }
+        return try {
+            dataStore.saveCharacter(card)
+            var avatarError: String? = null
+            if (avatarPng != null) {
+                runCatching { dataStore.replaceCharacterAvatar(card.id, avatarPng) }
+                    .onFailure { avatarError = it.message ?: "未知错误" }
+            }
+            val saved = dataStore.readCharacter(card.id)
+            _uiState.update {
+                it.copy(
+                    selectedCharacter = saved,
+                    isLoading = false,
+                    info = if (avatarError == null) "角色已创建。" else "角色已创建，但头像保存失败：$avatarError",
+                )
+            }
+            loadCharacters()
+            importedCardSignal.value = importedCardSignal.value + 1L
+            true
+        } catch (e: Exception) {
+            _uiState.update {
+                it.copy(isLoading = false, error = "创建角色失败：${e.message}")
+            }
+            false
+        }
+    }
+
     /**
      * Replaces the selected character's avatar with the picked image. The
      * image is downsampled and re-encoded as PNG, then the card (unchanged
@@ -273,36 +309,6 @@ class CharactersViewModel(
         val existingIds = _uiState.value.characters.map { it.id }.toSet()
         if (card.id !in existingIds) return card
         return card.copy(id = "${card.id}_${UUID.randomUUID().toString().take(8)}")
-    }
-
-    fun exportCharacter(id: String): ByteArray? {
-        var result: ByteArray? = null
-        try {
-            val state = _uiState.value
-            val character = state.characters.find { it.id == id }
-            if (character != null) {
-                // We need the full card to export
-                viewModelScope.launch {
-                    try {
-                        val card = dataStore.readCharacter(id)
-                        val jsonString = exporter.exportToJson(card)
-                        // Store the result info for the UI to pick up
-                        _uiState.update {
-                            it.copy(info = "导出已准备好：${card.name}.json")
-                        }
-                    } catch (e: Exception) {
-                        _uiState.update {
-                            it.copy(error = "导出失败：${e.message}")
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            _uiState.update {
-                it.copy(error = "导出失败：${e.message}")
-            }
-        }
-        return result
     }
 
     suspend fun exportCharacterToJson(id: String): String? {

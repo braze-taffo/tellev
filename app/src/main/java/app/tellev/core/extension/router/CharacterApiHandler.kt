@@ -5,6 +5,7 @@ import app.tellev.core.extension.VirtualApiResponse
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterSummary
 import app.tellev.core.model.WorldBook
+import app.tellev.core.storage.CharacterImporter
 import app.tellev.core.storage.StDataStore
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -100,7 +101,11 @@ internal class CharacterApiHandler(
             ?: return errorResponse(404, "Character not found: $id", json)
 
         val updatedRaw = patchCharacterFields(card.raw, bodyObj)
-        dataStore.saveCharacter(card.copy(raw = updatedRaw))
+        val updatedCard = CharacterImporter().parseCharacterJsonObject(updatedRaw).copy(
+            id = card.id,
+            avatarRelativePath = card.avatarRelativePath,
+        )
+        dataStore.saveCharacter(updatedCard)
         return jsonResponse(200, buildJsonObject { put("ok", true) }, json)
     }
 

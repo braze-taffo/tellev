@@ -43,6 +43,7 @@ import app.tellev.core.storage.StDirectoryLayout
 import app.tellev.core.update.UpdateChecker
 import app.tellev.ui.theme.parseThemeAccent
 import app.tellev.ui.theme.parseThemeMode
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -225,7 +226,13 @@ class TellevGraph private constructor(
             // store, and permission manager were previously dead code:
             // constructed nowhere and unreachable from the UI.  Wire them
             // up here so the 酒馆助手 compatibility layer is actually live.
-            val extensionScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            // 扩展作用域的兜底处理器：脚本侧任意未捕获失败只记录，不再击穿进程。
+            val extensionScope = CoroutineScope(
+                SupervisorJob() + Dispatchers.Default +
+                    CoroutineExceptionHandler { _, failure ->
+                        android.util.Log.w("tellev-ext", "Uncaught failure in extension scope", failure)
+                    },
+            )
             val extensionSettingsStore = ExtensionSettingsStore(layout.extensions)
             val permissionManager = ExtensionPermissionManager(
                 persistenceDir = layout.extensions.resolve("_permissions"),

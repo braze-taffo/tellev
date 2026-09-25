@@ -15,7 +15,7 @@ import kotlinx.serialization.json.putJsonObject
 
 /**
  * Exports character cards to JSON or PNG format.
- * Uses V2 spec format for JSON output.
+ * Creates V2 cards and preserves the spec of imported cards.
  * Removes the chat field on export; preserves the user's `fav` flag.
  */
 class CharacterExporter(
@@ -23,7 +23,7 @@ class CharacterExporter(
 ) {
 
     /**
-     * Export a character card as a V2 spec JSON string.
+     * Export a character card as a SillyTavern-compatible JSON string.
      * Removes the chat field; preserves the original `fav` flag.
      */
     fun exportToJson(card: CharacterCard): String {
@@ -46,6 +46,21 @@ class CharacterExporter(
             }
             put("spec", card.raw["spec"] ?: JsonPrimitive("chara_card_v2"))
             put("spec_version", card.raw["spec_version"] ?: JsonPrimitive("2.0"))
+            // SillyTavern writes these legacy mirrors alongside data for older readers.
+            put("name", card.name)
+            put("description", card.description)
+            put("personality", card.personality)
+            put("scenario", card.scenario)
+            put("first_mes", card.firstMessage)
+            put("mes_example", card.exampleMessages)
+            put("creatorcomment", card.creatorNotes)
+            put("tags", buildJsonArray { card.tags.forEach { add(JsonPrimitive(it)) } })
+            if (card.raw.containsKey("creator_notes")) put("creator_notes", card.creatorNotes)
+            if (card.raw.containsKey("alternate_greetings")) {
+                putJsonArray("alternate_greetings") {
+                    card.alternateGreetings.forEach { add(JsonPrimitive(it)) }
+                }
+            }
             put("data", buildDataObject(card, rawData))
         }
     }
@@ -65,18 +80,19 @@ class CharacterExporter(
             put("first_mes", card.firstMessage)
             put("mes_example", card.exampleMessages)
             put("creator_notes", card.creatorNotes)
-            if (rawData?.containsKey("character_version") != true) {
-                put("character_version", "1.0")
-            }
+            // A raw card supplied by an extension may omit the typed fields.
+            // Keep its existing values until the editor explicitly changes them.
+            fun field(key: String, value: String): JsonElement =
+                if (value.isEmpty()) rawData?.get(key) ?: JsonPrimitive("") else JsonPrimitive(value)
+            put("system_prompt", field("system_prompt", card.systemPrompt))
+            put("post_history_instructions", field("post_history_instructions", card.postHistoryInstructions))
+            put("creator", field("creator", card.creator))
+            put("character_version", field("character_version", card.characterVersion))
             put("tags", buildJsonArray {
                 card.tags.forEach { add(JsonPrimitive(it)) }
             })
-            if (rawData?.containsKey("system_prompt") != true) put("system_prompt", "")
-            if (rawData?.containsKey("post_history_instructions") != true) put("post_history_instructions", "")
-            if (rawData?.containsKey("alternate_greetings") != true) {
-                putJsonArray("alternate_greetings") {
-                    card.alternateGreetings.forEach { add(JsonPrimitive(it)) }
-                }
+            putJsonArray("alternate_greetings") {
+                card.alternateGreetings.forEach { add(JsonPrimitive(it)) }
             }
             if (rawData?.containsKey("extensions") != true) putJsonObject("extensions") {}
 
@@ -92,48 +108,56 @@ class CharacterExporter(
     private fun exportCharacterBook(rawBook: JsonObject?, book: app.tellev.core.model.WorldBook): JsonElement {
         if (rawBook != null) return rawBook
 
+        // Imported entries keep their original raw; rebuilding from scratch would
+        // drop ST fields tellev does not model (sticky/cooldown/delay, entry
+        // extensions, …). raw is the base, typed fields overlay it so edits win.
+        val usedUids = mutableSetOf<Int>()
+        book.entries.forEach { entry ->
+            entry.id.toIntOrNull()?.let { usedUids += it }
+            (entry.raw["uid"] as? JsonPrimitive)?.content?.toIntOrNull()?.let { usedUids += it }
+        }
+        var nextUid = (usedUids.maxOrNull() ?: -1) + 1
+
         return buildJsonObject {
             put("name", book.name)
             putJsonObject("entries") {
                 book.entries.forEachIndexed { index, entry ->
-                    putJsonObject(index.toString()) {
-                        put("uid", entry.id.toIntOrNull() ?: index)
-                        putJsonArray("key") {
-                            entry.keys.forEach { add(JsonPrimitive(it)) }
-                        }
-                        putJsonArray("keysecondary") {
-                            entry.secondaryKeys.forEach { add(JsonPrimitive(it)) }
-                        }
-                        put("comment", entry.comment)
-                        put("content", entry.content)
-                        put("constant", entry.constant)
-                        put("selective", entry.selective)
-                        put("order", entry.insertionOrder)
-                        put("position", entry.position)
-                        put("disable", !entry.enabled)
-                        put("depth", entry.depth)
-                        put("probability", entry.probability)
-                        put("useProbability", entry.useProbability)
-                        put("selectiveLogic", entry.selectiveLogic)
-                        put("role", entry.role)
-                        put("matchWholeWords", entry.matchWholeWords)
-                        put("useRegex", entry.useRegex)
-                        put("caseSensitive", entry.caseSensitive)
-                        put("excludeRecursion", entry.excludeRecursion)
-                        put("preventRecursion", entry.preventRecursion)
-                        put("delayUntilRecursion", entry.delayUntilRecursion)
-                        put("ignoreBudget", entry.ignoreBudget)
-                        put("priority", entry.priority)
-                        put("group", "")
-                        put("groupOverride", false)
-                        put("groupWeight", 100)
-                        put("sticky", 0)
-                        put("cooldown", 0)
-                        put("delay", 0)
-                        put("displayIndex", index)
-                        put("addMemo", true)
-                        putJsonObject("extensions") {}
-                    }
+                    val merged = mutableMapOf<String, JsonElement>()
+                    merged.putAll(entry.raw)
+                    merged["uid"] = JsonPrimitive(entry.id.toIntOrNull() ?: nextUid++)
+                    merged["key"] = buildJsonArray { entry.keys.forEach { add(JsonPrimitive(it)) } }
+                    merged["keysecondary"] = buildJsonArray { entry.secondaryKeys.forEach { add(JsonPrimitive(it)) } }
+                    merged["comment"] = JsonPrimitive(entry.comment)
+                    merged["content"] = JsonPrimitive(entry.content)
+                    merged["constant"] = JsonPrimitive(entry.constant)
+                    merged["selective"] = JsonPrimitive(entry.selective)
+                    merged["order"] = JsonPrimitive(entry.insertionOrder)
+                    merged["position"] = JsonPrimitive(entry.position)
+                    merged["disable"] = JsonPrimitive(!entry.enabled)
+                    merged["depth"] = JsonPrimitive(entry.depth)
+                    merged["probability"] = JsonPrimitive(entry.probability)
+                    merged["useProbability"] = JsonPrimitive(entry.useProbability)
+                    merged["selectiveLogic"] = JsonPrimitive(entry.selectiveLogic)
+                    merged["role"] = JsonPrimitive(entry.role)
+                    merged["matchWholeWords"] = JsonPrimitive(entry.matchWholeWords)
+                    merged["useRegex"] = JsonPrimitive(entry.useRegex)
+                    merged["caseSensitive"] = JsonPrimitive(entry.caseSensitive)
+                    merged["excludeRecursion"] = JsonPrimitive(entry.excludeRecursion)
+                    merged["preventRecursion"] = JsonPrimitive(entry.preventRecursion)
+                    merged["delayUntilRecursion"] = JsonPrimitive(entry.delayUntilRecursion)
+                    merged["ignoreBudget"] = JsonPrimitive(entry.ignoreBudget)
+                    merged["priority"] = JsonPrimitive(entry.priority)
+                    merged["group"] = JsonPrimitive(entry.group)
+                    merged["groupOverride"] = JsonPrimitive(entry.groupOverride)
+                    merged["groupWeight"] = JsonPrimitive(entry.groupWeight)
+                    merged["useGroupScoring"] = JsonPrimitive(entry.useGroupScoring)
+                    if (!merged.containsKey("sticky")) merged["sticky"] = JsonPrimitive(0)
+                    if (!merged.containsKey("cooldown")) merged["cooldown"] = JsonPrimitive(0)
+                    if (!merged.containsKey("delay")) merged["delay"] = JsonPrimitive(0)
+                    if (!merged.containsKey("displayIndex")) merged["displayIndex"] = JsonPrimitive(index)
+                    if (!merged.containsKey("addMemo")) merged["addMemo"] = JsonPrimitive(true)
+                    if (!merged.containsKey("extensions")) merged["extensions"] = buildJsonObject { }
+                    put(index.toString(), JsonObject(merged))
                 }
             }
         }

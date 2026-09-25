@@ -70,6 +70,14 @@ internal object WorldBookCodec {
     }
 
     fun serializeWorldBook(book: WorldBook): JsonObject {
+        // New entries get a fresh uid above every imported one; reusing list
+        // indices could duplicate an imported entry's uid (uid is ST's identity).
+        val usedUids = mutableSetOf<Int>()
+        book.entries.forEach { entry ->
+            entry.id.toIntOrNull()?.let { usedUids += it }
+            (entry.raw["uid"] as? JsonPrimitive)?.content?.toIntOrNull()?.let { usedUids += it }
+        }
+        var nextUid = (usedUids.maxOrNull() ?: -1) + 1
         return buildJsonObject {
             for ((key, value) in book.raw) {
                 if (key != "name" && key != "entries") put(key, value)
@@ -79,7 +87,7 @@ internal object WorldBookCodec {
                 book.entries.forEachIndexed { index, entry ->
                     val merged = mutableMapOf<String, JsonElement>()
                     merged.putAll(entry.raw)
-                    merged["uid"] = entry.raw["uid"] ?: JsonPrimitive(entry.id.toIntOrNull() ?: index)
+                    merged["uid"] = entry.raw["uid"] ?: JsonPrimitive(entry.id.toIntOrNull() ?: nextUid++)
                     merged["key"] = JsonArray(entry.keys.map { JsonPrimitive(it) })
                     merged["keysecondary"] = JsonArray(entry.secondaryKeys.map { JsonPrimitive(it) })
                     merged["content"] = JsonPrimitive(entry.content)
@@ -101,6 +109,10 @@ internal object WorldBookCodec {
                     merged["preventRecursion"] = JsonPrimitive(entry.preventRecursion)
                     merged["delayUntilRecursion"] = JsonPrimitive(entry.delayUntilRecursion)
                     merged["ignoreBudget"] = JsonPrimitive(entry.ignoreBudget)
+                    merged["group"] = JsonPrimitive(entry.group)
+                    merged["groupOverride"] = JsonPrimitive(entry.groupOverride)
+                    merged["groupWeight"] = JsonPrimitive(entry.groupWeight)
+                    merged["useGroupScoring"] = JsonPrimitive(entry.useGroupScoring)
                     if (entry.priority != 0 || entry.raw.containsKey("priority")) {
                         merged["priority"] = JsonPrimitive(entry.priority)
                     }

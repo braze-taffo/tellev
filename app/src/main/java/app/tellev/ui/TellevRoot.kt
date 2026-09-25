@@ -60,6 +60,10 @@ import app.tellev.feature.characters.CharacterDetailScreen
 import app.tellev.feature.characters.CharactersListScreen
 import app.tellev.feature.characters.CharactersViewModel
 import app.tellev.feature.characters.CharactersViewModelFactory
+import app.tellev.feature.creation.CreationEditorScreen
+import app.tellev.feature.creation.CreationHomeScreen
+import app.tellev.feature.creation.CreationViewModel
+import app.tellev.feature.creation.CreationViewModelFactory
 import app.tellev.feature.chat.ChatScreen
 import app.tellev.feature.chat.ChatViewModel
 import app.tellev.feature.chat.ChatViewModelFactory
@@ -119,6 +123,15 @@ fun TellevRoot() {
     val worldViewModel: WorldViewModel = viewModel(
         factory = WorldViewModelFactory(
             dataStore = graph.dataStore,
+        ),
+    )
+
+    val creationViewModel: CreationViewModel = viewModel(
+        factory = CreationViewModelFactory(
+            root = LocalContext.current.filesDir.resolve("ai-creation"),
+            store = graph.dataStore,
+            secrets = graph.secretStore,
+            providers = graph.providerRegistry,
         ),
     )
 
@@ -256,9 +269,26 @@ fun TellevRoot() {
                 composable("characters/list") {
                     CharactersListScreen(
                         viewModel = charactersViewModel,
+                        onCreateWithAi = { navController.navigate("creation/home") },
+                        onCreateClick = { navController.navigate("characters/create") },
+                        onEditWithAi = { characterId ->
+                            navController.navigate("creation/edit/character/$characterId")
+                        },
                         onCharacterClick = { characterId ->
                             charactersViewModel.selectCharacter(characterId)
                             navController.navigate("characters/detail/$characterId")
+                        },
+                    )
+                }
+                composable("characters/create") {
+                    CharacterDetailScreen(
+                        viewModel = charactersViewModel,
+                        onBack = { navController.popBackStack() },
+                        isCreating = true,
+                        onCreated = { characterId ->
+                            navController.navigate("characters/detail/$characterId") {
+                                popUpTo("characters/create") { inclusive = true }
+                            }
                         },
                     )
                 }
@@ -287,6 +317,10 @@ fun TellevRoot() {
                 composable("world/list") {
                     WorldBooksListScreen(
                         viewModel = worldViewModel,
+                        onCreateWithAi = { navController.navigate("creation/home") },
+                        onEditWithAi = { bookId ->
+                            navController.navigate("creation/edit/world/$bookId")
+                        },
                         onBookClick = { bookId ->
                             worldViewModel.selectBook(bookId)
                             navController.navigate("world/book/$bookId")
@@ -330,6 +364,68 @@ fun TellevRoot() {
                         onBack = { navController.popBackStack() },
                     )
                 }
+            }
+
+            // Extensions tab - single screen
+            composable("creation/home") {
+                CreationHomeScreen(
+                    viewModel = creationViewModel,
+                    onBack = { navController.popBackStack() },
+                    onOpenEditor = { navController.navigate("creation/editor") },
+                )
+            }
+            composable(
+                route = "creation/edit/character/{cardId}",
+                arguments = listOf(navArgument("cardId") { type = NavType.StringType }),
+            ) { backStackEntry ->
+                val cardId = backStackEntry.arguments?.getString("cardId").orEmpty()
+                LaunchedEffect(cardId) {
+                    if (cardId.isNotBlank()) creationViewModel.startFromCharacter(cardId)
+                }
+                CreationEditorScreen(
+                    viewModel = creationViewModel,
+                    onBack = { navController.popBackStack() },
+                    onSaved = { kind, _ ->
+                        if (kind == app.tellev.feature.creation.CreationKind.Character) {
+                            charactersViewModel.loadCharacters()
+                        } else {
+                            worldViewModel.loadBooks()
+                        }
+                    },
+                )
+            }
+            composable(
+                route = "creation/edit/world/{bookId}",
+                arguments = listOf(navArgument("bookId") { type = NavType.StringType }),
+            ) { backStackEntry ->
+                val bookId = backStackEntry.arguments?.getString("bookId").orEmpty()
+                LaunchedEffect(bookId) {
+                    if (bookId.isNotBlank()) creationViewModel.startFromWorldBook(bookId)
+                }
+                CreationEditorScreen(
+                    viewModel = creationViewModel,
+                    onBack = { navController.popBackStack() },
+                    onSaved = { kind, _ ->
+                        if (kind == app.tellev.feature.creation.CreationKind.Character) {
+                            charactersViewModel.loadCharacters()
+                        } else {
+                            worldViewModel.loadBooks()
+                        }
+                    },
+                )
+            }
+            composable("creation/editor") {
+                CreationEditorScreen(
+                    viewModel = creationViewModel,
+                    onBack = { navController.popBackStack() },
+                    onSaved = { kind, _ ->
+                        if (kind == app.tellev.feature.creation.CreationKind.Character) {
+                            charactersViewModel.loadCharacters()
+                        } else {
+                            worldViewModel.loadBooks()
+                        }
+                    },
+                )
             }
 
             // Extensions tab - single screen

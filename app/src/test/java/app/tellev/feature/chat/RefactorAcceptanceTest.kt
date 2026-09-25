@@ -24,6 +24,14 @@ import java.util.concurrent.Executors
 /** Acceptance tests for refactored chat architecture regressions (R1-R4). */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RefactorAcceptanceTest {
+    @Test fun reasoningOnlyCompletionDoesNotPersistAnEmptyReply() = exercise { f ->
+        f.textResponse = "<think>internal thought</think>"
+        assertTrue(withContext(f.main) { f.vm.sendMessage("hello") })
+        waitUntil { f.vm.uiState.value.error?.contains("未返回有效回复内容") == true }
+        assertFalse(f.vm.uiState.value.messages.any { it.role == MessageRole.Character })
+        assertFalse(f.disk.readChatSession("a")!!.messages.any { it.role == MessageRole.Character })
+    }
+
     @Test fun lateImageMustNotAppearInDifferentSession() = exercise { f ->
         withContext(f.main) { f.vm.generateImage("garden", "", false, ProviderCatalog.NOVELAI_IMAGE) }
         withTimeout(5000) { f.imageStarted.await() }
@@ -97,7 +105,7 @@ class RefactorAcceptanceTest {
             }
             val textAdapter = object : Adapter(ProviderCatalog.OPENAI_COMPATIBLE) {
                 override fun streamGenerate(config: ProviderConfig, request: GenerateRequest) = flow<GenerateChunk> {
-                    emit(GenerateChunk.Completed("reply"))
+                    emit(GenerateChunk.Completed(f.textResponse))
                 }
             }
             f.vm = withContext(main) {
@@ -147,6 +155,7 @@ class RefactorAcceptanceTest {
     private class Fixture(val disk: FileStDataStore, val main: ExecutorCoroutineDispatcher) {
         lateinit var vm: ChatViewModel
         @Volatile var failWrites = false
+        @Volatile var textResponse = "reply"
         var local: LocalVariableBackend? = null
         val imageStarted = CompletableDeferred<Unit>()
         val imageGate = CompletableDeferred<Unit>()

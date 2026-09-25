@@ -1201,7 +1201,7 @@ internal fun NovelAiImageParamsDialog(
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        supportingText = { Text("填 -1 随机") },
+                        supportingText = { Text("-1 为每次随机") },
                     )
                     OutlinedTextField(
                         value = upscale,
@@ -1255,32 +1255,30 @@ internal fun NovelAiImageParamsDialog(
                     onValueChange = { prefix = it },
                     label = { Text("提示词前缀") },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("masterpiece, best quality") },
-                    supportingText = { Text("自动拼在每次出图提示词最前面") },
+                    supportingText = { Text("酒馆默认：best quality, absurdres, aesthetic；支持 {prompt} 占位") },
                 )
                 OutlinedTextField(
                     value = negative,
                     onValueChange = { negative = it },
                     label = { Text("默认负面提示词") },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("lowres, bad anatomy, bad hands, blurry") },
-                    supportingText = { Text("自动拼在每次出图负面提示词中") },
+                    supportingText = { Text("酒馆默认负面会拼接在每次请求的负面之后") },
                 )
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
-                    viewModel.updateNovelAiSettings {
-                        it.copy(
-                            steps = steps.trim().toIntOrNull() ?: it.steps,
-                            scale = cfg.trim().toDoubleOrNull() ?: it.scale,
-                            width = width.trim().toIntOrNull() ?: it.width,
-                            height = height.trim().toIntOrNull() ?: it.height,
-                            sampler = sampler.trim(),
-                            scheduler = scheduler.trim(),
+                    viewModel.updateNovelAiSettings { current ->
+                        current.copy(
+                            steps = steps.trim().toIntOrNull() ?: current.steps,
+                            scale = cfg.trim().toDoubleOrNull() ?: current.scale,
+                            width = width.trim().toIntOrNull() ?: current.width,
+                            height = height.trim().toIntOrNull() ?: current.height,
+                            sampler = sampler.trim().ifBlank { current.sampler },
+                            scheduler = scheduler.trim().ifBlank { current.scheduler },
                             seed = seed.trim().toLongOrNull() ?: -1L,
-                            upscaleRatio = upscale.trim().toDoubleOrNull() ?: it.upscaleRatio,
+                            upscaleRatio = upscale.trim().toDoubleOrNull() ?: current.upscaleRatio,
                             sm = sm,
                             smDyn = smDyn,
                             decrisper = decrisper,
