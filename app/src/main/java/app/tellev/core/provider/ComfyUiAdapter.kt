@@ -3,6 +3,7 @@ package app.tellev.core.provider
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.TellevError
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow

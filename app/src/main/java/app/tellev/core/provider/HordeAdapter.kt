@@ -169,6 +169,7 @@ class HordeAdapter(
         } finally {
             submitCallGuard.complete()
         }
+        submitCallGuard.complete()
 
         // Step 2: Poll for completion
         val maxAttempts = 120 // 10 minutes at 5-second intervals
