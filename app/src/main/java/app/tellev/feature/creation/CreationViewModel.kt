@@ -25,6 +25,10 @@ data class CreationUiState(
     val current: CreationSession? = null,
     val busy: Boolean = false,
     val extractionProgress: String = "",
+    val operationLabel: String = "",
+    val modelPhase: String = "",
+    val liveReasoning: String = "",
+    val liveOutput: String = "",
     val error: String? = null,
     val info: String? = null,
 )
@@ -52,19 +56,19 @@ class CreationViewModel(
     fun start(kind: CreationKind) {
         if (_state.value.busy) return
         val session = CreationSession(kind = kind)
-        _state.update { it.copy(current = session, error = null, info = null) }
+        _state.update { it.copy(current = session, error = null, info = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "") }
         persist(session)
     }
 
     fun open(id: String) = viewModelScope.launch {
         if (_state.value.busy) return@launch
-        _state.update { it.copy(current = null, error = null) }
+        _state.update { it.copy(current = null, error = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "") }
         runCatching { repository.load(id) }
             .onSuccess { session -> _state.update { it.copy(current = session, error = null) } }
             .onFailure { fail(it) }
     }
 
-    fun close() { if (!_state.value.busy) _state.update { it.copy(current = null) } }
+    fun close() { if (!_state.value.busy) _state.update { it.copy(current = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "") } }
 
     fun send(text: String) {
         val session = _state.value.current ?: return
@@ -74,22 +78,28 @@ class CreationViewModel(
                 turns = session.turns + CreationTurn("user", text.trim()),
                 updatedAt = System.currentTimeMillis(),
             )
-            _state.update { it.copy(current = withUser, busy = true, error = null) }
+            _state.update { it.copy(
+                current = withUser, busy = true, error = null,
+                extractionProgress = "", operationLabel = "创作对话", modelPhase = "准备请求", liveReasoning = "", liveOutput = "",
+            ) }
             try {
                 write(withUser)
-                val reply = engine.converse(session, text.trim())
+                val reply = engine.converse(session, text.trim(), ::showModelProgress)
+                _state.update { it.copy(modelPhase = "校验并保存草稿") }
                 val next = CreationReplyParser.apply(withUser, reply).copy(
                     turns = withUser.turns + CreationTurn(
                         "agent", reply.message.ifBlank { "草稿已更新，请检查右侧内容。" },
                     ),
                 )
                 write(next)
-                _state.update { it.copy(current = next, info = null) }
+                _state.update { it.copy(current = next, info = null, modelPhase = "本轮完成") }
                 refresh()
             } catch (e: CancellationException) {
+                _state.update { it.copy(modelPhase = "已停止；本轮草稿未应用") }
                 throw e
             } catch (e: Exception) {
                 fail(e)
+                _state.update { it.copy(modelPhase = "本轮失败，草稿未应用") }
             } finally {
                 _state.update { it.copy(busy = false) }
             }
@@ -113,7 +123,7 @@ class CreationViewModel(
             return
         }
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, error = null) }
+            _state.update { it.copy(busy = true, error = null, extractionProgress = "", operationLabel = "保存原文", modelPhase = "正在保存原文", liveReasoning = "", liveOutput = "") }
             try {
                 val (hash, length) = repository.saveSource(session.id, text)
                 val next = session.copy(
@@ -124,9 +134,10 @@ class CreationViewModel(
                     updatedAt = System.currentTimeMillis(),
                 )
                 write(next)
-                _state.update { it.copy(current = next, info = "原文已保存，可开始逐段提炼。") }
+                _state.update { it.copy(current = next, info = "原文已保存，可开始逐段提炼。", modelPhase = "原文已保存") }
                 refresh()
             } catch (e: CancellationException) {
+                _state.update { it.copy(modelPhase = "保存原文已停止") }
                 throw e
             } catch (e: Exception) {
                 fail(e)
@@ -140,15 +151,25 @@ class CreationViewModel(
         val starting = _state.value.current ?: return
         if (_state.value.busy || starting.sourceLength == 0) return
         generationJob = viewModelScope.launch {
-            _state.update { it.copy(busy = true, error = null) }
+            _state.update { it.copy(
+                busy = true, error = null, operationLabel = "世界书长文提炼",
+                modelPhase = "读取已保存原文", liveReasoning = "", liveOutput = "",
+            ) }
             try {
                 val source = repository.readSource(starting.id, starting.sourceSha256)
                 require(source.length == starting.sourceLength) { "原文长度与草稿记录不一致，请重新导入。" }
                 var current = starting
+                val chunkCount = countSourceChunks(source, starting.sourceCursor)
+                var chunkNumber = chunkCount.completed
                 while (true) {
                     val chunk = nextSourceChunk(source, current.sourceCursor) ?: break
-                    _state.update { it.copy(extractionProgress = "提炼 ${chunk.start}–${chunk.end} / ${source.length} 字符") }
-                    val reply = engine.extractChunk(chunk, starting.sourceName)
+                    chunkNumber++
+                    _state.update { it.copy(
+                        extractionProgress = "第 $chunkNumber/${chunkCount.total} 段：正在处理 ${chunk.start}–${chunk.end} / ${source.length} 字符；已保存至 ${current.sourceCursor}",
+                        modelPhase = "提炼第 $chunkNumber 段", liveReasoning = "", liveOutput = "",
+                    ) }
+                    val reply = engine.extractChunk(chunk, starting.sourceName, ::showModelProgress)
+                    _state.update { it.copy(modelPhase = "核对第 $chunkNumber 段的原文证据") }
                     val proposed = reply.lore.orEmpty()
                     val verified = verifiedLoreFromChunk(chunk, proposed, starting.sourceName, starting.sourceSha256)
                     val rejected = proposed.size - verified.size
@@ -163,16 +184,22 @@ class CreationViewModel(
                         updatedAt = System.currentTimeMillis(),
                     )
                     write(current)
-                    _state.update { it.copy(current = current) }
+                    _state.update { it.copy(
+                        current = current,
+                        extractionProgress = "已保存 ${current.sourceCursor}/${source.length} 字符，共 ${current.lore.size} 条世界书内容",
+                        modelPhase = "第 $chunkNumber 段已保存",
+                    ) }
                 }
-                _state.update { it.copy(info = "原文提炼完成，请逐条核对后保存世界书。") }
+                _state.update { it.copy(info = "原文提炼完成，请逐条核对后保存世界书。", modelPhase = "提炼完成") }
                 refresh()
             } catch (e: CancellationException) {
+                _state.update { it.copy(modelPhase = "已停止，可从已保存位置继续提炼") }
                 throw e
             } catch (e: Exception) {
                 fail(e)
+                _state.update { it.copy(modelPhase = "提炼中断，可从已保存位置继续") }
             } finally {
-                _state.update { it.copy(busy = false, extractionProgress = "") }
+                _state.update { it.copy(busy = false) }
             }
         }
     }
@@ -278,6 +305,14 @@ class CreationViewModel(
     }
 
     private suspend fun write(session: CreationSession) = writeMutex.withLock { repository.save(session) }
+
+    private fun showModelProgress(progress: CreationStreamUpdate) {
+        _state.update { it.copy(
+            modelPhase = progress.phase,
+            liveReasoning = progress.reasoning,
+            liveOutput = progress.output,
+        ) }
+    }
 
     private fun fail(e: Throwable) {
         _state.update { it.copy(error = e.message ?: "创作失败") }

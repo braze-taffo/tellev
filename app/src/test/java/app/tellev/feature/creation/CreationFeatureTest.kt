@@ -42,6 +42,15 @@ class CreationFeatureTest {
     }
 
     @Test
+    fun resumedExtractionKeepsItsAbsoluteChunkNumber() {
+        val source = "世界设定。".repeat(3_000)
+        val first = nextSourceChunk(source, 0)!!
+        val count = countSourceChunks(source, first.end)
+        assertEquals(1, count.completed)
+        assertTrue(count.total > count.completed)
+    }
+
+    @Test
     fun agentPatchPreservesUnmentionedCardFieldsAndLore() {
         val original = CreationSession(
             kind = CreationKind.Character,
@@ -212,5 +221,49 @@ class CreationFeatureTest {
                 .converse(CreationSession(kind = CreationKind.Character), "写一段示例对话")
         }.exceptionOrNull()
         assertEquals("AI 连续两次返回无效的草稿格式；本轮未应用，请点击「重试上一轮」。", failure?.message)
+    }
+
+    @Test
+    fun creationAgentPublishesProviderReasoningAndDraftWhileStreaming() = runBlocking {
+        val response = """{"assistant_message":"完成","card":{"name":"林月"}}"""
+        val provider = object : ProviderAdapter {
+            override val id = "openai-compatible"
+            override val displayName = "Fake"
+            override val capabilities = setOf(ProviderCapability.Chat, ProviderCapability.Streaming)
+            override suspend fun checkStatus(config: ProviderConfig) = ProviderStatus(true, "ok")
+            override suspend fun listModels(config: ProviderConfig): List<ProviderModel> = emptyList()
+            override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> =
+                kotlinx.coroutines.flow.flow {
+                    emit(GenerateChunk.Delta("", reasoning = "先确定角色目标。"))
+                    emit(GenerateChunk.Delta(response.take(20)))
+                    emit(GenerateChunk.Delta(response.drop(20)))
+                    emit(GenerateChunk.Completed(response, reasoning = "先确定角色目标。"))
+                }
+        }
+        val secrets = object : SecretStore {
+            override suspend fun putSecret(id: String, value: String) = Unit
+            override suspend fun readSecret(id: String): String? = null
+            override suspend fun deleteSecret(id: String) = Unit
+            override suspend fun listSecretIds(): List<String> = emptyList()
+        }
+        val updates = mutableListOf<CreationStreamUpdate>()
+        val reply = CreationEngine(secrets, ProviderRegistry(listOf(provider)))
+            .converse(CreationSession(kind = CreationKind.Character), "写一位角色", updates::add)
+        assertEquals("完成", reply.message)
+        assertTrue(updates.any { it.phase == "模型正在思考" && it.reasoning == "先确定角色目标。" })
+        assertTrue(updates.any { it.output == response && it.reasoning == "先确定角色目标。" })
+    }
+
+    @Test
+    fun creationStreamDoesNotInventReasoningWhenProviderOnlyReturnsText() {
+        val plain = visibleCreationStream("""{"assistant_message":"完成"}""", "")
+        assertEquals("", plain.reasoning)
+        assertTrue(plain.output.contains("assistant_message"))
+        val thinking = visibleCreationStream("<think>先列出冲突", "")
+        assertEquals("先列出冲突", thinking.reasoning)
+        assertEquals("", thinking.output)
+        val completed = visibleCreationStream("<think>先列出冲突</think>{\"assistant_message\":\"完成\"}", "")
+        assertEquals("先列出冲突", completed.reasoning)
+        assertTrue(completed.output.contains("assistant_message"))
     }
 }

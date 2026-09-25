@@ -13,16 +13,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -85,6 +88,9 @@ fun CreationHomeScreen(
                                 "${if (session.kind == CreationKind.Character) "角色卡" else "世界书"} · ${session.turns.size} 轮 · ${session.lore.size} 条世界书内容",
                                 style = MaterialTheme.typography.bodySmall,
                             )
+                            if (session.sourceLength > 0) {
+                                Text("原文已提炼 ${session.sourceCursor}/${session.sourceLength} 字符", style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 }
@@ -125,13 +131,14 @@ fun CreationEditorScreen(
                 TextButton(onClick = viewModel::retry) { Text("重试上一轮") }
             }
             state.info?.let { Text(it, modifier = Modifier.padding(horizontal = 12.dp)) }
-            if (state.busy) {
-                Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CircularProgressIndicator(modifier = Modifier.height(20.dp))
-                        Text(state.extractionProgress.ifBlank { "agent 正在处理…" })
-                    }
-                    TextButton(onClick = viewModel::cancelGeneration) { Text("停止") }
+            if (state.busy || state.modelPhase.isNotBlank()) {
+                CreationActivityPanel(state, session, viewModel)
+            } else if (session.sourceLength > 0) {
+                val savedFraction = session.sourceCursor.toFloat() / session.sourceLength
+                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                    LinearProgressIndicator(progress = { savedFraction }, modifier = Modifier.fillMaxWidth())
+                    Text("原文已提炼 ${session.sourceCursor}/${session.sourceLength} 字符；可从已保存位置继续。",
+                        style = MaterialTheme.typography.bodySmall)
                 }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -149,6 +156,63 @@ fun CreationEditorScreen(
                 1 -> CharacterDraftEditor(session.card, viewModel, state.busy)
                 2 -> WorldDraftEditor(session, viewModel, state.busy)
                 3 -> FrontendPreview(session.card, viewModel, state.busy)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CreationActivityPanel(state: CreationUiState, session: CreationSession, viewModel: CreationViewModel) {
+    var showFullStream by remember(session.id) { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (state.busy) CircularProgressIndicator(modifier = Modifier.height(20.dp))
+                    Text(state.operationLabel.ifBlank { "创作进度" }, style = MaterialTheme.typography.titleSmall)
+                }
+                if (state.busy) TextButton(onClick = viewModel::cancelGeneration) { Text("停止") }
+            }
+            Text(state.modelPhase, style = MaterialTheme.typography.bodySmall)
+            if (session.sourceLength > 0) {
+                val fraction = session.sourceCursor.toFloat() / session.sourceLength
+                LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+                Text("已保存 ${session.sourceCursor}/${session.sourceLength} 字符（${(fraction * 100).toInt()}%）",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            if (state.extractionProgress.isNotBlank()) {
+                Text(state.extractionProgress, style = MaterialTheme.typography.bodySmall)
+            }
+            if (state.liveReasoning.isNotBlank() || state.liveOutput.isNotBlank()) {
+                val limit = 6_000
+                val shortened = !showFullStream && (state.liveReasoning.length > limit || state.liveOutput.length > limit)
+                if (shortened || showFullStream) {
+                    TextButton(onClick = { showFullStream = !showFullStream }) {
+                        Text(if (showFullStream) "只看最新片段" else "查看完整流式内容")
+                    }
+                }
+                Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (state.liveReasoning.isNotBlank()) {
+                        Text("模型思考（实际返回）", style = MaterialTheme.typography.labelMedium)
+                        SelectionContainer {
+                            Text(if (showFullStream) state.liveReasoning else state.liveReasoning.takeLast(limit))
+                        }
+                    }
+                    if (state.liveOutput.isNotBlank()) {
+                        if (state.liveReasoning.isBlank()) {
+                            Text(if (state.busy) "供应商尚未提供可显示的思考流。" else "本轮供应商未提供可显示的思考流。",
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text("模型输出（结构化草稿，校验前）", style = MaterialTheme.typography.labelMedium)
+                        SelectionContainer {
+                            Text(if (showFullStream) state.liveOutput else state.liveOutput.takeLast(limit))
+                        }
+                    }
+                    if (shortened) Text("当前显示各流最近 $limit 字；可展开查看全部。", style = MaterialTheme.typography.bodySmall)
+                }
+            } else if (state.busy) {
+                Text("等待供应商返回可显示的内容…", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
