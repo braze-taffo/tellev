@@ -64,13 +64,52 @@ internal data class CreationStreamUpdate(
     val phase: String,
     val output: String = "",
     val reasoning: String = "",
+    val assistantMessage: String = "",
+    val elapsedMillis: Long = 0,
+    val firstDeltaMillis: Long? = null,
+    val deltaCount: Int = 0,
+    val providerLabel: String = "",
 )
+
+/** Preview only: incomplete JSON strings may be shown here, but are never applied to a draft. */
+internal fun previewAssistantMessage(raw: String): String {
+    val marker = Regex(""""assistant_message"\s*:\s*"""").find(raw) ?: return ""
+    val preview = StringBuilder()
+    var cursor = marker.range.last + 1
+    while (cursor < raw.length) {
+        val char = raw[cursor++]
+        when (char) {
+            '"' -> return preview.toString()
+            '\\' -> {
+                if (cursor >= raw.length) break
+                when (val escaped = raw[cursor++]) {
+                    'n' -> preview.append('\n')
+                    'r' -> preview.append('\r')
+                    't' -> preview.append('\t')
+                    'b' -> preview.append('\b')
+                    'f' -> preview.append('\u000c')
+                    '"', '\\', '/' -> preview.append(escaped)
+                    'u' -> {
+                        if (cursor + 4 > raw.length) break
+                        val decoded = raw.substring(cursor, cursor + 4).toIntOrNull(16) ?: break
+                        preview.append(decoded.toChar())
+                        cursor += 4
+                    }
+                    else -> preview.append(escaped)
+                }
+            }
+            else -> preview.append(char)
+        }
+    }
+    return preview.toString()
+}
 
 /** Show only reasoning supplied by the provider or explicitly written inside a leading think tag. */
 internal fun visibleCreationStream(raw: String, providerReasoning: String): CreationStreamUpdate {
     val parts = MessageReasoning.fromResponse(raw, providerReasoning)
     if (parts.status == "parsed") {
-        return CreationStreamUpdate("正在接收草稿", parts.body, parts.reasoning)
+        return CreationStreamUpdate("正在接收草稿", parts.body, parts.reasoning,
+            assistantMessage = previewAssistantMessage(parts.body))
     }
     val opening = Regex("""^\s*<(think|reasoning)>""", RegexOption.IGNORE_CASE).find(raw)
     if (opening != null && parts.status == "ambiguous") {
@@ -82,6 +121,7 @@ internal fun visibleCreationStream(raw: String, providerReasoning: String): Crea
         phase = if (raw.isNotBlank()) "正在接收草稿" else if (providerReasoning.isNotBlank()) "模型正在思考" else "等待模型响应",
         output = raw,
         reasoning = providerReasoning,
+        assistantMessage = previewAssistantMessage(raw),
     )
 }
 
@@ -246,6 +286,10 @@ internal class CreationEngine(
             ?.takeIf { it.supportsChatGeneration }
             ?: error("当前供应商不支持对话生成，请先在设置中选择文字模型")
         val config = ProviderConfigPersistence.loadProviderConfig(secrets, selectedId)
+        onProgress(CreationStreamUpdate(
+            phase = "${phasePrefix}正在连接模型",
+            providerLabel = "${adapter.displayName} · ${config.model?.takeIf(String::isNotBlank) ?: "默认模型"}",
+        ))
         // This preset is owned by the creation agent. User chat presets and the
         // chat prompt engine must never alter authoring instructions or sampling.
         val agentPreset = GenerationPreset(
@@ -271,13 +315,26 @@ internal class CreationEngine(
         var completedReasoning: String? = null
         val deltas = StringBuilder()
         val reasoningDeltas = StringBuilder()
+        val requestStartedAt = System.nanoTime()
+        var firstDeltaMillis: Long? = null
+        var deltaCount = 0
         var lastPublishedAt = 0L
+        var publishedOutput = false
+        var publishedAssistantMessage = false
+        fun elapsedMillis() = (System.nanoTime() - requestStartedAt) / 1_000_000
         fun publish(force: Boolean = false) {
-            val now = System.currentTimeMillis()
-            if (!force && now - lastPublishedAt < 80) return
-            lastPublishedAt = now
             val visible = visibleCreationStream(deltas.toString(), reasoningDeltas.toString())
-            onProgress(visible.copy(phase = phasePrefix + visible.phase))
+            val now = System.currentTimeMillis()
+            val firstVisibleText = (visible.output.isNotBlank() && !publishedOutput) ||
+                (visible.assistantMessage.isNotBlank() && !publishedAssistantMessage)
+            if (!force && !firstVisibleText && now - lastPublishedAt < 80) return
+            lastPublishedAt = now
+            publishedOutput = publishedOutput || visible.output.isNotBlank()
+            publishedAssistantMessage = publishedAssistantMessage || visible.assistantMessage.isNotBlank()
+            onProgress(visible.copy(
+                phase = phasePrefix + visible.phase,
+                elapsedMillis = elapsedMillis(), firstDeltaMillis = firstDeltaMillis, deltaCount = deltaCount,
+            ))
         }
         onProgress(CreationStreamUpdate("${phasePrefix}等待模型响应"))
         adapter.streamGenerate(
@@ -288,7 +345,11 @@ internal class CreationEngine(
                 is GenerateChunk.Delta -> {
                     deltas.append(chunk.text)
                     reasoningDeltas.append(chunk.reasoning)
-                    publish()
+                    if (chunk.text.isNotEmpty() || chunk.reasoning.isNotEmpty()) {
+                        deltaCount++
+                        if (firstDeltaMillis == null) firstDeltaMillis = elapsedMillis()
+                        publish()
+                    }
                 }
                 is GenerateChunk.Completed -> {
                     completed = chunk.text
@@ -300,7 +361,10 @@ internal class CreationEngine(
         val raw = (completed?.takeIf(String::isNotBlank) ?: deltas.toString())
             .takeIf(String::isNotBlank) ?: error("模型未返回内容")
         val visible = visibleCreationStream(raw, completedReasoning?.takeIf(String::isNotBlank) ?: reasoningDeltas.toString())
-        onProgress(visible.copy(phase = "${phasePrefix}校验结构化草稿"))
+        onProgress(visible.copy(
+            phase = "${phasePrefix}校验结构化草稿",
+            elapsedMillis = elapsedMillis(), firstDeltaMillis = firstDeltaMillis, deltaCount = deltaCount,
+        ))
         return MessageReasoning.split(raw).body
     }
 }

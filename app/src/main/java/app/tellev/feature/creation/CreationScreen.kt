@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
@@ -163,7 +164,15 @@ fun CreationEditorScreen(
 
 @Composable
 private fun CreationActivityPanel(state: CreationUiState, session: CreationSession, viewModel: CreationViewModel) {
+    var showRawStream by remember(session.id) { mutableStateOf(false) }
     var showFullStream by remember(session.id) { mutableStateOf(false) }
+    var clockMillis by remember(state.operationStartedAtMillis) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(state.busy, state.operationStartedAtMillis) {
+        while (state.busy) {
+            clockMillis = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
     Card(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -174,6 +183,22 @@ private fun CreationActivityPanel(state: CreationUiState, session: CreationSessi
                 if (state.busy) TextButton(onClick = viewModel::cancelGeneration) { Text("停止") }
             }
             Text(state.modelPhase, style = MaterialTheme.typography.bodySmall)
+            if (state.providerLabel.isNotBlank()) {
+                Text("当前连接：${state.providerLabel}", style = MaterialTheme.typography.bodySmall)
+            }
+            if (state.busy && state.operationStartedAtMillis > 0) {
+                val elapsedSeconds = ((clockMillis - state.operationStartedAtMillis).coerceAtLeast(0) / 1_000)
+                Text("任务已运行 ${elapsedSeconds} 秒", style = MaterialTheme.typography.bodySmall)
+            }
+            if (state.deltaCount > 0) {
+                Text("首个流式片段在 ${state.firstDeltaMillis.orZeroSeconds()} 秒到达；当前请求已收到 ${state.deltaCount} 个片段。",
+                    style = MaterialTheme.typography.bodySmall)
+            } else if (state.busy && state.modelPhase.contains("等待模型响应")) {
+                Text("仍在等待首个流式片段。", style = MaterialTheme.typography.bodySmall)
+            } else if (!state.busy && state.modelElapsedMillis > 0 && state.liveOutput.isNotBlank()) {
+                Text("当前请求没有收到增量片段；结果在 ${state.modelElapsedMillis / 1_000} 秒后整段到达。",
+                    style = MaterialTheme.typography.bodySmall)
+            }
             if (session.sourceLength > 0) {
                 val fraction = session.sourceCursor.toFloat() / session.sourceLength
                 LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
@@ -183,9 +208,27 @@ private fun CreationActivityPanel(state: CreationUiState, session: CreationSessi
             if (state.extractionProgress.isNotBlank()) {
                 Text(state.extractionProgress, style = MaterialTheme.typography.bodySmall)
             }
-            if (state.liveReasoning.isNotBlank() || state.liveOutput.isNotBlank()) {
+            if (state.busy && state.liveAssistantMessage.isNotBlank()) {
+                Text("agent 正在回复", style = MaterialTheme.typography.labelMedium)
+                Text(state.liveAssistantMessage)
+            }
+            if (state.liveReasoning.isNotBlank()) {
+                Text("模型返回的思考文本", style = MaterialTheme.typography.labelMedium)
+                Column(Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState())) {
+                    SelectionContainer { Text(state.liveReasoning) }
+                }
+            } else if (!state.busy && state.liveOutput.isNotBlank()) {
+                Text("本轮未收到可显示的思考文本；等待时间不能说明模型内部如何处理。",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            if (state.liveOutput.isNotBlank()) {
+                TextButton(onClick = { showRawStream = !showRawStream }) {
+                    Text(if (showRawStream) "收起结构化草稿" else "查看结构化草稿流（${state.liveOutput.length} 字）")
+                }
+            }
+            if (showRawStream && state.liveOutput.isNotBlank()) {
                 val limit = 6_000
-                val shortened = !showFullStream && (state.liveReasoning.length > limit || state.liveOutput.length > limit)
+                val shortened = !showFullStream && state.liveOutput.length > limit
                 if (shortened || showFullStream) {
                     TextButton(onClick = { showFullStream = !showFullStream }) {
                         Text(if (showFullStream) "只看最新片段" else "查看完整流式内容")
@@ -193,30 +236,20 @@ private fun CreationActivityPanel(state: CreationUiState, session: CreationSessi
                 }
                 Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (state.liveReasoning.isNotBlank()) {
-                        Text("模型思考（实际返回）", style = MaterialTheme.typography.labelMedium)
-                        SelectionContainer {
-                            Text(if (showFullStream) state.liveReasoning else state.liveReasoning.takeLast(limit))
-                        }
+                    Text("结构化草稿原文（校验前）", style = MaterialTheme.typography.labelMedium)
+                    SelectionContainer {
+                        Text(if (showFullStream) state.liveOutput else state.liveOutput.takeLast(limit))
                     }
-                    if (state.liveOutput.isNotBlank()) {
-                        if (state.liveReasoning.isBlank()) {
-                            Text(if (state.busy) "供应商尚未提供可显示的思考流。" else "本轮供应商未提供可显示的思考流。",
-                                style = MaterialTheme.typography.bodySmall)
-                        }
-                        Text("模型输出（结构化草稿，校验前）", style = MaterialTheme.typography.labelMedium)
-                        SelectionContainer {
-                            Text(if (showFullStream) state.liveOutput else state.liveOutput.takeLast(limit))
-                        }
-                    }
-                    if (shortened) Text("当前显示各流最近 $limit 字；可展开查看全部。", style = MaterialTheme.typography.bodySmall)
+                    if (shortened) Text("当前显示最近 $limit 字；可展开查看全部。", style = MaterialTheme.typography.bodySmall)
                 }
-            } else if (state.busy) {
-                Text("等待供应商返回可显示的内容…", style = MaterialTheme.typography.bodySmall)
+            } else if (state.busy && state.liveReasoning.isBlank() && state.liveAssistantMessage.isBlank()) {
+                Text("等待供应商返回可显示的文字…", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
 }
+
+private fun Long?.orZeroSeconds(): Long = (this ?: 0L) / 1_000
 
 @Composable
 private fun CreationConversation(session: CreationSession, busy: Boolean, viewModel: CreationViewModel) {

@@ -159,12 +159,15 @@ class CreationFeatureTest {
             override suspend fun deleteSecret(id: String) = Unit
             override suspend fun listSecretIds(): List<String> = emptyList()
         }
+        val updates = mutableListOf<CreationStreamUpdate>()
         val reply = CreationEngine(secrets, ProviderRegistry(listOf(provider)))
-            .converse(CreationSession(kind = CreationKind.Character), "写一个人物")
+            .converse(CreationSession(kind = CreationKind.Character), "写一个人物", updates::add)
         assertEquals("想先确定视角吗？", reply.message)
         assertEquals("ai-creation-agent", provider.lastRequest?.preset?.id)
         assertTrue(provider.lastRequest?.prompt?.messages?.first()?.content.orEmpty().contains("第三人称限知"))
         assertTrue(provider.lastRequest?.preset?.prompts.isNullOrEmpty())
+        assertEquals(0, updates.last().deltaCount)
+        assertTrue(updates.any { it.providerLabel.startsWith("Fake · ") })
     }
 
     @Test
@@ -225,7 +228,8 @@ class CreationFeatureTest {
 
     @Test
     fun creationAgentPublishesProviderReasoningAndDraftWhileStreaming() = runBlocking {
-        val response = """{"assistant_message":"完成","card":{"name":"林月"}}"""
+        val first = "{\"assistant_message\":\"完"
+        val response = first + "成\",\"card\":{\"name\":\"林月\"}}"
         val provider = object : ProviderAdapter {
             override val id = "openai-compatible"
             override val displayName = "Fake"
@@ -235,8 +239,8 @@ class CreationFeatureTest {
             override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> =
                 kotlinx.coroutines.flow.flow {
                     emit(GenerateChunk.Delta("", reasoning = "先确定角色目标。"))
-                    emit(GenerateChunk.Delta(response.take(20)))
-                    emit(GenerateChunk.Delta(response.drop(20)))
+                    emit(GenerateChunk.Delta(first))
+                    emit(GenerateChunk.Delta(response.drop(first.length)))
                     emit(GenerateChunk.Completed(response, reasoning = "先确定角色目标。"))
                 }
         }
@@ -251,7 +255,10 @@ class CreationFeatureTest {
             .converse(CreationSession(kind = CreationKind.Character), "写一位角色", updates::add)
         assertEquals("完成", reply.message)
         assertTrue(updates.any { it.phase == "模型正在思考" && it.reasoning == "先确定角色目标。" })
+        assertTrue(updates.any { it.assistantMessage == "完" })
         assertTrue(updates.any { it.output == response && it.reasoning == "先确定角色目标。" })
+        assertEquals(3, updates.last().deltaCount)
+        assertTrue(updates.last().firstDeltaMillis != null)
     }
 
     @Test
@@ -265,5 +272,12 @@ class CreationFeatureTest {
         val completed = visibleCreationStream("<think>先列出冲突</think>{\"assistant_message\":\"完成\"}", "")
         assertEquals("先列出冲突", completed.reasoning)
         assertTrue(completed.output.contains("assistant_message"))
+    }
+
+    @Test
+    fun liveAssistantMessagePreviewDecodesPartialJsonString() {
+        val partial = """{"assistant_message":"第一行\n第二行，名字叫\"林月\""""
+        assertEquals("第一行\n第二行，名字叫\"林月\"", previewAssistantMessage(partial))
+        assertEquals("", previewAssistantMessage("""{"card":{"name":"林月"}}"""))
     }
 }
