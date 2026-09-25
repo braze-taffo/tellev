@@ -47,6 +47,37 @@ class CreationRepository(private val root: File) {
             hash to text.length
         }
 
+    suspend fun saveCover(id: String, pngBytes: ByteArray): String = withContext(Dispatchers.IO) {
+        require(pngBytes.size in 1..10_000_000 && pngBytes.take(8).toByteArray().contentEquals(
+            byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A),
+        )) { "封面必须是有效的 PNG，且不超过 10 MB。" }
+        root.mkdirs()
+        val hash = sha256(pngBytes)
+        val destination = coverFile(id, hash)
+        if (!destination.isFile) {
+            val temporary = File(root, "${safeId(id)}.$hash.cover.png.tmp")
+            temporary.writeBytes(pngBytes)
+            try {
+                Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE)
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                Files.move(temporary.toPath(), destination.toPath())
+            }
+        }
+        hash
+    }
+
+    suspend fun readCover(id: String, expectedSha256: String): ByteArray = withContext(Dispatchers.IO) {
+        val bytes = coverFile(id, expectedSha256).readBytes()
+        require(sha256(bytes) == expectedSha256) { "封面校验失败，请重新选择图片。" }
+        bytes
+    }
+
+    suspend fun pruneCovers(id: String, keepSha256: String) = withContext(Dispatchers.IO) {
+        val prefix = "${safeId(id)}."
+        root.listFiles { file -> file.name.startsWith(prefix) && file.name.endsWith(".cover.png") &&
+            file.name != "$id.$keepSha256.cover.png" }?.forEach(File::delete)
+    }
+
     suspend fun readSource(id: String, expectedSha256: String): String = withContext(Dispatchers.IO) {
         val bytes = sourceFile(id, expectedSha256).readBytes()
         require(sha256(bytes) == expectedSha256) { "原文校验失败，请重新导入。" }
@@ -57,9 +88,14 @@ class CreationRepository(private val root: File) {
         sessionFile(id).delete()
         root.listFiles { file -> file.name.startsWith("${safeId(id)}.") && file.name.endsWith(".source.txt") }
             ?.forEach(File::delete)
+        pruneCovers(id, "")
     }
 
     private fun sessionFile(id: String): File = File(root, "${safeId(id)}.json")
+    private fun coverFile(id: String, sha256: String): File {
+        require(Regex("[a-f0-9]{64}").matches(sha256)) { "Invalid cover digest" }
+        return File(root, "${safeId(id)}.$sha256.cover.png")
+    }
     private fun sourceFile(id: String, sha256: String): File {
         require(Regex("[a-f0-9]{64}").matches(sha256)) { "Invalid source digest" }
         return File(root, "${safeId(id)}.$sha256.source.txt")

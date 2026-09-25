@@ -3,6 +3,7 @@ package app.tellev.feature.creation
 import app.tellev.core.model.TellevError
 import app.tellev.core.storage.CharacterExporter
 import app.tellev.core.storage.CharacterImporter
+import app.tellev.core.storage.PngCardParser
 import app.tellev.core.storage.codec.WorldBookCodec
 import app.tellev.core.provider.GenerateChunk
 import app.tellev.core.provider.GenerateRequest
@@ -25,6 +26,33 @@ import org.junit.Test
 import java.nio.file.Files
 
 class CreationFeatureTest {
+    @Test
+    fun coverPersistsWithDraftAndExportsAsImportablePngCard() = runBlocking {
+        val directory = Files.createTempDirectory("creation-cover").toFile()
+        try {
+            val repository = CreationRepository(directory)
+            val cover = PngCardParser.createMinimalPng()
+            val session = CreationSession(
+                kind = CreationKind.Character,
+                card = CharacterDraft(name = "封面角色", firstMessage = "你好"),
+            )
+            val digest = repository.saveCover(session.id, cover)
+            repository.save(session.copy(coverSha256 = digest))
+            val reopened = repository.load(session.id)
+            assertEquals(digest, reopened.coverSha256)
+            assertTrue(cover.contentEquals(repository.readCover(reopened.id, reopened.coverSha256)))
+
+            val png = CharacterExporter().exportToPng(reopened.toCharacterCard(), cover)
+            val imported = CharacterImporter().importFromBytes(png, "character.png")
+            assertEquals("封面角色", imported.name)
+            assertEquals("你好", imported.firstMessage)
+            assertEquals("chara_card_v2", PngCardParser.extractCardJson(png)?.get("spec")?.toString()?.trim('"'))
+        } finally {
+            directory.deleteRecursively()
+        }
+        Unit
+    }
+
     @Test
     fun connectionRetryOnlyAllowsPreRequestConnectFailureOnce() {
         val connectFailure = TellevError(

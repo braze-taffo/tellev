@@ -3,12 +3,14 @@ package app.tellev.feature.creation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import app.tellev.core.model.CharacterCard
 import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.CharacterExporter
 import app.tellev.core.storage.CharacterImporter
 import app.tellev.core.storage.StDataStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,12 +19,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
 data class CreationUiState(
     val sessions: List<CreationSession> = emptyList(),
     val current: CreationSession? = null,
+    val coverPreviewPng: ByteArray? = null,
     val busy: Boolean = false,
     val extractionProgress: String = "",
     val operationLabel: String = "",
@@ -39,6 +43,8 @@ data class CreationUiState(
     val error: String? = null,
     val info: String? = null,
 )
+
+enum class CharacterExportFormat { Json, Png }
 
 class CreationViewModel(
     private val repository: CreationRepository,
@@ -63,19 +69,28 @@ class CreationViewModel(
     fun start(kind: CreationKind) {
         if (_state.value.busy) return
         val session = CreationSession(kind = kind)
-        _state.update { it.copy(current = session, error = null, info = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
+        _state.update { it.copy(current = session, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
         persist(session)
     }
 
     fun open(id: String) = viewModelScope.launch {
         if (_state.value.busy) return@launch
-        _state.update { it.copy(current = null, error = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
+        _state.update { it.copy(current = null, coverPreviewPng = null, error = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
         runCatching { repository.load(id) }
-            .onSuccess { session -> _state.update { it.copy(current = session, error = null) } }
+            .onSuccess { session ->
+                val coverResult = runCatching {
+                    session.coverSha256.takeIf(String::isNotBlank)?.let { repository.readCover(id, it) }
+                }
+                _state.update { it.copy(
+                    current = session,
+                    coverPreviewPng = coverResult.getOrNull(),
+                    error = coverResult.exceptionOrNull()?.message,
+                ) }
+            }
             .onFailure { fail(it) }
     }
 
-    fun close() { if (!_state.value.busy) _state.update { it.copy(current = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") } }
+    fun close() { if (!_state.value.busy) _state.update { it.copy(current = null, coverPreviewPng = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") } }
 
     fun send(text: String) {
         val session = _state.value.current ?: return
@@ -227,6 +242,48 @@ class CreationViewModel(
         persist(_state.value.current)
     }
 
+    fun setCoverPng(pngBytes: ByteArray) {
+        val session = _state.value.current ?: return
+        if (session.kind != CreationKind.Character || _state.value.busy) return
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, error = null) }
+            try {
+                val hash = repository.saveCover(session.id, pngBytes)
+                val next = session.copy(coverSha256 = hash, updatedAt = System.currentTimeMillis())
+                write(next)
+                repository.pruneCovers(session.id, hash)
+                _state.update { it.copy(current = next, coverPreviewPng = pngBytes, info = "封面已保存到创作草稿。") }
+                refresh()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail(e)
+            } finally {
+                _state.update { it.copy(busy = false) }
+            }
+        }
+    }
+
+    suspend fun exportCharacter(format: CharacterExportFormat): ByteArray = withContext(Dispatchers.IO) {
+        val session = _state.value.current ?: error("请先打开角色卡草稿。")
+        require(session.kind == CreationKind.Character && !_state.value.busy) { "当前无法导出角色卡。" }
+        val card = checkedCharacterCard(session)
+        val exporter = CharacterExporter()
+        when (format) {
+            CharacterExportFormat.Json -> exporter.exportToJson(card).toByteArray(Charsets.UTF_8)
+            CharacterExportFormat.Png -> {
+                require(session.coverSha256.isNotBlank()) { "请先在角色卡页设置封面，再导出 PNG。" }
+                val cover = repository.readCover(session.id, session.coverSha256)
+                exporter.exportToPng(card, cover).also { bytes ->
+                    val imported = CharacterImporter().importFromBytes(bytes, "character.png")
+                    require(imported.name == card.name && imported.firstMessage == card.firstMessage) {
+                        "PNG 角色卡导出回读失败。"
+                    }
+                }
+            }
+        }
+    }
+
     fun editWorldName(name: String) {
         if (_state.value.busy) return
         _state.update { it.copy(current = it.current?.copy(worldName = name, updatedAt = System.currentTimeMillis()), info = null) }
@@ -253,29 +310,32 @@ class CreationViewModel(
         generationJob = viewModelScope.launch {
             _state.update { it.copy(busy = true, error = null) }
             try {
-                require(session.lore.all { it.content.isNotBlank() && (it.constant || it.keys.any(String::isNotBlank)) }) {
-                    "世界书有空条目或缺少触发词。"
-                }
                 val prepared = if (session.savedArtifactId.isBlank()) session.copy(
                     savedArtifactId = "${if (session.kind == CreationKind.Character) "char" else "wb"}_${UUID.randomUUID()}",
                 ) else session
                 write(prepared)
                 _state.update { it.copy(current = prepared) }
                 val id = if (prepared.kind == CreationKind.Character) {
-                    require(prepared.card.name.isNotBlank() && prepared.card.firstMessage.isNotBlank()) {
-                        "请至少填写角色名称和开场消息。"
-                    }
-                    val issues = portableFrontendIssues(prepared.card.frontendHtml)
-                    require(issues.isEmpty()) { "前端不符合当前可移植约束：${issues.joinToString()}" }
-                    val card = prepared.toCharacterCard()
+                    val card = checkedCharacterCard(prepared)
                     val json = CharacterExporter().exportToJson(card)
                     val imported = CharacterImporter().importFromJson(json)
                     require(imported.name == card.name && imported.firstMessage == card.firstMessage) {
                         "角色卡导出回读失败。"
                     }
-                    store.saveCharacter(card)
+                    if (prepared.coverSha256.isNotBlank()) {
+                        val cover = repository.readCover(prepared.id, prepared.coverSha256)
+                        val png = CharacterExporter().exportToPng(card, cover)
+                        val pngCard = CharacterImporter().importFromBytes(png, "character.png")
+                        require(pngCard.name == card.name && pngCard.firstMessage == card.firstMessage) {
+                            "封面角色卡回读失败。"
+                        }
+                        store.importCharacter(card, cover, "character.png")
+                    } else store.saveCharacter(card)
                     card.id
                 } else {
+                    require(prepared.lore.all { it.content.isNotBlank() && (it.constant || it.keys.any(String::isNotBlank)) }) {
+                        "世界书有空条目或缺少触发词。"
+                    }
                     require(prepared.worldName.isNotBlank() && prepared.lore.isNotEmpty()) {
                         "请填写世界书名称并至少保留一个条目。"
                     }
@@ -301,6 +361,18 @@ class CreationViewModel(
     fun clearNotice() { _state.update { it.copy(error = null, info = null) } }
 
     fun showError(message: String) { _state.update { it.copy(error = message) } }
+
+    fun showInfo(message: String) { _state.update { it.copy(info = message, error = null) } }
+
+    private fun checkedCharacterCard(session: CreationSession): CharacterCard {
+        require(session.card.name.isNotBlank()) { "请至少填写角色名称。" }
+        require(session.lore.all { it.content.isNotBlank() && (it.constant || it.keys.any(String::isNotBlank)) }) {
+            "世界书有空条目或缺少触发词。"
+        }
+        val issues = portableFrontendIssues(session.card.frontendHtml)
+        require(issues.isEmpty()) { "前端不符合当前可移植约束：${issues.joinToString()}" }
+        return session.toCharacterCard()
+    }
 
     private fun persist(session: CreationSession?) {
         if (session == null) return

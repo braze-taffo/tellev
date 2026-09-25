@@ -60,6 +60,8 @@ data class CreationSession(
     val kind: CreationKind,
     val turns: List<CreationTurn> = emptyList(),
     val card: CharacterDraft = CharacterDraft(),
+    /** SHA-256 of the separately stored PNG cover; empty for no cover. */
+    val coverSha256: String = "",
     val worldName: String = "",
     val lore: List<LoreDraft> = emptyList(),
     val sourceName: String = "",

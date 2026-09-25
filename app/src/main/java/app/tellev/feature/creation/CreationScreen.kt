@@ -1,6 +1,8 @@
 package app.tellev.feature.creation
 
 import android.annotation.SuppressLint
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -19,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -46,6 +49,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -110,6 +115,62 @@ fun CreationEditorScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val session = state.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var pendingExport by remember(session?.id) { mutableStateOf<Pair<CharacterExportFormat, ByteArray>?>(null) }
+    fun writeExport(uri: Uri?, format: CharacterExportFormat) {
+        val bytes = pendingExport?.takeIf { it.first == format }?.second
+        pendingExport = null
+        if (uri == null || bytes == null) return
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                        ?: error("无法写入所选文件")
+                }
+                viewModel.showInfo(if (format == CharacterExportFormat.Png) "PNG 角色卡已导出。" else "JSON 角色卡已导出。")
+            } catch (e: Exception) {
+                viewModel.showError("导出失败：${e.message}")
+            }
+        }
+    }
+    val jsonExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) {
+        writeExport(it, CharacterExportFormat.Json)
+    }
+    val pngExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) {
+        writeExport(it, CharacterExportFormat.Png)
+    }
+    val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val source = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { it.readNBytes(12_000_001) }
+                } ?: error("无法读取所选图片")
+                require(source.size <= 12_000_000) { "图片超过 12 MB，请选择较小的文件。" }
+                val png = withContext(Dispatchers.IO) {
+                    app.tellev.util.decodeImageAsPng(source, maxEdge = 1024)
+                } ?: error("无法解析所选图片")
+                viewModel.setCoverPng(png)
+            } catch (e: Exception) {
+                viewModel.showError("设置封面失败：${e.message}")
+            }
+        }
+    }
+    fun safeExportName(): String = session?.card?.name.orEmpty()
+        .replace(Regex("""[\\/:*?"<>|]"""), "_").trim().take(80).ifBlank { "character" }
+    fun prepareExport(format: CharacterExportFormat) {
+        scope.launch {
+            try {
+                val bytes = viewModel.exportCharacter(format)
+                pendingExport = format to bytes
+                val name = safeExportName()
+                if (format == CharacterExportFormat.Png) pngExport.launch("$name.png")
+                else jsonExport.launch("$name.json")
+            } catch (e: Exception) {
+                viewModel.showError("导出失败：${e.message}")
+            }
+        }
+    }
     var tab by remember { mutableIntStateOf(0) }
     LaunchedEffect(session?.id) { tab = 0 }
     Scaffold(topBar = {
@@ -117,7 +178,7 @@ fun CreationEditorScreen(
             navigationIcon = { TextButton(onClick = { viewModel.close(); onBack() }) { Text("返回") } },
             actions = {
                 TextButton(onClick = { viewModel.saveArtifact(onSaved) }, enabled = session != null && !state.busy) {
-                    Text("保存到本机")
+                    Text(if (session?.kind == CreationKind.WorldBook) "保存到世界书" else "保存到角色列表")
                 }
             })
     }) { padding ->
@@ -155,7 +216,12 @@ fun CreationEditorScreen(
             }
             when (tab) {
                 0 -> CreationConversation(session, state, viewModel)
-                1 -> CharacterDraftEditor(session.card, viewModel, state.busy)
+                1 -> CharacterDraftEditor(
+                    session.card, state.coverPreviewPng, viewModel, state.busy,
+                    onPickCover = { coverPicker.launch("image/*") },
+                    onExportJson = { prepareExport(CharacterExportFormat.Json) },
+                    onExportPng = { prepareExport(CharacterExportFormat.Png) },
+                )
                 2 -> WorldDraftEditor(session, viewModel, state.busy)
                 3 -> FrontendPreview(session.card, viewModel, state.busy)
             }
@@ -321,9 +387,30 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
 }
 
 @Composable
-private fun CharacterDraftEditor(card: CharacterDraft, viewModel: CreationViewModel, busy: Boolean) {
+private fun CharacterDraftEditor(
+    card: CharacterDraft,
+    coverPng: ByteArray?,
+    viewModel: CreationViewModel,
+    busy: Boolean,
+    onPickCover: () -> Unit,
+    onExportJson: () -> Unit,
+    onExportPng: () -> Unit,
+) {
+    val coverBitmap = remember(coverPng) {
+        coverPng?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("角色封面", style = MaterialTheme.typography.titleMedium)
+        if (coverBitmap != null) {
+            Image(coverBitmap, contentDescription = "角色封面预览",
+                modifier = Modifier.fillMaxWidth().height(180.dp), contentScale = ContentScale.Fit)
+        } else Text("尚未设置封面；JSON 可直接导出，PNG 需先选择封面。", style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = onPickCover, enabled = !busy) { Text(if (coverPng == null) "选择封面图片" else "更换封面图片") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onExportJson, enabled = !busy) { Text("导出 JSON") }
+            Button(onClick = onExportPng, enabled = !busy && coverPng != null) { Text("导出 PNG 角色卡") }
+        }
         DraftField("名称", card.name, busy) { viewModel.editCard { c -> c.copy(name = it) } }
         DraftField("描述与背景", card.description, busy, 5) { viewModel.editCard { c -> c.copy(description = it) } }
         DraftField("性格与行为", card.personality, busy, 4) { viewModel.editCard { c -> c.copy(personality = it) } }
