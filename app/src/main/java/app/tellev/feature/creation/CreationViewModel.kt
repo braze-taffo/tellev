@@ -99,7 +99,7 @@ class CreationViewModel(
     fun open(id: String) = viewModelScope.launch {
         if (_state.value.busy) return@launch
         _state.update { it.copy(current = null, coverPreviewPng = null, error = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
-        runCatching { repository.load(id) }
+        runCatching { repository.load(id).withAssignedLoreIds() }
             .onSuccess { session ->
                 val coverResult = runCatching {
                     session.coverSha256.takeIf(String::isNotBlank)?.let { repository.readCover(id, it) }
@@ -111,6 +111,40 @@ class CreationViewModel(
                 ) }
             }
             .onFailure { fail(it) }
+    }
+
+    /** Load a stored character card into a new creation session for AI editing. */
+    fun startFromCharacter(cardId: String) = viewModelScope.launch {
+        if (_state.value.busy || cardId.isBlank()) return@launch
+        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = "读取角色卡", modelPhase = "正在读取角色卡", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
+        try {
+            val session = CreationSession.fromCharacter(store.readCharacter(cardId))
+            _state.update { it.copy(current = session, modelPhase = "已载入角色卡") }
+            persist(session)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            fail(e)
+        } finally {
+            _state.update { it.copy(busy = false) }
+        }
+    }
+
+    /** Load a stored world book into a new creation session for AI editing. */
+    fun startFromWorldBook(bookId: String) = viewModelScope.launch {
+        if (_state.value.busy || bookId.isBlank()) return@launch
+        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = "读取世界书", modelPhase = "正在读取世界书", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
+        try {
+            val session = CreationSession.fromWorldBook(store.readWorldBook(bookId))
+            _state.update { it.copy(current = session, modelPhase = "已载入世界书") }
+            persist(session)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            fail(e)
+        } finally {
+            _state.update { it.copy(busy = false) }
+        }
     }
 
     fun close() { if (!_state.value.busy) _state.update { it.copy(current = null, coverPreviewPng = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") } }
@@ -133,10 +167,11 @@ class CreationViewModel(
                 write(withUser)
                 val reply = engine.converse(session, text.trim(), ::showModelProgress)
                 _state.update { it.copy(modelPhase = "校验并保存草稿") }
-                val next = CreationReplyParser.apply(withUser, reply).copy(
+                val next = reply.session.copy(
                     turns = withUser.turns + CreationTurn(
                         "agent", reply.message.ifBlank { "草稿已更新，请检查右侧内容。" },
                     ),
+                    updatedAt = System.currentTimeMillis(),
                 )
                 write(next)
                 _state.update { it.copy(current = next, info = null, modelPhase = "本轮完成") }

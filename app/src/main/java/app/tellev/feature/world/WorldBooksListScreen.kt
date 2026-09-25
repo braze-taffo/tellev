@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
@@ -66,6 +67,7 @@ fun WorldBooksListScreen(
     viewModel: WorldViewModel,
     onBookClick: (String) -> Unit,
     onCreateWithAi: () -> Unit = {},
+    onEditWithAi: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -205,6 +207,7 @@ fun WorldBooksListScreen(
                             book = book,
                             activated = book.id !in state.disabledWorldIds,
                             onClick = { onBookClick(book.id) },
+                            onEditWithAi = { onEditWithAi(book.id) },
                             onToggleActivation = { viewModel.toggleWorldActivation(book.id) },
                             onDelete = { viewModel.deleteBook(book.id) },
                         )
@@ -405,6 +408,7 @@ private fun WorldBookListItem(
     book: WorldBook,
     activated: Boolean,
     onClick: () -> Unit,
+    onEditWithAi: () -> Unit,
     onToggleActivation: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -444,6 +448,13 @@ private fun WorldBookListItem(
             )
 
             Spacer(modifier = Modifier.padding(horizontal = 4.dp))
+
+            IconButton(onClick = onEditWithAi) {
+                Icon(
+                    Icons.Default.Edit,
+                    contentDescription = "AI 编辑世界书",
+                )
+            }
 
             IconButton(onClick = { showDeleteDialog = true }) {
                 Icon(

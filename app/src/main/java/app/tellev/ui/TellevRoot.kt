@@ -264,6 +264,9 @@ fun TellevRoot() {
                         viewModel = charactersViewModel,
                         onCreateWithAi = { navController.navigate("creation/home") },
                         onCreateClick = { navController.navigate("characters/create") },
+                        onEditWithAi = { characterId ->
+                            navController.navigate("creation/edit/character/$characterId")
+                        },
                         onCharacterClick = { characterId ->
                             charactersViewModel.selectCharacter(characterId)
                             navController.navigate("characters/detail/$characterId")
@@ -308,6 +311,9 @@ fun TellevRoot() {
                     WorldBooksListScreen(
                         viewModel = worldViewModel,
                         onCreateWithAi = { navController.navigate("creation/home") },
+                        onEditWithAi = { bookId ->
+                            navController.navigate("creation/edit/world/$bookId")
+                        },
                         onBookClick = { bookId ->
                             worldViewModel.selectBook(bookId)
                             navController.navigate("world/book/$bookId")
@@ -359,6 +365,46 @@ fun TellevRoot() {
                     viewModel = creationViewModel,
                     onBack = { navController.popBackStack() },
                     onOpenEditor = { navController.navigate("creation/editor") },
+                )
+            }
+            composable(
+                route = "creation/edit/character/{cardId}",
+                arguments = listOf(navArgument("cardId") { type = NavType.StringType }),
+            ) { backStackEntry ->
+                val cardId = backStackEntry.arguments?.getString("cardId").orEmpty()
+                LaunchedEffect(cardId) {
+                    if (cardId.isNotBlank()) creationViewModel.startFromCharacter(cardId)
+                }
+                CreationEditorScreen(
+                    viewModel = creationViewModel,
+                    onBack = { navController.popBackStack() },
+                    onSaved = { kind, _ ->
+                        if (kind == app.tellev.feature.creation.CreationKind.Character) {
+                            charactersViewModel.loadCharacters()
+                        } else {
+                            worldViewModel.loadBooks()
+                        }
+                    },
+                )
+            }
+            composable(
+                route = "creation/edit/world/{bookId}",
+                arguments = listOf(navArgument("bookId") { type = NavType.StringType }),
+            ) { backStackEntry ->
+                val bookId = backStackEntry.arguments?.getString("bookId").orEmpty()
+                LaunchedEffect(bookId) {
+                    if (bookId.isNotBlank()) creationViewModel.startFromWorldBook(bookId)
+                }
+                CreationEditorScreen(
+                    viewModel = creationViewModel,
+                    onBack = { navController.popBackStack() },
+                    onSaved = { kind, _ ->
+                        if (kind == app.tellev.feature.creation.CreationKind.Character) {
+                            charactersViewModel.loadCharacters()
+                        } else {
+                            worldViewModel.loadBooks()
+                        }
+                    },
                 )
             }
             composable("creation/editor") {
