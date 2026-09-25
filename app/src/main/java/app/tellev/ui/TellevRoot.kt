@@ -60,6 +60,10 @@ import app.tellev.feature.characters.CharacterDetailScreen
 import app.tellev.feature.characters.CharactersListScreen
 import app.tellev.feature.characters.CharactersViewModel
 import app.tellev.feature.characters.CharactersViewModelFactory
+import app.tellev.feature.creation.CreationEditorScreen
+import app.tellev.feature.creation.CreationHomeScreen
+import app.tellev.feature.creation.CreationViewModel
+import app.tellev.feature.creation.CreationViewModelFactory
 import app.tellev.feature.chat.ChatScreen
 import app.tellev.feature.chat.ChatViewModel
 import app.tellev.feature.chat.ChatViewModelFactory
@@ -118,6 +122,15 @@ fun TellevRoot() {
     val worldViewModel: WorldViewModel = viewModel(
         factory = WorldViewModelFactory(
             dataStore = graph.dataStore,
+        ),
+    )
+
+    val creationViewModel: CreationViewModel = viewModel(
+        factory = CreationViewModelFactory(
+            root = LocalContext.current.filesDir.resolve("ai-creation"),
+            store = graph.dataStore,
+            secrets = graph.secretStore,
+            providers = graph.providerRegistry,
         ),
     )
 
@@ -249,6 +262,7 @@ fun TellevRoot() {
                 composable("characters/list") {
                     CharactersListScreen(
                         viewModel = charactersViewModel,
+                        onCreateWithAi = { navController.navigate("creation/home") },
                         onCharacterClick = { characterId ->
                             charactersViewModel.selectCharacter(characterId)
                             navController.navigate("characters/detail/$characterId")
@@ -280,6 +294,7 @@ fun TellevRoot() {
                 composable("world/list") {
                     WorldBooksListScreen(
                         viewModel = worldViewModel,
+                        onCreateWithAi = { navController.navigate("creation/home") },
                         onBookClick = { bookId ->
                             worldViewModel.selectBook(bookId)
                             navController.navigate("world/book/$bookId")
@@ -323,6 +338,28 @@ fun TellevRoot() {
                         onBack = { navController.popBackStack() },
                     )
                 }
+            }
+
+            // Extensions tab - single screen
+            composable("creation/home") {
+                CreationHomeScreen(
+                    viewModel = creationViewModel,
+                    onBack = { navController.popBackStack() },
+                    onOpenEditor = { navController.navigate("creation/editor") },
+                )
+            }
+            composable("creation/editor") {
+                CreationEditorScreen(
+                    viewModel = creationViewModel,
+                    onBack = { navController.popBackStack() },
+                    onSaved = { kind, _ ->
+                        if (kind == app.tellev.feature.creation.CreationKind.Character) {
+                            charactersViewModel.loadCharacters()
+                        } else {
+                            worldViewModel.loadBooks()
+                        }
+                    },
+                )
             }
 
             // Extensions tab - single screen

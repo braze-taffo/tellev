@@ -364,6 +364,10 @@ internal class ChatGenerationCoordinator(
                                     createdAtMillis = System.currentTimeMillis(),
                                     swipes = listOf(finalText),
                                     swipeIndex = 0,
+                                    // ST clones the generated floor's variables from the
+                                    // previous message; message-scope writes performed by
+                                    // the generate-phase templates land on the new floor.
+                                    variables = listOfNotNull(promptResult.promptTemplateVariableUpdates.message),
                                 ).withGenerationReasoning(parts, rawFinalText, chunk.reasoning, chunk.finishReason, false))
                             }
                             val finalSession = (latestSession?.takeIf { it.id == updatedSession.id } ?: updatedSession)

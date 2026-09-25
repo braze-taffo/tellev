@@ -65,6 +65,7 @@ import kotlinx.coroutines.withContext
 fun WorldBooksListScreen(
     viewModel: WorldViewModel,
     onBookClick: (String) -> Unit,
+    onCreateWithAi: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -123,6 +124,7 @@ fun WorldBooksListScreen(
             TopAppBar(
                 title = { Text("世界书") },
                 actions = {
+                    TextButton(onClick = onCreateWithAi) { Text("AI 创建") }
                     IconButton(onClick = { showSettingsDialog = true }) {
                         Icon(Icons.Default.Settings, contentDescription = "世界书设置")
                     }
