@@ -71,13 +71,19 @@ const templateSurface = [
   ['execute', 'stub', 'async () => \'\'; no STscript engine'],
   ['faker', 'stub', 'declared undefined; lib not bundled'],
   ['print', 'implemented', 'EJS outputFunctionName built-in'],
-  ['activateRegex / activateWorldInfo / activewi / activateWorldInfoByKeywords / selectActivatedEntries', 'missing', 'worldbook activation family'],
-  ['getWorldInfoData / getWorldInfoActivatedData / getEnabledWorldInfoEntries / getEnabledLoreBooks', 'missing', 'worldbook data family'],
-  ['getCharData / getCharaData / getchar / getchr / getChara', 'missing', 'character data family'],
-  ['getpreset / getprp / getPresetPrompt', 'missing', 'preset prompt family'],
-  ['getqr / getQuickReply / getQuickReplyData', 'missing', 'quick reply family'],
-  ['evalTemplate', 'missing', 'nested template evaluation (EjsTemplate.evalTemplate exists script-side)'],
-  ['setVariableSchema / findVariables / applyVarYamlAnnotate', 'missing', 'variable schema/annotation family'],
+  ['activewi / activateWorldInfo / activateWorldInfoByKeywords / selectActivatedEntries', 'implemented', 'local activation registry readable via getActivatedWIEntries; mid-build re-scan unsupported so applyActivateWorldInfo warns once; registry cleared per build by the deactivate hook'],
+  ['activateRegex', 'missing', 'regex activation has no template-path pipeline'],
+  ['getWorldInfoData / getWorldInfoActivatedData / getEnabledWorldInfoEntries / getEnabledLoreBooks', 'implemented', 'worldCatalog now carries raw entry fields; entries shaped to ST WorldInfoEntry (numeric uid, @@decorators stripped, world binding); enabled books = distinct catalog books; order-stable sort, not ST position sort; catalog content is macro/regex pre-expanded'],
+  ['getCharData / getCharaData / getchar / getchr / getChara', 'implemented', 'render request carries request.character (single-card roster); getchr family renders DEFAULT_CHAR_DEFINE with char/user substitution; other characters resolve null'],
+  ['getpreset / getprp / getPresetPrompt', 'stub', 'no preset source in template rendering; one-time warn, returns empty'],
+  ['getqr / getQuickReply / getQuickReplyData', 'stub', 'no quick-reply source; one-time warn, empty/null'],
+  ['evalTemplate', 'implemented', 'nested EJS evaluation; data merged into the live env; char/user re-substituted'],
+  ['applyVarYamlAnnotate', 'implemented', 'YAML dump without schema; with schema fills values into the document tree (upstream setIn uses the outer key, treated as an upstream bug)'],
+  ['setVariableSchema / findVariables', 'stub', 'schema stored nowhere (returns undefined); historical floors carry no per-floor variables so findVariables returns {}'],
+  ['getWorldInfoEntries / getWorldInfoEntry / getWorldInfoEntryContent / getWorldInfoComments', 'implemented', 'documented reference names beyond the ejs.ts mounts; safe superset'],
+  ['getCharacterDefine', 'implemented', 'v1 field normalization incl. mes_example <START> fencing'],
+  ['getActivatedWIEntries / deactivateActivateWorldInfo / applyActivateWorldInfo', 'implemented', 'registry readers; applyActivateWorldInfo warns once (no mid-build re-scan)'],
+  ['getUserAvatarURL / getCharacterAvaterURL', 'stub', 'no avatar URLs in the render path'],
   ['userName / charName / assistantName / name1 / name2 / user / char', 'implemented', 'constants'],
   ['lastMessage / lastUserMessage / lastCharMessage', 'implemented', 'constants'],
   ['lastMessageId / lastUserMessageId / lastCharMessageId', 'implemented', 'numbers; visible-message index base (ST uses full chat)'],
@@ -87,12 +93,46 @@ const templateSurface = [
   ['charAvatar / userAvatar', 'implemented', 'empty-string stubs'],
   ['variables', 'implemented', 'live cache object (setvar-synced); message/local/global layers merged'],
   ['LAST_SEND_TOKENS / LAST_SEND_CHARS / LAST_RECEIVE_TOKENS / LAST_RECEIVE_CHARS', 'missing', 'written post-generation in ST'],
-  ['message_id / swipe_id / is_last / is_user / is_system / name (render phase)', 'missing', 'ST render-phase per-floor fields'],
+  ['message_id / is_last / is_user / is_system / name (render phase)', 'implemented', 'chat floors carry a messageContext payload (PromptTemplateMessageContext); system prompt renders with them unset'],
+  ['swipe_id (render phase)', 'missing', 'Tellev carries no per-floor swipe index'],
   ['prompt_template_prepare event', 'missing', 'script hook into context preparation'],
 ];
 for(const [name,status,notes] of templateSurface) {
   lines.push(`| \`${name}\` | ${status} | ${notes || '—'} |`);
 }
-lines.push('', 'Coverage 2026-09-25: 38 of 62 function names implemented on the production WebView path (was 12); constants declared except the four LAST_* counters and render-phase fields.');
+// TavernHelper script surface (extension WebView: inline shim + host.js overrides).
+lines.push('', '## TavernHelper script surface (extension WebView)', '',
+  'Families on `TavernHelper`/`window` as consumed by card scripts. Real = persists through the virtual API and is visible to the next generation (the runtime re-reads world books per build).', '',
+  '| Family | Status | Notes |', '| --- | --- | --- |');
+const scriptSurface = [
+  ['variables (get/replace/insert/update/delete/getAll, message scope)', 'real', 'host.js overrides; message scope through per-floor native bridge'],
+  ['events (eventOn/Once/MakeFirst/MakeLast/Emit/...) + tavern_events/iframe_events', 'real', 'eventSource bridge; per-frame registration DOM'],
+  ['getChatMessages / setChatMessages / setChatMessage', 'real', 'stSetChatMessages round trip incl. MVU variable-write commit wait'],
+  ['createChatMessages', 'real', 'POST /api/chats/{id}/messages/insert; insert_before semantics incl. negative index'],
+  ['deleteChatMessages', 'real', 'POST /api/chats/{id}/messages/delete by normalized floor ids'],
+  ['rotateChatMessages', 'stub', 'swipe rotation needs generation; honest no-op'],
+  ['worldbook reads (getLorebookEntries/getWorldbook/getWorldbookNames/...)','real','ST lorebook entry shape + v4 WorldbookEntry shape (strategy/position objects)'],
+  ['worldbook writes (create/delete/replace/updateWorldbookWith, lorebook entry family)', 'real', 'read-modify-write of the full book via POST /api/worlds; effective next generation'],
+  ['deleteWorldbook', 'real', 'DELETE /api/worlds/{id}'],
+  ['rebindGlobalWorldbooks', 'real', 'POST /api/worldinfo/disabled activation-set write-back'],
+  ['rebindCharWorldbooks / rebindChatWorldbook / getOrCreateChatWorldbook', 'stub', 'Tellev has no per-character additional books nor chat-bound books'],
+  ['getCharLorebooks / getCharWorldbookNames / getGlobalWorldbookNames / getLorebookSettings', 'real', 'from the live context snapshot'],
+  ['presets (get/load/set/create/replace/update/rename/deletePreset, getLoadedPresetName)', 'real', '/api/presets routes'],
+  ['triggerSlash / triggerSlashWithResult / addSlashCommand', 'real', 'native slash engine; triggerSlash rejects on isError and returns the pipe'],
+  ['regex (getTavernRegexes/replaceTavernRegexes/updateTavernRegexesWith)', 'real', 'upstream option-object order; legacy positional (charId, regexes) still accepted'],
+  ['formatAsDisplayedMessage', 'real', 'macro substitution; card regex applied upstream'],
+  ['formatAsTavernRegexedString', 'stub', 'ScopedScript reshaping not implemented'],
+  ['injectPrompts / uninjectPrompts', 'real', 'position/depth/role/shouldScan via stInjectPromptWithOptions; once via GENERATION_ENDED'],
+  ['generate / generateRaw / getModelList', 'real', '/api/backends/chat-completions routes'],
+  ['characters / personas (get/list/create/replace/updateWith/delete)', 'real', '/api/characters, /api/personas routes; upstream CharacterData reshaping not replicated'],
+  ['audio family (play/pause/lists/settings/audioEnable/...)', 'stub', 'no audio pipeline in the extension WebView'],
+  ['initializeGlobal / waitGlobalInitialized', 'real', 'waiter registry with polling backstop'],
+  ['substitudeMacros / getLastMessageId / getMessageId / errorCatched', 'real', '—'],
+  ['registerVariableSchema', 'partial', 'schema stored but not validated on write'],
+];
+for(const [family,status,notes] of scriptSurface) {
+  lines.push(`| \`${family}\` | ${status} | ${notes} |`);
+}
+lines.push('', 'Coverage 2026-09-26: 53 of 62 function names implemented on the production WebView path (was 38); the remaining 9 are stubs or missing: activateRegex, getpreset/getprp/getPresetPrompt, getqr/getQuickReply/getQuickReplyData, setVariableSchema, findVariables, plus the four LAST_* counters and swipe_id/prompt_template_prepare.');
 await writeFile(new URL('docs/MVU-API-MATRIX.md',root),lines.join('\n')+'\n');
 console.log(JSON.stringify({entries:contracts.length,placeholderCandidates:contracts.filter(e=>e.placeholderCandidate).length,withSourceCandidates:contracts.filter(e=>e.sourceCandidates.length).length,accepted:0}));
