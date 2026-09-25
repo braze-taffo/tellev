@@ -67,8 +67,28 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
+
+/**
+ * [InputStream.readNBytes] 的限量读取等价实现：该函数要求 API 33（minSdk 31），
+ * lint 报 NewApi 错误。语义一致——读满 [limit] 字节或流结束即停，允许最后一次
+ * 多读一个缓冲块作为「超限」证据，内存上界 limit + 64 KB。
+ */
+private fun InputStream.readBounded(limit: Int): ByteArray {
+    val out = ByteArrayOutputStream(minOf(limit, 1 shl 20))
+    val buffer = ByteArray(1 shl 16)
+    var total = 0
+    while (total <= limit) {
+        val read = read(buffer)
+        if (read < 0) break
+        out.write(buffer, 0, read)
+        total += read
+    }
+    return out.toByteArray()
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -184,7 +204,7 @@ fun CreationEditorScreen(
         if (uri != null) scope.launch {
             try {
                 val source = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { it.readNBytes(12_000_001) }
+                    context.contentResolver.openInputStream(uri)?.use { it.readBounded(12_000_001) }
                 } ?: error("无法读取所选图片")
                 require(source.size <= 12_000_000) { "图片超过 12 MB，请选择较小的文件。" }
                 val png = withContext(Dispatchers.IO) {
@@ -635,7 +655,7 @@ private fun WorldDraftEditor(
         if (uri != null) scope.launch {
             try {
                 val bytes = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { it.readNBytes(12_000_001) }
+                    context.contentResolver.openInputStream(uri)?.use { it.readBounded(12_000_001) }
                 } ?: error("无法读取原文")
                 require(bytes.size <= 12_000_000) { "文件超过 12 MB，请拆分；没有截断导入。" }
                 val decoded = runCatching {
