@@ -55,8 +55,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,10 +88,10 @@ fun ExtensionsScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("扩展") },
+                title = { Text(stringResource(R.string.ext_title)) },
                 actions = {
                     IconButton(onClick = { viewModel.refreshExtensions() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新")
+                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.ext_refresh_cd))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -120,8 +122,8 @@ fun ExtensionsScreen(
 
                 item(key = "built_in_header") {
                     SectionHeader(
-                        title = "内置兼容模块",
-                        subtitle = "这些模块随 APK 提供，不需要用户进入目录安装。",
+                        title = stringResource(R.string.ext_builtin_header_title),
+                        subtitle = stringResource(R.string.ext_builtin_header_subtitle),
                     )
                 }
 
@@ -141,8 +143,8 @@ fun ExtensionsScreen(
 
                 item(key = "asset_header") {
                     SectionHeader(
-                        title = "角色卡附带资源",
-                        subtitle = "导入角色卡后，世界书、正则和酒馆助手数据会自动登记在这里。",
+                        title = stringResource(R.string.ext_asset_header_title),
+                        subtitle = stringResource(R.string.ext_asset_header_subtitle),
                     )
                 }
 
@@ -222,19 +224,19 @@ fun ExtensionsScreen(
             onDismissRequest = {
                 viewModel.respondToPermissionRequest(request.requestId, granted = false)
             },
-            title = { Text("扩展权限请求") },
+            title = { Text(stringResource(R.string.ext_permission_dialog_title)) },
             text = {
-                Text("扩展 ${request.extensionId} 请求 ${request.permission.name} 权限。仅在你信任该脚本时允许。")
+                Text(stringResource(R.string.ext_permission_dialog_body, request.extensionId, request.permission.name))
             },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.respondToPermissionRequest(request.requestId, granted = true)
-                }) { Text("允许") }
+                }) { Text(stringResource(R.string.ext_permission_allow)) }
             },
             dismissButton = {
                 TextButton(onClick = {
                     viewModel.respondToPermissionRequest(request.requestId, granted = false)
-                }) { Text("拒绝") }
+                }) { Text(stringResource(R.string.ext_permission_deny)) }
             },
         )
     }
@@ -319,14 +321,14 @@ private fun ExtensionCard(
                     IconButton(onClick = onOpenSettings) {
                         Icon(
                             Icons.Default.Settings,
-                            contentDescription = "设置",
+                            contentDescription = stringResource(R.string.ext_settings_cd),
                             modifier = Modifier.size(20.dp),
                         )
                     }
                 }
                 if (hasDebug) {
                     TextButton(onClick = onOpenDebug) {
-                        Text("调试")
+                        Text(stringResource(R.string.ext_debug_button))
                     }
                 }
                 Switch(
@@ -338,7 +340,7 @@ private fun ExtensionCard(
 
             runtimeStatus?.lastError?.let { lastError ->
                 Text(
-                    text = "最近错误：$lastError",
+                    text = stringResource(R.string.ext_last_error, lastError),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                     maxLines = 3,
@@ -358,7 +360,7 @@ private fun ExtensionCard(
                 if (extension.locked) {
                     AssistChip(
                         onClick = {},
-                        label = { Text("自动启用") },
+                        label = { Text(stringResource(R.string.ext_auto_enable_chip)) },
                     )
                 }
             }
@@ -392,7 +394,7 @@ private fun CharacterAssetCard(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "ID: ${asset.characterId}",
+                text = stringResource(R.string.ext_asset_id, asset.characterId),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -401,14 +403,14 @@ private fun CharacterAssetCard(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 val worldLabel = if (asset.worldBookId.isNullOrBlank()) {
-                    "世界书 0"
+                    stringResource(R.string.ext_worldbook_none)
                 } else {
-                    "世界书 已导入"
+                    stringResource(R.string.ext_worldbook_imported)
                 }
                 AssistChip(onClick = {}, label = { Text(worldLabel) })
-                AssistChip(onClick = {}, label = { Text("正则 ${asset.regexScripts}") })
-                AssistChip(onClick = {}, label = { Text("酒馆助手脚本 ${asset.tavernHelperScripts}") })
-                AssistChip(onClick = {}, label = { Text("变量数据 ${asset.tavernHelperData}") })
+                AssistChip(onClick = {}, label = { Text(stringResource(R.string.ext_regex_count, asset.regexScripts)) })
+                AssistChip(onClick = {}, label = { Text(stringResource(R.string.ext_th_scripts_count, asset.tavernHelperScripts)) })
+                AssistChip(onClick = {}, label = { Text(stringResource(R.string.ext_data_count, asset.tavernHelperData)) })
             }
             if (asset.regexScriptSummaries.isNotEmpty()) {
                 Row(
@@ -427,12 +429,12 @@ private fun CharacterAssetCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "正则脚本（${asset.regexScriptSummaries.size}）",
+                        text = stringResource(R.string.ext_regex_scripts_header, asset.regexScriptSummaries.size),
                         style = MaterialTheme.typography.labelLarge,
                         modifier = Modifier.weight(1f),
                     )
                     Text(
-                        text = if (regexExpanded) "收起" else "展开",
+                        text = if (regexExpanded) stringResource(R.string.ext_collapse) else stringResource(R.string.ext_expand),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -479,11 +481,11 @@ private fun EmptyAssetState() {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = "还没有角色卡附带资源",
+                text = stringResource(R.string.ext_asset_empty_title),
                 style = MaterialTheme.typography.titleSmall,
             )
             Text(
-                text = "导入包含世界书、正则或酒馆助手脚本的角色卡后，会自动显示在这里。",
+                text = stringResource(R.string.ext_asset_empty_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

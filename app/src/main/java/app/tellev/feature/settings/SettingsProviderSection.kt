@@ -39,11 +39,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.tellev.R
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.ProviderConfigPersistence
 
@@ -69,7 +73,7 @@ internal fun selectedProviderLabel(state: SettingsUiState): String {
     return if (ProviderConfigPersistence.isCustomConfigId(id)) {
         state.customConfigs.firstOrNull {
             it.id == ProviderConfigPersistence.customIdFrom(id)
-        }?.name ?: "自定义配置"
+        }?.name ?: UiStrings.get(S.setprov_custom_config_fallback)
     } else {
         state.providers.firstOrNull { it.id == id }?.displayName ?: id
     }
@@ -86,7 +90,7 @@ internal fun ProviderQuickSwitchCard(
     var expanded by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader(icon = Icons.Default.Settings, title = "模型服务")
+        SectionHeader(icon = Icons.Default.Settings, title = stringResource(R.string.setprov_header))
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -98,7 +102,7 @@ internal fun ProviderQuickSwitchCard(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    text = "当前使用",
+                    text = stringResource(R.string.setprov_current_label),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -108,7 +112,7 @@ internal fun ProviderQuickSwitchCard(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = state.model.ifBlank { "尚未指定模型" },
+                    text = state.model.ifBlank { stringResource(R.string.setprov_no_model) },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -123,12 +127,12 @@ internal fun ProviderQuickSwitchCard(
                         value = selectedProviderLabel(state),
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("快速切换配置") },
+                        label = { Text(stringResource(R.string.setprov_quick_switch_label)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .menuAnchor(MenuAnchorType.PrimaryNotEditable),
-                        supportingText = { Text("选择后立即用于下一次生成") },
+                        supportingText = { Text(stringResource(R.string.setprov_quick_switch_help)) },
                     )
                     ExposedDropdownMenu(
                         expanded = expanded,
@@ -139,7 +143,7 @@ internal fun ProviderQuickSwitchCard(
                                 text = { Text(option.label) },
                                 trailingIcon = {
                                     if (option.id == state.selectedProviderId) {
-                                        Text("当前", style = MaterialTheme.typography.labelSmall)
+                                        Text(stringResource(R.string.setprov_current_tag), style = MaterialTheme.typography.labelSmall)
                                     }
                                 },
                                 onClick = {
@@ -157,7 +161,7 @@ internal fun ProviderQuickSwitchCard(
                 ) {
                     Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("管理模型服务配置")
+                    Text(stringResource(R.string.setprov_manage))
                 }
             }
         }
@@ -178,7 +182,7 @@ internal fun LazyListScope.providerDetailsItems(
         val selectedLabel = if (isCustom) {
             state.customConfigs.firstOrNull {
                 it.id == ProviderConfigPersistence.customIdFrom(state.selectedProviderId)
-            }?.name ?: "自定义配置"
+            }?.name ?: stringResource(R.string.setprov_custom_config_fallback)
         } else {
             state.providers.find { it.id == state.selectedProviderId }?.displayName
                 ?: state.selectedProviderId
@@ -192,7 +196,7 @@ internal fun LazyListScope.providerDetailsItems(
                 value = selectedLabel,
                 onValueChange = {},
                 readOnly = true,
-                label = { Text("服务商") },
+                label = { Text(stringResource(R.string.setprov_provider_label)) },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -231,7 +235,7 @@ internal fun LazyListScope.providerDetailsItems(
                 }
                 HorizontalDivider()
                 DropdownMenuItem(
-                    text = { Text("新建自定义配置") },
+                    text = { Text(stringResource(R.string.setprov_new_custom)) },
                     leadingIcon = {
                         Icon(Icons.Default.Add, contentDescription = null)
                     },
@@ -254,7 +258,7 @@ internal fun LazyListScope.providerDetailsItems(
                 OutlinedTextField(
                     value = state.customConfigName,
                     onValueChange = { viewModel.updateCustomConfigName(it) },
-                    label = { Text("配置名称") },
+                    label = { Text(stringResource(R.string.setprov_config_name_label)) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                 )
@@ -267,7 +271,7 @@ internal fun LazyListScope.providerDetailsItems(
                 ) {
                     Icon(
                         Icons.Default.Delete,
-                        contentDescription = "删除该配置",
+                        contentDescription = stringResource(R.string.setprov_cd_delete_config),
                         tint = MaterialTheme.colorScheme.error,
                     )
                 }
@@ -279,7 +283,7 @@ internal fun LazyListScope.providerDetailsItems(
         OutlinedTextField(
             value = state.baseUrl,
             onValueChange = { viewModel.updateBaseUrl(it) },
-            label = { Text("接口地址") },
+            label = { Text(stringResource(R.string.setprov_base_url_label)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             placeholder = { Text("https://api.example.com") },
@@ -290,7 +294,7 @@ internal fun LazyListScope.providerDetailsItems(
         OutlinedTextField(
             value = state.apiKey,
             onValueChange = { viewModel.updateApiKey(it) },
-            label = { Text("API 密钥") },
+            label = { Text(stringResource(R.string.setprov_api_key_label)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             visualTransformation = if (apiKeyVisible) VisualTransformation.None
@@ -299,7 +303,7 @@ internal fun LazyListScope.providerDetailsItems(
                 IconButton(onClick = onToggleApiKeyVisible) {
                     Icon(
                         if (apiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        contentDescription = if (apiKeyVisible) "隐藏 API 密钥" else "显示 API 密钥",
+                        contentDescription = if (apiKeyVisible) stringResource(R.string.setprov_cd_hide_api_key) else stringResource(R.string.setprov_cd_show_api_key),
                     )
                 }
             },
@@ -334,12 +338,12 @@ internal fun LazyListScope.providerDetailsItems(
                     viewModel.updateModel(it)
                     modelMenuExpanded = availableModels.isNotEmpty()
                 },
-                label = { Text("模型") },
+                label = { Text(stringResource(R.string.setprov_model_label)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .menuAnchor(MenuAnchorType.PrimaryEditable),
                 singleLine = true,
-                placeholder = { Text("可选择或手动填写模型 ID") },
+                placeholder = { Text(stringResource(R.string.setprov_model_placeholder)) },
                 trailingIcon = {
                     if (availableModels.isNotEmpty()) {
                         ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelMenuExpanded)
@@ -348,9 +352,9 @@ internal fun LazyListScope.providerDetailsItems(
                 supportingText = {
                     Text(
                         if (availableModels.isEmpty()) {
-                            "当前服务未返回模型列表，可手动填写"
+                            stringResource(R.string.setprov_model_help_empty)
                         } else {
-                            "可输入筛选，已获取 ${availableModels.size} 个模型"
+                            stringResource(R.string.setprov_model_help_count, availableModels.size)
                         },
                     )
                 },
@@ -380,7 +384,7 @@ internal fun LazyListScope.providerDetailsItems(
             ) {
                 Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("高级设置")
+                Text(stringResource(R.string.setprov_advanced))
             }
         }
     }
@@ -402,7 +406,7 @@ internal fun LazyListScope.providerDetailsItems(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                 }
-                Text(if (state.isTesting) "测试中..." else "测试连接")
+                Text(if (state.isTesting) stringResource(R.string.setprov_testing) else stringResource(R.string.setprov_test_connection))
             }
             FilledTonalButton(
                 onClick = { viewModel.saveProviderConfig() },
@@ -410,7 +414,7 @@ internal fun LazyListScope.providerDetailsItems(
             ) {
                 Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("保存")
+                Text(stringResource(R.string.setprov_save))
             }
         }
     }
@@ -427,7 +431,7 @@ internal fun LazyListScope.providerDetailsItems(
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text(
-                        text = if (status.available) "已连接" else "连接失败",
+                        text = if (status.available) stringResource(R.string.setprov_status_connected) else stringResource(R.string.setprov_status_failed),
                         style = MaterialTheme.typography.titleSmall,
                         color = if (status.available) MaterialTheme.colorScheme.onPrimaryContainer
                         else MaterialTheme.colorScheme.onErrorContainer,

@@ -10,6 +10,8 @@ import app.tellev.core.extension.ExtensionPermission
 import app.tellev.core.extension.ExtensionPermissionManager
 import app.tellev.core.extension.ExtensionSettingsStore
 import app.tellev.core.extension.TavernHelperSettings
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.prompt.DefaultPromptEngine
 import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.storage.StDataStore
@@ -148,7 +150,7 @@ class ExtensionsViewModel(
                     it.copy(
                         extensions = builtInExtensions(),
                         isLoading = false,
-                        error = "加载扩展资源失败：${e.message}",
+                        error = UiStrings.get(S.extvm_load_failed, e.message),
                     )
                 }
             }
@@ -174,7 +176,7 @@ class ExtensionsViewModel(
                     val manifest = installedManifests[id]
                     val script = installedScripts[id] ?: ""
                     if (manifest == null) {
-                        _uiState.update { s -> s.copy(error = "未找到扩展清单：$id") }
+                        _uiState.update { s -> s.copy(error = UiStrings.get(S.extvm_manifest_not_found, id)) }
                         return@runCatching
                     }
                     // Only pre-grant low-risk permissions (Storage, UiPanel,
@@ -188,7 +190,7 @@ class ExtensionsViewModel(
                     val minClient = manifest.minimumClientVersion
                     if (minClient.isNotBlank() && !meetsMinimumClientVersion(minClient)) {
                         _uiState.update { s ->
-                            s.copy(error = "扩展 $id 要求客户端版本 ≥ $minClient，当前 tellev 版本更低")
+                            s.copy(error = UiStrings.get(S.extvm_client_version_too_low, id, minClient))
                         }
                         return@runCatching
                     }
@@ -198,8 +200,8 @@ class ExtensionsViewModel(
                     updateExtension(id) { it.copy(loaded = true) }
                 }
             }.onFailure { e ->
-                recordLocalFailure(id, "扩展切换失败：${e.message ?: e::class.simpleName}")
-                _uiState.update { it.copy(error = "扩展切换失败：${e.message}") }
+                recordLocalFailure(id, UiStrings.get(S.extvm_toggle_failed, e.message ?: e::class.simpleName))
+                _uiState.update { it.copy(error = UiStrings.get(S.extvm_toggle_failed, e.message)) }
             }
         }
     }
@@ -216,7 +218,7 @@ class ExtensionsViewModel(
                     .firstOrNull { it.characterId == characterId }
                     ?.regexScriptSummaries
                     ?.firstOrNull { it.id == scriptId }
-                    ?: error("未找到正则脚本：$scriptId")
+                    ?: error(UiStrings.get(S.extvm_regex_script_not_found, scriptId))
                 val card = dataStore.readCharacter(characterId)
                 val patched = CharacterRegexApplier.withScriptEnabled(
                     card = card,
@@ -227,7 +229,7 @@ class ExtensionsViewModel(
                 val assets = withContext(Dispatchers.IO) { readCharacterAssets() }
                 _uiState.update { it.copy(characterAssets = assets, disabledRegexScripts = emptyMap()) }
             }.onFailure { e ->
-                _uiState.update { it.copy(error = "更新正则开关失败：${e.message}") }
+                _uiState.update { it.copy(error = UiStrings.get(S.extvm_regex_toggle_failed, e.message)) }
             }
         }
     }
@@ -321,7 +323,7 @@ class ExtensionsViewModel(
                 extensionHost.deliverPermissionResult(request.requestId, false)
                 recordLocalFailure(
                     request.extensionId,
-                    "权限请求处理失败：${error.message ?: error::class.simpleName}",
+                    UiStrings.get(S.extvm_permission_request_failed, error.message ?: error::class.simpleName),
                 )
             }
         }
@@ -397,34 +399,48 @@ class ExtensionsViewModel(
     private fun builtInExtensions(): List<ExtensionInfo> = listOf(
         ExtensionInfo(
             id = "tavern-helper-compat",
-            name = "酒馆助手兼容",
-            description = "SillyTavern 事件总线、getContext、TavernHelper、fetch /api/* 桥与角色卡脚本运行",
+            name = UiStrings.get(S.extvm_builtin_th_name),
+            description = UiStrings.get(S.extvm_builtin_th_desc),
             loaded = true,
-            permissions = listOf("WebView", "角色资源", "虚拟 API"),
+            permissions = listOf(
+                UiStrings.get(S.extvm_perm_webview),
+                UiStrings.get(S.extvm_perm_character_assets),
+                UiStrings.get(S.extvm_perm_virtual_api),
+            ),
             locked = true,
         ),
         ExtensionInfo(
             id = "character-regex",
-            name = "角色卡正则",
-            description = "自动读取并应用角色卡内嵌 regex_scripts",
+            name = UiStrings.get(S.extvm_builtin_regex_name),
+            description = UiStrings.get(S.extvm_builtin_regex_desc),
             loaded = true,
-            permissions = listOf("聊天显示", "角色资源"),
+            permissions = listOf(
+                UiStrings.get(S.extvm_perm_chat_display),
+                UiStrings.get(S.extvm_perm_character_assets),
+            ),
             locked = true,
         ),
         ExtensionInfo(
             id = "embedded-world-book",
-            name = "角色卡世界书",
-            description = "自动导入 character_book 并随角色注入提示词",
+            name = UiStrings.get(S.extvm_builtin_worldbook_name),
+            description = UiStrings.get(S.extvm_builtin_worldbook_desc),
             loaded = true,
-            permissions = listOf("提示词", "世界书"),
+            permissions = listOf(
+                UiStrings.get(S.extvm_perm_prompt),
+                UiStrings.get(S.extvm_perm_worldbook),
+            ),
             locked = true,
         ),
         ExtensionInfo(
             id = "ejs-template-compat",
-            name = "EJS 提示词模板",
-            description = "在提示词和角色卡中使用 EJS 模板语法（<%= ... %>），支持动态生成与注入",
+            name = UiStrings.get(S.extvm_builtin_ejs_name),
+            description = UiStrings.get(S.extvm_builtin_ejs_desc),
             loaded = true,
-            permissions = listOf("提示词", "世界书", "变量"),
+            permissions = listOf(
+                UiStrings.get(S.extvm_perm_prompt),
+                UiStrings.get(S.extvm_perm_worldbook),
+                UiStrings.get(S.extvm_perm_variables),
+            ),
             locked = true,
         ),
     )

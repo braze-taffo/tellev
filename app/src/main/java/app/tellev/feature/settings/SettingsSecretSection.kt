@@ -30,7 +30,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 
 @Composable
 internal fun AddSecretDialog(
@@ -42,20 +44,20 @@ internal fun AddSecretDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("添加密钥") },
+        title = { Text(stringResource(R.string.setsec_add_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = key,
                     onValueChange = { key = it },
-                    label = { Text("键") },
+                    label = { Text(stringResource(R.string.setsec_key_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = value,
                     onValueChange = { value = it },
-                    label = { Text("值") },
+                    label = { Text(stringResource(R.string.setsec_value_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -69,12 +71,12 @@ internal fun AddSecretDialog(
                     }
                 },
             ) {
-                Text("保存")
+                Text(stringResource(R.string.setsec_save))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.setsec_cancel))
             }
         },
     )
@@ -88,7 +90,7 @@ internal fun LazyListScope.secretSectionItems(
     item(key = "secrets_header") {
         SectionHeader(
             icon = Icons.Default.Key,
-            title = "密钥",
+            title = stringResource(R.string.setsec_title),
             action = onAddSecret,
         )
     }
@@ -96,7 +98,7 @@ internal fun LazyListScope.secretSectionItems(
     if (state.secretIds.isEmpty()) {
         item(key = "secrets_empty") {
             Text(
-                text = "暂无保存的密钥。",
+                text = stringResource(R.string.setsec_empty),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -133,7 +135,7 @@ internal fun LazyListScope.secretSectionItems(
                     ) {
                         Icon(
                             Icons.Default.Delete,
-                            contentDescription = "删除",
+                            contentDescription = stringResource(R.string.setsec_delete_cd),
                             modifier = Modifier.size(18.dp),
                             tint = MaterialTheme.colorScheme.error,
                         )

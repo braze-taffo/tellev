@@ -277,7 +277,7 @@ private fun ChatContentScreen(
                         )
                         MemoryMode.of(state.currentSession)?.let { mode ->
                             val status = if (state.memoryPluginEnabled) state.memoryStatus else stringResource(R.string.chat_memory_paused)
-                            Text(stringResource(R.string.chat_memory_label, mode.label) + (status?.let { " · $it" } ?: ""), style = MaterialTheme.typography.labelSmall)
+                            Text(stringResource(R.string.chat_memory_label, memoryModeLabel(mode)) + (status?.let { " · $it" } ?: ""), style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }

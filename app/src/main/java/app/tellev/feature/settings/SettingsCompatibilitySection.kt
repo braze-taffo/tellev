@@ -15,7 +15,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 
 @Composable
 internal fun CompatibilitySwitch(
@@ -40,14 +42,14 @@ internal fun CompatibilityAdvancedDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("高级设置") },
+        title = { Text(stringResource(R.string.setcompat_title)) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    "Base URL 与路径分开配置；默认只发送兼容性较高的字段。",
+                    stringResource(R.string.setcompat_intro),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -56,7 +58,7 @@ internal fun CompatibilityAdvancedDialog(
                     state.model in setOf("deepseek-chat", "deepseek-reasoner")
                 ) {
                     Text(
-                        "该旧模型将于 2026-07-24 停用，请迁移到 deepseek-v4-flash 或 deepseek-v4-pro。",
+                        stringResource(R.string.setcompat_legacy_model_warning),
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -64,14 +66,14 @@ internal fun CompatibilityAdvancedDialog(
                 OutlinedTextField(
                     value = state.compatibility.modelsPath,
                     onValueChange = viewModel::updateModelsPath,
-                    label = { Text("模型列表路径") },
+                    label = { Text(stringResource(R.string.setcompat_models_path_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
                 OutlinedTextField(
                     value = state.compatibility.chatCompletionsPath,
                     onValueChange = viewModel::updateChatCompletionsPath,
-                    label = { Text("Chat Completions 路径") },
+                    label = { Text(stringResource(R.string.setcompat_chat_completions_path_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
@@ -79,76 +81,76 @@ internal fun CompatibilityAdvancedDialog(
                     OutlinedTextField(
                         value = state.compatibility.authHeader,
                         onValueChange = viewModel::updateAuthHeader,
-                        label = { Text("鉴权 Header") },
+                        label = { Text(stringResource(R.string.setcompat_auth_header_label)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                     )
                     OutlinedTextField(
                         value = state.compatibility.authScheme,
                         onValueChange = viewModel::updateAuthScheme,
-                        label = { Text("鉴权前缀") },
+                        label = { Text(stringResource(R.string.setcompat_auth_scheme_label)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
-                        placeholder = { Text("Bearer；可留空") },
+                        placeholder = { Text(stringResource(R.string.setcompat_auth_scheme_placeholder)) },
                     )
                 }
                 OutlinedTextField(
                     value = state.compatibility.maxTokensField,
                     onValueChange = viewModel::updateMaxTokensField,
-                    label = { Text("输出长度字段") },
-                    supportingText = { Text("max_tokens 或 max_completion_tokens") },
+                    label = { Text(stringResource(R.string.setcompat_max_tokens_field_label)) },
+                    supportingText = { Text(stringResource(R.string.setcompat_max_tokens_field_hint)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
                 CompatibilitySwitch(
-                    label = "发送 stream_options.include_usage",
+                    label = stringResource(R.string.setcompat_include_usage),
                     checked = state.compatibility.includeUsage,
                     onCheckedChange = viewModel::updateIncludeUsage,
                 )
                 CompatibilitySwitch(
-                    label = "启用模型列表接口",
+                    label = stringResource(R.string.setcompat_supports_model_listing),
                     checked = state.compatibility.supportsModelListing,
                     onCheckedChange = viewModel::updateSupportsModelListing,
                 )
                 CompatibilitySwitch(
-                    label = "发送 top_k",
+                    label = stringResource(R.string.setcompat_top_k),
                     checked = state.compatibility.supportsTopK,
                     onCheckedChange = viewModel::updateSupportsTopK,
                 )
                 CompatibilitySwitch(
-                    label = "启用 tools 字段",
+                    label = stringResource(R.string.setcompat_supports_tools),
                     checked = state.compatibility.supportsTools,
                     onCheckedChange = viewModel::updateSupportsTools,
                 )
                 CompatibilitySwitch(
-                    label = "启用 reasoning 字段",
+                    label = stringResource(R.string.setcompat_supports_reasoning),
                     checked = state.compatibility.supportsReasoning,
                     onCheckedChange = viewModel::updateSupportsReasoning,
                 )
                 CompatibilitySwitch(
-                    label = "启用图片消息",
+                    label = stringResource(R.string.setcompat_supports_vision),
                     checked = state.compatibility.supportsVision,
                     onCheckedChange = viewModel::updateSupportsVision,
                 )
                 OutlinedTextField(
                     value = state.extraHeadersJson,
                     onValueChange = viewModel::updateExtraHeadersJson,
-                    label = { Text("附加 Headers（JSON）") },
+                    label = { Text(stringResource(R.string.setcompat_extra_headers_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3,
                 )
                 OutlinedTextField(
                     value = state.extraBodyJson,
                     onValueChange = viewModel::updateExtraBodyJson,
-                    label = { Text("附加请求体（JSON）") },
-                    supportingText = { Text("messages/model/stream 等核心字段不会被覆盖") },
+                    label = { Text(stringResource(R.string.setcompat_extra_body_label)) },
+                    supportingText = { Text(stringResource(R.string.setcompat_extra_body_hint)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3,
                 )
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("完成") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.setcompat_done)) }
         },
     )
 }

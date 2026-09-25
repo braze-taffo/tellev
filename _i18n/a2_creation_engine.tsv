@@ -1,0 +1,82 @@
+crmodels_frontend_script	包含脚本
+crmodels_frontend_inline_event	包含内联事件
+crmodels_frontend_forbidden_tag	包含当前双端范围外的标签
+crmodels_frontend_external_ref	依赖链接或资源
+crmodels_frontend_dynamic_style	包含外部或动态样式
+crmodels_frontend_template_var	包含可能依赖运行扩展的模板变量
+crrepo_error_invalid_cover	封面必须是有效的 PNG，且不超过 10 MB。
+crrepo_error_cover_checksum	封面校验失败，请重新选择图片。
+crrepo_error_source_checksum	原文校验失败，请重新导入。
+crvm_draft_deleted	创作草稿已删除。
+crvm_cover_saved	封面已保存到创作草稿。
+crvm_saved_to_device	已保存到本机。双端运行仍需实际验证。
+crvm_source_saved	原文已保存，可开始逐段提炼。
+crvm_extract_done	原文提炼完成，请逐条核对后保存世界书。
+crvm_op_read_card	读取角色卡
+crvm_op_read_worldbook	读取世界书
+crvm_op_converse	创作对话
+crvm_op_save_source	保存原文
+crvm_op_extract	世界书长文提炼
+crvm_phase_reading_card	正在读取角色卡
+crvm_phase_card_loaded	已载入角色卡
+crvm_phase_source_card_loaded	已载入来源角色卡
+crvm_phase_reading_worldbook	正在读取世界书
+crvm_phase_worldbook_loaded	已载入世界书
+crvm_phase_preparing	准备请求
+crvm_phase_verify_save	校验并保存草稿
+crvm_phase_turn_done	本轮完成
+crvm_phase_stopped_saved	已停止；已完成的草稿修改已保存，可继续处理
+crvm_phase_stopped_not_applied	已停止；本轮草稿未应用
+crvm_phase_interrupted_saved	请求中断；已完成的草稿修改已保存，可继续处理
+crvm_phase_turn_failed	本轮失败，草稿未应用
+crvm_phase_saving_source	正在保存原文
+crvm_phase_source_saved	原文已保存
+crvm_phase_save_source_stopped	保存原文已停止
+crvm_phase_reading_source	读取已保存原文
+crvm_phase_extract_chunk	提炼第 %1$d 段
+crvm_phase_verify_chunk	核对第 %1$d 段的原文证据
+crvm_phase_chunk_saved	第 %1$d 段已保存
+crvm_phase_extract_done	提炼完成
+crvm_phase_extract_stopped	已停止，可从已保存位置继续提炼
+crvm_phase_extract_interrupted	提炼中断，可从已保存位置继续
+crvm_extract_progress_chunk	第 %1$d/%2$d 段：正在处理 %3$d–%4$d / %5$d 字符；已保存至 %6$d
+crvm_extract_progress_saved	已保存 %1$d/%2$d 字符，共 %3$d 条世界书内容
+crvm_error_source_too_large	原文超过 400 万字符，请先拆为多个文件；没有截断或处理任何内容。
+crvm_error_source_length_mismatch	原文长度与草稿记录不一致，请重新导入。
+crvm_error_open_card_draft_first	请先打开角色卡草稿。
+crvm_error_cannot_export_card	当前无法导出角色卡。
+crvm_error_cover_required_for_png	请先在角色卡页设置封面，再导出 PNG。
+crvm_error_png_export_roundtrip	PNG 角色卡导出回读失败。
+crvm_error_open_worldbook_draft_first	请先打开世界书草稿。
+crvm_error_cannot_export_worldbook	当前无法导出世界书。
+crvm_error_card_export_roundtrip	角色卡导出回读失败。
+crvm_error_cover_card_roundtrip	封面角色卡回读失败。
+crvm_error_name_required	请至少填写角色名称。
+crvm_error_lore_empty	世界书有空条目或缺少触发词。
+crvm_error_frontend_portable	前端不符合当前可移植约束：%1$s
+crvm_error_worldbook_required	请填写世界书名称并至少保留一个条目。
+crvm_worldbook_export_roundtrip_failed	世界书导出回读失败。
+crvm_failed_default	创作失败
+creng_phase_receiving_draft	正在接收草稿
+creng_phase_model_thinking	模型正在思考
+creng_phase_waiting_model	等待模型响应
+creng_phase_prepare_request	准备模型请求
+creng_phase_connecting	正在连接模型
+creng_phase_validating	校验结构化草稿
+creng_phase_exec_tool	第 %1$d 轮：执行工具 %2$s
+creng_phase_condensed_retry	输出被截断，正在精简重试一次
+creng_phase_repair_format	草稿格式无效，正在修复一次
+creng_phase_connect_retry	连接失败，正在重试（1/1）
+creng_round_prefix	第 %1$d 轮：
+creng_repair_prefix	格式修复：
+creng_condensed_prefix	精简重试：
+creng_agent_reply_format_invalid	AI 返回的草稿格式无效
+creng_tool_loop_stalled	制卡工具回路连续三轮未得到完整调用或回复（%1$s）。已停止自动重试，草稿保持原状。
+creng_error_extract_invalid	提取连续重试后仍未得到有效结构（输出超长或格式无效）；本段未应用，可从已保存位置继续。
+creng_error_provider_not_supported	当前供应商不支持对话生成，请先在设置中选择文字模型
+creng_default_model_label	默认模型
+creng_stage_body_output	正文输出
+creng_stage_reasoning_output	思考输出
+creng_stage_before_first_chunk	收到首个流片前
+creng_error_stream_interrupted	模型请求在%1$s中断（已收 %2$d 个流片，错误 %3$s%4$s）：%5$s
+creng_error_no_content	模型未返回内容

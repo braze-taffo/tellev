@@ -1,6 +1,8 @@
 package app.tellev.feature.extensions
 
 import app.tellev.core.extension.ExtensionEvent
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -83,7 +85,7 @@ internal fun reduceExtensionRuntimeEvent(
             current
                 .withLoadedStatus(extensionId, loaded = true, nowMillis = nowMillis)
                 .appendLog(
-                    ExtensionRuntimeLog(nowMillis, extensionId, ExtensionRuntimeLogLevel.Info, "扩展已加载"),
+                    ExtensionRuntimeLog(nowMillis, extensionId, ExtensionRuntimeLogLevel.Info, UiStrings.get(S.extdbg_loaded)),
                 )
         }
 
@@ -92,13 +94,13 @@ internal fun reduceExtensionRuntimeEvent(
             current
                 .withLoadedStatus(extensionId, loaded = false, nowMillis = nowMillis)
                 .appendLog(
-                    ExtensionRuntimeLog(nowMillis, extensionId, ExtensionRuntimeLogLevel.Info, "扩展已卸载"),
+                    ExtensionRuntimeLog(nowMillis, extensionId, ExtensionRuntimeLogLevel.Info, UiStrings.get(S.extdbg_unloaded)),
                 )
         }
 
         "extension_load_failed" -> {
             if (extensionId == null) return current
-            val message = event.payload.stringValue("message") ?: "扩展加载失败"
+            val message = event.payload.stringValue("message") ?: UiStrings.get(S.extdbg_load_failed)
             val unloaded = current.withLoadedStatus(extensionId, loaded = false, nowMillis = nowMillis)
             val previous = unloaded.statusByExtensionId.getValue(extensionId)
             unloaded.copy(

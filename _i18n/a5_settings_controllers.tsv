@@ -1,0 +1,70 @@
+provctl_switched_to	已切换到“%1$s”。
+provctl_load_failed	加载服务商配置失败：%1$s
+provctl_custom_config_display_name	自定义配置
+provctl_created	已创建自定义配置“%1$s”。
+provctl_create_failed	创建自定义配置失败：%1$s
+provctl_deleted	自定义配置已删除。
+provctl_delete_failed	删除自定义配置失败：%1$s
+provctl_advanced_config_invalid	高级配置格式错误
+provctl_test_failed	连接测试失败：%1$s
+provctl_saved	模型服务配置已保存。
+provctl_save_failed	保存服务商配置失败：%1$s
+provctl_label_extra_headers	附加 Headers
+provctl_label_extra_body	附加请求体
+provctl_must_be_json_object	%1$s 必须是合法的 JSON 对象
+provctl_header_must_be_string	附加 Header“%1$s”必须是字符串
+provctl_max_tokens_field_invalid	输出长度字段只能是 max_tokens 或 max_completion_tokens
+presetctl_load_failed	加载预设失败：%1$s
+presetctl_saved	预设“%1$s”已保存。
+presetctl_save_failed	保存预设失败：%1$s
+presetctl_selected	已切换到预设“%1$s”。
+presetctl_select_failed	切换预设失败：%1$s
+presetctl_duplicate_id	同分类已存在预设“%1$s”
+presetctl_saved_as	预设已另存为“%1$s”。
+presetctl_save_as_failed	另存为失败：%1$s
+presetctl_same_name	新名称与原名称相同
+presetctl_renamed	预设已重命名为“%1$s”。
+presetctl_rename_failed	重命名失败：%1$s
+presetctl_create_export_file_failed	无法创建导出文件
+presetctl_exported	预设“%1$s”已导出。
+presetctl_export_failed	导出预设失败：%1$s
+presetctl_deleted	预设已删除。
+presetctl_delete_failed	删除预设失败：%1$s
+presetctl_read_file_failed	无法读取所选文件
+presetctl_imported	预设「%1$s」已导入并启用。
+presetctl_imported_with_warnings	预设「%1$s」已导入并启用；%2$s。
+presetctl_import_failed	导入预设失败：%1$s
+persctl_created	人设“%1$s”已创建。
+persctl_create_failed	创建人设失败：%1$s
+persctl_not_found	人设不存在：%1$s
+persctl_updated	人设已更新。
+persctl_update_failed	更新人设失败：%1$s
+persctl_deleted	人设已删除。
+persctl_delete_failed	删除人设失败：%1$s
+persctl_secret_saved	密钥“%1$s”已保存。
+persctl_secret_save_failed	保存密钥失败：%1$s
+persctl_secret_deleted	密钥“%1$s”已删除。
+persctl_secret_delete_failed	删除密钥失败：%1$s
+imgctl_comfy_test_failed	ComfyUI 连接测试失败：%1$s
+imgctl_workflow_parse_failed	工作流 JSON 无法解析，未保存。请粘贴 ComfyUI「保存（API 格式）」导出的 JSON。
+imgctl_comfy_saved	生图模型配置已保存。
+imgctl_comfy_save_failed	保存生图模型配置失败：%1$s
+imgctl_novelai_test_failed	NovelAI 测试失败：%1$s
+imgctl_novelai_saved	NovelAI 生图配置已保存。
+imgctl_novelai_save_failed	保存 NovelAI 生图配置失败：%1$s
+bkpctl_open_target_failed	Unable to open backup target
+bkpctl_exported	备份已导出。
+bkpctl_export_failed	导出备份失败：%1$s
+bkpctl_imported	备份已导入。请重启应用以查看变化。
+bkpctl_import_failed	导入备份失败：%1$s
+setvm_load_failed	加载设置失败：%1$s
+setscreen_version_unknown	未知
+setscreen_title_provider	模型服务配置
+setscreen_title_imagegen	生图设置
+setscreen_title_settings	设置
+setscreen_back_cd	返回
+setscreen_this_config	该配置
+setscreen_delete_config_title	删除自定义配置
+setscreen_delete_config_message	确定删除“%1$s”吗？该配置的接口地址与密钥将被清除，且无法撤销。
+setscreen_delete	删除
+setscreen_cancel	取消

@@ -1,0 +1,60 @@
+comfy_status_connected	Connected
+comfy_status_connection_failed	Connection failed - is the ComfyUI server reachable?
+comfy_error_workflow_missing	未配置 ComfyUI 工作流：请先在设置中粘贴 API 格式工作流 JSON
+comfy_error_workflow_invalid	ComfyUI 工作流不是有效的 JSON 对象
+comfy_error_prompt_unbound	ComfyUI 工作流未接入图片提示词：请将正向提示词节点的完整文本设为 %1$s 并连接到采样器
+comfy_error_prompt_empty	图片提示词没有有效文字，已停止生图
+comfy_error_no_prompt_id	ComfyUI 未返回任务 ID
+comfy_error_timeout	ComfyUI 生成超时（10 分钟）
+comfy_error_no_images	ComfyUI 执行完成但没有产出图片
+comfy_error_request_failed	ComfyUI 请求失败
+comfy_error_bad_response	ComfyUI 响应无法解析：%1$s
+comfy_error_node_errors	工作流节点校验失败：%1$s
+comfy_error_history_http	查询生成历史失败：HTTP %1$d
+comfy_error_history_unparseable	历史响应无法解析
+comfy_error_download_http	下载生成图片失败：HTTP %1$d
+comfy_error_empty_image_response	图片响应为空
+comfy_error_execution	ComfyUI 执行出错
+novai_status_token_missing	未配置 NovelAI 令牌
+novai_status_token_invalid_suffix	：令牌无效或已过期
+novai_status_tier_unknown	未知档位
+novai_status_active	令牌有效，订阅生效（%1$s）
+novai_status_inactive	令牌有效，但订阅未生效（%1$s）
+novai_status_connect_failed	连接 NovelAI 失败：%1$s
+novai_error_token_missing	未配置 NovelAI 令牌：请先在设置中填写并保存
+novai_error_request_failed	NovelAI 请求失败
+novai_error_empty_response	NovelAI 响应为空
+novai_error_no_png	NovelAI 返回的压缩包中没有 PNG 图片
+novai_error_token_invalid	令牌无效或已过期
+novai_error_subscription	当前订阅不支持该请求（可能需要消耗 Anlas）
+novai_error_request_http	NovelAI 请求失败：HTTP %1$d
+oai_status_base_url_required	Base URL is required
+oai_status_connected	Connected
+oai_status_connection_failed	Connection failed
+oai_status_model_required	Please enter a model name or endpoint ID before testing this provider.
+oai_error_stream_invalid	服务商未返回有效的流式响应，请检查中转站接口或稍后重试
+oai_error_stream_incomplete	模型流在完成标记前结束（已收到 %1$d 个数据帧）
+oai_error_model_not_configured	当前服务商未配置模型
+oai_error_response_error	服务商返回生成错误
+grt_error_no_preset	没有可用于 %1$s 的生成预设
+prrepo_error_not_found	Preset not found: %1$s/%2$s
+prrepo_error_invalid_json	预设 JSON 格式无效：%1$s 不是有效的 JSON 对象
+prrepo_warning_routing_preserved	服务商、接口和模型字段已保留但不会应用：%1$s
+wbrepo_error_invalid_json	世界书 JSON 格式无效：%1$s 不是有效的 JSON 对象
+wbrepo_error_missing_entries	世界书 JSON 格式无效：%1$s 缺少 entries 对象
+chatrepo_error_session_not_found	Chat session not found: %1$s
+chatrepo_error_memory_mode_locked	对话记忆模式已锁定
+cregex_unnamed_script	未命名脚本
+cregex_diag_invalid_regex	无效或不兼容的正则表达式/flag，已跳过该规则
+cregex_diag_replace_failed	正则替换失败，已跳过该规则
+memmod_error_mode_locked	记忆模式已锁定
+memsvc_error_vector_need_enable	请先开启记忆与向量检索
+memsvc_error_vector_model_missing	未配置向量模型
+memsvc_error_vector_invalid_result	向量接口未返回有效结果
+webviewhost_error_module_not_ready	Module did not report ready within %1$d ms
+main_import_success	角色“%1$s”已导入
+main_import_failed	导入失败：%1$s
+main_error_read_file	无法读取文件
+memmod_mode_none	无记忆
+memmod_mode_archive	柏宝书式
+memmod_mode_episodic	STARmem 式

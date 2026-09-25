@@ -1,5 +1,7 @@
 package app.tellev.core.provider
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.Persona
 import app.tellev.core.model.PresetCategory
@@ -42,7 +44,7 @@ class GenerationRuntimeResolver(
         val selectedPresetName = dataStore.readSelectedPresetName(presetCategory)
         val selectedNamedPreset = presets.firstOrNull { it.id == selectedPresetName }
             ?: presets.firstOrNull()
-            ?: error("没有可用于 ${presetCategory.name} 的生成预设")
+            ?: error(UiStrings.get(S.grt_error_no_preset, presetCategory.name))
         val workingPreset = if (selectedNamedPreset.id == selectedPresetName) {
             dataStore.readPreset(presetCategory, "in_use")
         } else {

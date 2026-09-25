@@ -25,6 +25,16 @@ import app.tellev.core.memory.MemoryMode
 import app.tellev.core.memory.MemoryRecord
 import app.tellev.core.model.MessageRole
 
+/** MemoryMode 的本地化显示名：枚举 label 保留中文供提示词/持久化使用，界面一律经此解析。 */
+@Composable
+internal fun memoryModeLabel(mode: MemoryMode): String = stringResource(
+    when (mode) {
+        MemoryMode.NONE -> R.string.memmod_mode_none
+        MemoryMode.ARCHIVE -> R.string.memmod_mode_archive
+        MemoryMode.EPISODIC -> R.string.memmod_mode_episodic
+    },
+)
+
 @Composable
 internal fun MemoryChatDialogs(state: ChatUiState, viewModel: ChatViewModel, showManager: Boolean, onClose: () -> Unit) {
     val session = state.currentSession ?: return
@@ -38,7 +48,7 @@ internal fun MemoryChatDialogs(state: ChatUiState, viewModel: ChatViewModel, sho
             confirmButton = {
                 Column {
                     MemoryMode.entries.forEach { choice ->
-                        TextButton(onClick = { viewModel.selectMemoryMode(choice) }) { Text(choice.label) }
+                        TextButton(onClick = { viewModel.selectMemoryMode(choice) }) { Text(memoryModeLabel(choice)) }
                     }
                 }
             },
@@ -54,7 +64,7 @@ internal fun MemoryChatDialogs(state: ChatUiState, viewModel: ChatViewModel, sho
     val replyCount = session.messages.count { it.role == MessageRole.Character || it.role == MessageRole.Assistant }
     AlertDialog(
         onDismissRequest = onClose,
-        title = { Text(stringResource(R.string.chat_memory_manager_title, mode.label)) },
+        title = { Text(stringResource(R.string.chat_memory_manager_title, memoryModeLabel(mode))) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(state.memoryStatus ?: stringResource(R.string.chat_memory_ready))

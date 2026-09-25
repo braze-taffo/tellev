@@ -16,7 +16,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 
 @Composable
 internal fun SectionHeader(
@@ -25,7 +27,7 @@ internal fun SectionHeader(
     action: (() -> Unit)? = null,
     secondaryAction: (() -> Unit)? = null,
     secondaryActionIcon: ImageVector = Icons.Default.FileUpload,
-    secondaryActionDescription: String = "导入",
+    secondaryActionDescription: String? = null,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -50,7 +52,8 @@ internal fun SectionHeader(
             ) {
                 Icon(
                     secondaryActionIcon,
-                    contentDescription = secondaryActionDescription,
+                    contentDescription = secondaryActionDescription
+                        ?: stringResource(R.string.setcomp_import),
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -62,7 +65,7 @@ internal fun SectionHeader(
             ) {
                 Icon(
                     Icons.Default.Add,
-                    contentDescription = "添加",
+                    contentDescription = stringResource(R.string.setcomp_add_cd),
                     modifier = Modifier.size(20.dp),
                 )
             }

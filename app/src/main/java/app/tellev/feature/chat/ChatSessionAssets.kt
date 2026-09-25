@@ -1,5 +1,7 @@
 package app.tellev.feature.chat
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.CharacterSummary
 import app.tellev.core.model.ChatSession
 import app.tellev.core.storage.StDirectoryLayout
@@ -29,7 +31,7 @@ internal object ChatSessionAssets {
     ) {
         try {
             val pngBytes = withContext(Dispatchers.IO) { decodeImageAsPng(imageBytes) }
-                ?: error("无法解析图片")
+                ?: error(UiStrings.get(S.chassets_image_decode_failed))
             val rel = "backgrounds/${session.id}.png"
             val bgFile = withContext(Dispatchers.IO) {
                 val dir = layout.backgrounds.toFile()
@@ -48,7 +50,7 @@ internal object ChatSessionAssets {
             sessionRuntime.persistSessionMutation(session, updated, onSessionUpdated)
             onBackgroundFileResolved(bgFile)
         } catch (e: Exception) {
-            onError("设置聊天背景失败：${e.message}")
+            onError(UiStrings.get(S.chassets_set_background_failed, e.message))
         }
     }
 
@@ -77,7 +79,7 @@ internal object ChatSessionAssets {
                 }
             }
         } catch (e: Exception) {
-            onError("清除聊天背景失败：${e.message}")
+            onError(UiStrings.get(S.chassets_clear_background_failed, e.message))
         }
     }
 

@@ -52,8 +52,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 import app.tellev.core.model.WorldBookEntry
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -88,22 +90,22 @@ fun WorldBookDetailScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(book?.name ?: "世界书") },
+                title = { Text(book?.name ?: stringResource(R.string.wbdetail_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.wbdetail_back_cd))
                     }
                 },
                 actions = {
                     IconButton(onClick = { searchActive = !searchActive }) {
                         Icon(
                             if (searchActive) Icons.Default.Close else Icons.Default.Search,
-                            contentDescription = if (searchActive) "关闭搜索" else "搜索条目",
+                            contentDescription = if (searchActive) stringResource(R.string.wbdetail_search_close_cd) else stringResource(R.string.wbdetail_search_cd),
                         )
                     }
                     if (book != null) {
                         IconButton(enabled = !state.isSaving, onClick = { viewModel.saveBook(book) }) {
-                            Icon(Icons.Default.Save, contentDescription = "保存世界书")
+                            Icon(Icons.Default.Save, contentDescription = stringResource(R.string.wbdetail_save_book_cd))
                         }
                     }
                 },
@@ -118,8 +120,8 @@ fun WorldBookDetailScreen(
                     onClick = {
                         onEditEntry("new")
                     },
-                    icon = { Icon(Icons.Default.Add, contentDescription = "新建条目") },
-                    text = { Text("新建条目") },
+                    icon = { Icon(Icons.Default.Add, contentDescription = stringResource(R.string.wbdetail_new_entry)) },
+                    text = { Text(stringResource(R.string.wbdetail_new_entry)) },
                 )
             }
         },
@@ -142,7 +144,7 @@ fun WorldBookDetailScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 8.dp),
-                        placeholder = { Text("按关键词或内容搜索条目...") },
+                        placeholder = { Text(stringResource(R.string.wbdetail_search_placeholder)) },
                         singleLine = true,
                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                         trailingIcon = {
@@ -151,7 +153,7 @@ fun WorldBookDetailScreen(
                                     searchQuery = ""
                                     viewModel.searchEntries("")
                                 }) {
-                                    Icon(Icons.Default.Close, contentDescription = "清除")
+                                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.wbdetail_clear_cd))
                                 }
                             }
                         },
@@ -169,7 +171,7 @@ fun WorldBookDetailScreen(
                     } else {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(state.selectionError.orEmpty(), color = MaterialTheme.colorScheme.error)
-                            TextButton(onClick = onBack) { Text("返回世界书列表") }
+                            TextButton(onClick = onBack) { Text(stringResource(R.string.wbdetail_back_to_list)) }
                         }
                     }
                 }
@@ -180,14 +182,14 @@ fun WorldBookDetailScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = if (searchQuery.isNotEmpty()) "没有匹配的条目" else "此世界书暂无条目",
+                            text = if (searchQuery.isNotEmpty()) stringResource(R.string.wbdetail_no_match) else stringResource(R.string.wbdetail_empty),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         if (searchQuery.isEmpty()) {
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "点击“新建条目”添加第一条设定",
+                                text = stringResource(R.string.wbdetail_empty_hint),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                             )
@@ -229,7 +231,7 @@ private fun WorldBookEntryItem(
     onDelete: () -> Unit,
 ) {
     var showDeleteDialog by remember { mutableStateOf(false) }
-    val displayTitle = entry.keys.firstOrNull() ?: "未命名条目"
+    val displayTitle = entry.keys.firstOrNull() ?: stringResource(R.string.wbdetail_unnamed_entry)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -285,7 +287,7 @@ private fun WorldBookEntryItem(
                             onClick = {},
                             label = {
                                 Text(
-                                    text = "+${entry.keys.size - 4}",
+                                    text = stringResource(R.string.wbdetail_more_keys, entry.keys.size - 4),
                                     style = MaterialTheme.typography.labelSmall,
                                 )
                             },
@@ -303,14 +305,14 @@ private fun WorldBookEntryItem(
             ) {
                 Badge(containerColor = MaterialTheme.colorScheme.tertiaryContainer) {
                     Text(
-                        "P:${entry.priority}",
+                        stringResource(R.string.wbdetail_priority_badge, entry.priority),
                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
                 Badge(containerColor = MaterialTheme.colorScheme.secondaryContainer) {
                     Text(
-                        "D:${entry.depth}",
+                        stringResource(R.string.wbdetail_depth_badge, entry.depth),
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                         style = MaterialTheme.typography.labelSmall,
                     )
@@ -318,7 +320,7 @@ private fun WorldBookEntryItem(
                 if (entry.constant) {
                     Badge(containerColor = MaterialTheme.colorScheme.errorContainer) {
                         Text(
-                            "常驻",
+                            stringResource(R.string.wbdetail_badge_constant),
                             color = MaterialTheme.colorScheme.onErrorContainer,
                             style = MaterialTheme.typography.labelSmall,
                         )
@@ -327,7 +329,7 @@ private fun WorldBookEntryItem(
                 if (entry.selective) {
                     Badge(containerColor = MaterialTheme.colorScheme.primaryContainer) {
                         Text(
-                            "选择",
+                            stringResource(R.string.wbdetail_badge_selective),
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                             style = MaterialTheme.typography.labelSmall,
                         )
@@ -342,7 +344,7 @@ private fun WorldBookEntryItem(
                 ) {
                     Icon(
                         Icons.Default.Delete,
-                        contentDescription = "删除条目",
+                        contentDescription = stringResource(R.string.wbdetail_delete_entry_cd),
                         modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.error,
                     )
@@ -354,8 +356,8 @@ private fun WorldBookEntryItem(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            title = { Text("删除条目") },
-            text = { Text("确定要删除这个条目吗？") },
+            title = { Text(stringResource(R.string.wbdetail_delete_entry_title)) },
+            text = { Text(stringResource(R.string.wbdetail_delete_entry_confirm)) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -363,12 +365,12 @@ private fun WorldBookEntryItem(
                         showDeleteDialog = false
                     },
                 ) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.wbdetail_delete), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("取消")
+                    Text(stringResource(R.string.wbdetail_cancel))
                 }
             },
         )

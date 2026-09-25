@@ -26,8 +26,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 import app.tellev.feature.update.UpdateUiState
 import app.tellev.feature.update.UpdateViewModel
 
@@ -41,6 +43,7 @@ internal fun LazyListScope.aboutSectionItems(
         val uriHandler = LocalUriHandler.current
         val clipboardManager = LocalClipboardManager.current
         val bilibiliProfileUrl = "https://space.bilibili.com/499259948"
+        val qqGroupCopiedMessage = stringResource(R.string.setabout_qq_copied)
 
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -56,12 +59,12 @@ internal fun LazyListScope.aboutSectionItems(
                     Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(20.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "关于",
+                        text = stringResource(R.string.setabout_title),
                         style = MaterialTheme.typography.titleSmall,
                     )
                 }
                 Text(
-                    text = "tellev v$versionName",
+                    text = stringResource(R.string.setabout_version, versionName),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 UpdateStatus(
@@ -72,11 +75,11 @@ internal fun LazyListScope.aboutSectionItems(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "启动时自动检查更新",
+                            text = stringResource(R.string.setabout_auto_check),
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Text(
-                            text = "关闭后启动不再联网检查，仍可在此手动检查",
+                            text = stringResource(R.string.setabout_auto_check_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -87,37 +90,37 @@ internal fun LazyListScope.aboutSectionItems(
                     )
                 }
                 Text(
-                    text = "基于 SillyTavern 的原生 Android 客户端。",
+                    text = stringResource(R.string.setabout_based_on_st),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                 Text(
-                    text = "发布许可",
+                    text = stringResource(R.string.setabout_license),
                     style = MaterialTheme.typography.labelLarge,
                 )
                 Text(
-                    text = "tellev 继续以 GNU Affero General Public License v3.0（AGPL-3.0）发布。",
+                    text = stringResource(R.string.setabout_license_line1),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    text = "你可以自由使用、复制、修改和分发本程序；分发修改版或提供网络服务时，应按 AGPL-3.0 提供相应源代码。",
+                    text = stringResource(R.string.setabout_license_line2),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    text = "tellev 名称、图标和作者信息仅用于官方版本展示，未经授权不得用于冒充官方版本或误导性商业分发。",
+                    text = stringResource(R.string.setabout_license_line3),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                 Text(
-                    text = "作者",
+                    text = stringResource(R.string.setabout_author),
                     style = MaterialTheme.typography.labelLarge,
                 )
                 Text(
-                    text = "B站：迷迭香のねこ",
+                    text = stringResource(R.string.setabout_author_bilibili),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -125,21 +128,21 @@ internal fun LazyListScope.aboutSectionItems(
                     onClick = { uriHandler.openUri(bilibiliProfileUrl) },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("打开作者 B 站主页")
+                    Text(stringResource(R.string.setabout_open_bilibili))
                 }
                 Text(
-                    text = "QQ 交流群：tellev酒馆交流群",
+                    text = stringResource(R.string.setabout_qq_group),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 OutlinedButton(
                     onClick = {
                         clipboardManager.setText(AnnotatedString("754350480"))
-                        Toast.makeText(context, "已复制群号 754350480", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, qqGroupCopiedMessage, Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("复制 QQ 群号：754350480")
+                    Text(stringResource(R.string.setabout_copy_qq_group))
                 }
             }
         }

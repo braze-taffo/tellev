@@ -53,8 +53,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 import app.tellev.core.model.WorldBook
 import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
@@ -85,13 +87,13 @@ fun WorldBooksListScreen(
                 try {
                     val bytes = withContext(Dispatchers.IO) {
                         context.contentResolver.openInputStream(selectedUri)?.use { it.readBytes() }
-                    } ?: error("无法读取所选文件")
+                    } ?: error(context.getString(R.string.wblist_read_file_failed))
                     val fileName = UriUtils.resolveDisplayName(context, selectedUri)
                         ?: selectedUri.lastPathSegment
                         ?: "imported_world_book.json"
                     viewModel.importBook(bytes, fileName)
                 } catch (e: Exception) {
-                    snackbarHostState.showSnackbar("导入世界书失败：${e.message}")
+                    snackbarHostState.showSnackbar(context.getString(R.string.wblist_import_failed, e.message))
                 }
             }
         }
@@ -124,16 +126,16 @@ fun WorldBooksListScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("世界书") },
+                title = { Text(stringResource(R.string.wblist_title)) },
                 actions = {
-                    TextButton(onClick = onCreateWithAi) { Text("AI 创建") }
+                    TextButton(onClick = onCreateWithAi) { Text(stringResource(R.string.wblist_ai_create)) }
                     IconButton(onClick = { showSettingsDialog = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "世界书设置")
+                        Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.wblist_settings_cd))
                     }
                     // Use */* so .json files stay selectable (SAF MIME filtering
                     // greys them out in many file managers).
                     IconButton(onClick = { importLauncher.launch("*/*") }) {
-                        Icon(Icons.Default.FileUpload, contentDescription = "导入世界书")
+                        Icon(Icons.Default.FileUpload, contentDescription = stringResource(R.string.wblist_import_cd))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -147,8 +149,8 @@ fun WorldBooksListScreen(
                     newBookName = ""
                     showCreateDialog = true
                 },
-                icon = { Icon(Icons.Default.Add, contentDescription = "新建") },
-                text = { Text("新建") },
+                icon = { Icon(Icons.Default.Add, contentDescription = stringResource(R.string.wblist_new)) },
+                text = { Text(stringResource(R.string.wblist_new)) },
             )
         },
         modifier = modifier,
@@ -182,13 +184,13 @@ fun WorldBooksListScreen(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "暂无世界书",
+                            text = stringResource(R.string.wblist_empty),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "新建世界书来管理背景设定条目",
+                            text = stringResource(R.string.wblist_empty_hint),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         )
@@ -220,12 +222,12 @@ fun WorldBooksListScreen(
     if (showCreateDialog) {
         AlertDialog(
             onDismissRequest = { showCreateDialog = false },
-            title = { Text("新建世界书") },
+            title = { Text(stringResource(R.string.wblist_create_title)) },
             text = {
                 OutlinedTextField(
                     value = newBookName,
                     onValueChange = { newBookName = it },
-                    label = { Text("世界书名称") },
+                    label = { Text(stringResource(R.string.wblist_name_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -239,12 +241,12 @@ fun WorldBooksListScreen(
                         }
                     },
                 ) {
-                    Text("创建")
+                    Text(stringResource(R.string.wblist_create))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateDialog = false }) {
-                    Text("取消")
+                    Text(stringResource(R.string.wblist_cancel))
                 }
             },
         )
@@ -263,26 +265,25 @@ fun WorldBooksListScreen(
         val instructPresetOptions = remember(state.instructPresets) { state.instructPresets }
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
-            title = { Text("世界书与提示词设置") },
+            title = { Text(stringResource(R.string.wblist_settings_title)) },
             text = {
                 Column {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("递归扫描", modifier = Modifier.weight(1f))
+                        Text(stringResource(R.string.wblist_recursive_scan), modifier = Modifier.weight(1f))
                         Switch(checked = recursive, onCheckedChange = { recursive = it })
                     }
                     Text(
-                        "激活的条目内容会再次参与关键词匹配（ST 的 world_info_recursive），" +
-                            "延迟递归（delayUntilRecursion）的条目需要开启此项才会触发。",
+                        stringResource(R.string.wblist_recursive_desc),
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = maxRecursionSteps,
                         onValueChange = { maxRecursionSteps = it.filter(Char::isDigit) },
-                        label = { Text("最大递归步数（0 = 不限）") },
+                        label = { Text(stringResource(R.string.wblist_max_recursion_steps)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -290,22 +291,22 @@ fun WorldBooksListScreen(
                     OutlinedTextField(
                         value = scanDepth,
                         onValueChange = { scanDepth = it.filter(Char::isDigit) },
-                        label = { Text("扫描深度（最近 N 条消息参与匹配）") },
+                        label = { Text(stringResource(R.string.wblist_scan_depth)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(16.dp))
-                    Text("角色卡提示词", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.wblist_char_prompt_section), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(4.dp))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("使用角色卡系统提示词", modifier = Modifier.weight(1f))
+                        Text(stringResource(R.string.wblist_prefer_char_prompt), modifier = Modifier.weight(1f))
                         Switch(checked = preferCharPrompt, onCheckedChange = { preferCharPrompt = it })
                     }
                     Text(
-                        "开启后使用角色卡的 data.system_prompt 替代默认系统提示词（ST 的 prefer_character_prompt）。",
+                        stringResource(R.string.wblist_prefer_char_prompt_desc),
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Spacer(Modifier.height(8.dp))
@@ -313,31 +314,32 @@ fun WorldBooksListScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("使用角色卡越狱提示", modifier = Modifier.weight(1f))
+                        Text(stringResource(R.string.wblist_prefer_char_jailbreak), modifier = Modifier.weight(1f))
                         Switch(checked = preferCharJailbreak, onCheckedChange = { preferCharJailbreak = it })
                     }
                     Text(
-                        "开启后注入角色卡的 data.post_history_instructions 到聊天末尾（ST 的 prefer_character_jailbreak）。",
+                        stringResource(R.string.wblist_prefer_char_jailbreak_desc),
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Spacer(Modifier.height(16.dp))
-                    Text("Instruct 模式", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.wblist_instruct_section), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(4.dp))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("启用 Instruct 格式化", modifier = Modifier.weight(1f))
+                        Text(stringResource(R.string.wblist_instruct_enabled), modifier = Modifier.weight(1f))
                         Switch(checked = instructEnabled, onCheckedChange = { instructEnabled = it })
                     }
                     Text(
-                        "为补全式 API（textgen/kobold 等）格式化消息序列。聊天补全 API 无需开启。",
+                        stringResource(R.string.wblist_instruct_enabled_desc),
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Spacer(Modifier.height(8.dp))
-                    Text("Instruct 预设", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.wblist_instruct_preset), style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        if (instructPresetName.isBlank()) "当前：内置 ChatML" else "当前：$instructPresetName",
+                        if (instructPresetName.isBlank()) stringResource(R.string.wblist_instruct_preset_default)
+                        else stringResource(R.string.wblist_instruct_preset_current, instructPresetName),
                         style = MaterialTheme.typography.bodySmall,
                     )
                     if (instructPresetOptions.isNotEmpty()) {
@@ -366,7 +368,7 @@ fun WorldBooksListScreen(
                             selected = instructPresetName.isBlank(),
                             onClick = { instructPresetName = "" },
                         )
-                        Text("内置 ChatML", style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.wblist_instruct_preset_builtin), style = MaterialTheme.typography.bodySmall)
                     }
                 }
             },
@@ -391,12 +393,12 @@ fun WorldBooksListScreen(
                         showSettingsDialog = false
                     },
                 ) {
-                    Text("保存")
+                    Text(stringResource(R.string.wblist_save))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showSettingsDialog = false }) {
-                    Text("取消")
+                    Text(stringResource(R.string.wblist_cancel))
                 }
             },
         )
@@ -436,7 +438,7 @@ private fun WorldBookListItem(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "${book.entries.size} 条条目",
+                    text = stringResource(R.string.wblist_entry_count, book.entries.size),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -452,14 +454,14 @@ private fun WorldBookListItem(
             IconButton(onClick = onEditWithAi) {
                 Icon(
                     Icons.Default.Edit,
-                    contentDescription = "AI 编辑世界书",
+                    contentDescription = stringResource(R.string.wblist_ai_edit_cd),
                 )
             }
 
             IconButton(onClick = { showDeleteDialog = true }) {
                 Icon(
                     Icons.Default.Delete,
-                    contentDescription = "删除世界书",
+                    contentDescription = stringResource(R.string.wblist_delete_cd),
                     tint = MaterialTheme.colorScheme.error,
                 )
             }
@@ -469,8 +471,8 @@ private fun WorldBookListItem(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            title = { Text("删除世界书") },
-            text = { Text("确定要删除世界书「${book.name}」吗？其中的所有条目都将被删除。") },
+            title = { Text(stringResource(R.string.wblist_delete_title)) },
+            text = { Text(stringResource(R.string.wblist_delete_confirm, book.name)) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -478,12 +480,12 @@ private fun WorldBookListItem(
                         showDeleteDialog = false
                     },
                 ) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.wblist_delete), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("取消")
+                    Text(stringResource(R.string.wblist_cancel))
                 }
             },
         )

@@ -1,0 +1,67 @@
+chatvm_recover_unsaved	上次修改未能保存，已恢复到最近保存的会话
+chatvm_reread_character_failed	重新读取角色卡失败：%1$s
+chatvm_reread_preset_failed	重新读取预设失败：%1$s
+chatvm_reread_worldbook_failed	重新读取世界书失败：%1$s
+chatvm_reread_persona_failed	重新读取用户设定失败：%1$s
+chatvm_reread_provider_failed	重新读取服务商配置失败：%1$s
+chatvm_read_session_state_failed	读取会话提交状态失败：%1$s
+chatvm_load_data_failed	加载数据失败：%1$s
+chatvm_load_character_failed	加载角色失败：%1$s
+chatvm_close_session_failed	关闭会话失败：%1$s
+chatvm_create_session_failed	创建会话失败：%1$s
+chatvm_save_memory_mode_failed	保存记忆模式失败：%1$s
+chatvm_memory_rebuild_failed	补建失败：%1$s
+chatvm_memory_retry_failed	记忆重试失败：%1$s
+chatvm_memory_correct_failed	修改记忆失败：%1$s
+chatvm_memory_vectors_failed	向量更新失败：%1$s
+chatvm_memory_resume_failed	记忆恢复失败：%1$s
+chatvm_switch_session_failed	切换会话失败：%1$s
+chatvm_cleanup_images_failed	清理消息图片失败：%1$s
+chatvm_delete_session_failed	删除会话失败：%1$s
+chatvm_deleted_cleanup_failed	会话已删除，但清理未完成：%1$s
+chatvm_deleted_refresh_failed	会话已删除，但刷新会话列表失败：%1$s
+chatvm_delete_image_failed	删除图片失败：%1$s
+chatvm_load_preset_failed	加载预设失败：%1$s
+chatimgco_engine_not_configured	生图模型未配置：请先在设置中配置 ComfyUI 工作流或填写 NovelAI 令牌
+chatimgco_busy_generating_text	正在生成回复，请等回复结束后再生图
+chatimgco_select_character_first	请先选择角色
+chatimgco_no_session	当前没有可用会话
+chatimgco_prompt_required	请输入图片提示词
+chatimgco_status_preparing	准备生成图片…
+chatimgco_status_summarizing	正在用对话模型总结画面…
+chatimgco_status_novelai_generating	正在调用 NovelAI 生成图片…
+chatimgco_status_generating	正在生成图片…
+chatimgco_select_engine	请选择生图引擎
+chatimgco_engine_unconfigured_detail	%1$s 未配置，请先在设置中完成配置
+chatimgco_generate_failed_code	生成图片失败：%1$s（%2$s）
+chatimgco_generate_failed_no_data	生成图片失败：未返回图片数据
+chatimgco_generate_failed	生成图片失败：%1$s
+chatgenco_select_character_first	请先选择角色
+chatgenco_no_session	当前没有可用会话
+chatgenco_regen_last_only	只能重新生成当前最后一条角色回复
+chatgenco_regen_input_missing	找不到这条回复对应的用户消息
+chatgenco_empty_reply	生成失败：服务商未返回有效回复内容（可能是网关/中转站错误或内容拦截）
+chatgenco_memory_process_failed	记忆整理失败：%1$s
+chatgenco_generate_failed	生成失败：%1$s
+chatgenco_error_generic	出错了：%1$s
+chatrt_recover_state_failed	恢复未保存的会话状态失败：%1$s
+chatrt_variable_save_paused	变量保存失败，生成已暂停：%1$s
+chatrt_edit_not_committed	消息修改未提交：%1$s
+chatrt_update_incomplete	消息更新未完成：%1$s
+chatrt_extension_flush_failed	扩展写入收尾失败：%1$s
+chatrt_session_release_failed	会话写入收尾失败：%1$s
+chatrt_session_unregister_failed	会话写入清理失败：%1$s
+chatrt_exit_pending_writes	退出时仍有未完成写入：%1$s
+chtav_script_load_failed	加载角色卡脚本失败：%1$s
+chassets_image_decode_failed	无法解析图片
+chassets_set_background_failed	设置聊天背景失败：%1$s
+chassets_clear_background_failed	清除聊天背景失败：%1$s
+updvm_check_failed	检查更新失败
+updvm_download_failed	下载失败：%1$s
+updchk_channel_official	正式版
+updchk_channel_mnn	生图版
+updchk_channel_release_missing	未找到 %1$s 渠道的发行
+updchk_channel_apk_missing	未找到 %1$s 渠道的 APK 资产
+updchk_empty_response_body	空响应体
+updchk_apk_checksum_failed	APK 校验失败
+updchk_download_failed	下载失败

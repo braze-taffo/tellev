@@ -204,3 +204,944 @@ nav_update_apk_size	Download is about %1$s MB	ダウンロードは約%1$s MBで
 nav_update_now	Update now	今すぐアップデート	지금 업데이트
 nav_update_download_started	Downloading new version...	新バージョンをダウンロード中…	새 버전 다운로드 중…
 ui_placeholder_message	Architecture entry point ready; features live in their own modules.	アーキテクチャのエントリポイントです。機能は各モジュールに実装します。	아키텍처 진입점이 준비되었습니다. 기능은 각 모듈에 구현합니다.
+chatvm_recover_unsaved	Unsaved changes were recovered from the last saved session	保存できなかった変更を復元し、最後に保存したセッションに戻しました	저장되지 않은 변경 사항이 마지막 저장 세션으로 복구되었습니다
+chatvm_reread_character_failed	Failed to re-read character card: %1$s	キャラカードの再読み込みに失敗しました：%1$s	캐릭터 카드 다시 읽기 실패: %1$s
+chatvm_reread_preset_failed	Failed to re-read preset: %1$s	プリセットの再読み込みに失敗しました：%1$s	프리셋 다시 읽기 실패: %1$s
+chatvm_reread_worldbook_failed	Failed to re-read world book: %1$s	ワールドブックの再読み込みに失敗しました：%1$s	월드북 다시 읽기 실패: %1$s
+chatvm_reread_persona_failed	Failed to re-read persona: %1$s	ペルソナの再読み込みに失敗しました：%1$s	페르소나 다시 읽기 실패: %1$s
+chatvm_reread_provider_failed	Failed to re-read provider config: %1$s	プロバイダー設定の再読み込みに失敗しました：%1$s	공급자 구성 다시 읽기 실패: %1$s
+chatvm_read_session_state_failed	Failed to read session commit state: %1$s	セッションのコミット状態の読み取りに失敗しました：%1$s	세션 커밋 상태 읽기 실패: %1$s
+chatvm_load_data_failed	Failed to load data: %1$s	データの読み込みに失敗しました：%1$s	데이터 로드 실패: %1$s
+chatvm_load_character_failed	Failed to load character: %1$s	キャラクターの読み込みに失敗しました：%1$s	캐릭터 로드 실패: %1$s
+chatvm_close_session_failed	Failed to close session: %1$s	セッションを閉じるのに失敗しました：%1$s	세션 닫기 실패: %1$s
+chatvm_create_session_failed	Failed to create session: %1$s	セッションの作成に失敗しました：%1$s	세션 생성 실패: %1$s
+chatvm_save_memory_mode_failed	Failed to save memory mode: %1$s	記憶モードの保存に失敗しました：%1$s	기억 모드 저장 실패: %1$s
+chatvm_memory_rebuild_failed	Backfill failed: %1$s	補完に失敗しました：%1$s	보완 실패: %1$s
+chatvm_memory_retry_failed	Memory retry failed: %1$s	記憶の再試行に失敗しました：%1$s	기억 재시도 실패: %1$s
+chatvm_memory_correct_failed	Failed to update memory: %1$s	記憶の修正に失敗しました：%1$s	기억 수정 실패: %1$s
+chatvm_memory_vectors_failed	Vector update failed: %1$s	ベクトルの更新に失敗しました：%1$s	벡터 업데이트 실패: %1$s
+chatvm_memory_resume_failed	Failed to resume memory: %1$s	記憶の再開に失敗しました：%1$s	기억 재개 실패: %1$s
+chatvm_switch_session_failed	Failed to switch session: %1$s	セッションの切り替えに失敗しました：%1$s	세션 전환 실패: %1$s
+chatvm_cleanup_images_failed	Failed to clean up message images: %1$s	メッセージ画像のクリーンアップに失敗しました：%1$s	메시지 이미지 정리 실패: %1$s
+chatvm_delete_session_failed	Failed to delete session: %1$s	セッションの削除に失敗しました：%1$s	세션 삭제 실패: %1$s
+chatvm_deleted_cleanup_failed	Session deleted, but cleanup did not finish: %1$s	セッションは削除されましたが、クリーンアップが完了していません：%1$s	세션은 삭제되었지만 정리가 완료되지 않았습니다: %1$s
+chatvm_deleted_refresh_failed	Session deleted, but refreshing the session list failed: %1$s	セッションは削除されましたが、セッション一覧の更新に失敗しました：%1$s	세션은 삭제되었지만 세션 목록 새로 고침에 실패했습니다: %1$s
+chatvm_delete_image_failed	Failed to delete image: %1$s	画像の削除に失敗しました：%1$s	이미지 삭제 실패: %1$s
+chatvm_load_preset_failed	Failed to load preset: %1$s	プリセットの読み込みに失敗しました：%1$s	프리셋 로드 실패: %1$s
+chatimgco_engine_not_configured	Image model is not configured. Set up a ComfyUI workflow or enter a NovelAI token in Settings first	生図モデルが未設定です。先に設定でComfyUIワークフローを設定するか、NovelAIトークンを入力してください	이미지 모델이 구성되지 않았습니다. 먼저 설정에서 ComfyUI 워크플로를 구성하거나 NovelAI 토큰을 입력하세요
+chatimgco_busy_generating_text	A reply is being generated. Wait for it to finish before generating images	返信を生成中です。返信が完了してから画像を生成してください	답변을 생성 중입니다. 답변이 끝난 후 이미지를 생성하세요
+chatimgco_select_character_first	Select a character first	先にキャラクターを選択してください	먼저 캐릭터를 선택하세요
+chatimgco_no_session	No active session	利用可能なセッションがありません	사용 가능한 세션이 없습니다
+chatimgco_prompt_required	Enter an image prompt	画像プロンプトを入力してください	이미지 프롬프트를 입력하세요
+chatimgco_status_preparing	Preparing to generate image...	画像生成を準備中…	이미지 생성 준비 중…
+chatimgco_status_summarizing	Summarizing the scene with the chat model...	対話モデルでシーンを要約中…	대화 모델로 장면 요약 중…
+chatimgco_status_novelai_generating	Calling NovelAI to generate image...	NovelAIで画像を生成中…	NovelAI로 이미지 생성 중…
+chatimgco_status_generating	Generating image...	画像を生成中…	이미지 생성 중…
+chatimgco_select_engine	Select an image engine	画像エンジンを選択してください	이미지 엔진을 선택하세요
+chatimgco_engine_unconfigured_detail	%1$s is not configured. Finish its setup in Settings first	%1$sが未設定です。先に設定で構成を完了してください	%1$s이(가) 구성되지 않았습니다. 먼저 설정에서 구성을 완료하세요
+chatimgco_generate_failed_code	Image generation failed: %1$s (%2$s)	画像生成に失敗しました：%1$s（%2$s）	이미지 생성 실패: %1$s(%2$s)
+chatimgco_generate_failed_no_data	Image generation failed: no image data was returned	画像生成に失敗しました：画像データが返されませんでした	이미지 생성 실패: 이미지 데이터가 반환되지 않았습니다
+chatimgco_generate_failed	Image generation failed: %1$s	画像生成に失敗しました：%1$s	이미지 생성 실패: %1$s
+chatgenco_select_character_first	Select a character first	先にキャラクターを選択してください	먼저 캐릭터를 선택하세요
+chatgenco_no_session	No active session	利用可能なセッションがありません	사용 가능한 세션이 없습니다
+chatgenco_regen_last_only	Only the latest character reply can be regenerated	再生成できるのは最後のキャラクター応答のみです	마지막 캐릭터 응답만 다시 생성할 수 있습니다
+chatgenco_regen_input_missing	The user message for this reply could not be found	この応答に対応するユーザーメッセージが見つかりません	이 응답에 해당하는 사용자 메시지를 찾을 수 없습니다
+chatgenco_empty_reply	Generation failed: the provider returned no valid reply (gateway/relay error or content block)	生成に失敗しました：プロバイダーから有効な応答がありません（ゲートウェイ/中継のエラー、またはコンテンツブロックの可能性）	생성 실패: 공급자가 유효한 응답을 반환하지 않았습니다(게이트웨이/중계 오류 또는 콘텐츠 차단일 수 있습니다)
+chatgenco_memory_process_failed	Memory processing failed: %1$s	記憶の整理に失敗しました：%1$s	기억 처리 실패: %1$s
+chatgenco_generate_failed	Generation failed: %1$s	生成に失敗しました：%1$s	생성 실패: %1$s
+chatgenco_error_generic	Something went wrong: %1$s	エラーが発生しました：%1$s	오류가 발생했습니다: %1$s
+chatrt_recover_state_failed	Failed to recover unsaved session state: %1$s	未保存のセッション状態の復元に失敗しました：%1$s	저장되지 않은 세션 상태 복구 실패: %1$s
+chatrt_variable_save_paused	Variable save failed; generation paused: %1$s	変数の保存に失敗したため、生成を一時停止しました：%1$s	변수 저장 실패로 생성이 일시 중지되었습니다: %1$s
+chatrt_edit_not_committed	Message edit was not committed: %1$s	メッセージの編集がコミットされませんでした：%1$s	메시지 수정이 커밋되지 않았습니다: %1$s
+chatrt_update_incomplete	Message update did not complete: %1$s	メッセージの更新が完了しませんでした：%1$s	메시지 업데이트가 완료되지 않았습니다: %1$s
+chatrt_extension_flush_failed	Failed to finalize extension writes: %1$s	拡張機能の書き込みの終了処理に失敗しました：%1$s	확장 쓰기 마무리 실패: %1$s
+chatrt_session_release_failed	Failed to finalize session writes: %1$s	セッション書き込みの終了処理に失敗しました：%1$s	세션 쓰기 마무리 실패: %1$s
+chatrt_session_unregister_failed	Failed to clean up session writes: %1$s	セッション書き込みのクリーンアップに失敗しました：%1$s	세션 쓰기 정리 실패: %1$s
+chatrt_exit_pending_writes	There are unfinished writes on exit: %1$s	終了時に未完了の書き込みがあります：%1$s	종료 시 완료되지 않은 쓰기가 있습니다: %1$s
+chtav_script_load_failed	Failed to load character card script: %1$s	キャラカードスクリプトの読み込みに失敗しました：%1$s	캐릭터 카드 스크립트 로드 실패: %1$s
+chassets_image_decode_failed	Could not decode the image	画像をデコードできませんでした	이미지를 디코딩할 수 없습니다
+chassets_set_background_failed	Failed to set chat background: %1$s	チャット背景の設定に失敗しました：%1$s	채팅 배경 설정 실패: %1$s
+chassets_clear_background_failed	Failed to clear chat background: %1$s	チャット背景のクリアに失敗しました：%1$s	채팅 배경 지우기 실패: %1$s
+updvm_check_failed	Update check failed	更新の確認に失敗しました	업데이트 확인 실패
+updvm_download_failed	Download failed: %1$s	ダウンロードに失敗しました：%1$s	다운로드 실패: %1$s
+updchk_channel_official	Standard	正式版	정식판
+updchk_channel_mnn	Image Gen (MNN)	画像生成版	이미지 생성판
+updchk_channel_release_missing	No release found for the %1$s channel	%1$sチャンネルのリリースが見つかりません	%1$s 채널의 릴리스를 찾을 수 없습니다
+updchk_channel_apk_missing	No APK asset found for the %1$s channel	%1$sチャンネルのAPKアセットが見つかりません	%1$s 채널의 APK 자산을 찾을 수 없습니다
+updchk_empty_response_body	Empty response body	空のレスポンスボディ	빈 응답 본문
+updchk_apk_checksum_failed	APK checksum verification failed	APKのチェックサム検証に失敗しました	APK 체크섬 검증 실패
+updchk_download_failed	Download failed	ダウンロードに失敗しました	다운로드 실패
+comfy_status_connected	Connected	接続済み	연결됨
+comfy_status_connection_failed	Connection failed - is the ComfyUI server reachable?	接続に失敗しました - ComfyUIサーバーに到達できますか？	연결 실패 - ComfyUI 서버에 연결할 수 있습니까?
+comfy_error_workflow_missing	No ComfyUI workflow configured. Paste an API-format workflow JSON in Settings first	ComfyUIワークフローが未設定です。先に設定でAPI形式のワークフローJSONを貼り付けてください	ComfyUI 워크플로가 구성되지 않았습니다. 먼저 설정에서 API 형식 워크플로 JSON을 붙여넣으세요
+comfy_error_workflow_invalid	The ComfyUI workflow is not a valid JSON object	ComfyUIワークフローが有効なJSONオブジェクトではありません	ComfyUI 워크플로가 유효한 JSON 개체가 아닙니다
+comfy_error_prompt_unbound	The ComfyUI workflow has no image prompt wired in. Set the positive prompt node's full text to %1$s and connect it to the sampler	ComfyUIワークフローに画像プロンプトが接続されていません。ポジティブプロンプトノードの全文を%1$sにし、サンプラーに接続してください	ComfyUI 워크플로에 이미지 프롬프트가 연결되지 않았습니다. 긍정 프롬프트 노드의 전체 텍스트를 %1$s(으)로 설정하고 샘플러에 연결하세요
+comfy_error_prompt_empty	The image prompt has no usable text; generation stopped	画像プロンプトに有効なテキストがないため、生成を停止しました	이미지 프롬프트에 유효한 텍스트가 없어 생성을 중지했습니다
+comfy_error_no_prompt_id	ComfyUI did not return a task ID	ComfyUIがタスクIDを返しませんでした	ComfyUI가 작업 ID를 반환하지 않았습니다
+comfy_error_timeout	ComfyUI generation timed out (10 minutes)	ComfyUIの生成がタイムアウトしました（10分）	ComfyUI 생성 시간 초과(10분)
+comfy_error_no_images	ComfyUI finished but produced no images	ComfyUIは完了しましたが画像が生成されませんでした	ComfyUI가 완료되었지만 이미지가 생성되지 않았습니다
+comfy_error_request_failed	ComfyUI request failed	ComfyUIリクエストに失敗しました	ComfyUI 요청 실패
+comfy_error_bad_response	Could not parse the ComfyUI response: %1$s	ComfyUIの応答を解析できませんでした：%1$s	ComfyUI 응답을 구문 분석할 수 없습니다: %1$s
+comfy_error_node_errors	Workflow node validation failed: %1$s	ワークフローノードの検証に失敗しました：%1$s	워크플로 노드 검증 실패: %1$s
+comfy_error_history_http	Failed to query generation history: HTTP %1$d	生成履歴の照会に失敗しました：HTTP %1$d	생성 기록 조회 실패: HTTP %1$d
+comfy_error_history_unparseable	Could not parse the history response	履歴レスポンスを解析できませんでした	기록 응답을 구문 분석할 수 없습니다
+comfy_error_download_http	Failed to download the generated image: HTTP %1$d	生成画像のダウンロードに失敗しました：HTTP %1$d	생성 이미지 다운로드 실패: HTTP %1$d
+comfy_error_empty_image_response	The image response was empty	画像レスポンスが空です	이미지 응답이 비어 있습니다
+comfy_error_execution	ComfyUI execution error	ComfyUIの実行エラー	ComfyUI 실행 오류
+novai_status_token_missing	No NovelAI token configured	NovelAIトークンが未設定です	NovelAI 토큰이 구성되지 않았습니다
+novai_status_token_invalid_suffix	: token invalid or expired	：トークンが無効または期限切れです	: 토큰이 유효하지 않거나 만료되었습니다
+novai_status_tier_unknown	Unknown tier	不明なティア	알 수 없는 등급
+novai_status_active	Token valid, subscription active (%1$s)	トークンは有効で、サブスクリプションが有効です（%1$s）	토큰이 유효하고 구독이 활성 상태입니다(%1$s)
+novai_status_inactive	Token valid, but subscription not active (%1$s)	トークンは有効ですが、サブスクリプションが有効ではありません（%1$s）	토큰은 유효하지만 구독이 활성화되지 않았습니다(%1$s)
+novai_status_connect_failed	Failed to connect to NovelAI: %1$s	NovelAIへの接続に失敗しました：%1$s	NovelAI 연결 실패: %1$s
+novai_error_token_missing	No NovelAI token configured. Enter and save one in Settings first	NovelAIトークンが未設定です。先に設定で入力して保存してください	NovelAI 토큰이 구성되지 않았습니다. 먼저 설정에서 입력하고 저장하세요
+novai_error_request_failed	NovelAI request failed	NovelAIリクエストに失敗しました	NovelAI 요청 실패
+novai_error_empty_response	NovelAI returned an empty response	NovelAIの応答が空です	NovelAI 응답이 비어 있습니다
+novai_error_no_png	The NovelAI archive contains no PNG image	NovelAIのアーカイブにPNG画像がありません	NovelAI 압축 파일에 PNG 이미지가 없습니다
+novai_error_token_invalid	Token invalid or expired	トークンが無効または期限切れです	토큰이 유효하지 않거나 만료되었습니다
+novai_error_subscription	The current subscription does not support this request (may require Anlas)	現在のサブスクリプションではこのリクエストをサポートしていません（Anlasが必要な場合があります）	현재 구독에서는 이 요청을 지원하지 않습니다(Anlas가 필요할 수 있음)
+novai_error_request_http	NovelAI request failed: HTTP %1$d	NovelAIリクエストに失敗しました：HTTP %1$d	NovelAI 요청 실패: HTTP %1$d
+oai_status_base_url_required	Base URL is required	Base URLを入力してください	Base URL을 입력하세요
+oai_status_connected	Connected	接続済み	연결됨
+oai_status_connection_failed	Connection failed	接続に失敗しました	연결 실패
+oai_status_model_required	Please enter a model name or endpoint ID before testing this provider.	テストの前にモデル名またはエンドポイントIDを入力してください。	이 공급자를 테스트하기 전에 모델 이름 또는 엔드포인트 ID를 입력하세요.
+oai_error_stream_invalid	The provider returned no valid streaming response. Check the relay endpoint or retry later	プロバイダーから有効なストリーミング応答が返されませんでした。中継エンドポイントを確認するか、後でもう一度お試しください	공급자가 유효한 스트리밍 응답을 반환하지 않았습니다. 중계 엔드포인트를 확인하거나 나중에 다시 시도하세요
+oai_error_stream_incomplete	The model stream ended before the completion marker (%1$d frames received)	モデルのストリームが完了マーカーの前に終了しました（%1$dフレーム受信）	모델 스트림이 완료 마커 전에 끝났습니다(%1$d프레임 수신)
+oai_error_model_not_configured	No model configured for the current provider	現在のプロバイダーにモデルが設定されていません	현재 공급자에 모델이 구성되지 않았습니다
+oai_error_response_error	The provider returned a generation error	プロバイダーが生成エラーを返しました	공급자가 생성 오류를 반환했습니다
+grt_error_no_preset	No generation preset available for %1$s	%1$sに利用可能な生成プリセットがありません	%1$s에 사용 가능한 생성 프리셋이 없습니다
+prrepo_error_not_found	Preset not found: %1$s/%2$s	プリセットが見つかりません：%1$s/%2$s	프리셋을 찾을 수 없음: %1$s/%2$s
+prrepo_error_invalid_json	Invalid preset JSON: %1$s is not a valid JSON object	プリセットJSONが無効です：%1$sは有効なJSONオブジェクトではありません	프리셋 JSON이 잘못되었습니다: %1$s은(는) 유효한 JSON 개체가 아닙니다
+prrepo_warning_routing_preserved	Provider, endpoint and model fields were kept but will not be applied: %1$s	プロバイダー・エンドポイント・モデルの各フィールドは保持されていますが、適用されません：%1$s	공급자, 엔드포인트, 모델 필드는 유지되지만 적용되지 않습니다: %1$s
+wbrepo_error_invalid_json	Invalid world book JSON: %1$s is not a valid JSON object	ワールドブックJSONが無効です：%1$sは有効なJSONオブジェクトではありません	월드북 JSON이 잘못되었습니다: %1$s은(는) 유효한 JSON 개체가 아닙니다
+wbrepo_error_missing_entries	Invalid world book JSON: %1$s is missing the entries object	ワールドブックJSONが無効です：%1$sにentriesオブジェクトがありません	월드북 JSON이 잘못되었습니다: %1$s에 entries 개체가 없습니다
+chatrepo_error_session_not_found	Chat session not found: %1$s	チャットセッションが見つかりません：%1$s	채팅 세션을 찾을 수 없음: %1$s
+chatrepo_error_memory_mode_locked	This chat's memory mode is locked	このセッションの記憶モードはロックされています	이 대화의 기억 모드가 잠겨 있습니다
+cregex_unnamed_script	Unnamed script	名称未スクリプト	이름 없는 스크립트
+cregex_diag_invalid_regex	Invalid or unsupported regex/flags; rule skipped	無効または非対応の正規表現/フラグのため、このルールをスキップしました	잘못되었거나 지원되지 않는 정규식/플래그로 규칙을 건너뛰었습니다
+cregex_diag_replace_failed	Regex replacement failed; rule skipped	正規表現置換に失敗したため、このルールをスキップしました	정규식 치환 실패로 규칙을 건너뛰었습니다
+memmod_error_mode_locked	Memory mode is locked	記憶モードはロックされています	기억 모드가 잠겨 있습니다
+memsvc_error_vector_need_enable	Enable memory and vector search first	先に記憶とベクトル検索を有効にしてください	먼저 기억과 벡터 검색을 활성화하세요
+memsvc_error_vector_model_missing	No vector model configured	ベクトルモデルが未設定です	벡터 모델이 구성되지 않았습니다
+memsvc_error_vector_invalid_result	The vector API returned no valid results	ベクトルAPIが有効な結果を返しませんでした	벡터 API가 유효한 결과를 반환하지 않았습니다
+webviewhost_error_module_not_ready	Module did not report ready within %1$d ms	モジュールが%1$d ms以内に準備完了を報告しませんでした	모듈이 %1$d ms 내에 준비 완료를 보고하지 않았습니다
+main_import_success	Imported character "%1$s"	キャラクター「%1$s」をインポートしました	캐릭터 "%1$s"을(를) 가져왔습니다
+main_import_failed	Import failed: %1$s	インポートに失敗しました：%1$s	가져오기 실패: %1$s
+main_error_read_file	Could not read the file	ファイルを読み取れませんでした	파일을 읽을 수 없습니다
+memmod_mode_none	No memory	記憶なし	기억 없음
+memmod_mode_archive	Archive style	柏宝書式	아카이브 스타일
+memmod_mode_episodic	STARmem style	STARmem式	STARmem 방식
+crs_add_entry	Add entry	エントリを追加	항목 추가
+crs_agent_replying	agent is replying	agentが返信中	agent가 응답 중
+crs_assets_hint	Create or edit these assets by asking the AI in the chat. Scripts export with the character card JSON/PNG; verify their behavior in a real chat.	チャットでAIに依頼してこれらのリソースを作成・編集できます。スクリプトはキャラカードのJSON/PNGと一緒にエクスポートされます。動作はチャット内で確認してください。	채팅에서 AI에게 요청하여 이 리소스를 만들거나 수정할 수 있습니다. 스크립트는 캐릭터 카드 JSON/PNG와 함께 내보내집니다. 동작은 채팅에서 확인해 주세요.
+crs_assets_summary	TavernHelper scripts %1$d · Regex %2$d · Variables %3$d	TavernHelperスクリプト %1$d · 正規表現 %2$d · 変数 %3$d	TavernHelper 스크립트 %1$d · 정규식 %2$d · 변수 %3$d
+crs_back	Back	戻る	뒤로
+crs_brief_hint	Fill in only what you already have in mind; you can also skip the form and chat directly below.	考えている部分だけ記入すればOKです。フォームをスキップして、下で直接会話しても構いません。	생각해 둔 부분만 채우면 됩니다. 폼을 건너뛰고 아래에서 바로 대화해도 됩니다.
+crs_brief_title	Creation Brief	作成の起点	창작 시작점
+crs_btn_ai_decide	Let the AI decide	AIに任せる	AI에게 맡기기
+crs_btn_check_assets	Check assets with AI	AIにリソースを確認させる	AI에게 리소스 확인시키기
+crs_btn_continue_guide	Continue guiding	ガイドを続ける	가이드 계속
+crs_btn_discuss_one_by_one	Discuss item by item	1件ずつ議論する	항목별로 논의
+crs_btn_generate_draft	Generate draft	初稿を生成	초안 생성
+crs_btn_status_bar	Make a dynamic status bar	動的ステータスバーを作る	동적 상태바 만들기
+crs_cancel	Cancel	キャンセル	취소
+crs_collapse_draft_stream	Collapse structured draft	構造化ドラフトを折りたたむ	구조화 초안 접기
+crs_constant_entry	Constant entry	常駐エントリ	상시 항목
+crs_continue_extract	Continue extracting	抽出を続ける	추출 계속
+crs_continue_incomplete	Continue unfinished creation	未完了の作成を続ける	완료되지 않은 창작 계속하기
+crs_conversation_intro	Start from a single idea. You can also specify the narrative perspective, relationships, style, opening, world rules or frontend; the agent will produce a draft for you to refine.	ひと言のアイデアから始められます。語り視点・人物関係・スタイル・冒頭・世界のルール・フロントエンド形式を指定してもOK。agentが修正用のドラフトを提案します。	한 마디 아이디어에서 시작할 수 있습니다. 서술 시점, 인물 관계, 스타일, 도입부, 세계 규칙, 프론트엔드 형식을 지정해도 됩니다. agent가 수정할 초안을 제안합니다.
+crs_cover_cd	Character cover preview	キャラカバープレビュー	캐릭터 커버 미리보기
+crs_cover_change	Change cover image	カバー画像を変更	커버 이미지 변경
+crs_cover_failed	Failed to set cover: %1$s	カバーの設定に失敗しました：%1$s	커버 설정 실패: %1$s
+crs_cover_missing_hint	No cover set yet. JSON can be exported directly; PNG requires a cover first.	カバーが未設定です。JSONはそのままエクスポートできます。PNGには先にカバーが必要です。	아직 커버가 설정되지 않았습니다. JSON은 바로 내보낼 수 있으며, PNG는 먼저 커버가 필요합니다.
+crs_cover_pick	Choose cover image	カバー画像を選択	커버 이미지 선택
+crs_cover_title	Character Cover	キャラカバー	캐릭터 커버
+crs_delete	Delete	削除	삭제
+crs_delete_draft_body	This deletes the chat, source text and cover of "%1$s". Finished cards already saved to the character list or world books are kept.	「%1$s」の会話・原文・カバーを削除します。キャラクター一覧やワールドブックに保存済みの成果物は残ります。	"%1$s"의 대화, 원문, 커버를 삭제합니다. 캐릭터 목록이나 월드북에 저장된 결과물은 유지됩니다.
+crs_delete_draft_title	Delete creation draft?	作成ドラフトを削除しますか？	창작 초안을 삭제하시겠습니까?
+crs_delete_entry	Delete entry	エントリを削除	항목 삭제
+crs_delta_stats	First chunk arrived at %1$ds, last at %2$ds; chunks spanned %3$ds, %4$d in total.	最初のチャンクは%1$d秒、最後は%2$d秒に到着。チャンクの総時間は%3$d秒、計%4$d個でした。	첫 청크는 %1$d초, 마지막은 %2$d초에 도착했습니다. 청크 지속 %3$d초, 총 %4$d개.
+crs_disabled	Off	オフ	끔
+crs_draft_raw_title	Structured draft raw text (before validation)	構造化ドラフト原文（検証前）	구조화 초안 원문(검증 전)
+crs_drafts_title	Creation Drafts	作成ドラフト	창작 초안
+crs_duplicate_titles	There are %1$d groups of duplicate titles. Check for duplicates or conflicts.	同名エントリが%1$d組あります。重複や競合を確認してください。	동일 제목 항목이 %1$d그룹 있습니다. 중복이나 충돌을 확인하세요.
+crs_editor_title_character	Create Character Card	キャラカードを作成	캐릭터 카드 만들기
+crs_editor_title_worldbook	Create World Book	ワールドブックを作成	월드북 만들기
+crs_enabled	On	オン	켬
+crs_error_file_too_large	The file exceeds 12 MB. Please split it; nothing was truncated on import.	ファイルが12MBを超えています。分割してください。取り込み時の切り詰めはしていません。	파일이 12MB를 초과합니다. 분할해 주세요. 가져오기 시 잘라내지 않았습니다.
+crs_error_image_too_large	The image exceeds 12 MB. Please choose a smaller file.	画像が12MBを超えています。より小さいファイルを選んでください。	이미지가 12MB를 초과합니다. 더 작은 파일을 선택하세요.
+crs_error_not_utf8	Only UTF-8 text is supported; the file encoding could not be decoded. The source was not processed.	UTF-8テキストのみ対応です。ファイルのエンコーディングをデコードできず、原文は処理していません。	UTF-8 텍스트만 지원합니다. 파일 인코딩을 디코딩할 수 없어 원문을 처리하지 않았습니다.
+crs_error_parse_image	Could not parse the selected image	選択した画像を解析できませんでした	선택한 이미지를 해석할 수 없습니다
+crs_error_read_image	Could not read the selected image	選択した画像を読み取れませんでした	선택한 이미지를 읽을 수 없습니다
+crs_error_read_source	Could not read the source text	原文を読み取れませんでした	원문을 읽을 수 없습니다
+crs_error_write_file	Could not write to the selected file	選択したファイルに書き込めませんでした	선택한 파일에 쓸 수 없습니다
+crs_export_failed	Export failed: %1$s	エクスポートに失敗しました：%1$s	내보내기 실패: %1$s
+crs_export_json	Export JSON	JSONをエクスポート	JSON 내보내기
+crs_export_json_done	JSON character card exported.	JSONキャラカードをエクスポートしました。	JSON 캐릭터 카드를 내보냈습니다.
+crs_export_png	Export PNG card	PNGキャラカードをエクスポート	PNG 카드 내보내기
+crs_export_png_done	PNG character card exported.	PNGキャラカードをエクスポートしました。	PNG 캐릭터 카드를 내보냈습니다.
+crs_export_worldbook_done	World book JSON exported. It can be imported into SillyTavern directly.	ワールドブックJSONをエクスポートしました。SillyTavernにそのままインポートできます。	월드북 JSON을 내보냈습니다. SillyTavern에 바로 가져올 수 있습니다.
+crs_export_worldbook_json	Export world book JSON	ワールドブックJSONをエクスポート	월드북 JSON 내보내기
+crs_field_alternate_greetings	Alternate greetings (separated by blank lines)	代替の冒頭メッセージ（空行で区切る）	대체 인사말(빈 줄로 구분)
+crs_field_characters	One per line: name, relation to the user, brief	1行に1人：名前・ユーザーとの関係・簡単な説明	한 줄에 한 명: 이름, 사용자와의 관계, 간단한 소개
+crs_field_creator_notes	Creator notes	作成者ノート	제작자 노트
+crs_field_description	Description & background	説明と背景	설명 및 배경
+crs_field_example_messages	Example dialogs	例会話	예시 대화
+crs_field_first_message	Opening message	冒頭メッセージ	도입 메시지
+crs_field_frontend_html	HTML/CSS snippet	HTML/CSSスニペット	HTML/CSS 스니펫
+crs_field_keys	Keywords (comma-separated)	キーワード（カンマ区切り）	키워드(쉼표로 구분)
+crs_field_lore_content	Entry content	エントリ内容	항목 내용
+crs_field_lore_title	Title	タイトル	제목
+crs_field_name	Name	名前	이름
+crs_field_note	Notes / facts or rumors	説明・事実または噂	설명 / 사실 또는 소문
+crs_field_paste_source	Paste source text (optional)	原文を貼り付け（任意）	원문 붙여넣기(선택 사항)
+crs_field_persona	The identity you play (optional)	あなたが演じる人物（任意）	당신이 연기할 신분(선택 사항)
+crs_field_personality	Personality & behavior	性格と行動	성격 및 행동
+crs_field_post_history	Post-history instructions	履歴後プロンプト	기록 후 프롬프트
+crs_field_premise_character	Core premise of the character and story (optional)	キャラクターと物語の核心設定（任意）	캐릭터와 이야기의 핵심 설정(선택 사항)
+crs_field_premise_worldbook	Worldview, places, factions and rules (optional)	世界観・場所・勢力・ルール（任意）	세계관, 장소, 세력, 규칙(선택 사항)
+crs_field_relationship	Relationship with the user (optional)	ユーザーとの関係（任意）	사용자와의 관계(선택 사항)
+crs_field_scenario	Scenario	シナリオ	시나리오
+crs_field_secondary_keys	Secondary keywords (comma-separated)	二次キーワード（カンマ区切り）	보조 키워드(쉼표로 구분)
+crs_field_system_prompt	System prompt	システムプロンプ트	시스템 프롬프트
+crs_field_tags	Tags (comma-separated)	タグ（カンマ区切り）	태그(쉼표로 구분)
+crs_field_title_character	Character or story name (optional)	キャラクターまたは物語の名前（任意）	캐릭터 또는 이야기 이름(선택 사항)
+crs_field_title_worldbook	World book name (optional)	ワールドブック名（任意）	월드북 이름(선택 사항)
+crs_field_worldbook_name	World book name	ワールドブック名	월드북 이름
+crs_first_message_preview	Opening text: %1$s	冒頭本文：%1$s	도입 본문: %1$s
+crs_frontend_hint	The frontend source code is saved with the opening message. This is a sandboxed preview; verify the final result in real chats in SillyTavern and Tellev.	フロントエンドのソースコードは冒頭メッセージと一緒に保存されます。これは分離されたプレビューです。最終的にはSillyTavernとTellevの実際のチャットで検証してください。	프론트엔드 소스 코드는 도입 메시지와 함께 저장됩니다. 이것은 격리된 미리보기이며, 최종 결과는 SillyTavern과 Tellev의 실제 채팅에서 검증해야 합니다.
+crs_home_intro	Chat with a dedicated creation agent to make character cards, frontends or world books.	専用の作成agentと会話して、キャラカード・フロントエンド・ワールドブックを作成します。	전용 창작 agent와 대화하여 캐릭터 카드, 프론트엔드, 월드북을 만듭니다.
+crs_home_title	AI Co-creation	AI共同作成	AI 공동 창작
+crs_import_failed	Import failed	インポートに失敗しました	가져오기 실패
+crs_import_text_file	Import text file	テキストファイルをインポート	텍스트 파일 가져오기
+crs_input_label	Tell the agent what to create	agentに作りたいものを伝える	agent에게 만들고 싶은 것을 알려주세요
+crs_kind_character	Character card	キャラカード	캐릭터 카드
+crs_kind_worldbook	World book	ワールドブック	월드북
+crs_length_concise	Concise	簡潔	간결
+crs_length_normal	Standard	標準	표준
+crs_length_rich	Detailed	詳細	상세
+crs_length_title	Content length	本文の分量	본문 분량
+crs_loading_draft	Loading draft...	ドラフトを読み込み中…	초안 불러오는 중…
+crs_lore_count	Entry %1$d	エントリ %1$d	항목 %1$d
+crs_lore_one_by_one	Discuss item by item; confirmed items are written	1件ずつ議論し、確認したものを書き込みます	항목별로 논의하고 확인된 항목을 기록합니다
+crs_min_characters_hint	Write at least two characters, one per line.	少なくとも2人のキャラクターを、1行に1人ずつ書いてください。	최소 두 명의 캐릭터를 한 줄에 한 명씩 작성하세요.
+crs_mode_chat	Chat while writing	会話しながら執筆	대화하며 집필
+crs_mode_direct_draft	Direct to first draft	直接初稿へ	바로 초안으로
+crs_multi_characters	Ensemble / multi-character card	群像・マルチキャラカード	군상/멀티 캐릭터 카드
+crs_new_character	New character card	新規キャラカード	새 캐릭터 카드
+crs_new_worldbook	New world book	新規ワールドブック	새 월드북
+crs_no_reasoning	No displayable reasoning text was received this turn; the wait time does not indicate what the model is doing internally.	このターンでは表示可能な思考テキストを受信していませんでした。待機時間はモデルの内部処理を示すものではありません。	이 턴에서는 표시 가능한 사고 텍스트를 받지 못했습니다. 대기 시간이 모델의 내부 처리를 나타내는 것은 아닙니다.
+crs_no_stream_fallback	No incremental chunks were received for this request; the full result arrived after %1$d seconds.	このリクエストでは増分チャンクを受信できませんでした。結果は%1$d秒後に一括で到着しました。	이 요청에서는 증분 청크를 받지 못했습니다. 결과는 %1$d초 후 한꺼번에 도착했습니다.
+crs_portability_issues	Portability check: %1$s	移植性チェック：%1$s	이식성 검사: %1$s
+crs_progress_title	Creation progress	作成の進行状況	창작 진행 상황
+crs_provider_connected	Connected to: %1$s	現在の接続：%1$s	현재 연결: %1$s
+crs_reasoning_title	Reasoning returned by the model	モデルが返した思考テキスト	모델이 반환한 사고 텍스트
+crs_regex_line	Regex: %1$s	正規表現：%1$s	정규식: %1$s
+crs_retry_last	Retry last turn	前のターンを再試行	이전 턴 재시도
+crs_role_agent	Creation agent	作成agent	창작 agent
+crs_role_you	You	あなた	나
+crs_save_source	Save source text	原文を保存	원문 저장
+crs_save_to_character_list	Save to character list	キャラクター一覧に保存	캐릭터 목록에 저장
+crs_save_to_worldbook	Save to world books	ワールドブックに保存	월드북에 저장
+crs_script_line	%1$s · %2$s · %3$d chars	%1$s · %2$s · %3$d文字	%1$s · %2$s · %3$d자
+crs_selective_entry	Requires secondary keys	二次キーワードを要求	보조 키워드 필요
+crs_send	Send	送信	보내기
+crs_session_meta	%1$s · %2$d turns · %3$d world book entries	%1$s · %2$dターン · ワールドブック%3$d件	%1$s · %2$d턴 · 월드북 항목 %3$d개
+crs_show_latest_only	Latest chunk only	最新チャンクのみ表示	최신 청크만 보기
+crs_source_extracted_continue	Extracted %1$d/%2$d characters; you can continue from the saved position.	原文を%1$d/%2$d文字まで抽出しました。保存済み位置から続けられます。	원문을 %1$d/%2$d자 추출했습니다. 저장된 위치에서 계속할 수 있습니다.
+crs_source_extracted_short	Extracted %1$d/%2$d characters	原文を%1$d/%2$d文字抽出	원문 %1$d/%2$d자 추출
+crs_source_quote	%1$s [%2$d]: %3$s	%1$s [%2$d]：%3$s	%1$s [%2$d]: %3$s
+crs_source_saved_pct	Saved %1$d/%2$d characters (%3$d%%)	%1$d/%2$d文字を保存（%3$d%%）	%1$d/%2$d자 저장(%3$d%%)
+crs_source_status	%1$s · %2$d/%3$d characters extracted	%1$s · %2$d/%3$d文字を抽出済み	%1$s · %2$d/%3$d자 추출됨
+crs_start_extract	Start extracting	段階的な抽出を開始	단계별 추출 시작
+crs_start_first_draft	Generate the first draft	初稿を生成	첫 초안 생성
+crs_start_guided	Start guided creation	ガイド付き作成を開始	가이드 창작 시작
+crs_start_one_by_one	Start item-by-item discussion	1件ずつの議論を開始	항목별 논의 시작
+crs_stop	Stop	停止	중지
+crs_stream_truncated	Showing the most recent %1$d characters. Expand to view everything.	最新の%1$d文字のみ表示中。展開すると全部見られます。	최근 %1$d자만 표시 중입니다. 펼쳐서 전체를 보세요.
+crs_tab_advanced	Advanced assets	高度なリソース	고급 리소스
+crs_tab_chat	Chat	会話	대화
+crs_tab_frontend	Frontend preview	フロントエンドプレビュー	프론트엔드 미리보기
+crs_task_elapsed	Task running for %1$ds	タスク実行時間：%1$d秒	작업 실행 %1$d초
+crs_unnamed_character	Unnamed character	名前のないキャラクター	이름 없는 캐릭터
+crs_unnamed_draft	Unnamed draft	名称未ドラフト	이름 없는 초안
+crs_unnamed_worldbook	Unnamed world book	名称未ワールドブック	이름 없는 월드북
+crs_variables_line	Variables: %1$s	変数：%1$s	변수: %1$s
+crs_view_draft_stream	View structured draft stream (%1$d chars)	構造化ドラフトストリームを表示（%1$d文字）	구조화 초안 스트림 보기(%1$d자)
+crs_view_full_stream	View full stream	完全なストリームを表示	전체 스트림 보기
+crs_view_progress	View turn progress · %1$s	このターンの進行状況を表示 · %1$s	이번 턴 진행 상황 보기 · %1$s
+crs_waiting_first_chunk	Still waiting for the first streaming chunk.	最初のストリーミングチャンクを待機中です。	첫 스트리밍 청크를 기다리는 중입니다.
+crs_waiting_provider_text	Waiting for the provider to return displayable text...	プロバイダーが表示可能なテキストを返すのを待っています…	공급자가 표시 가능한 텍스트를 반환하기를 기다리는 중…
+crmodels_frontend_script	Contains scripts	スクリプトを含む	스크립트 포함
+crmodels_frontend_inline_event	Contains inline events	インラインイベントを含む	인라인 이벤트 포함
+crmodels_frontend_forbidden_tag	Contains tags outside the allowed set for both platforms	両プラットフォームの許可範囲外のタグを含む	양쪽 플랫폼 허용 범위 밖의 태그 포함
+crmodels_frontend_external_ref	Depends on external links or resources	外部リンクやリソースに依存	외부 링크 또는 리소스 의존
+crmodels_frontend_dynamic_style	Contains external or dynamic styles	外部または動的スタイルを含む	외부 또는 동적 스타일 포함
+crmodels_frontend_template_var	Contains template variables that may rely on runtime extensions	ランタイム拡張に依存する可能性のあるテンプレート変数を含む	런타임 확장에 의존할 수 있는 템플릿 변수 포함
+crrepo_error_invalid_cover	The cover must be a valid PNG of at most 10 MB.	カバーは10MB以下の有効なPNGである必要があります。	커버는 10MB 이하의 유효한 PNG여야 합니다.
+crrepo_error_cover_checksum	Cover verification failed. Please choose another image.	カバーの検証に失敗しました。別の画像を選んでください。	커버 검증에 실패했습니다. 다른 이미지를 선택하세요.
+crrepo_error_source_checksum	Source text verification failed. Please import it again.	原文の検証に失敗しました。再度インポートしてください。	원문 검증에 실패했습니다. 다시 가져와 주세요.
+crvm_draft_deleted	Creation draft deleted.	作成ドラフトを削除しました。	창작 초안을 삭제했습니다.
+crvm_cover_saved	Cover saved to the creation draft.	カバーを作成ドラフトに保存しました。	커버를 창작 초안에 저장했습니다.
+crvm_saved_to_device	Saved to this device. Cross-platform behavior still needs real verification.	この端末に保存しました。実際の両プラットフォームでの動作は要検証です。	이 기기에 저장했습니다. 실제 양쪽 플랫폼에서의 동작은 검증이 필요합니다.
+crvm_source_saved	Source text saved. You can start extracting section by section.	原文を保存しました。段階的な抽出を開始できます。	원문을 저장했습니다. 단계별 추출을 시작할 수 있습니다.
+crvm_extract_done	Extraction finished. Review each entry, then save the world book.	抽出が完了しました。各エントリを確認してからワールドブックを保存してください。	추출이 완료되었습니다. 각 항목을 확인한 후 월드북을 저장하세요.
+crvm_op_read_card	Read character card	キャラカードを読む	캐릭터 카드 읽기
+crvm_op_read_worldbook	Read world book	ワールドブックを読む	월드북 읽기
+crvm_op_converse	Creation chat	作成会話	창작 대화
+crvm_op_save_source	Save source text	原文を保存	원문 저장
+crvm_op_extract	World book long-text extraction	ワールドブック長文抽出	월드북 장문 추출
+crvm_phase_reading_card	Reading character card	キャラカードを読み込み中	캐릭터 카드 읽는 중
+crvm_phase_card_loaded	Character card loaded	キャラカードを読み込みました	캐릭터 카드 로드됨
+crvm_phase_source_card_loaded	Source character card loaded	元キャラカードを読み込みました	원본 캐릭터 카드 로드됨
+crvm_phase_reading_worldbook	Reading world book	ワールドブックを読み込み中	월드북 읽는 중
+crvm_phase_worldbook_loaded	World book loaded	ワールドブックを読み込みました	월드북 로드됨
+crvm_phase_preparing	Preparing request	リクエストを準備中	요청 준비 중
+crvm_phase_verify_save	Validating and saving draft	ドラフトを検証して保存中	초안 검증 및 저장 중
+crvm_phase_turn_done	Turn complete	このターンが完了	이번 턴 완료
+crvm_phase_stopped_saved	Stopped. Completed draft changes were saved and you can continue.	停止しました。完了済みのドラフト変更は保存済みです。続行できます。	중지되었습니다. 완료된 초안 변경은 저장되었으며 계속할 수 있습니다.
+crvm_phase_stopped_not_applied	Stopped. This turn's draft changes were not applied.	停止しました。このターンのドラフト変更は適用されていません。	중지되었습니다. 이번 턴의 초안 변경은 적용되지 않았습니다.
+crvm_phase_interrupted_saved	Interrupted. Completed draft changes were saved and you can continue.	中断されました。完了済みのドラフト変更は保存済みです。続行できます。	중단되었습니다. 완료된 초안 변경은 저장되었으며 계속할 수 있습니다.
+crvm_phase_turn_failed	Turn failed; draft changes were not applied	このターンは失敗しました。ドラフト変更は適用されていません	이번 턴 실패, 초안 변경은 적용되지 않았습니다
+crvm_phase_saving_source	Saving source text	原文を保存中	원문 저장 중
+crvm_phase_source_saved	Source text saved	原文を保存しました	원문 저장됨
+crvm_phase_save_source_stopped	Saving source text was stopped	原文の保存を停止しました	원문 저장이 중지되었습니다
+crvm_phase_reading_source	Reading saved source text	保存済みの原文を読み込み中	저장된 원문 읽는 중
+crvm_phase_extract_chunk	Extracting chunk %1$d	第%1$dチャンクを抽出中	%1$d번째 청크 추출 중
+crvm_phase_verify_chunk	Verifying source evidence for chunk %1$d	第%1$dチャンクの原文エビデンスを照合中	%1$d번째 청크의 원문 근거 검증 중
+crvm_phase_chunk_saved	Chunk %1$d saved	第%1$dチャンクを保存しました	%1$d번째 청크 저장됨
+crvm_phase_extract_done	Extraction complete	抽出完了	추출 완료
+crvm_phase_extract_stopped	Stopped. You can continue extracting from the saved position.	停止しました。保存済み位置から抽出を続けられます。	중지되었습니다. 저장된 위치에서 추출을 계속할 수 있습니다.
+crvm_phase_extract_interrupted	Extraction interrupted. You can continue from the saved position.	抽出が中断されました。保存済み位置から続けられます。	추출이 중단되었습니다. 저장된 위치에서 계속할 수 있습니다.
+crvm_extract_progress_chunk	Chunk %1$d/%2$d: processing %3$d–%4$d of %5$d characters; saved up to %6$d	第%1$d/%2$dチャンク：%3$d–%4$d / %5$d文字を処理中。%6$dまで保存済み	청크 %1$d/%2$d: %3$d–%4$d / %5$d자 처리 중. %6$d까지 저장됨
+crvm_extract_progress_saved	Saved %1$d/%2$d characters, %3$d world book entries in total	%1$d/%2$d文字を保存。ワールドブックは計%3$d件	%1$d/%2$d자 저장, 총 월드북 항목 %3$d개
+crvm_error_source_too_large	The source exceeds 4,000,000 characters. Split it into multiple files first; nothing was truncated or processed.	原文が400万文字を超えています。先に複数のファイルに分割してください。切り詰めや処理は一切していません。	원문이 400만 자를 초과합니다. 먼저 여러 파일로 나눠 주세요. 잘라내거나 처리한 내용은 없습니다.
+crvm_error_source_length_mismatch	The source length does not match the draft record. Please import it again.	原文の長さがドラフトの記録と一致しません。再インポートしてください。	원문 길이가 초안 기록과 일치하지 않습니다. 다시 가져와 주세요.
+crvm_error_open_card_draft_first	Open a character card draft first.	先にキャラカードのドラフトを開いてください。	먼저 캐릭터 카드 초안을 여세요.
+crvm_error_cannot_export_card	The character card cannot be exported right now.	現在キャラカードをエクスポートできません。	현재 캐릭터 카드를 내보낼 수 없습니다.
+crvm_error_cover_required_for_png	Set a cover on the character card page before exporting PNG.	PNGをエクスポートする前に、キャラカードページでカバーを設定してください。	PNG를 내보내기 전에 캐릭터 카드 페이지에서 커버를 설정하세요.
+crvm_error_png_export_roundtrip	Failed to read back the exported PNG character card.	エクスポートしたPNGキャラカードの読み返しに失敗しました。	내보낸 PNG 캐릭터 카드를 다시 읽는 데 실패했습니다.
+crvm_error_open_worldbook_draft_first	Open a world book draft first.	先にワールドブックのドラフトを開いてください。	먼저 월드북 초안을 여세요.
+crvm_error_cannot_export_worldbook	The world book cannot be exported right now.	現在ワールドブックをエクスポートできません。	현재 월드북을 내보낼 수 없습니다.
+crvm_error_card_export_roundtrip	Failed to read back the exported character card.	エクスポートしたキャラカードの読み返しに失敗しました。	내보낸 캐릭터 카드를 다시 읽는 데 실패했습니다.
+crvm_error_cover_card_roundtrip	Failed to read back the cover character card.	カバー付きキャラカードの読み返しに失敗しました。	커버가 포함된 캐릭터 카드를 다시 읽는 데 실패했습니다.
+crvm_error_name_required	Enter at least the character name.	少なくともキャラクター名を入力してください。	최소한 캐릭터 이름을 입력하세요.
+crvm_error_lore_empty	The world book has empty entries or entries without trigger keywords.	ワールドブックに空のエントリ、またはトリガーキーワードがないエントリがあります。	월드북에 빈 항목 또는 트리거 키워드가 없는 항목이 있습니다.
+crvm_error_frontend_portable	The frontend does not meet the current portability constraints: %1$s	フロントエンドが現在の移植性制約を満たしていません：%1$s	프론트엔드가 현재 이식성 제약을 충족하지 않습니다: %1$s
+crvm_error_worldbook_required	Enter the world book name and keep at least one entry.	ワールドブック名を入力し、エントリを1つ以上残してください。	월드북 이름을 입력하고 항목을 하나 이상 유지하세요.
+crvm_worldbook_export_roundtrip_failed	Failed to read back the exported world book.	エクスポートしたワールドブックの読み返しに失敗しました。	내보낸 월드북을 다시 읽는 데 실패했습니다.
+crvm_failed_default	Creation failed	作成に失敗しました	창작 실패
+creng_phase_receiving_draft	Receiving draft	ドラフトを受信中	초안 수신 중
+creng_phase_model_thinking	The model is thinking	モデルが思考中	모델이 사고 중
+creng_phase_waiting_model	Waiting for the model	モデルの応答を待機中	모델 응답 대기 중
+creng_phase_prepare_request	Preparing model request	モデルリクエストを準備中	모델 요청 준비 중
+creng_phase_connecting	Connecting to the model	モデルに接続中	모델 연결 중
+creng_phase_validating	Validating the structured draft	構造化ドラフトを検証中	구조화 초안 검증 중
+creng_phase_exec_tool	Turn %1$d: running tool %2$s	第%1$dターン：ツール%2$sを実行中	%1$d턴: 도구 %2$s 실행 중
+creng_phase_condensed_retry	Output was truncated; retrying once with a condensed prompt	出力が切り詰められたため、要約して1回再試行しています	출력이 잘려서 축약 프롬프트로 한 번 재시도하는 중
+creng_phase_repair_format	The draft format was invalid; repairing once	ドラフト形式が無効のため、1回修復しています	초안 형식이 잘못되어 한 번 복구하는 중
+creng_phase_connect_retry	Connection failed; retrying (1/1)	接続に失敗しました。再試行中（1/1）	연결 실패, 재시도 중(1/1)
+creng_round_prefix	Turn %1$d:	第%1$dターン：	%1$d턴:
+creng_repair_prefix	Format repair:	形式修復：	형식 복구:
+creng_condensed_prefix	Condensed retry:	要約再試行：	축약 재시도:
+creng_agent_reply_format_invalid	The AI returned a draft in an invalid format	AIが無効な形式のドラフトを返しました	AI가 잘못된 형식의 초안을 반환했습니다
+creng_tool_loop_stalled	The tool loop went three consecutive turns without a complete call or reply (%1$s). Automatic retries have stopped; the draft is unchanged.	ツールループが3ターン連続で完全な呼び出しや返信を得られませんでした（%1$s）。自動再試行を停止し、ドラフトは変更していません。	도구 루프가 3턴 연속 완전한 호출이나 응답을 얻지 못했습니다(%1$s). 자동 재시도를 중지했으며 초안은 변경되지 않았습니다.
+creng_error_extract_invalid	Still no valid structure after repeated retries (output too long or invalid format). This chunk was not applied; you can continue from the saved position.	再試行を繰り返しても有効な構造が得られませんでした（出力が長すぎるか形式が無効）。このチャンクは適用していません。保存済み位置から続けられます。	반복 재시도 후에도 유효한 구조를 얻지 못했습니다(출력이 너무 길거나 형식이 잘못됨). 이 청크는 적용되지 않았으며 저장된 위치에서 계속할 수 있습니다.
+creng_error_provider_not_supported	The current provider does not support chat generation. Select a text model in Settings first.	現在のプロバイダーは会話生成に対応していません。先に設定でテキストモデルを選択してください。	현재 공급자는 대화 생성을 지원하지 않습니다. 먼저 설정에서 텍스트 모델을 선택하세요.
+creng_default_model_label	Default model	デフォルトモデル	기본 모델
+creng_stage_body_output	Body output	本文出力	본문 출력
+creng_stage_reasoning_output	Reasoning output	思考出力	사고 출력
+creng_stage_before_first_chunk	Before the first streaming chunk	最初のストリーミングチャンクを受信する前	첫 스트리밍 청크 수신 전
+creng_error_stream_interrupted	The model request was interrupted at %1$s (%2$d chunks received, error %3$s%4$s): %5$s	モデルリクエストが%1$sで中断されました（%2$dチャンク受信、エラー%3$s%4$s）：%5$s	모델 요청이 %1$s에 중단되었습니다(%2$d개 청크 수신, 오류 %3$s%4$s): %5$s
+creng_error_no_content	The model returned no content	モデルがコンテンツを返しませんでした	모델이 콘텐츠를 반환하지 않았습니다
+setimg_anlas_guard_label	Anlas guard (stay within the free tier)	Anlasガード（無料枠内で生成）	Anlas 가드(무료 한도 내 생성)
+setimg_cancel	Cancel	キャンセル	취소
+setimg_comfy_header	Image model (ComfyUI)	生図モデル（ComfyUI）	이미지 모델(ComfyUI)
+setimg_comfy_model_help_count	Fetched %1$d models; type to filter	%1$d個のモデルを取得しました。入力で絞り込めます	모델 %1$d개를 가져왔습니다. 입력하여 필터링하세요
+setimg_comfy_model_help_empty	Test the connection to fetch the model list from ComfyUI	接続テスト後にComfyUIからモデル一覧を取得できます	연결 테스트 후 ComfyUI에서 모델 목록을 가져올 수 있습니다
+setimg_comfy_model_label	Model (Checkpoint)	モデル（Checkpoint）	모델(Checkpoint)
+setimg_comfy_model_placeholder	Enter the model name bound to the %model% placeholder in your workflow; optional	ワークフローの%model%プレースホルダに対応するモデル名。空欄可	워크플로의 %model% 자리 표시자에 해당하는 모델 이름, 비워 둘 수 있음
+setimg_comfy_params_button	Generation params & default negative prompt	生成パラメータとデフォルトネガティブ	생성 매개변수 및 기본 부정 프롬프트
+setimg_comfy_url_help	Address of the ComfyUI running on your computer. Once a workflow is configured and saved, a "Generate image" entry appears in the chat input bar.	PC上で動いているComfyUIのアドレス。ワークフローを設定して保存すると、チャット入力欄に「画像を生成」が現れます。	PC에서 실행 중인 ComfyUI 주소입니다. 워크플로를 구성하고 저장하면 채팅 입력창에 "이미지 생성" 항목이 나타납니다.
+setimg_comfy_url_label	ComfyUI server address	ComfyUIサーバーアドレス	ComfyUI 서버 주소
+setimg_decrisper_label	Decrisper (reduces high-CFG artifacts)	Decrisper（高CFGのアーティファクト低減）	Decrisper(고 CFG 아티팩트 감소)
+setimg_engine_comfy	ComfyUI (remote)	ComfyUI（リモート）	ComfyUI(원격)
+setimg_engine_desc	The engine used by the "Generate image" button in the chat input bar (applies immediately, no save needed). Configure each engine's connection and parameters in its section below.	チャット入力欄の「画像を生成」ボタンが使うエンジンです（即時反映、保存不要）。各エンジンの接続とパラメータは下の対応ブロックで設定します。	채팅 입력창의 "이미지 생성" 버튼이 사용하는 엔진입니다(즉시 적용, 저장 불필요). 각 엔진의 연결과 매개변수는 아래 해당 블록에서 설정합니다.
+setimg_engine_header	Image engine	生図エンジン	이미지 엔진
+setimg_engine_novelai	NovelAI (remote)	NovelAI（リモート）	NovelAI(원격)
+setimg_entry_summary	Current engine: %1$s (%2$s)	現在のエンジン：%1$s（%2$s）	현재 엔진: %1$s(%2$s)
+setimg_entry_title	Image gen (engine & model)	生図（エンジンとモデル）	이미지 생성(엔진 및 모델)
+setimg_height_label	Height	高さ	높이
+setimg_model_label	Model	モデル	모델
+setimg_negative_label	Default negative prompt	デフォルトネガティブプロンプト	기본 부정 프롬프트
+setimg_novelai_header	NovelAI image gen (remote)	NovelAI生図（リモート）	NovelAI 이미지 생성(원격)
+setimg_novelai_negative_help	The Tavern default negative is appended after each request's negative	酒館のデフォルトネガティブは、毎回のリクエストのネガティブの後に連結されます	Tavern 기본 부정 프롬프트는 매 요청의 부정 프롬프트 뒤에 붙습니다
+setimg_novelai_params_button	Generation params, sampler & prompt prefix	生成パラメータ・サンプラー・プロンプト接頭辞	생성 매개변수, 샘플러, 프롬프트 접두사
+setimg_novelai_params_dialog_body	Matches the SillyTavern NovelAI source: prefix and negative are appended to every request automatically. After changing, go back to Settings and tap "Save".	酒館（SillyTavern）のNovelAIソースと同一：接頭辞とネガティブは毎回のリクエストに自動で連結されます。変更後は設定ページに戻り「保存」をタップしてください。	SillyTavern의 NovelAI 소스와 동일합니다: 접두사와 부정 프롬프트는 매 요청에 자동으로 붙습니다. 변경 후 설정 페이지로 돌아가 "저장"을 누르세요.
+setimg_novelai_params_dialog_title	NovelAI image gen parameters	NovelAI生図パラメータ	NovelAI 이미지 생성 매개변수
+setimg_novelai_sampler_label	Sampler	サンプラー	샘플러
+setimg_novelai_scheduler_label	Scheduler	スケジューラ	스케줄러
+setimg_novelai_steps_help	Max 50; limited to 28 with Anlas guard on	上限50。Anlasガード有効時は28	최대 50, Anlas 가드 사용 시 28
+setimg_novelai_token_help	novelai.net → Account settings → Persistent Token; requires a valid subscription (e.g. Opus)	novelai.net → アカウント設定 → Persistent Token。有効なサブスクリプション（Opusなど）が必要です	novelai.net → 계정 설정 → Persistent Token. 유효한 구독(예: Opus) 필요
+setimg_novelai_token_label	NovelAI token (Persistent Token)	NovelAIトークン（Persistent Token）	NovelAI 토큰(Persistent Token)
+setimg_ok	OK	確定	확인
+setimg_params_dialog_body	Parameters replace the matching placeholders in the workflow. Leave sampler/scheduler empty to keep the workflow's own values. After changing, go back to Settings and tap "Save".	パラメータはワークフロー内の対応するプレースホルダを置き換えます。サンプラーとスケジューラを空欄にすると、ワークフロー自身の値を使います。変更後は設定ページに戻り「保存」をタップしてください。	매개변수는 워크플로의 해당 자리 표시자를 대체합니다. 샘플러/스케줄러를 비우면 워크플로 자체 값을 사용합니다. 변경 후 설정 페이지로 돌아가 "저장"을 누르세요.
+setimg_params_dialog_title	Image gen parameters	生図パラメータ	이미지 생성 매개변수
+setimg_prefix_help	Tavern default: best quality, absurdres, aesthetic; supports the {prompt} placeholder	酒館のデフォルト：best quality, absurdres, aesthetic。{prompt}プレースホルダ対応	Tavern 기본값: best quality, absurdres, aesthetic. {prompt} 자리 표시자 지원
+setimg_prefix_label	Prompt prefix	プロンプト接頭辞	프롬프트 접두사
+setimg_sampler_label	Sampler (optional)	サンプラー（空欄可）	샘플러(비워 둘 수 있음)
+setimg_sampler_placeholder	euler, dpmpp_2m, etc.	euler, dpmpp_2m など	euler, dpmpp_2m 등
+setimg_save	Save	保存	저장
+setimg_scheduler_label	Scheduler (optional)	スケジューラ（空欄可）	스케줄러(비워 둘 수 있음)
+setimg_scheduler_placeholder	normal, karras, etc.	normal, karras など	normal, karras 등
+setimg_seed_help	-1 for random each time	-1で毎回ランダム	-1이면 매번 무작위
+setimg_seed_label	Seed	シード	시드
+setimg_smea_dyn_label	DYN (varied SMEA)	DYN（多様なSMEA）	DYN(다양한 SMEA)
+setimg_smea_label	SMEA (high-res enhancement)	SMEA（高解像度強化）	SMEA(고해상도 강화)
+setimg_state_configured	Configured	設定済み	구성됨
+setimg_state_unconfigured	Not configured	未設定	미구성
+setimg_status_connected	Connected	接続済み	연결됨
+setimg_status_failed	Connection failed	接続失敗	연결 실패
+setimg_steps_label	Steps	ステップ数	스텝 수
+setimg_test_connection	Test connection	接続テスト	연결 테스트
+setimg_test_token	Test token	トークンテスト	토큰 테스트
+setimg_testing	Testing...	テスト中...	테스트 중...
+setimg_token_ok	Token works	トークンは有効です	토큰 사용 가능
+setimg_token_unavailable	Unavailable	利用できません	사용할 수 없음
+setimg_upscale_help	1 = no upscaling	1で拡大なし	1 = 확대 없음
+setimg_upscale_label	Upscale factor	拡大倍率	확대 배율
+setimg_variety_label	Variety+ (diversity boost)	Variety+（多様性強化）	Variety+(다양성 강화)
+setimg_width_label	Width	幅	너비
+setimg_workflow_configured	Workflow JSON (configured — tap to edit)	ワークフローJSON（設定済み、タップで編集）	워크플로 JSON(구성됨, 탭하여 편집)
+setimg_workflow_dialog_body	Enable Developer Mode in the ComfyUI web UI, export the workflow with "Save (API Format)" and paste it here. Then set the positive/negative prompt nodes' text to the placeholders "%prompt%" and "%negative_prompt%". Optional placeholders: "%model%", "%seed%", "%steps%", "%scale%", "%width%", "%height%", "%sampler%", "%scheduler%", "%denoise%", "%clip_skip%" (parameters without a matching placeholder are ignored). After changing, go back to Settings and tap "Save".	ComfyUIのWeb UIで開発者モードを有効にし、「保存（API形式）」でワークフローをエクスポートしてここに貼り付けます。そのうえで、ポジティブ/ネガティブプロンプトノードのテキストをプレースホルダ「%prompt%」「%negative_prompt%」に変更してください。任意のプレースホルダ：「%model%」「%seed%」「%steps%」「%scale%」「%width%」「%height%」「%sampler%」「%scheduler%」「%denoise%」「%clip_skip%」（ワークフローに対応するプレースホルダがないパラメータは反映されません）。変更後は設定ページに戻り「保存」をタップしてください。	ComfyUI 웹 UI에서 개발자 모드를 켜고 "저장(API 형식)"으로 워크플로를 내보내 여기에 붙여넣으세요. 그런 다음 긍정/부정 프롬프트 노드의 텍스트를 자리 표시자 "%prompt%"와 "%negative_prompt%"로 바꾸세요. 선택적 자리 표시자: "%model%", "%seed%", "%steps%", "%scale%", "%width%", "%height%", "%sampler%", "%scheduler%", "%denoise%", "%clip_skip%"(워크플로에 해당 자리 표시자가 없는 매개변수는 적용되지 않음). 변경 후 설정 페이지로 돌아가 "저장"을 누르세요.
+setimg_workflow_dialog_title	ComfyUI workflow JSON	ComfyUIワークフローJSON	ComfyUI 워크플로 JSON
+setimg_workflow_field_label	API-format workflow	API形式ワークフロー	API 형식 워크플로
+setimg_workflow_json_error	Could not parse the JSON. Check it and retry	JSONを解析できませんでした。確認してから確定してください	JSON을 구문 분석할 수 없습니다. 확인 후 다시 시도하세요
+setimg_workflow_unconfigured	Workflow JSON (not configured)	ワークフローJSON（未設定）	워크플로 JSON(미구성)
+setpre_cancel	Cancel	キャンセル	취소
+setpre_cat_openai_compatible	OpenAI compatible	OpenAI互換	OpenAI 호환
+setpre_cd_close_editor	Close preset editor	プリセットエディタを閉じる	프리셋 편집기 닫기
+setpre_cd_collapse	Collapse	折りたたむ	접기
+setpre_cd_drag_sort	Long-press and drag to sort	長押しでドラッグして並べ替え	길게 눌러 드래그하여 정렬
+setpre_cd_expand	Expand	展開	펼치기
+setpre_cd_in_use	In use	使用中	사용 중
+setpre_cd_more	More actions	その他の操作	더 많은 작업
+setpre_cd_save_preset	Save preset	プリセットを保存	프리셋 저장
+setpre_create	Create	作成	만들기
+setpre_create_title	New preset	新規プリセット	새 프리셋
+setpre_delete	Delete	削除	삭제
+setpre_empty	No presets yet. Create one to configure generation parameters.	プリセットがありません。作成して生成パラメータを設定しましょう。	프리셋이 없습니다. 하나 만들어 생성 매개변수를 구성하세요.
+setpre_export	Export	エクスポート	내보내기
+setpre_import	Import	インポート	가져오기
+setpre_import_file	File: %1$s	ファイル：%1$s	파일: %1$s
+setpre_import_help	Choose the provider category this preset belongs to; it decides the directory it is written to and where it can be selected in chat.	このプリセットが属するプロバイダーカテゴリを選択してください。保存先のディレクトリと、チャットで選択できる範囲が決まります。	이 프리셋이 속할 공급자 카테고리를 선택하세요. 저장될 디렉터리와 채팅에서 선택 가능한 범위가 결정됩니다.
+setpre_import_title	Import preset	プリセットをインポート	프리셋 가져오기
+setpre_max_completion_label	Max reply tokens	最大返信トークン	최대 응답 토큰
+setpre_max_context_label	Max context tokens	最大コンテキストトークン	최대 컨텍스트 토큰
+setpre_max_tokens_help	Leave empty to let tellev cap the output length	空欄の場合、tellevは出力長を制限しません	비워 두면 tellev이 출력 길이를 제한하지 않습니다
+setpre_max_tokens_label	Max tokens	最大トークン数	최대 토큰 수
+setpre_move_down	Move down	下へ	아래로
+setpre_move_up	Move up	上へ	위로
+setpre_name_label	Preset name	プリセット名	프리셋 이름
+setpre_not_in_order	Not in order	順序未追加	순서 미추가
+setpre_preserved_fields	Kept but not applied: %1$s	保持済み・未適用：%1$s	유지되었으나 적용되지 않음: %1$s
+setpre_prompts_order_help	Tap to expand; long-press the handle to reorder. Unused prompts can be enabled directly.	タップで展開。ハンドルを長押ししてドラッグで並べ替え。未使用の項目はそのまま有効化できます。	탭하여 펼치고, 핸들을 길게 눌러 드래그하여 순서를 바꿉니다. 미사용 항목은 바로 활성화할 수 있습니다.
+setpre_prompts_order_title	Prompt order	プロンプト順序	프롬프트 순서
+setpre_provider_category_label	Provider category	プロバイダーカテゴリ	공급자 카테고리
+setpre_provider_label	Provider	プロバイダー	공급자
+setpre_raw_json_hint	The JSON object is validated before saving.	保存前にJSONオブジェクトを検証します。	저장 전에 JSON 개체를 검증합니다.
+setpre_raw_json_invalid	The raw field must be a valid JSON object	生フィールドは有効なJSONオブジェクトである必要があります	원시 필드는 유효한 JSON 개체여야 합니다
+setpre_raw_json_label	Raw JSON	生JSON	원시 JSON
+setpre_rename	Rename	名前を変更	이름 바꾸기
+setpre_save	Save	保存	저장
+setpre_save_as	Save as	別名で保存	다른 이름으로 저장
+setpre_section_generation	Generation parameters	生成パラメータ	생성 매개변수
+setpre_section_generation_sub	Temperature, Top-P, token caps and file operations	Temperature、Top-P、トークン上限、ファイル操作	Temperature, Top-P, 토큰 한도 및 파일 작업
+setpre_section_header	Generation presets	生成プリセット	생성 프리셋
+setpre_section_raw	Advanced raw JSON	高度な生JSON	고급 원시 JSON
+setpre_section_raw_sub	Unknown fields are kept as-is and exported with the preset	未知のフィールドはそのまま保持され、プリセットと一緒にエクスポートされます	알 수 없는 필드는 그대로 유지되며 프리셋과 함께 내보내집니다
+setpre_set_current	Set as current	現在に設定	현재로 설정
+setpre_set_current_active	Set as current (already current)	現在に設定（現在です）	현재로 설정(이미 현재)
+setpre_summary_active	%1$d prompts enabled · %2$d regex	%1$d件のプロンプトを有効 · 正規表現%2$d件	프롬프트 %1$d개 활성화 · 정규식 %2$d개
+setpre_target_name_label	Save-as / rename target name	別名保存・名前変更後の名称	다른 이름으로 저장/이름 변경 후 이름
+setpre_temperature_value	Temperature: %1$s	温度：%1$s	온도: %1$s
+setpre_unsupported_fields	Not yet in the runtime path: %1$s.	まだ実行経路に入っていません：%1$s。	아직 런타임 경로에 없습니다: %1$s.
+setprov_advanced	Advanced settings	詳細設定	고급 설정
+setprov_api_key_label	API key	APIキー	API 키
+setprov_base_url_label	Base URL	インターフェースアドレス	엔드포인트 주소
+setprov_cd_delete_config	Delete this config	この設定を削除	이 구성 삭제
+setprov_cd_hide_api_key	Hide API key	APIキーを隠す	API 키 숨기기
+setprov_cd_show_api_key	Show API key	APIキーを表示	API 키 표시
+setprov_config_name_label	Config name	設定名	구성 이름
+setprov_current_label	Current	現在使用中	현재 사용 중
+setprov_current_tag	Current	現在	현재
+setprov_custom_config_fallback	Custom config	カスタム設定	사용자 지정 구성
+setprov_header	Model service	モデルサービス	모델 서비스
+setprov_manage	Manage model service configs	モデルサービス設定を管理	모델 서비스 구성 관리
+setprov_model_help_count	Type to filter; fetched %1$d models	入力で絞り込めます。%1$d個のモデルを取得済み	입력하여 필터링, 모델 %1$d개 가져옴
+setprov_model_help_empty	This service returned no model list; you can type one manually	このサービスはモデル一覧を返しません。手動で入力できます	이 서비스는 모델 목록을 반환하지 않습니다. 직접 입력할 수 있습니다
+setprov_model_label	Model	モデル	모델
+setprov_model_placeholder	Select or type a model ID	モデルIDを選択または入力	모델 ID를 선택하거나 입력
+setprov_new_custom	New custom config	新規カスタム設定	새 사용자 지정 구성
+setprov_no_model	No model specified yet	まだモデルが指定されていません	아직 모델이 지정되지 않았습니다
+setprov_provider_label	Provider	プロバイダー	공급자
+setprov_quick_switch_help	The selection takes effect on the next generation	選択すると次の生成から即使用されます	선택하면 다음 생성부터 즉시 적용됩니다
+setprov_quick_switch_label	Quick switch config	設定のクイック切り替え	빠른 구성 전환
+setprov_save	Save	保存	저장
+setprov_status_connected	Connected	接続済み	연결됨
+setprov_status_failed	Connection failed	接続失敗	연결 실패
+setprov_test_connection	Test connection	接続テスト	연결 테스트
+setprov_testing	Testing...	テスト中...	테스트 중...
+setabout_author	Author	作者	제작자
+setabout_author_bilibili	Bilibili: 迷迭香のねこ	Bステーション：迷迭香のねこ	Bilibili: 迷迭香のねこ
+setabout_auto_check	Check for updates on launch	起動時に更新を自動確認	실행 시 업데이트 자동 확인
+setabout_auto_check_desc	When off, launching no longer checks online; manual check here still works	オフにすると起動時のオンライン確認をスキップします。ここでの手動確認は引き続き利用できます	끄면 실행 시 온라인 확인을 하지 않으며, 여기서 수동 확인은 계속 가능합니다
+setabout_based_on_st	A native Android client based on SillyTavern.	SillyTavernベースのネイティブAndroidクライアント。	SillyTavern 기반 네이티브 Android 클라이언트입니다.
+setabout_copy_qq_group	Copy QQ group number: 754350480	QQグループ番号をコピー：754350480	QQ 그룹 번호 복사: 754350480
+setabout_license	License	ライセンス	라이선스
+setabout_license_line1	tellev continues to be released under the GNU Affero General Public License v3.0 (AGPL-3.0).	tellevは引き続きGNU Affero General Public License v3.0（AGPL-3.0）でリリースされます。	tellev은 계속해서 GNU Affero General Public License v3.0(AGPL-3.0)으로 배포됩니다.
+setabout_license_line2	You may freely use, copy, modify and distribute this program; when distributing modified versions or offering network services, provide the corresponding source code under AGPL-3.0.	本プログラムは自由に利用・複製・改変・配布できます。改変版の配布やネットワークサービスの提供時には、AGPL-3.0に基づき対応するソースコードを提供してください。	이 프로그램은 자유롭게 사용, 복제, 수정, 배포할 수 있습니다. 수정 버전을 배포하거나 네트워크 서비스를 제공할 때는 AGPL-3.0에 따라 해당 소스 코드를 제공해야 합니다.
+setabout_license_line3	The tellev name, icon and author information are for official releases only; unauthorized use to impersonate official versions or for misleading commercial distribution is prohibited.	tellevの名称・アイコン・作者情報は公式版の表示にのみ使用できます。公式版への偽装や誤解を招く商業配布への無断利用は禁止です。	tellev 이름, 아이콘, 제작자 정보는 공식 버전 표시에만 사용됩니다. 공식 버전 사칭이나 오도성 상업 배포에 무단 사용할 수 없습니다.
+setabout_open_bilibili	Open the author's Bilibili page	作者のBステーションページを開く	제작자의 Bilibili 페이지 열기
+setabout_qq_copied	Copied group number 754350480	グループ番号754350480をコピーしました	그룹 번호 754350480이(가) 복사되었습니다
+setabout_qq_group	QQ group: tellev酒馆交流群	QQグループ：tellev酒館交流群	QQ 그룹: tellev酒馆交流群
+setabout_title	About	このアプリについて	정보
+setabout_version	tellev v%1$s	tellev v%1$s	tellev v%1$s
+setapp_accent_classic	Classic blue-violet	クラシック青紫	클래식 청보라
+setapp_accent_label	Accent color	テーマカラー	테마 색상
+setapp_accent_warm	Warm orange	ウォームオレンジ	웜 오렌지
+setapp_bubble_alpha	Bubble opacity: %1$d%%	バブル不透明度：%1$d%%	말풍선 불투명도: %1$d%%
+setapp_font_size	Chat font size: %1$d sp	チャット文字サイズ：%1$d sp	채팅 글자 크기: %1$d sp
+setapp_preview_text	Preview: this is a sample chat message	プレビュー：これはチャット文字のサンプルです	미리보기: 채팅 텍스트 샘플입니다
+setapp_theme_dark	Dark	ダーク	다크
+setapp_theme_light	Light	ライト	라이트
+setapp_theme_system	Follow system	システムに従う	시스템 설정 따름
+setapp_title	Theme	テーマ	테마
+setappctl_accent_classic	Classic blue-violet	クラシック青紫	클래식 청보라
+setappctl_accent_switched	Accent color changed to %1$s.	テーマカラーを%1$sに切り替えました。	테마 색상이 %1$s(으)로 변경되었습니다.
+setappctl_accent_warm	Warm orange	ウォームオレンジ	웜 오렌지
+setappctl_theme_dark	Dark	ダーク	다크
+setappctl_theme_light	Light	ライト	라이트
+setappctl_theme_switched	Theme changed to %1$s.	テーマを%1$sに切り替えました。	테마가 %1$s(으)로 변경되었습니다.
+setappctl_theme_system	Follow system	システムに従う	시스템 설정 따름
+setbkp_cancel	Cancel	キャンセル	취소
+setbkp_export	Export backup	バックアップをエクスポート	백업 내보내기
+setbkp_export_confirm	Export	エクスポート	내보내기
+setbkp_export_message	A ZIP backup will be created. Saved secrets are not included unless explicitly supported later. Choose where to save it.	ZIPバックアップを作成します。保存済みのシークレットは、今後明示的に対応されない限り含まれません。保存先を選択してください。	ZIP 백업이 생성됩니다. 저장된 시크릿은 이후 명시적으로 지원되지 않는 한 포함되지 않습니다. 저장 위치를 선택하세요.
+setbkp_import	Import backup	バックアップをインポート	백업 가져오기
+setbkp_import_confirm	Import	インポート	가져오기
+setbkp_import_message	Warning: importing a backup overwrites all current data and cannot be undone. Continue?	警告：バックアップをインポートすると現在のすべてのデータが上書きされ、元に戻せません。続行しますか？	경고: 백업을 가져오면 현재 모든 데이터를 덮어쓰며 되돌릴 수 없습니다. 계속하시겠습니까?
+setbkp_title	Backup	バックアップ	백업
+setcomp_add_cd	Add	追加	추가
+setcompat_auth_header_label	Auth header	認証Header	인증 헤더
+setcompat_auth_scheme_label	Auth prefix	認証プレフィックス	인증 접두사
+setcompat_auth_scheme_placeholder	Bearer; optional	Bearer。空欄可	Bearer, 비워 둘 수 있음
+setcompat_chat_completions_path_label	Chat Completions path	Chat Completionsパス	Chat Completions 경로
+setcompat_done	Done	完了	완료
+setcompat_extra_body_hint	Core fields such as messages/model/stream are never overridden	messages/model/streamなどの主要フィールドは上書きされません	messages/model/stream 등 핵심 필드는 덮어쓰지 않습니다
+setcompat_extra_body_label	Extra body (JSON)	追加リクエストボディ（JSON）	추가 요청 본문(JSON)
+setcompat_extra_headers_label	Extra headers (JSON)	追加Headers（JSON）	추가 헤더(JSON)
+setcompat_include_usage	Send stream_options.include_usage	stream_options.include_usageを送信	stream_options.include_usage 전송
+setcompat_intro	Base URL and paths are configured separately; only highly compatible fields are sent by default.	Base URLとパスは別々に設定します。デフォルトでは互換性の高いフィールドのみ送信します。	Base URL과 경로는 별도로 구성하며, 기본적으로 호환성이 높은 필드만 전송합니다.
+setcompat_legacy_model_warning	This legacy model will be retired on 2026-07-24. Please migrate to deepseek-v4-flash or deepseek-v4-pro.	この旧モデルは2026-07-24に停止します。deepseek-v4-flashまたはdeepseek-v4-proへ移行してください。	이 구형 모델은 2026-07-24에 중단됩니다. deepseek-v4-flash 또는 deepseek-v4-pro로 마이그레이션하세요.
+setcompat_max_tokens_field_hint	max_tokens or max_completion_tokens	max_tokens または max_completion_tokens	max_tokens 또는 max_completion_tokens
+setcompat_max_tokens_field_label	Output length field	出力長フィールド	출력 길이 필드
+setcompat_models_path_label	Model list path	モデル一覧パス	모델 목록 경로
+setcompat_supports_model_listing	Enable model list endpoint	モデル一覧APIを有効化	모델 목록 API 활성화
+setcompat_supports_reasoning	Enable reasoning field	reasoningフィールドを有効化	reasoning 필드 활성화
+setcompat_supports_tools	Enable tools field	toolsフィールドを有効化	tools 필드 활성화
+setcompat_supports_vision	Enable image messages	画像メッセージを有効化	이미지 메시지 활성화
+setcompat_title	Advanced settings	詳細設定	고급 설정
+setcompat_top_k	Send top_k	top_kを送信	top_k 전송
+setpers_cancel	Cancel	キャンセル	취소
+setpers_delete_cd	Delete	削除	삭제
+setpers_desc_label	Description	説明	설명
+setpers_edit_cd	Edit	編集	편집
+setpers_edit_title	Edit persona	ペルソナを編集	페르소나 편집
+setpers_empty	No personas yet. Create one to define your identity (used for the {{user}} name and description).	ペルソナがありません。作成してあなたの身份（{{user}}の名前と説明）を設定しましょう。	페르소나가 없습니다. 만들어 당신의 신분({{user}} 이름과 설명)을 설정하세요.
+setpers_name_label	Name	名前	이름
+setpers_new_title	New persona	新規ペルソナ	새 페르소나
+setpers_save	Save	保存	저장
+setpers_title	Persona	ペルソナ	페르소나
+setsec_add_title	Add secret	シークレットを追加	시크릿 추가
+setsec_cancel	Cancel	キャンセル	취소
+setsec_delete_cd	Delete	削除	삭제
+setsec_empty	No saved secrets.	保存済みのシークレットはありません。	저장된 시크릿이 없습니다.
+setsec_key_label	Key	キー	키
+setsec_save	Save	保存	저장
+setsec_title	Secrets	シークレット	시크릿
+setsec_value_label	Value	値	값
+setupd_check_failed	Update check failed	更新の確認に失敗しました	업데이트 확인 실패
+setupd_check_now	Check for updates	更新を確認	업데이트 확인
+setupd_checking	Checking for updates...	更新を確認中…	업데이트 확인 중…
+setupd_download	Download update	更新をダウンロード	업데이트 다운로드
+setupd_downloading	Downloading... %1$d%%	ダウンロード中… %1$d%%	다운로드 중... %1$d%%
+setupd_new_version	New version v%1$s available	新しいバージョンv%1$s	새 버전 v%1$s
+setupd_redownload	Re-download update	更新を再ダウンロード	업데이트 다시 다운로드
+setupd_retry	Retry	再試行	재시도
+setupd_up_to_date	Up to date	最新です	최신 버전입니다
+setcomp_import	Import	インポート	가져오기
+provctl_switched_to	Switched to "%1$s".	「%1$s」に切り替えました。	"%1$s"(으)로 전환했습니다.
+provctl_load_failed	Failed to load provider config: %1$s	プロバイダー設定の読み込みに失敗しました：%1$s	공급자 구성 로드 실패: %1$s
+provctl_custom_config_display_name	Custom config	カスタム設定	사용자 지정 구성
+provctl_created	Created custom config "%1$s".	カスタム設定「%1$s」を作成しました。	사용자 지정 구성 "%1$s"을(를) 만들었습니다.
+provctl_create_failed	Failed to create custom config: %1$s	カスタム設定の作成に失敗しました：%1$s	사용자 지정 구성 생성 실패: %1$s
+provctl_deleted	Custom config deleted.	カスタム設定を削除しました。	사용자 지정 구성을 삭제했습니다.
+provctl_delete_failed	Failed to delete custom config: %1$s	カスタム設定の削除に失敗しました：%1$s	사용자 지정 구성 삭제 실패: %1$s
+provctl_advanced_config_invalid	Advanced config format is invalid	詳細設定の形式が正しくありません	고급 구성 형식이 잘못되었습니다
+provctl_test_failed	Connection test failed: %1$s	接続テストに失敗しました：%1$s	연결 테스트 실패: %1$s
+provctl_saved	Model service config saved.	モデルサービス設定を保存しました。	모델 서비스 구성을 저장했습니다.
+provctl_save_failed	Failed to save provider config: %1$s	プロバイダー設定の保存に失敗しました：%1$s	공급자 구성 저장 실패: %1$s
+provctl_label_extra_headers	Extra headers	追加Headers	추가 헤더
+provctl_label_extra_body	Extra body	追加リクエストボディ	추가 요청 본문
+provctl_must_be_json_object	%1$s must be a valid JSON object	%1$sは有効なJSONオブジェクトである必要があります	%1$s은(는) 유효한 JSON 개체여야 합니다
+provctl_header_must_be_string	Extra header "%1$s" must be a string	追加Header「%1$s」は文字列である必要があります	추가 헤더 "%1$s"은(는) 문자열이어야 합니다
+provctl_max_tokens_field_invalid	The output length field must be max_tokens or max_completion_tokens	出力長フィールドはmax_tokensまたはmax_completion_tokensのみです	출력 길이 필드는 max_tokens 또는 max_completion_tokens만 가능합니다
+presetctl_load_failed	Failed to load preset: %1$s	プリセットの読み込みに失敗しました：%1$s	프리셋 로드 실패: %1$s
+presetctl_saved	Preset "%1$s" saved.	プリセット「%1$s」を保存しました。	프리셋 "%1$s"을(를) 저장했습니다.
+presetctl_save_failed	Failed to save preset: %1$s	プリセットの保存に失敗しました：%1$s	프리셋 저장 실패: %1$s
+presetctl_selected	Switched to preset "%1$s".	プリセット「%1$s」に切り替えました。	프리셋 "%1$s"(으)로 전환했습니다.
+presetctl_select_failed	Failed to switch preset: %1$s	プリセットの切り替えに失敗しました：%1$s	프리셋 전환 실패: %1$s
+presetctl_duplicate_id	A preset named "%1$s" already exists in this category	同カテゴリにプリセット「%1$s」が既に存在します	이 카테고리에 프리셋 "%1$s"이(가) 이미 있습니다
+presetctl_saved_as	Preset saved as "%1$s".	プリセットを「%1$s」として保存しました。	프리셋을 "%1$s"(으)로 저장했습니다.
+presetctl_save_as_failed	Save-as failed: %1$s	別名保存に失敗しました：%1$s	다른 이름으로 저장 실패: %1$s
+presetctl_same_name	The new name is the same as the current one	新しい名前が元の名前と同じです	새 이름이 기존 이름과 같습니다
+presetctl_renamed	Preset renamed to "%1$s".	プリセットの名前を「%1$s」に変更しました。	프리셋 이름을 "%1$s"(으)로 변경했습니다.
+presetctl_rename_failed	Rename failed: %1$s	名前の変更に失敗しました：%1$s	이름 변경 실패: %1$s
+presetctl_create_export_file_failed	Could not create the export file	エクスポートファイルを作成できませんでした	내보내기 파일을 만들 수 없습니다
+presetctl_exported	Preset "%1$s" exported.	プリセット「%1$s」をエクスポートしました。	프리셋 "%1$s"을(를) 내보냈습니다.
+presetctl_export_failed	Failed to export preset: %1$s	プリセットのエクスポートに失敗しました：%1$s	프리셋 내보내기 실패: %1$s
+presetctl_deleted	Preset deleted.	プリセットを削除しました。	프리셋을 삭제했습니다.
+presetctl_delete_failed	Failed to delete preset: %1$s	プリセットの削除に失敗しました：%1$s	프리셋 삭제 실패: %1$s
+presetctl_read_file_failed	Could not read the selected file	選択したファイルを読み取れませんでした	선택한 파일을 읽을 수 없습니다
+presetctl_imported	Preset "%1$s" imported and activated.	プリセット「%1$s」をインポートして有効にしました。	프리셋 "%1$s"을(를) 가져와 활성화했습니다.
+presetctl_imported_with_warnings	Preset "%1$s" imported and activated; %2$s.	プリセット「%1$s」をインポートして有効にしました；%2$s。	프리셋 "%1$s"을(를) 가져와 활성화했습니다. %2$s.
+presetctl_import_failed	Failed to import preset: %1$s	プリセットのインポートに失敗しました：%1$s	프리셋 가져오기 실패: %1$s
+persctl_created	Persona "%1$s" created.	ペルソナ「%1$s」を作成しました。	페르소나 "%1$s"을(를) 만들었습니다.
+persctl_create_failed	Failed to create persona: %1$s	ペルソナの作成に失敗しました：%1$s	페르소나 생성 실패: %1$s
+persctl_not_found	Persona not found: %1$s	ペルソナが見つかりません：%1$s	페르소나를 찾을 수 없음: %1$s
+persctl_updated	Persona updated.	ペルソナを更新しました。	페르소나를 업데이트했습니다.
+persctl_update_failed	Failed to update persona: %1$s	ペルソナの更新に失敗しました：%1$s	페르소나 업데이트 실패: %1$s
+persctl_deleted	Persona deleted.	ペルソナを削除しました。	페르소나를 삭제했습니다.
+persctl_delete_failed	Failed to delete persona: %1$s	ペルソナの削除に失敗しました：%1$s	페르소나 삭제 실패: %1$s
+persctl_secret_saved	Secret "%1$s" saved.	シークレット「%1$s」を保存しました。	시크릿 "%1$s"을(를) 저장했습니다.
+persctl_secret_save_failed	Failed to save secret: %1$s	シークレットの保存に失敗しました：%1$s	시크릿 저장 실패: %1$s
+persctl_secret_deleted	Secret "%1$s" deleted.	シークレット「%1$s」を削除しました。	시크릿 "%1$s"을(를) 삭제했습니다.
+persctl_secret_delete_failed	Failed to delete secret: %1$s	シークレットの削除に失敗しました：%1$s	시크릿 삭제 실패: %1$s
+imgctl_comfy_test_failed	ComfyUI connection test failed: %1$s	ComfyUIの接続テストに失敗しました：%1$s	ComfyUI 연결 테스트 실패: %1$s
+imgctl_workflow_parse_failed	Could not parse the workflow JSON; nothing was saved. Paste the JSON exported via ComfyUI's "Save (API Format)".	ワークフローJSONを解析できず、保存していません。ComfyUIの「保存（API形式）」でエクスポートしたJSONを貼り付けてください。	워크플로 JSON을 구문 분석할 수 없어 저장하지 않았습니다. ComfyUI의 "저장(API 형식)"으로 내보낸 JSON을 붙여넣으세요.
+imgctl_comfy_saved	Image model config saved.	生図モデルの設定を保存しました。	이미지 모델 구성을 저장했습니다.
+imgctl_comfy_save_failed	Failed to save image model config: %1$s	生図モデル設定の保存に失敗しました：%1$s	이미지 모델 구성 저장 실패: %1$s
+imgctl_novelai_test_failed	NovelAI test failed: %1$s	NovelAIのテストに失敗しました：%1$s	NovelAI 테스트 실패: %1$s
+imgctl_novelai_saved	NovelAI image gen config saved.	NovelAI生図の設定を保存しました。	NovelAI 이미지 생성 구성을 저장했습니다.
+imgctl_novelai_save_failed	Failed to save NovelAI image gen config: %1$s	NovelAI生図設定の保存に失敗しました：%1$s	NovelAI 이미지 생성 구성 저장 실패: %1$s
+bkpctl_open_target_failed	Unable to open backup target	バックアップ先を開けません	백업 대상을 열 수 없습니다
+bkpctl_exported	Backup exported.	バックアップをエクスポートしました。	백업을 내보냈습니다.
+bkpctl_export_failed	Failed to export backup: %1$s	バックアップのエクスポートに失敗しました：%1$s	백업 내보내기 실패: %1$s
+bkpctl_imported	Backup imported. Restart the app to see the changes.	バックアップをインポートしました。変更を反映するにはアプリを再起動してください。	백업을 가져왔습니다. 변경 사항을 보려면 앱을 재시작하세요.
+bkpctl_import_failed	Failed to import backup: %1$s	バックアップのインポートに失敗しました：%1$s	백업 가져오기 실패: %1$s
+setvm_load_failed	Failed to load settings: %1$s	設定の読み込みに失敗しました：%1$s	설정 로드 실패: %1$s
+setscreen_version_unknown	Unknown	不明	알 수 없음
+setscreen_title_provider	Model service config	モデルサービス設定	모델 서비스 구성
+setscreen_title_imagegen	Image gen settings	生図設定	이미지 생성 설정
+setscreen_title_settings	Settings	設定	설정
+setscreen_back_cd	Back	戻る	뒤로
+setscreen_this_config	this config	この設定	이 구성
+setscreen_delete_config_title	Delete custom config	カスタム設定を削除	사용자 지정 구성 삭제
+setscreen_delete_config_message	Delete "%1$s"? Its base URL and API key will be cleared. This cannot be undone.	「%1$s」を削除しますか？この設定のインターフェースアドレスとAPIキーは消去され、元に戻せません。	"%1$s"을(를) 삭제하시겠습니까? 이 구성의 엔드포인트 주소와 API 키가 지워지며 되돌릴 수 없습니다.
+setscreen_delete	Delete	削除	삭제
+setscreen_cancel	Cancel	キャンセル	취소
+wblist_title	World Books	ワールドブック	월드북
+wblist_ai_create	AI Create	AI作成	AI 생성
+wblist_settings_cd	World book settings	ワールドブック設定	월드북 설정
+wblist_import_cd	Import world book	ワールドブックをインポート	월드북 가져오기
+wblist_new	New	新規	새로 만들기
+wblist_empty	No world books yet	ワールドブックがありません	월드북이 없습니다
+wblist_empty_hint	Create a world book to manage background lore entries	ワールドブックを作成して背景設定のエントリを管理しましょう	월드북을 만들어 배경 설정 항목을 관리하세요
+wblist_create_title	New world book	新規ワールドブック	새 월드북
+wblist_name_label	World book name	ワールドブック名	월드북 이름
+wblist_create	Create	作成	만들기
+wblist_cancel	Cancel	キャンセル	취소
+wblist_settings_title	World book & prompt settings	ワールドブックとプロンプト設定	월드북 및 프롬프트 설정
+wblist_recursive_scan	Recursive scan	再帰スキャン	재귀 스캔
+wblist_recursive_desc	Activated entry content participates in further keyword matching (ST's world_info_recursive). Entries with delayed recursion (delayUntilRecursion) only trigger when this is on.	有効化されたエントリの内容がさらにキーワードマッチに参加します（STのworld_info_recursive）。遅延再帰（delayUntilRecursion）のエントリは、この設定がオンのときにのみ発火します。	활성화된 항목 내용이 추가 키워드 매칭에 참여합니다(ST의 world_info_recursive). 지연 재귀(delayUntilRecursion) 항목은 이 설정이 켜져 있어야 발동합니다.
+wblist_max_recursion_steps	Max recursion steps (0 = unlimited)	最大再帰ステップ数（0 = 無制限）	최대 재귀 단계 수(0 = 무제한)
+wblist_scan_depth	Scan depth (last N messages participate in matching)	スキャン深度（直近N件のメッセージがマッチ対象）	스캔 깊이(최근 N개 메시지가 매칭에 참여)
+wblist_char_prompt_section	Character card prompts	キャラカードプロンプト	캐릭터 카드 프롬프트
+wblist_prefer_char_prompt	Use character card system prompt	キャラカードのシステムプロンプトを使用	캐릭터 카드 시스템 프롬프트 사용
+wblist_prefer_char_prompt_desc	When on, the card's data.system_prompt replaces the default system prompt (ST's prefer_character_prompt).	オンにすると、キャラカードのdata.system_promptがデフォルトのシステムプロンプトを置き換えます（STのprefer_character_prompt）。	켜면 캐릭터 카드의 data.system_prompt가 기본 시스템 프롬프트를 대체합니다(ST의 prefer_character_prompt).
+wblist_prefer_char_jailbreak	Use character card jailbreak prompt	キャラカードの jailbreak プロンプトを使用	캐릭터 카드 jailbreak 프롬프트 사용
+wblist_prefer_char_jailbreak_desc	When on, the card's data.post_history_instructions is injected at the end of the chat (ST's prefer_character_jailbreak).	オンにすると、キャラカードのdata.post_history_instructionsをチャット末尾に注入します（STのprefer_character_jailbreak）。	켜면 캐릭터 카드의 data.post_history_instructions가 채팅 끝에 주입됩니다(ST의 prefer_character_jailbreak).
+wblist_instruct_section	Instruct mode	Instructモード	Instruct 모드
+wblist_instruct_enabled	Enable Instruct formatting	Instructフォーマットを有効化	Instruct 포맷 활성화
+wblist_instruct_enabled_desc	Formats the message sequence for completion-style APIs (textgen/kobold etc.). Chat completion APIs do not need this.	補完型API（textgen/koboldなど）向けにメッセージ列をフォーマットします。チャット補完APIでは不要です。	완성형 API(textgen/kobold 등)를 위해 메시지 시퀀스를 포맷합니다. 채팅 완성 API에는 필요 없습니다.
+wblist_instruct_preset	Instruct preset	Instructプリセット	Instruct 프리셋
+wblist_instruct_preset_default	Current: built-in ChatML	現在：内蔵ChatML	현재: 내장 ChatML
+wblist_instruct_preset_current	Current: %1$s	現在：%1$s	현재: %1$s
+wblist_instruct_preset_builtin	Built-in ChatML	内蔵ChatML	내장 ChatML
+wblist_save	Save	保存	저장
+wblist_read_file_failed	Could not read the selected file	選択したファイルを読み取れませんでした	선택한 파일을 읽을 수 없습니다
+wblist_import_failed	Failed to import world book: %1$s	ワールドブックのインポートに失敗しました：%1$s	월드북 가져오기 실패: %1$s
+wblist_entry_count	%1$d entries	%1$d件のエントリ	항목 %1$d개
+wblist_ai_edit_cd	AI edit world book	ワールドブックをAI編集	월드북 AI 편집
+wblist_delete_cd	Delete world book	ワールドブックを削除	월드북 삭제
+wblist_delete_title	Delete world book	ワールドブックを削除	월드북 삭제
+wblist_delete_confirm	Delete world book "%1$s"? All of its entries will be removed.	ワールドブック「%1$s」を削除しますか？そのすべてのエントリが削除されます。	월드북 "%1$s"을(를) 삭제하시겠습니까? 모든 항목이 삭제됩니다.
+wblist_delete	Delete	削除	삭제
+wbedit_new_entry	New entry	新規エントリ	새 항목
+wbedit_edit_entry	Edit entry	エントリを編集	항목 편집
+wbedit_back_cd	Back	戻る	뒤로
+wbedit_save_entry_cd	Save entry	エントリを保存	항목 저장
+wbedit_back_to_book	Back to world book	ワールドブックに戻る	월드북으로 돌아가기
+wbedit_field_keys	Keywords (comma-separated)	キーワード（カンマ区切り）	키워드(쉼표로 구분)
+wbedit_field_secondary_keys	Secondary keywords (comma-separated)	二次キーワード（カンマ区切り）	보조 키워드(쉼표로 구분)
+wbedit_field_content	Content	内容	내용
+wbedit_enabled	Enabled	有効	활성화
+wbedit_selective	Selective trigger	選択的トリガー	선택적 트리거
+wbedit_constant	Constant injection	常時注入	상시 주입
+wbedit_priority	Priority	優先度	우선순위
+wbedit_insertion_order	Insertion order	挿入順序	삽입 순서
+wbedit_depth	Depth	深度	깊이
+wbedit_position	Insertion position	注入位置	주입 위치
+wbedit_position_before_char	Before character	キャラクターの前	캐릭터 앞
+wbedit_position_after_char	After character	キャラクターの後	캐릭터 뒤
+wbedit_position_before_an	Before author's note	作者ノートの前	작가 노트 앞
+wbedit_position_after_an	After author's note	作者ノートの後	작가 노트 뒤
+wbedit_position_at_depth	@Depth	@深度	@깊이
+wbedit_position_before_example	Before example dialogs	例会話の前	예시 대화 앞
+wbedit_position_after_example	After example dialogs	例会話の後	예시 대화 뒤
+wbedit_position_slot	Slot	スロット	슬롯
+wbedit_selective_logic	Selective logic	選択的ロジック	선택적 로직
+wbedit_logic_and_any	AND any matches	AND いずれか一致	AND 하나라도 일치
+wbedit_logic_not_any	NOT any unmatched	NOT いずれか不一致	NOT 하나라도 불일치
+wbedit_logic_not_all	NOT all unmatched	NOT すべて不一致	NOT 모두 불일치
+wbedit_logic_and_all	AND all match	AND すべて一致	AND 모두 일치
+wbedit_role	Role	ロール	역할
+wbedit_role_system	System	System	System
+wbedit_role_user	User	User	User
+wbedit_role_assistant	Assistant	Assistant	Assistant
+wbedit_use_probability	Probability trigger	確率トリガー	확률 트리거
+wbedit_probability	Probability (0-100)	確率 (0-100)	확률 (0-100)
+wbedit_match_whole_words	Match whole words	全語一致	전체 단어 일치
+wbedit_use_regex	Regex matching	正規表現マッチ	정규식 매칭
+wbedit_case_sensitive	Case sensitive	大文字小文字を区別	대소문자 구분
+wbedit_exclude_recursion	Exclude from recursion (not fed into recursive text)	再帰から除外（再帰テキストに供給しない）	재귀 제외(재귀 텍스트에 공급하지 않음)
+wbedit_prevent_recursion	Prevent recursion (does not trigger further activation)	再帰を防止（後続の活性化を誘発しない）	재귀 방지(이후 활성화 유발하지 않음)
+wbedit_delay_recursion	Delay until recursion	再帰まで遅延	재귀까지 지연
+wbedit_delay_recursion_level	Recursion level (the round from which it can activate; requires recursive scan)	再帰レベル（何回目の再帰から有効になるか。再帰スキャンの有効化が必要）	재귀 단계(몇 번째 재귀부터 활성화 가능, 재귀 스캔 필요)
+wbedit_comment	Comment	備考	메모
+wbedit_cancel	Cancel	キャンセル	취소
+wbedit_save_entry	Save entry	エントリを保存	항목 저장
+wbdetail_title	World Book	ワールドブック	월드북
+wbdetail_back_cd	Back	戻る	뒤로
+wbdetail_search_close_cd	Close search	検索を閉じる	검색 닫기
+wbdetail_search_cd	Search entries	エントリを検索	항목 검색
+wbdetail_save_book_cd	Save world book	ワールドブックを保存	월드북 저장
+wbdetail_new_entry	New entry	新規エントリ	새 항목
+wbdetail_search_placeholder	Search entries by keyword or content...	キーワードや内容でエントリを検索...	키워드나 내용으로 항목 검색...
+wbdetail_clear_cd	Clear	クリア	지우기
+wbdetail_back_to_list	Back to world book list	ワールドブック一覧に戻る	월드북 목록으로 돌아가기
+wbdetail_no_match	No matching entries	一致するエントリがありません	일치하는 항목이 없습니다
+wbdetail_empty	This world book has no entries	このワールドブックにはエントリがありません	이 월드북에는 항목이 없습니다
+wbdetail_empty_hint	Tap "New entry" to add the first lore	「新規エントリ」をタップして最初の設定を追加しましょう	"새 항목"을 눌러 첫 설정을 추가하세요
+wbdetail_unnamed_entry	Unnamed entry	名称未エントリ	이름 없는 항목
+wbdetail_more_keys	+%1$d	+%1$d	+%1$d
+wbdetail_priority_badge	P:%1$d	P:%1$d	P:%1$d
+wbdetail_depth_badge	D:%1$d	D:%1$d	D:%1$d
+wbdetail_badge_constant	Constant	常駐	상시
+wbdetail_badge_selective	Selective	選択	선택
+wbdetail_delete_entry_cd	Delete entry	エントリを削除	항목 삭제
+wbdetail_delete_entry_title	Delete entry	エントリを削除	항목 삭제
+wbdetail_delete_entry_confirm	Delete this entry?	このエントリを削除しますか？	이 항목을 삭제하시겠습니까?
+wbdetail_delete	Delete	削除	삭제
+wbdetail_cancel	Cancel	キャンセル	취소
+wbvm_load_failed	Failed to load world books: %1$s	ワールドブックの読み込みに失敗しました：%1$s	월드북 로드 실패: %1$s
+wbvm_save_settings_failed	Failed to save world book settings: %1$s	ワールドブック設定の保存に失敗しました：%1$s	월드북 설정 저장 실패: %1$s
+wbvm_save_prompt_settings_failed	Failed to save prompt settings: %1$s	プロンプト設定の保存に失敗しました：%1$s	프롬프트 설정 저장 실패: %1$s
+wbvm_toggle_failed	Failed to update world book toggle: %1$s	ワールドブックのスイッチ更新に失敗しました：%1$s	월드북 스위치 업데이트 실패: %1$s
+wbvm_book_not_found	World book "%1$s" not found or unreadable.	ワールドブック「%1$s」が見つからないか、読み取れません。	월드북 "%1$s"을(를) 찾을 수 없거나 읽을 수 없습니다.
+wbvm_book_saved	World book saved.	ワールドブックを保存しました。	월드북을 저장했습니다.
+wbvm_save_failed	Failed to save world book: %1$s	ワールドブックの保存に失敗しました：%1$s	월드북 저장 실패: %1$s
+wbvm_book_created	World book "%1$s" created.	ワールドブック「%1$s」を作成しました。	월드북 "%1$s"을(를) 만들었습니다.
+wbvm_create_failed	Failed to create world book: %1$s	ワールドブックの作成に失敗しました：%1$s	월드북 생성 실패: %1$s
+wbvm_book_imported	World book "%1$s" imported.	ワールドブック「%1$s」をインポートしました。	월드북 "%1$s"을(를) 가져왔습니다.
+wbvm_import_failed	Failed to import world book: %1$s	ワールドブックのインポートに失敗しました：%1$s	월드북 가져오기 실패: %1$s
+wbvm_book_deleted	World book deleted.	ワールドブックを削除しました。	월드북을 삭제했습니다.
+wbvm_delete_failed	Failed to delete world book: %1$s	ワールドブックの削除に失敗しました：%1$s	월드북 삭제 실패: %1$s
+wbvm_entry_not_found	Entry not found: %1$s	エントリが見つかりません：%1$s	항목을 찾을 수 없음: %1$s
+wbvm_entry_missing	World book entry "%1$s" not found. It may have been deleted.	ワールドブックエントリ「%1$s」が見つかりません。削除された可能性があります。	월드북 항목 "%1$s"을(를) 찾을 수 없습니다. 삭제되었을 수 있습니다.
+wbvm_load_entry_failed	Failed to load world book entry: %1$s	ワールドブックエントリの読み込みに失敗しました：%1$s	월드북 항목 로드 실패: %1$s
+wbvm_save_context_changed	Save failed: the world book context has changed. Go back and reopen the entry.	保存に失敗しました：ワールドブックのコンテキストが変わりました。戻ってエントリを開き直してください。	저장 실패: 월드북 컨텍스트가 변경되었습니다. 돌아가서 항목을 다시 여세요.
+wbvm_delete_context_changed	Delete failed: the world book context has changed. Reopen the entry.	削除に失敗しました：ワールドブックのコンテキストが変わりました。エントリを開き直してください。	삭제 실패: 월드북 컨텍스트가 변경되었습니다. 항목을 다시 여세요.
+extcompat_ejs_title	EJS prompt template settings	EJSプロンプトテンプレート設定	EJS 프롬프트 템플릿 설정
+extcompat_ejs_subtitle	Controls how EJS templates (<%= ... %>) behave in prompt generation and message rendering.	プロンプト生成とメッセージ描画におけるEJSテンプレート（<%= ... %>）の動作を制御します。	프롬프트 생성과 메시지 렌더링에서 EJS 템플릿(<%= ... %>)의 동작을 제어합니다.
+extcompat_section_basic	Basic	基本	기본
+extcompat_ejs_enable_title	Enable EJS template processing	EJSテンプレート処理を有効化	EJS 템플릿 처리 활성화
+extcompat_ejs_enable_subtitle	Master switch; all template processing is skipped when off	マスタースイッチ。オフにするとすべてのテンプレート処理をスキップ합니다	마스터 스위치, 끄면 모든 템플릿 처리를 건너뜁니다
+extcompat_ejs_debug_title	Debug mode	デバッグモード	디버그 모드
+extcompat_ejs_debug_subtitle	Output debug logs	デバッグログを出力	디버그 로그 출력
+extcompat_section_generate_stage	Generation stage	生成ステージ	생성 단계
+extcompat_ejs_generate_title	Pre-generation processing	生成前処理	생성 전 처리
+extcompat_ejs_generate_subtitle	Process EJS in prompts before sending to the LLM	LLMに送信する前にプロンプト内のEJSを処理합니다	LLM에 보내기 전에 프롬프트의 EJS 처리
+extcompat_ejs_generate_loader_title	World book [GENERATE:BEFORE]	ワールドブック [GENERATE:BEFORE]	월드북 [GENERATE:BEFORE]
+extcompat_ejs_generate_loader_subtitle	Process GENERATE directives in world book entries	ワールドブックエントリ内のGENERATE指示を処理します	월드북 항목의 GENERATE 지시 처리
+extcompat_ejs_inject_loader_title	@INJECT injection loader	@INJECT注入ローダー	@INJECT 주입 로더
+extcompat_ejs_inject_loader_subtitle	Process @INJECT prompt injection directives	@INJECTプロンプト注入指示を処理します	@INJECT 프롬프트 주입 지시 처리
+extcompat_ejs_preload_title	Preload world book	ワールドブックをプリロード	월드북 사전 로드
+extcompat_ejs_preload_subtitle	Preload world book entries before generation	生成前にワールドブックエントリをプリロードします	생성 전에 월드북 항목 사전 로드
+extcompat_section_render_stage	Render stage	描画ステージ	렌더링 단계
+extcompat_ejs_render_title	Post-render processing	描画後処理	렌더링 후 처리
+extcompat_ejs_render_subtitle	Process EJS templates after receiving the LLM response	LLMの応答受信後にEJSテンプレートを処理します	LLM 응답 수신 후 EJS 템플릿 처리
+extcompat_ejs_render_loader_title	Render loader	描画ローダー	렌더링 로더
+extcompat_ejs_render_loader_subtitle	Run loader logic during rendering	描画時にローダーのロジックを実行します	렌더링 시 로더 로직 실행
+extcompat_ejs_code_blocks_title	Code block processing	コードブロック処理	코드 블록 처리
+extcompat_ejs_code_blocks_subtitle	Process EJS inside code blocks	コードブロック内のEJSを処理します	코드 블록 내 EJS 처리
+extcompat_ejs_raw_eval_title	Permanent evaluation	恒久評価	영구 평가
+extcompat_ejs_raw_eval_subtitle	Permanently evaluate variables on every message	メッセージごとに変数を恒久的に評価します	메시지마다 변수를 영구 평가
+extcompat_ejs_filter_title	Message filtering	メッセージフィルタ	메시지 필터
+extcompat_ejs_filter_subtitle	Filter message content	メッセージ内容をフィルタします	메시지 내용 필터
+extcompat_section_advanced	Advanced	高度	고급
+extcompat_ejs_sandbox_title	Sandbox mode	サンドボックスモード	샌드박스 모드
+extcompat_ejs_sandbox_subtitle	Execute EJS code in a sandbox	EJSコードをサンドボックスで実行します	EJS 코드를 샌드박스에서 실행
+extcompat_ejs_autosave_title	Auto-save variables	変数の自動保存	변수 자동 저장
+extcompat_ejs_autosave_subtitle	Automatically save EJS variable changes	EJS変数の変更を自動保存します	EJS 변수 변경 자동 저장
+extcompat_ejs_no_context_title	Disable context	コンテキストを無効化	컨텍스트 비활성화
+extcompat_ejs_no_context_subtitle	Disable context variable injection	コンテキスト変数の注入を無効化します	컨텍스트 변수 주입 비활성화
+extcompat_ejs_invert_title	Invert logic	ロジックを反転	로직 반전
+extcompat_ejs_invert_subtitle	Invert world book activation logic	ワールドブックの活性化ロジックを反転します	월드북 활성화 로직 반전
+extcompat_ejs_compile_workers_title	Compile workers	コンパイルWorker	컴파일 워커
+extcompat_ejs_compile_workers_subtitle	Compile templates using Web Workers	Web Workerでテンプレートをコンパイル합니다	Web Worker로 템플릿 컴파일
+extcompat_ejs_code_editor_title	Code editor	コードエディタ	코드 에디터
+extcompat_ejs_code_editor_subtitle	Enable the code editor UI	コードエディタUIを有効化します	코드 에디터 UI 활성화
+extcompat_depth_limit	Depth limit: %1$s	深度制限: %1$s	깊이 제한: %1$s
+extcompat_depth_unlimited	Unlimited	無制限	무제한
+extcompat_reset_default	Reset to defaults	デフォルトに戻す	기본값으로 재설정
+extcompat_done	Done	完了	완료
+extcompat_th_title	Tavern Helper settings	酒館助手設定	술관 도우미 설정
+extcompat_th_subtitle	Controls the Tavern Helper compatibility layer, including audio, optimization and rendering options.	酒館助手互換レイヤーの動作（音声・最適化・描画オプションなど）を制御します。	술관 도우미 호환 레이어의 동작(오디오, 최적화, 렌더링 옵션 등)을 제어합니다.
+extcompat_section_audio	Audio	オーディオ	오디오
+extcompat_th_audio_enable_title	Enable audio	オーディオを有効化	오디오 활성화
+extcompat_th_audio_enable_subtitle	Enable BGM and ambient sound playback	BGMと環境音の再生を有効化します	BGM 및 환경음 재생 활성화
+extcompat_th_bgm_title	BGM playback	BGM再生	BGM 재생
+extcompat_th_bgm_subtitle	Background music playback	背景音楽の再生	배경 음악 재생
+extcompat_th_bgm_muted_title	Mute BGM	BGMをミュート	BGM 음소거
+extcompat_th_bgm_muted_subtitle	Mute background music	背景音楽をミュートします	배경 음악 음소거
+extcompat_th_ambient_title	Ambient sound playback	環境音の再生	환경음 재생
+extcompat_th_ambient_subtitle	Ambient sound effect playback	環境効果音の再生	환경 효과음 재생
+extcompat_th_ambient_muted_title	Mute ambient sound	環境音をミュート	환경음 음소거
+extcompat_th_ambient_muted_subtitle	Mute ambient sounds	環境音をミュートします	환경음 음소거
+extcompat_th_volumes	BGM volume: %1$d  Ambient volume: %2$d	BGM音量: %1$d  環境音量: %2$d	BGM 볼륨: %1$d  환경음 볼륨: %2$d
+extcompat_section_optimize	Optimization	最適化	최적화
+extcompat_th_opt_incompatible_title	Disable incompatible options	非互換オプションを無効化	호환되지 않는 옵션 비활성화
+extcompat_th_opt_incompatible_subtitle	Automatically disable options incompatible with tellev	tellevと非互換のオプションを自動で無効化します	tellev과 호환되지 않는 옵션 자동 비활성화
+extcompat_th_opt_better_load_title	Better message loading	より良いメッセージ読み込み	더 나은 메시지 로딩
+extcompat_th_opt_better_load_subtitle	Optimize message loading performance	メッセージ読み込みのパフォーマンスを最適化します	메시지 로딩 성능 최적화
+extcompat_th_opt_better_update_title	Better character updates	より良いキャラクター更新	더 나은 캐릭터 업데이트
+extcompat_th_opt_better_update_subtitle	Optimize the character update flow	キャラクター更新フローを最適化します	캐릭터 업데이트 흐름 최적화
+extcompat_th_opt_better_export_title	Better character export	より良いキャラクターエクスポート	더 나은 캐릭터 내보내기
+extcompat_th_opt_better_export_subtitle	Optimize the character export flow	キャラクターエクスポートフローを最適化します	캐릭터 내보내기 흐름 최적화
+extcompat_th_opt_better_delete_title	Better character deletion	より良いキャラクター削除	더 나은 캐릭터 삭제
+extcompat_th_opt_better_delete_subtitle	Optimize the character deletion flow	キャラクター削除フローを最適化します	캐릭터 삭제 흐름 최적화
+extcompat_th_opt_worldbook_title	Recommended world book settings	推奨ワールドブック設定	권장 월드북 설정
+extcompat_th_opt_worldbook_subtitle	Force-apply the recommended global world book settings	推奨のワールドブック全体設定を強制適用します	권장 월드북 전역 설정 강제 적용
+extcompat_th_opt_max_context_title	Maximize preset context length	プリセットのコンテキスト長を最大化	프리셋 컨텍스트 길이 최대화
+extcompat_th_opt_max_context_subtitle	Automatically maximize the preset's context length	プリセットのコンテキスト長を自動で最大化します	프리셋의 컨텍스트 길이 자동 최대화
+extcompat_section_render	Render	描画	렌더링
+extcompat_th_render_enable_title	Enable rendering	描画を有効化	렌더링 활성화
+extcompat_th_render_enable_subtitle	Enable enhanced message rendering	メッセージ描画の拡張を有効化します	메시지 렌더링 강화 활성화
+extcompat_th_render_streaming_title	Allow streaming render	ストリーミング描画を許可	스트리밍 렌더링 허용
+extcompat_th_render_streaming_subtitle	Render in real time during streaming generation	ストリーミング生成中にリアルタイム描画します	스트리밍 생성 중 실시간 렌더링
+extcompat_th_render_blob_title	Use Blob URLs	Blob URLを使用	Blob URL 사용
+extcompat_th_render_blob_subtitle	Load resources via Blob URLs	Blob URL経由でリソースを読み込みます	Blob URL로 리소스 로드
+extcompat_th_render_hljs_title	Optimize highlight.js	highlight.jsを最適化	highlight.js 최적화
+extcompat_th_render_hljs_subtitle	Optimize code highlighting performance	コードハイライトのパフォーマンスを最適化します	코드 하이라이트 성능 최적화
+extcompat_th_render_depth_hidden_title	Depth ignores hidden	深度計算で非表示を無視	깊이 계산 시 숨김 무시
+extcompat_th_render_depth_hidden_subtitle	Ignore hidden messages when computing render depth	描画深度の計算で非表示メッセージを無視します	렌더링 깊이 계산 시 숨김 메시지 무시
+extcompat_th_render_stats	Code folding: %1$s  Render depth: %2$d	コード折りたたみ: %1$s  描画深度: %2$d	코드 접기: %1$s  렌더링 깊이: %2$d
+extcompat_section_macro	Macros	マクロ	매크로
+extcompat_th_macro_enable_title	Enable macro enhancements	マクロ拡張を有効化	매크로 확장 활성화
+extcompat_th_macro_enable_subtitle	Enable extended macro features	拡張マクロ機能を有効化します	확장 매크로 기능 활성화
+extcompat_debug_title	%1$s · Debug	%1$s · デバッグ	%1$s · 디버그
+extcompat_status_loaded	Status: loaded	実行状態：読み込み済み	실행 상태: 로드됨
+extcompat_status_not_loaded	Status: not loaded	実行状態：未読み込み	실행 상태: 로드되지 않음
+extcompat_last_event	Last event: %1$s	最近のイベント：%1$s	마지막 이벤트: %1$s
+extcompat_last_error	Last error: %1$s	最近のエラー：%1$s	마지막 오류: %1$s
+extcompat_final_prompt	Final prompt	最終プロンプト	최종 프롬프트
+extcompat_clear	Clear	クリア	지우기
+extcompat_prompt_empty_hint	Nothing reported by the generation pipeline yet. Run one real generation and the messages sent to the model plus diagnostics will appear here; this view does not reconstruct or guess prompts on its own.	生成パイプラインからの報告はまだありません。実際に1回生成すると、モデルに送信したメッセージと診断がここに表示されます。この画面は自力でプロンプトを再構築・推測しません。	생성 파이프라인의 보고가 아직 없습니다. 실제로 한 번 생성하면 모델에 보낸 메시지와 진단이 여기에 표시됩니다. 이 화면은 스스로 프롬프트를 재구성하거나 추측하지 않습니다.
+extcompat_prompt_stats	Messages %1$d · Estimated tokens %2$s · Active world book entries %3$d	メッセージ %1$d · 推定トークン %2$s · 活性ワールドブック %3$d	메시지 %1$d · 추정 토큰 %2$s · 활성 월드북 %3$d
+extcompat_unknown	Unknown	不明	알 수 없음
+extcompat_diag_warnings	Diagnostic warnings	診断警告	진단 경고
+extcompat_activated_entries	Activated entries: %1$s	活性エントリ：%1$s	활성 항목: %1$s
+extcompat_runtime_logs	Runtime logs	実行ログ	실행 로그
+extcompat_logs_empty_hint	No logs yet. Only extension_log and real load/unload events are shown here.	ログはまだありません。ここにはextension_logと実際の読み込み/アンロードイベントのみ表示されます。	로그가 아직 없습니다. 여기에는 extension_log와 실제 로드/언로드 이벤트만 표시됩니다.
+ext_title	Extensions	拡張	확장
+ext_refresh_cd	Refresh	更新	새로 고침
+ext_builtin_header_title	Built-in compatibility modules	内蔵互換モジュール	내장 호환 모듈
+ext_builtin_header_subtitle	These modules ship with the APK; no directory installation needed.	これらのモジュールはAPKに同梱されており、ディレクトリへのインストールは不要です。	이 모듈들은 APK에 포함되어 있어 디렉터리 설치가 필요 없습니다.
+ext_asset_header_title	Character card assets	キャラカード添付リソース	캐릭터 카드 첨부 리소스
+ext_asset_header_subtitle	After importing a character card, its world books, regex and Tavern Helper data are registered here automatically.	キャラカードをインポートすると、ワールドブック・正規表現・酒館助手データがここに自動登録されます。	캐릭터 카드를 가져오면 월드북, 정규식, 술관 도우미 데이터가 여기에 자동 등록됩니다.
+ext_permission_dialog_title	Extension permission request	拡張機能の権限リクエスト	확장 권한 요청
+ext_permission_dialog_body	Extension %1$s requests the %2$s permission. Allow only if you trust this script.	拡張%1$sが%2$s権限を要求しています。このスクリプトを信頼する場合のみ許可してください。	확장 %1$s이(가) %2$s 권한을 요청합니다. 이 스크립트를 신뢰할 때만 허용하세요.
+ext_permission_allow	Allow	許可	허용
+ext_permission_deny	Deny	拒否	거부
+ext_settings_cd	Settings	設定	설정
+ext_debug_button	Debug	デバッグ	디버그
+ext_last_error	Last error: %1$s	最近のエラー：%1$s	마지막 오류: %1$s
+ext_auto_enable_chip	Auto-enable	自動有効化	자동 활성화
+ext_asset_id	ID: %1$s	ID: %1$s	ID: %1$s
+ext_worldbook_none	World book 0	ワールドブック 0	월드북 0
+ext_worldbook_imported	World book imported	ワールドブック導入済み	월드북 가져옴
+ext_regex_count	Regex %1$d	正規表現 %1$d	정규식 %1$d
+ext_th_scripts_count	Tavern Helper scripts %1$d	酒館助手スクリプト %1$d	술관 도우미 스크립트 %1$d
+ext_data_count	Variable data %1$d	変数データ %1$d	변수 데이터 %1$d
+ext_regex_scripts_header	Regex scripts (%1$d)	正規表現スクリプト（%1$d）	정규식 스크립트(%1$d)
+ext_collapse	Collapse	折りたたむ	접기
+ext_expand	Expand	展開	펼치기
+ext_asset_empty_title	No character card assets yet	キャラカード添付リソースはまだありません	캐릭터 카드 첨부 리소스가 아직 없습니다
+ext_asset_empty_hint	Import a character card containing world books, regex or Tavern Helper scripts and they will appear here.	ワールドブック・正規表現・酒館助手スクリプトを含むキャラカードをインポートすると、ここに表示されます。	월드북, 정규식 또는 술관 도우미 스크립트가 포함된 캐릭터 카드를 가져오면 여기에 표시됩니다.
+extvm_load_failed	Failed to load extension assets: %1$s	拡張リソースの読み込みに失敗しました：%1$s	확장 리소스 로드 실패: %1$s
+extvm_manifest_not_found	Extension manifest not found: %1$s	拡張マニフェストが見つかりません：%1$s	확장 매니페스트를 찾을 수 없음: %1$s
+extvm_client_version_too_low	Extension %1$s requires client version >= %2$s; this tellev build is older	拡張%1$sはクライアントバージョン%2$s以上を要求します。このtellevはそれより古いです	확장 %1$s은(는) 클라이언트 버전 %2$s 이상이 필요합니다. 현재 tellev 버전은 그보다 낮습니다
+extvm_toggle_failed	Failed to toggle extension: %1$s	拡張の切り替えに失敗しました：%1$s	확장 전환 실패: %1$s
+extvm_regex_script_not_found	Regex script not found: %1$s	正規表現スクリプトが見つかりません：%1$s	정규식 스크립트를 찾을 수 없음: %1$s
+extvm_regex_toggle_failed	Failed to update regex toggle: %1$s	正規表現スイッチの更新に失敗しました：%1$s	정규식 스위치 업데이트 실패: %1$s
+extvm_permission_request_failed	Failed to handle permission request: %1$s	権限リクエストの処理に失敗しました：%1$s	권한 요청 처리 실패: %1$s
+extvm_builtin_th_name	Tavern Helper compatibility	酒館助手互換	술관 도우미 호환
+extvm_builtin_th_desc	SillyTavern event bus, getContext, TavernHelper, fetch /api/* bridge and character card script runtime	SillyTavernのイベントバス、getContext、TavernHelper、fetch /api/*ブリッジ、キャラカードスクリプト実行	SillyTavern 이벤트 버스, getContext, TavernHelper, fetch /api/* 브리지 및 캐릭터 카드 스크립트 실행
+extvm_builtin_regex_name	Character card regex	キャラカード正規表現	캐릭터 카드 정규식
+extvm_builtin_regex_desc	Automatically reads and applies regex_scripts embedded in character cards	キャラカード内蔵のregex_scriptsを自動で読み込み・適用します	캐릭터 카드에 내장된 regex_scripts를 자동으로 읽어 적용합니다
+extvm_builtin_worldbook_name	Character card world book	キャラカードワールドブック	캐릭터 카드 월드북
+extvm_builtin_worldbook_desc	Auto-imports character_book and injects it with the character's prompts	character_bookを自動インポートし、キャラクターのプロンプトに注入します	character_book를 자동 가져오기하여 캐릭터 프롬프트에 주입합니다
+extvm_builtin_ejs_name	EJS prompt templates	EJSプロンプトテンプレート	EJS 프롬프트 템플릿
+extvm_builtin_ejs_desc	Use EJS template syntax (<%= ... %>) in prompts and character cards for dynamic generation and injection	プロンプトやキャラカードでEJSテンプレート構文（<%= ... %>）を使い、動的生成と注入を実現します	프롬프트와 캐릭터 카드에서 EJS 템플릿 구문(<%= ... %>)을 사용해 동적 생성과 주입을 지원합니다
+extvm_perm_webview	WebView	WebView	WebView
+extvm_perm_character_assets	Character assets	キャラクターリソース	캐릭터 리소스
+extvm_perm_virtual_api	Virtual API	仮想API	가상 API
+extvm_perm_chat_display	Chat display	チャット表示	채팅 표시
+extvm_perm_prompt	Prompts	プロンプト	프롬프트
+extvm_perm_worldbook	World books	ワールドブック	월드북
+extvm_perm_variables	Variables	変数	변수
+extmem_title	Long-term memory	長期記憶	장기 기억
+extmem_subtitle	Built-in switchable module. When off, extraction and injection pause for all chats; existing memories are kept.	内蔵の切り替え可能モジュール。オフにすると全セッションの抽出と注入を一時停止します。既存の記憶は保持されます。	내장 전환 모듈입니다. 끄면 모든 대화의 추출과 주입이 일시 중지되며 기존 기억은 유지됩니다.
+extmem_open_settings	Model & retrieval settings	モデルと検索の設定	모델 및 검색 설정
+extmem_model_section_title	Memory processing model	記憶整理モデル	기억 정리 모델
+extmem_model_section_subtitle	Configured separately from the chat model and generation preset. When unset, the chat model is not used automatically.	チャットモデルや生成プリセットとは別に設定します。未設定のとき、チャットモデルを自動使用しません。	채팅 모델 및 생성 프리셋과 별도로 구성합니다. 미설정 시 채팅 모델을 자동으로 사용하지 않습니다.
+extmem_existing_connection	Existing connection	既存の接続	기존 연결
+extmem_model_name_label	Memory model name (leave empty to reuse the connection's)	記憶モデル名（空欄で接続設定を流用）	기억 모델 이름(비우면 연결 설정 사용)
+extmem_custom_base_url_label	Dedicated API address	専用APIアドレス	전용 API 주소
+extmem_custom_api_key_label	Dedicated API key	専用APIキー	전용 API 키
+extmem_custom_model_label	Dedicated model name	専用モデル名	전용 모델 이름
+extmem_vector_toggle_title	Vector retrieval (optional)	ベクトル検索（任意）	벡터 검색(선택 사항)
+extmem_vector_hint	The vector API uses OpenAI-compatible /embeddings. Local retrieval continues on failure; queries may incur extra costs once enabled.	ベクトルAPIはOpenAI互換の/embeddingsを使用します。失敗時はローカル検索にフォールバックします。有効にするとクエリで追加費用が発生する可能性があります。	벡터 API는 OpenAI 호환 /embeddings를 사용합니다. 실패 시 로컬 검색으로 계속하며, 활성화하면 쿼리에 추가 비용이 발생할 수 있습니다.
+extmem_existing_vector_connection	Existing vector connection	既存のベクトル接続	기존 벡터 연결
+extmem_vector_base_url_label	Vector API address	ベクトルAPIアドレス	벡터 API 주소
+extmem_vector_api_key_label	Vector API key	ベクトルAPIキー	벡터 API 키
+extmem_vector_model_label	Vector model name (may override an existing connection)	ベクトルモデル名（既存接続を上書き可）	벡터 모델 이름(기존 연결 재정의 가능)
+extmem_vector_path_label	Vector API path	ベクトルAPIパス	벡터 API 경로
+extmem_save_button	Save settings	設定を保存	설정 저장
+extmem_selector_label	%1$s: %2$s	%1$s：%2$s	%1$s: %2$s
+extmem_custom_entry	Enter separately	個別に入力	개별 입력
+extdbg_loaded	Extension loaded	拡張を読み込みました	확장이 로드되었습니다
+extdbg_unloaded	Extension unloaded	拡張をアンロードしました	확장이 언로드되었습니다
+extdbg_load_failed	Extension load failed	拡張の読み込みに失敗しました	확장 로드에 실패했습니다

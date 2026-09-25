@@ -15,6 +15,8 @@ import app.tellev.core.extension.host.ExtensionDiagnostics
 import app.tellev.core.extension.host.ExtensionPromptStore
 import app.tellev.core.extension.host.ExtensionRequestManager
 import app.tellev.core.extension.host.ExtensionScriptTemplate
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.prompt.DefaultMacroEngine
 import app.tellev.core.prompt.MacroContext
 import app.tellev.core.prompt.MacroEngine
@@ -356,7 +358,7 @@ class WebViewJsExtensionHost(
             slashCommands.entries.removeIf { it.value.extensionId == manifest.id }
             virtualRoutes.entries.removeIf { it.value.extensionId == manifest.id }
             promptStore.clearExtension(manifest.id)
-            val message = scriptFailure ?: "Module did not report ready within ${loadTimeoutMs} ms"
+            val message = scriptFailure ?: UiStrings.get(S.webviewhost_error_module_not_ready, loadTimeoutMs)
             publishLocalEvent(
                 ExtensionEvent(
                     name = "extension_load_failed",

@@ -1,5 +1,7 @@
 package app.tellev.core.storage.repository
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.WorldBook
 import app.tellev.core.storage.JournaledFileWriter
 import app.tellev.core.storage.StDirectoryLayout
@@ -68,10 +70,10 @@ internal class WorldBookRepository(
     ): WorldBook = withContext(Dispatchers.IO) {
         val raw = runCatching {
             json.parseToJsonElement(jsonBytes.decodeToString()) as? JsonObject
-        }.getOrNull() ?: error("世界书 JSON 格式无效：$sourceFileName 不是有效的 JSON 对象")
+        }.getOrNull() ?: error(UiStrings.get(S.wbrepo_error_invalid_json, sourceFileName))
 
         if (raw["entries"] !is JsonObject) {
-            error("世界书 JSON 格式无效：$sourceFileName 缺少 entries 对象")
+            error(UiStrings.get(S.wbrepo_error_missing_entries, sourceFileName))
         }
 
         val fallbackName = sourceFileName.substringBeforeLast('.').ifBlank { "导入的世界书" }

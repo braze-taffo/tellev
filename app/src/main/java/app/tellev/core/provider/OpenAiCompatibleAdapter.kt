@@ -1,5 +1,7 @@
 package app.tellev.core.provider
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.TellevError
 import kotlinx.coroutines.Dispatchers
@@ -51,7 +53,7 @@ class OpenAiCompatibleAdapter(
 
     override suspend fun checkStatus(config: ProviderConfig): ProviderStatus {
         if (config.baseUrl.isBlank()) {
-            return ProviderStatus(available = false, message = "Base URL is required")
+            return ProviderStatus(available = false, message = UiStrings.get(S.oai_status_base_url_required))
         }
 
         if (supportsModelListing(config)) {
@@ -85,14 +87,14 @@ class OpenAiCompatibleAdapter(
                 StatusProbe(
                     status = ProviderStatus(
                         available = response.isSuccessful,
-                        message = if (response.isSuccessful) "Connected" else "HTTP ${response.code}",
+                        message = if (response.isSuccessful) UiStrings.get(S.oai_status_connected) else "HTTP ${response.code}",
                     ),
                     httpCode = response.code,
                 )
             }
         }.getOrElse {
             StatusProbe(
-                status = ProviderStatus(available = false, message = it.message ?: "Connection failed"),
+                status = ProviderStatus(available = false, message = it.message ?: UiStrings.get(S.oai_status_connection_failed)),
                 httpCode = null,
             )
         }
@@ -103,7 +105,7 @@ class OpenAiCompatibleAdapter(
             ?: defaultModel?.takeIf { it.isNotBlank() }
             ?: return ProviderStatus(
                 available = false,
-                message = "Please enter a model name or endpoint ID before testing this provider.",
+                message = UiStrings.get(S.oai_status_model_required),
             )
 
         val request = Request.Builder()
@@ -117,14 +119,14 @@ class OpenAiCompatibleAdapter(
                 ProviderStatus(
                     available = response.isSuccessful,
                     message = if (response.isSuccessful) {
-                        "Connected"
+                        UiStrings.get(S.oai_status_connected)
                     } else {
                         response.body?.string().orEmpty().ifBlank { "HTTP ${response.code}" }
                     },
                 )
             }
         }.getOrElse {
-            ProviderStatus(available = false, message = it.message ?: "Connection failed")
+            ProviderStatus(available = false, message = it.message ?: UiStrings.get(S.oai_status_connection_failed))
         }
     }
 
@@ -251,7 +253,7 @@ class OpenAiCompatibleAdapter(
                     if (dataFrames == 0) {
                         emit(GenerateChunk.Failed(TellevError(
                             code = "provider_invalid_stream",
-                            message = "服务商未返回有效的流式响应，请检查中转站接口或稍后重试",
+                            message = UiStrings.get(S.oai_error_stream_invalid),
                         )))
                         return@use
                     }
@@ -260,7 +262,7 @@ class OpenAiCompatibleAdapter(
                     ) {
                         emit(GenerateChunk.Failed(TellevError(
                             code = "provider_incomplete_stream",
-                            message = "模型流在完成标记前结束（已收到 $dataFrames 个数据帧）",
+                            message = UiStrings.get(S.oai_error_stream_incomplete, dataFrames),
                         )))
                         return@use
                     }
@@ -320,7 +322,7 @@ class OpenAiCompatibleAdapter(
         if (providerId == ProviderCatalog.DEEPSEEK) {
             buildDeepSeekPayload(config, request)
         } else buildJsonObject {
-            put("model", JsonPrimitive(config.model ?: defaultModel ?: error("当前服务商未配置模型")))
+            put("model", JsonPrimitive(config.model ?: defaultModel ?: error(UiStrings.get(S.oai_error_model_not_configured))))
             put("stream", JsonPrimitive(request.stream))
             val includeUsage = config.optionBoolean("includeUsage") ?: includeUsageByDefault
             if (request.stream && includeUsage) {
@@ -480,7 +482,7 @@ class OpenAiCompatibleAdapter(
         }
         return TellevError(
             code = "provider_response_error",
-            message = message?.take(2000)?.takeIf { it.isNotBlank() } ?: "服务商返回生成错误",
+            message = message?.take(2000)?.takeIf { it.isNotBlank() } ?: UiStrings.get(S.oai_error_response_error),
         )
     }
 

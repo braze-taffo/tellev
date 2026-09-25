@@ -2,6 +2,8 @@ package app.tellev.feature.settings.controller
 
 import android.content.Context
 import android.net.Uri
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.storage.StDataStore
 import app.tellev.feature.settings.SettingsUiState
@@ -29,7 +31,7 @@ internal class PresetSettingsController(
                 stateFlow.update { it.copy(presets = presets) }
             } catch (e: Exception) {
                 stateFlow.update {
-                    it.copy(error = "加载预设失败：${e.message}")
+                    it.copy(error = UiStrings.get(S.presetctl_load_failed, e.message))
                 }
             }
         }
@@ -48,14 +50,14 @@ internal class PresetSettingsController(
                     it.copy(
                         presets = presets,
                         isLoading = false,
-                        info = "预设“${preset.name}”已保存。",
+                        info = UiStrings.get(S.presetctl_saved, preset.name),
                     )
                 }
             } catch (e: Exception) {
                 stateFlow.update {
                     it.copy(
                         isLoading = false,
-                        error = "保存预设失败：${e.message}",
+                        error = UiStrings.get(S.presetctl_save_failed, e.message),
                     )
                 }
             }
@@ -71,12 +73,12 @@ internal class PresetSettingsController(
                     it.copy(
                         selectedPresetNames = it.selectedPresetNames + (preset.category to preset.id),
                         isLoading = false,
-                        info = "已切换到预设“${preset.name}”。",
+                        info = UiStrings.get(S.presetctl_selected, preset.name),
                     )
                 }
             } catch (e: Exception) {
                 stateFlow.update {
-                    it.copy(isLoading = false, error = "切换预设失败：${e.message}")
+                    it.copy(isLoading = false, error = UiStrings.get(S.presetctl_select_failed, e.message))
                 }
             }
         }
@@ -88,7 +90,7 @@ internal class PresetSettingsController(
             try {
                 val id = presetId(requestedName)
                 require(stateFlow.value.presets.none { it.category == preset.category && it.id == id }) {
-                    "同分类已存在预设“$id”"
+                    UiStrings.get(S.presetctl_duplicate_id, id)
                 }
                 dataStore.savePreset(preset.copy(id = id, name = requestedName.trim()))
                 val presets = dataStore.listPresets()
@@ -96,11 +98,11 @@ internal class PresetSettingsController(
                     it.copy(
                         presets = presets,
                         isLoading = false,
-                        info = "预设已另存为“${requestedName.trim()}”。",
+                        info = UiStrings.get(S.presetctl_saved_as, requestedName.trim()),
                     )
                 }
             } catch (e: Exception) {
-                stateFlow.update { it.copy(isLoading = false, error = "另存为失败：${e.message}") }
+                stateFlow.update { it.copy(isLoading = false, error = UiStrings.get(S.presetctl_save_as_failed, e.message)) }
             }
         }
     }
@@ -110,9 +112,9 @@ internal class PresetSettingsController(
             stateFlow.update { it.copy(isLoading = true, error = null) }
             try {
                 val id = presetId(requestedName)
-                require(id != preset.id) { "新名称与原名称相同" }
+                require(id != preset.id) { UiStrings.get(S.presetctl_same_name) }
                 require(stateFlow.value.presets.none { it.category == preset.category && it.id == id }) {
-                    "同分类已存在预设“$id”"
+                    UiStrings.get(S.presetctl_duplicate_id, id)
                 }
                 val wasSelected = dataStore.readSelectedPresetName(preset.category) == preset.id
                 dataStore.savePreset(preset.copy(id = id, name = requestedName.trim()))
@@ -126,11 +128,11 @@ internal class PresetSettingsController(
                         selectedPresetNames = if (selected == null) it.selectedPresetNames - preset.category
                             else it.selectedPresetNames + (preset.category to selected),
                         isLoading = false,
-                        info = "预设已重命名为“${requestedName.trim()}”。",
+                        info = UiStrings.get(S.presetctl_renamed, requestedName.trim()),
                     )
                 }
             } catch (e: Exception) {
-                stateFlow.update { it.copy(isLoading = false, error = "重命名失败：${e.message}") }
+                stateFlow.update { it.copy(isLoading = false, error = UiStrings.get(S.presetctl_rename_failed, e.message)) }
             }
         }
     }
@@ -143,11 +145,11 @@ internal class PresetSettingsController(
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openOutputStream(uri)?.use { output ->
                         output.write(json.encodeToString(JsonObject.serializer(), raw).encodeToByteArray())
-                    } ?: error("无法创建导出文件")
+                    } ?: error(UiStrings.get(S.presetctl_create_export_file_failed))
                 }
-                stateFlow.update { it.copy(isLoading = false, info = "预设“${preset.name}”已导出。") }
+                stateFlow.update { it.copy(isLoading = false, info = UiStrings.get(S.presetctl_exported, preset.name)) }
             } catch (e: Exception) {
-                stateFlow.update { it.copy(isLoading = false, error = "导出预设失败：${e.message}") }
+                stateFlow.update { it.copy(isLoading = false, error = UiStrings.get(S.presetctl_export_failed, e.message)) }
             }
         }
     }
@@ -171,14 +173,14 @@ internal class PresetSettingsController(
                         presets = presets,
                         selectedPresetNames = selectedNames,
                         isLoading = false,
-                        info = "预设已删除。",
+                        info = UiStrings.get(S.presetctl_deleted),
                     )
                 }
             } catch (e: Exception) {
                 stateFlow.update {
                     it.copy(
                         isLoading = false,
-                        error = "删除预设失败：${e.message}",
+                        error = UiStrings.get(S.presetctl_delete_failed, e.message),
                     )
                 }
             }
@@ -191,7 +193,7 @@ internal class PresetSettingsController(
             try {
                 val bytes = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: error("无法读取所选文件")
+                        ?: error(UiStrings.get(S.presetctl_read_file_failed))
                 }
                 val fileName = UriUtils.resolveDisplayName(context, uri)
                     ?: uri.lastPathSegment
@@ -204,10 +206,14 @@ internal class PresetSettingsController(
                         presets = presets,
                         selectedPresetNames = it.selectedPresetNames + (result.inferredCategory to imported.id),
                         isLoading = false,
-                        info = buildString {
-                            append("预设「${imported.name}」已导入并启用")
-                            if (result.warnings.isNotEmpty()) append("；${result.warnings.joinToString("；")}")
-                            append('。')
+                        info = if (result.warnings.isEmpty()) {
+                            UiStrings.get(S.presetctl_imported, imported.name)
+                        } else {
+                            UiStrings.get(
+                                S.presetctl_imported_with_warnings,
+                                imported.name,
+                                result.warnings.joinToString("；"),
+                            )
                         },
                     )
                 }
@@ -215,7 +221,7 @@ internal class PresetSettingsController(
                 stateFlow.update {
                     it.copy(
                         isLoading = false,
-                        error = "导入预设失败：${e.message}",
+                        error = UiStrings.get(S.presetctl_import_failed, e.message),
                     )
                 }
             }

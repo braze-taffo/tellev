@@ -31,11 +31,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.filled.Person
+import app.tellev.R
 import app.tellev.core.model.Persona
 
 @Composable
@@ -91,7 +93,7 @@ internal fun PersonaCard(
             ) {
                 Icon(
                     Icons.Default.Edit,
-                    contentDescription = "编辑",
+                    contentDescription = stringResource(R.string.setpers_edit_cd),
                     modifier = Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -102,7 +104,7 @@ internal fun PersonaCard(
             ) {
                 Icon(
                     Icons.Default.Delete,
-                    contentDescription = "删除",
+                    contentDescription = stringResource(R.string.setpers_delete_cd),
                     modifier = Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.error,
                 )
@@ -122,20 +124,25 @@ internal fun PersonaEditDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (existing == null) "新建人设" else "编辑人设") },
+        title = {
+            Text(
+                if (existing == null) stringResource(R.string.setpers_new_title)
+                else stringResource(R.string.setpers_edit_title)
+            )
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("名称") },
+                    label = { Text(stringResource(R.string.setpers_name_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
-                    label = { Text("描述") },
+                    label = { Text(stringResource(R.string.setpers_desc_label)) },
                     minLines = 3,
                     maxLines = 8,
                     modifier = Modifier.fillMaxWidth(),
@@ -148,12 +155,12 @@ internal fun PersonaEditDialog(
                     if (name.isNotBlank()) onSave(name.trim(), description)
                 },
             ) {
-                Text("保存")
+                Text(stringResource(R.string.setpers_save))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.setpers_cancel))
             }
         },
     )
@@ -168,7 +175,7 @@ internal fun LazyListScope.personaSectionItems(
     item(key = "persona_header") {
         SectionHeader(
             icon = Icons.Default.Person,
-            title = "人设",
+            title = stringResource(R.string.setpers_title),
             action = onAddPersona,
         )
     }
@@ -176,7 +183,7 @@ internal fun LazyListScope.personaSectionItems(
     if (state.personas.isEmpty()) {
         item(key = "persona_empty") {
             Text(
-                text = "暂无人设。新建一个来设定你的身份（用于 {{user}} 名字与描述）。",
+                text = stringResource(R.string.setpers_empty),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

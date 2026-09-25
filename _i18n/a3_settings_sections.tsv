@@ -1,0 +1,138 @@
+setimg_anlas_guard_label	Anlas 防护（免费额度内生成）
+setimg_cancel	取消
+setimg_comfy_header	生图模型（ComfyUI）
+setimg_comfy_model_help_count	已获取 %1$d 个模型，可输入筛选
+setimg_comfy_model_help_empty	测试连接后可从 ComfyUI 获取模型列表
+setimg_comfy_model_label	模型（Checkpoint）
+setimg_comfy_model_placeholder	填入工作流 %model% 占位符对应的模型名，可留空
+setimg_comfy_params_button	生成参数与默认负面提示词
+setimg_comfy_url_help	电脑上运行的 ComfyUI 地址；配置工作流并保存后，对话输入栏会出现“生成图片”入口
+setimg_comfy_url_label	ComfyUI 服务地址
+setimg_decrisper_label	Decrisper（高 CFG 去伪影）
+setimg_engine_comfy	ComfyUI（远程）
+setimg_engine_desc	聊天输入栏「生成图片」按钮使用的引擎（立即生效，无需保存）；各引擎的连接与参数在下方对应区块配置。
+setimg_engine_header	生图引擎
+setimg_engine_novelai	NovelAI（远程）
+setimg_entry_summary	当前引擎：%1$s（%2$s）
+setimg_entry_title	生图（引擎与模型）
+setimg_height_label	高度
+setimg_model_label	模型
+setimg_negative_label	默认负面提示词
+setimg_novelai_header	NovelAI 生图（远程）
+setimg_novelai_negative_help	酒馆默认负面会拼接在每次请求的负面之后
+setimg_novelai_params_button	生成参数、采样器与提示词前缀
+setimg_novelai_params_dialog_body	与酒馆（SillyTavern）NovelAI 源一致：前缀与负面会自动拼进每次请求。修改后请回到设置页点击「保存」。
+setimg_novelai_params_dialog_title	NovelAI 生图参数
+setimg_novelai_sampler_label	采样器
+setimg_novelai_scheduler_label	调度器
+setimg_novelai_steps_help	上限 50；开 Anlas 防护时限 28
+setimg_novelai_token_help	novelai.net → 账户设置 → Persistent Token；需要有效订阅（如 Opus）
+setimg_novelai_token_label	NovelAI 令牌（Persistent Token）
+setimg_ok	确定
+setimg_params_dialog_body	参数会替换工作流中对应的占位符；采样器与调度器留空表示沿用工作流自身的值。修改后请回到设置页点击「保存」。
+setimg_params_dialog_title	生图参数
+setimg_prefix_help	酒馆默认：best quality, absurdres, aesthetic；支持 {prompt} 占位
+setimg_prefix_label	提示词前缀
+setimg_sampler_label	采样器（可留空）
+setimg_sampler_placeholder	euler, dpmpp_2m 等
+setimg_save	保存
+setimg_scheduler_label	调度器（可留空）
+setimg_scheduler_placeholder	normal, karras 等
+setimg_seed_help	-1 为每次随机
+setimg_seed_label	种子
+setimg_smea_dyn_label	DYN（更多样的 SMEA）
+setimg_smea_label	SMEA（高分辨率增强）
+setimg_state_configured	已配置
+setimg_state_unconfigured	未配置
+setimg_status_connected	已连接
+setimg_status_failed	连接失败
+setimg_steps_label	步数
+setimg_test_connection	测试连接
+setimg_test_token	测试令牌
+setimg_testing	测试中...
+setimg_token_ok	令牌可用
+setimg_token_unavailable	不可用
+setimg_upscale_help	1 为不放大
+setimg_upscale_label	放大倍数
+setimg_variety_label	Variety+（多样性增强）
+setimg_width_label	宽度
+setimg_workflow_configured	工作流 JSON（已配置，点击编辑）
+setimg_workflow_dialog_body	在 ComfyUI 网页开启开发者模式，用「保存（API 格式）」导出工作流并粘贴到此处，再把正向/负向提示词节点的文本改为占位符 "%prompt%" 与 "%negative_prompt%"。可选占位符："%model%"、"%seed%"、"%steps%"、"%scale%"、"%width%"、"%height%"、"%sampler%"、"%scheduler%"、"%denoise%"、"%clip_skip%"（工作流中不含对应占位符时参数不生效）。修改后请回到设置页点击「保存」。
+setimg_workflow_dialog_title	ComfyUI 工作流 JSON
+setimg_workflow_field_label	API 格式工作流
+setimg_workflow_json_error	JSON 无法解析，请检查后再确定
+setimg_workflow_unconfigured	工作流 JSON（未配置）
+setpre_cancel	取消
+setpre_cat_openai_compatible	OpenAI 兼容
+setpre_cd_close_editor	关闭预设编辑器
+setpre_cd_collapse	收起
+setpre_cd_drag_sort	长按拖动排序
+setpre_cd_expand	展开
+setpre_cd_in_use	当前使用
+setpre_cd_more	更多操作
+setpre_cd_save_preset	保存预设
+setpre_create	创建
+setpre_create_title	新建预设
+setpre_delete	删除
+setpre_empty	暂无预设。新建一个预设来配置生成参数。
+setpre_export	导出
+setpre_import	导入
+setpre_import_file	文件：%1$s
+setpre_import_help	选择该预设归属的服务商分类，决定它写入的目录与在聊天中可被选用的范围。
+setpre_import_title	导入预设
+setpre_max_completion_label	最大回复 Token
+setpre_max_context_label	最大上下文 Token
+setpre_max_tokens_help	留空则不由 tellev 限制输出长度
+setpre_max_tokens_label	最大 Token 数
+setpre_move_down	下移
+setpre_move_up	上移
+setpre_name_label	预设名称
+setpre_not_in_order	未加入顺序
+setpre_preserved_fields	已保留、未应用：%1$s
+setpre_prompts_order_help	点击展开；长按拖动手柄排序。未使用项可直接启用。
+setpre_prompts_order_title	提示词顺序
+setpre_provider_category_label	服务商分类
+setpre_provider_label	服务商
+setpre_raw_json_hint	保存前会校验 JSON 对象。
+setpre_raw_json_invalid	原始字段必须是有效的 JSON 对象
+setpre_raw_json_label	原始 JSON
+setpre_rename	重命名
+setpre_save	保存
+setpre_save_as	另存为
+setpre_section_generation	生成参数
+setpre_section_generation_sub	Temperature、Top-P、Token 上限及文件操作
+setpre_section_header	生成预设
+setpre_section_raw	高级原始 JSON
+setpre_section_raw_sub	未知字段保持原样并随预设导出
+setpre_set_current	设为当前
+setpre_set_current_active	设为当前（已是当前）
+setpre_summary_active	启用 %1$d 条提示词 · 正则 %2$d 条
+setpre_target_name_label	另存为 / 重命名后的名称
+setpre_temperature_value	温度：%1$s
+setpre_unsupported_fields	尚未进入运行链路：%1$s。
+setprov_advanced	高级设置
+setprov_api_key_label	API 密钥
+setprov_base_url_label	接口地址
+setprov_cd_delete_config	删除该配置
+setprov_cd_hide_api_key	隐藏 API 密钥
+setprov_cd_show_api_key	显示 API 密钥
+setprov_config_name_label	配置名称
+setprov_current_label	当前使用
+setprov_current_tag	当前
+setprov_custom_config_fallback	自定义配置
+setprov_header	模型服务
+setprov_manage	管理模型服务配置
+setprov_model_help_count	可输入筛选，已获取 %1$d 个模型
+setprov_model_help_empty	当前服务未返回模型列表，可手动填写
+setprov_model_label	模型
+setprov_model_placeholder	可选择或手动填写模型 ID
+setprov_new_custom	新建自定义配置
+setprov_no_model	尚未指定模型
+setprov_provider_label	服务商
+setprov_quick_switch_help	选择后立即用于下一次生成
+setprov_quick_switch_label	快速切换配置
+setprov_save	保存
+setprov_status_connected	已连接
+setprov_status_failed	连接失败
+setprov_test_connection	测试连接
+setprov_testing	测试中...

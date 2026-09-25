@@ -1,5 +1,7 @@
 package app.tellev.core.provider
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.TellevError
 import kotlinx.coroutines.Dispatchers
@@ -305,7 +307,7 @@ class NovelAiImageAdapter(
     /** Verifies the token against /user/subscription (SillyTavern's "View my Anlas" endpoint). */
     override suspend fun checkStatus(config: ProviderConfig): ProviderStatus {
         val token = config.apiKey?.takeIf { it.isNotBlank() }
-            ?: return ProviderStatus(available = false, message = "未配置 NovelAI 令牌")
+            ?: return ProviderStatus(available = false, message = UiStrings.get(S.novai_status_token_missing))
         val request = Request.Builder()
             .url("$API_BASE/user/subscription")
             .get()
@@ -315,7 +317,7 @@ class NovelAiImageAdapter(
         return runCatching {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    val extra = if (response.code == 401) "：令牌无效或已过期" else ""
+                    val extra = if (response.code == 401) UiStrings.get(S.novai_status_token_invalid_suffix) else ""
                     return@use ProviderStatus(available = false, message = "HTTP ${response.code}$extra")
                 }
                 val body = response.body?.string().orEmpty()
@@ -325,16 +327,16 @@ class NovelAiImageAdapter(
                     3 -> "Opus"
                     2 -> "Scroll"
                     1 -> "Tablet"
-                    else -> "未知档位"
+                    else -> UiStrings.get(S.novai_status_tier_unknown)
                 }
                 if (active) {
-                    ProviderStatus(available = true, message = "令牌有效，订阅生效（$tierName）")
+                    ProviderStatus(available = true, message = UiStrings.get(S.novai_status_active, tierName))
                 } else {
-                    ProviderStatus(available = false, message = "令牌有效，但订阅未生效（$tierName）")
+                    ProviderStatus(available = false, message = UiStrings.get(S.novai_status_inactive, tierName))
                 }
             }
         }.getOrElse {
-            ProviderStatus(available = false, message = "连接 NovelAI 失败：${it.message}")
+            ProviderStatus(available = false, message = UiStrings.get(S.novai_status_connect_failed, it.message))
         }
     }
 
@@ -350,7 +352,7 @@ class NovelAiImageAdapter(
                 GenerateChunk.Failed(
                     TellevError(
                         code = "novelai_token_missing",
-                        message = "未配置 NovelAI 令牌：请先在设置中填写并保存",
+                        message = UiStrings.get(S.novai_error_token_missing),
                         retryable = false,
                     ),
                 ),
@@ -401,7 +403,7 @@ class NovelAiImageAdapter(
                 GenerateChunk.Failed(
                     TellevError(
                         code = e.code,
-                        message = e.message ?: "NovelAI 请求失败",
+                        message = e.message ?: UiStrings.get(S.novai_error_request_failed),
                         retryable = e.retryable,
                     ),
                 ),
@@ -447,11 +449,11 @@ class NovelAiImageAdapter(
                     )
                 }
                 val zip = response.body?.bytes()
-                    ?: throw NovelAiHttpException("novelai_no_image_data", "NovelAI 响应为空", retryable = true)
+                    ?: throw NovelAiHttpException("novelai_no_image_data", UiStrings.get(S.novai_error_empty_response), retryable = true)
                 return NovelAiImageProtocol.extractFirstPng(zip)
                     ?: throw NovelAiHttpException(
                         "novelai_no_png",
-                        "NovelAI 返回的压缩包中没有 PNG 图片",
+                        UiStrings.get(S.novai_error_no_png),
                         retryable = false,
                     )
             }
@@ -466,9 +468,9 @@ class NovelAiImageAdapter(
         }.getOrNull()
         return when {
             detail != null -> detail
-            code == 401 -> "令牌无效或已过期"
-            code == 402 -> "当前订阅不支持该请求（可能需要消耗 Anlas）"
-            else -> "NovelAI 请求失败：HTTP $code"
+            code == 401 -> UiStrings.get(S.novai_error_token_invalid)
+            code == 402 -> UiStrings.get(S.novai_error_subscription)
+            else -> UiStrings.get(S.novai_error_request_http, code)
         }
     }
 

@@ -2,6 +2,8 @@ package app.tellev.feature.settings.controller
 
 import android.content.Context
 import android.net.Uri
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.storage.StDataStore
 import app.tellev.feature.settings.SettingsUiState
 import kotlinx.coroutines.CoroutineScope
@@ -29,20 +31,20 @@ internal class BackupSettingsController(
                         tempFile.inputStream().use { input ->
                             input.copyTo(output)
                         }
-                    } ?: error("Unable to open backup target")
+                    } ?: error(UiStrings.get(S.bkpctl_open_target_failed))
                 }
 
                 stateFlow.update {
                     it.copy(
                         isLoading = false,
-                        info = "备份已导出。",
+                        info = UiStrings.get(S.bkpctl_exported),
                     )
                 }
             } catch (e: Exception) {
                 stateFlow.update {
                     it.copy(
                         isLoading = false,
-                        error = "导出备份失败：${e.message}",
+                        error = UiStrings.get(S.bkpctl_export_failed, e.message),
                     )
                 }
             } finally {
@@ -71,14 +73,14 @@ internal class BackupSettingsController(
                 stateFlow.update {
                     it.copy(
                         isLoading = false,
-                        info = "备份已导入。请重启应用以查看变化。",
+                        info = UiStrings.get(S.bkpctl_imported),
                     )
                 }
             } catch (e: Exception) {
                 stateFlow.update {
                     it.copy(
                         isLoading = false,
-                        error = "导入备份失败：${e.message}",
+                        error = UiStrings.get(S.bkpctl_import_failed, e.message),
                     )
                 }
             }

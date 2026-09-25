@@ -3,6 +3,8 @@ package app.tellev.feature.world
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
 import app.tellev.core.model.WorldInfoSettings
@@ -86,7 +88,7 @@ class WorldViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = "加载世界书失败：${e.message}",
+                        error = UiStrings.get(S.wbvm_load_failed, e.message),
                     )
                 }
             }
@@ -102,7 +104,7 @@ class WorldViewModel(
                 throw e
             } catch (e: Exception) {
                 _uiState.update {
-                    it.copy(error = "保存世界书设置失败：${e.message}")
+                    it.copy(error = UiStrings.get(S.wbvm_save_settings_failed, e.message))
                 }
             }
         }
@@ -117,7 +119,7 @@ class WorldViewModel(
                 throw e
             } catch (e: Exception) {
                 _uiState.update {
-                    it.copy(error = "保存提示词设置失败：${e.message}")
+                    it.copy(error = UiStrings.get(S.wbvm_save_prompt_settings_failed, e.message))
                 }
             }
         }
@@ -134,7 +136,7 @@ class WorldViewModel(
                 throw e
             } catch (e: Exception) {
                 _uiState.update {
-                    it.copy(error = "更新世界书开关失败：${e.message}")
+                    it.copy(error = UiStrings.get(S.wbvm_toggle_failed, e.message))
                 }
             }
         }
@@ -168,8 +170,8 @@ class WorldViewModel(
                         selectedBook = null,
                         selectedEntry = null,
                         filteredEntries = emptyList(),
-                        selectionError = "找不到世界书“$id”或文件无法读取。",
-                        error = "加载世界书失败：${e.message}",
+                        selectionError = UiStrings.get(S.wbvm_book_not_found, id),
+                        error = UiStrings.get(S.wbvm_load_failed, e.message),
                     )
                 }
             }
@@ -217,7 +219,7 @@ class WorldViewModel(
                             state.copy(
                                 selectedBook = updated,
                                 filteredEntries = filterEntries(updated.entries, state.searchQuery),
-                                info = "世界书已保存。",
+                                info = UiStrings.get(S.wbvm_book_saved),
                             )
                         } else state
                     }
@@ -228,7 +230,7 @@ class WorldViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _uiState.update { it.copy(error = "保存世界书失败：${e.message}") }
+                _uiState.update { it.copy(error = UiStrings.get(S.wbvm_save_failed, e.message)) }
             } finally {
                 pendingSaves--
                 _uiState.update { it.copy(isSaving = pendingSaves > 0) }
@@ -249,7 +251,7 @@ class WorldViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        info = "世界书“$name”已创建。",
+                        info = UiStrings.get(S.wbvm_book_created, name),
                     )
                 }
                 loadBooks()
@@ -260,7 +262,7 @@ class WorldViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = "创建世界书失败：${e.message}",
+                        error = UiStrings.get(S.wbvm_create_failed, e.message),
                     )
                 }
             }
@@ -279,7 +281,7 @@ class WorldViewModel(
                         worldBooks = books,
                         disabledWorldIds = disabledWorldIds,
                         isLoading = false,
-                        info = "世界书“${book.name}”已导入。",
+                        info = UiStrings.get(S.wbvm_book_imported, book.name),
                     )
                 }
             } catch (e: CancellationException) {
@@ -288,7 +290,7 @@ class WorldViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = "导入世界书失败：${e.message}",
+                        error = UiStrings.get(S.wbvm_import_failed, e.message),
                     )
                 }
             }
@@ -304,7 +306,7 @@ class WorldViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        info = "世界书已删除。",
+                        info = UiStrings.get(S.wbvm_book_deleted),
                     )
                 }
                 loadBooks()
@@ -314,7 +316,7 @@ class WorldViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = "删除世界书失败：${e.message}",
+                        error = UiStrings.get(S.wbvm_delete_failed, e.message),
                     )
                 }
             }
@@ -345,7 +347,7 @@ class WorldViewModel(
                     )
                 } else {
                     book.entries.firstOrNull { it.id == entryId }
-                        ?: error("Entry not found: $entryId")
+                        ?: error(UiStrings.get(S.wbvm_entry_not_found, entryId))
                 }
                 _uiState.update {
                     it.copy(
@@ -365,8 +367,8 @@ class WorldViewModel(
                         selectedEntry = null,
                         filteredEntries = emptyList(),
                         isLoading = false,
-                        selectionError = "找不到世界书条目“$entryId”，它可能已被删除。",
-                        error = "加载世界书条目失败：${e.message}",
+                        selectionError = UiStrings.get(S.wbvm_entry_missing, entryId),
+                        error = UiStrings.get(S.wbvm_load_entry_failed, e.message),
                     )
                 }
             }
@@ -381,7 +383,7 @@ class WorldViewModel(
 
     fun saveEntry(bookId: String, entry: WorldBookEntry, onSaved: (() -> Unit)? = null) {
         if (_uiState.value.selectedBook?.id != bookId) {
-            _uiState.update { it.copy(error = "保存失败：世界书上下文已变化，请返回后重新打开条目。") }
+            _uiState.update { it.copy(error = UiStrings.get(S.wbvm_save_context_changed)) }
             return
         }
         persistBook(bookId, onSaved) { book ->
@@ -394,7 +396,7 @@ class WorldViewModel(
 
     fun deleteEntry(bookId: String, entryId: String) {
         if (_uiState.value.selectedBook?.id != bookId) {
-            _uiState.update { it.copy(error = "删除失败：世界书上下文已变化，请重新打开条目。") }
+            _uiState.update { it.copy(error = UiStrings.get(S.wbvm_delete_context_changed)) }
             return
         }
         persistBook(bookId) { book -> book.copy(entries = book.entries.filterNot { it.id == entryId }) }

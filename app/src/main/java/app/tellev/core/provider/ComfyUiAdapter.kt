@@ -1,5 +1,7 @@
 package app.tellev.core.provider
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.TellevError
 import kotlinx.coroutines.Dispatchers
@@ -131,13 +133,13 @@ class ComfyUiAdapter(
         return runCatching {
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
-                    ProviderStatus(available = true, message = "Connected")
+                    ProviderStatus(available = true, message = UiStrings.get(S.comfy_status_connected))
                 } else {
                     ProviderStatus(available = false, message = "HTTP ${response.code}")
                 }
             }
         }.getOrElse {
-            ProviderStatus(available = false, message = it.message ?: "Connection failed - is the ComfyUI server reachable?")
+            ProviderStatus(available = false, message = it.message ?: UiStrings.get(S.comfy_status_connection_failed))
         }
     }
 
@@ -177,7 +179,7 @@ class ComfyUiAdapter(
                 GenerateChunk.Failed(
                     TellevError(
                         code = "comfy_workflow_missing",
-                        message = "未配置 ComfyUI 工作流：请先在设置中粘贴 API 格式工作流 JSON",
+                        message = UiStrings.get(S.comfy_error_workflow_missing),
                         retryable = false,
                     ),
                 ),
@@ -189,7 +191,7 @@ class ComfyUiAdapter(
                 GenerateChunk.Failed(
                     TellevError(
                         code = "comfy_workflow_invalid",
-                        message = "ComfyUI 工作流不是有效的 JSON 对象",
+                        message = UiStrings.get(S.comfy_error_workflow_invalid),
                         retryable = false,
                     ),
                 ),
@@ -203,7 +205,7 @@ class ComfyUiAdapter(
         if (!settings.workflowJson.contains("\"%prompt%\"")) {
             emit(GenerateChunk.Failed(TellevError(
                 code = "comfy_prompt_unbound",
-                message = "ComfyUI 工作流未接入图片提示词：请将正向提示词节点的完整文本设为 %prompt% 并连接到采样器",
+                message = UiStrings.get(S.comfy_error_prompt_unbound, "%prompt%"),
                 retryable = false,
             )))
             return@flow
@@ -211,7 +213,7 @@ class ComfyUiAdapter(
         if (promptText.none { it.isLetter() }) {
             emit(GenerateChunk.Failed(TellevError(
                 code = "comfy_prompt_empty",
-                message = "图片提示词没有有效文字，已停止生图",
+                message = UiStrings.get(S.comfy_error_prompt_empty),
                 retryable = false,
             )))
             return@flow
@@ -243,7 +245,7 @@ class ComfyUiAdapter(
                         GenerateChunk.Failed(
                             TellevError(
                                 code = "comfy_submit_failed",
-                                message = "ComfyUI 未返回任务 ID",
+                                message = UiStrings.get(S.comfy_error_no_prompt_id),
                                 retryable = true,
                             ),
                         ),
@@ -258,7 +260,7 @@ class ComfyUiAdapter(
                         GenerateChunk.Failed(
                             TellevError(
                                 code = "comfy_timeout",
-                                message = "ComfyUI 生成超时（10 分钟）",
+                                message = UiStrings.get(S.comfy_error_timeout),
                                 retryable = true,
                             ),
                         ),
@@ -282,7 +284,7 @@ class ComfyUiAdapter(
                         GenerateChunk.Failed(
                             TellevError(
                                 code = "comfy_no_images",
-                                message = "ComfyUI 执行完成但没有产出图片",
+                                message = UiStrings.get(S.comfy_error_no_images),
                                 retryable = false,
                             ),
                         ),
@@ -298,7 +300,7 @@ class ComfyUiAdapter(
                 GenerateChunk.Failed(
                     TellevError(
                         code = e.code,
-                        message = e.message ?: "ComfyUI 请求失败",
+                        message = e.message ?: UiStrings.get(S.comfy_error_request_failed),
                         retryable = e.retryable,
                     ),
                 ),
@@ -338,12 +340,12 @@ class ComfyUiAdapter(
                 )
             }
             val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
-                ?: throw ComfyHttpException("comfy_bad_response", "ComfyUI 响应无法解析：$text", retryable = true)
+                ?: throw ComfyHttpException("comfy_bad_response", UiStrings.get(S.comfy_error_bad_response, text), retryable = true)
             val nodeErrors = root["node_errors"]?.jsonObject
             if (!nodeErrors.isNullOrEmpty()) {
                 throw ComfyHttpException(
                     code = "comfy_node_errors",
-                    message = "工作流节点校验失败：$nodeErrors",
+                    message = UiStrings.get(S.comfy_error_node_errors, nodeErrors),
                     retryable = false,
                 )
             }
@@ -373,13 +375,13 @@ class ComfyUiAdapter(
                 if (!response.isSuccessful) {
                     throw ComfyHttpException(
                         code = "comfy_http_${response.code}",
-                        message = "查询生成历史失败：HTTP ${response.code}",
+                        message = UiStrings.get(S.comfy_error_history_http, response.code),
                         retryable = response.code in 429..599,
                     )
                 }
                 val body = response.body?.string().orEmpty()
                 val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
-                    ?: throw ComfyHttpException("comfy_bad_response", "历史响应无法解析", retryable = true)
+                    ?: throw ComfyHttpException("comfy_bad_response", UiStrings.get(S.comfy_error_history_unparseable), retryable = true)
                 // /history/{id} omits the entry until the job finishes.
                 root[promptId]?.jsonObject
             } ?: continue
@@ -431,12 +433,12 @@ class ComfyUiAdapter(
             if (!response.isSuccessful) {
                 throw ComfyHttpException(
                     code = "comfy_http_${response.code}",
-                    message = "下载生成图片失败：HTTP ${response.code}",
+                    message = UiStrings.get(S.comfy_error_download_http, response.code),
                     retryable = response.code in 429..599,
                 )
             }
             response.body?.bytes()
-                ?: throw ComfyHttpException("comfy_no_image_data", "图片响应为空", retryable = true)
+                ?: throw ComfyHttpException("comfy_no_image_data", UiStrings.get(S.comfy_error_empty_image_response), retryable = true)
         }
     }
 
@@ -445,18 +447,18 @@ class ComfyUiAdapter(
     }.getOrDefault("")
 
     private fun extractExecutionError(status: JsonObject): String = runCatching {
-        val messages = status["messages"]?.jsonArray ?: return "ComfyUI 执行出错"
+        val messages = status["messages"]?.jsonArray ?: return UiStrings.get(S.comfy_error_execution)
         for (message in messages) {
             val pair = message.jsonArray
             if (pair.firstOrNull()?.jsonPrimitive?.contentOrNull == "execution_error") {
                 val detail = pair.getOrNull(1)?.jsonObject ?: continue
                 val exception = detail["exception_message"]?.jsonPrimitive?.contentOrNull
                 val nodeType = detail["node_type"]?.jsonPrimitive?.contentOrNull
-                return listOfNotNull(nodeType, exception).joinToString(": ").ifBlank { "ComfyUI 执行出错" }
+                return listOfNotNull(nodeType, exception).joinToString(": ").ifBlank { UiStrings.get(S.comfy_error_execution) }
             }
         }
-        "ComfyUI 执行出错"
-    }.getOrDefault("ComfyUI 执行出错")
+        UiStrings.get(S.comfy_error_execution)
+    }.getOrDefault(UiStrings.get(S.comfy_error_execution))
 
     private fun ProviderConfig.endpoint(path: String): String =
         baseUrl.trimEnd('/') + path

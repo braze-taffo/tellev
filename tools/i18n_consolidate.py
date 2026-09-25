@@ -63,9 +63,18 @@ def xml_escape(value: str) -> str:
     # Keep literal \n sequences untouched: aapt turns them into newlines.
     v = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     v = v.replace("'", "\\'").replace('"', '\\"')
-    if v != v.strip():
+    if v.startswith("@") or v.startswith("?"):
+        v = "\\" + v
+    # Quote-wrap to preserve leading/trailing whitespace and internal runs of spaces.
+    if v != v.strip() or "  " in value:
         v = f'"{v}"'
     return v
+
+def needs_formatted_false(value: str) -> bool:
+    """True when the value contains % tokens that are not positional placeholders
+    (e.g. '%model%', '<%= %>') — aapt would reject them in a formatted string."""
+    without_positional = re.sub(r"%\d+\$[sd]", "", value)
+    return "%" in without_positional.replace("%%", "")
 
 def kotlin_escape(value: str) -> str:
     # TSV stores newline as the two characters \n; turn them into a real Kotlin escape.
@@ -88,7 +97,7 @@ def main() -> None:
     entries: dict[str, str] = {}
     order: list[str] = []
     for tsv in sorted(I18N_DIR.glob("*.tsv")):
-        if tsv.name == "translations.tsv":
+        if tsv.name == "translations.tsv" or tsv.name.startswith("_"):
             continue
         module = read_module_tsv(tsv)
         for key in module:
@@ -114,8 +123,9 @@ def main() -> None:
             has_double = "%%" in zh
             if has_double and not has_positional:
                 fail(f"{key}: contains %% but no positional placeholder (would render literally)")
-            if has_positional and "%" in re.sub(r"%\d+\$[sd]|%%", "", zh):
-                fail(f"{key}: mixes placeholders with bare % (escape as %% or use positional)")
+            bare = "%" in re.sub(r"%\d+\$[sd]|%%", "", zh)
+            if has_positional and bare:
+                fail(f"{key}: mixes positional placeholders with bare % tokens (fix manually)")
 
     used = referenced_keys()
     dangling = sorted(used - set(entries))
@@ -132,7 +142,11 @@ def main() -> None:
             if key == "app_name":
                 continue
             value = entries[key] if idx == 0 else (translations.get(key, [None, None, None])[idx - 1] or entries[key])
-            lines.append(f'    <string name="{key}">{xml_escape(value)}</string>')
+            escaped = xml_escape(value)
+            if needs_formatted_false(value):
+                lines.append(f'    <string name="{key}" formatted="false">{escaped}</string>')
+            else:
+                lines.append(f'    <string name="{key}">{escaped}</string>')
         lines.append("</resources>")
         out = RES_DIR / dirname / "strings.xml"
         out.parent.mkdir(parents=True, exist_ok=True)

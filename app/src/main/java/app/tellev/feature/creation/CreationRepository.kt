@@ -1,5 +1,7 @@
 package app.tellev.feature.creation
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -50,7 +52,7 @@ class CreationRepository(private val root: File) {
     suspend fun saveCover(id: String, pngBytes: ByteArray): String = withContext(Dispatchers.IO) {
         require(pngBytes.size in 1..10_000_000 && pngBytes.take(8).toByteArray().contentEquals(
             byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A),
-        )) { "封面必须是有效的 PNG，且不超过 10 MB。" }
+        )) { UiStrings.get(S.crrepo_error_invalid_cover) }
         root.mkdirs()
         val hash = sha256(pngBytes)
         val destination = coverFile(id, hash)
@@ -68,7 +70,7 @@ class CreationRepository(private val root: File) {
 
     suspend fun readCover(id: String, expectedSha256: String): ByteArray = withContext(Dispatchers.IO) {
         val bytes = coverFile(id, expectedSha256).readBytes()
-        require(sha256(bytes) == expectedSha256) { "封面校验失败，请重新选择图片。" }
+        require(sha256(bytes) == expectedSha256) { UiStrings.get(S.crrepo_error_cover_checksum) }
         bytes
     }
 
@@ -80,7 +82,7 @@ class CreationRepository(private val root: File) {
 
     suspend fun readSource(id: String, expectedSha256: String): String = withContext(Dispatchers.IO) {
         val bytes = sourceFile(id, expectedSha256).readBytes()
-        require(sha256(bytes) == expectedSha256) { "原文校验失败，请重新导入。" }
+        require(sha256(bytes) == expectedSha256) { UiStrings.get(S.crrepo_error_source_checksum) }
         bytes.decodeToString()
     }
 

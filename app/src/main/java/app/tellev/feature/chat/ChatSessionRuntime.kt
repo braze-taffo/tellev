@@ -6,6 +6,8 @@ import app.tellev.core.extension.MutationRequest
 import app.tellev.core.extension.RuntimeToken
 import app.tellev.core.extension.RuntimeWriteCoordinator
 import app.tellev.core.extension.StorageOwner
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.ChatSession
 import app.tellev.core.storage.StDataStore
 import app.tellev.core.storage.applyChatSessionMutation
@@ -95,7 +97,7 @@ internal class ChatSessionRuntime(
         val truth = try {
             dataStore.readChatSession(sessionId)
         } catch (error: Exception) {
-            onSessionError?.invoke(sessionId, "恢复未保存的会话状态失败：${error.message}")
+            onSessionError?.invoke(sessionId, UiStrings.get(S.chatrt_recover_state_failed, error.message))
             return false
         }
         // A poisoned owner's queued writes are all doomed; settle their deferreds first so
@@ -138,7 +140,7 @@ internal class ChatSessionRuntime(
         }
         job.invokeOnCompletion { failure ->
             if (failure != null && failure !is CancellationException) {
-                onSessionError?.invoke(base.id, "变量保存失败，生成已暂停：${failure.message}")
+                onSessionError?.invoke(base.id, UiStrings.get(S.chatrt_variable_save_paused, failure.message))
             }
         }
         return job
@@ -153,7 +155,7 @@ internal class ChatSessionRuntime(
         runCatching {
             scheduleMetadataSave(base, desired, onSessionUpdated)
         }.onFailure { error ->
-            onError("消息修改未提交：${error.message}")
+            onError(UiStrings.get(S.chatrt_edit_not_committed, error.message))
         }.getOrNull()
 
     suspend fun persistSessionMutation(
@@ -185,7 +187,7 @@ internal class ChatSessionRuntime(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
-            onError("消息更新未完成：${error.message}")
+            onError(UiStrings.get(S.chatrt_update_incomplete, error.message))
         }
     }
 
@@ -208,21 +210,21 @@ internal class ChatSessionRuntime(
         }
         if (token == null) {
             runCatching { extensionHost.flushWrites() }
-                .onFailure { error -> onSessionError?.invoke("", "扩展写入收尾失败：${error.message}") }
+                .onFailure { error -> onSessionError?.invoke("", UiStrings.get(S.chatrt_extension_flush_failed, error.message)) }
             return
         }
         // Every step degrades to a single report. A poisoned chain must never abort the
         // transition itself — that is how one failed write wedged every later switch,
         // creation and close of a session until process death.
         runCatching { extensionHost.flushWrites() }
-            .onFailure { error -> onSessionError?.invoke(token.sessionId, "扩展写入收尾失败：${error.message}") }
+            .onFailure { error -> onSessionError?.invoke(token.sessionId, UiStrings.get(S.chatrt_extension_flush_failed, error.message)) }
         runCatching { sessionWrites.release(token) }
-            .onFailure { error -> onSessionError?.invoke(token.sessionId, "会话写入收尾失败：${error.message}") }
+            .onFailure { error -> onSessionError?.invoke(token.sessionId, UiStrings.get(S.chatrt_session_release_failed, error.message)) }
         // release aborts on the first failure; settle every queued write before
         // discarding so the cell can actually be removed and the owner re-registered.
         sessionWrites.awaitSettled(StorageOwner("chat", token.sessionId))
         runCatching { sessionWrites.unregister(StorageOwner("chat", token.sessionId), discardFailures = true) }
-            .onFailure { error -> onSessionError?.invoke(token.sessionId, "会话写入清理失败：${error.message}") }
+            .onFailure { error -> onSessionError?.invoke(token.sessionId, UiStrings.get(S.chatrt_session_unregister_failed, error.message)) }
     }
 
     fun currentRuntimeToken(sessionId: String?): RuntimeToken? = runtimeToken?.takeIf {
@@ -265,13 +267,13 @@ internal class ChatSessionRuntime(
                     try {
                         sessionWrites.release(it)
                     } catch (error: Exception) {
-                        onError("退出时仍有未完成写入：${error.message}")
+                        onError(UiStrings.get(S.chatrt_exit_pending_writes, error.message))
                     }
                     sessionWrites.awaitSettled(StorageOwner("chat", it.sessionId))
                     runCatching { sessionWrites.unregister(StorageOwner("chat", it.sessionId), discardFailures = true) }
                 }
             } catch (error: Exception) {
-                onError("退出时仍有未完成写入：${error.message}")
+                onError(UiStrings.get(S.chatrt_exit_pending_writes, error.message))
             } finally {
                 sessionWriteScope.cancel()
             }

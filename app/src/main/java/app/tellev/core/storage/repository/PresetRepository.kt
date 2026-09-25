@@ -1,5 +1,7 @@
 package app.tellev.core.storage.repository
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.PresetCategory
 import app.tellev.core.model.PresetImportResult
@@ -68,7 +70,7 @@ internal class PresetRepository(
         withContext(Dispatchers.IO) {
             val directory = resolvePresetDirectory(category)
             val source = directory.resolve("$name.json")
-            if (!source.exists()) error("Preset not found: ${category.name.lowercase()}/$name")
+            if (!source.exists()) error(UiStrings.get(S.prrepo_error_not_found, category.name.lowercase(), name))
             source.copyTo(directory.resolve("in_use.json"), overwrite = true)
 
             val statePath = layout.root.resolve("preset-selection.json")
@@ -160,7 +162,7 @@ internal class PresetRepository(
         val rawJsonString = jsonBytes.decodeToString()
         val parsed = runCatching { json.parseToJsonElement(rawJsonString) }.getOrNull()
         val rawObj = parsed as? JsonObject
-            ?: error("预设 JSON 格式无效：$sourceFileName 不是有效的 JSON 对象")
+            ?: error(UiStrings.get(S.prrepo_error_invalid_json, sourceFileName))
 
         val category = presetCategory(providerCategory)
         val parent = resolvePresetDirectory(category)
@@ -193,7 +195,7 @@ internal class PresetRepository(
             appliedFields = applied,
             preservedFields = rawObj.keys - applied,
             warnings = buildList {
-                if (routing.isNotEmpty()) add("服务商、接口和模型字段已保留但不会应用：${routing.sorted().joinToString()}")
+                if (routing.isNotEmpty()) add(UiStrings.get(S.prrepo_warning_routing_preserved, routing.sorted().joinToString()))
             },
         ).also { presetChanges.tryEmit(category) }
     }

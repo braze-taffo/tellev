@@ -8,6 +8,8 @@ import app.tellev.core.extension.ExtensionPermissionManager
 import app.tellev.core.extension.MutableExternalChatWritePort
 import app.tellev.core.extension.RuntimeToken
 import app.tellev.core.extension.StEventCatalog
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.Attachment
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterSummary
@@ -129,7 +131,7 @@ class ChatViewModel(
                     state.copy(
                         currentSession = truth,
                         messages = truth.messages,
-                        error = state.error ?: "上次修改未能保存，已恢复到最近保存的会话",
+                        error = state.error ?: UiStrings.get(S.chatvm_recover_unsaved),
                     )
                 }
             }
@@ -260,7 +262,7 @@ class ChatViewModel(
                         reloadCharacterTavernHelperScripts(refreshed)
                     }
                     .onFailure { error ->
-                        _uiState.update { it.copy(error = "重新读取角色卡失败：${error.message}") }
+                        _uiState.update { it.copy(error = UiStrings.get(S.chatvm_reread_character_failed, error.message)) }
                     }
             }
         }
@@ -280,7 +282,7 @@ class ChatViewModel(
                 }.onSuccess { (presets, selected) ->
                     _uiState.update { it.copy(presets = presets, selectedPreset = selected) }
                 }.onFailure { error ->
-                    _uiState.update { it.copy(error = "重新读取预设失败：${error.message}") }
+                    _uiState.update { it.copy(error = UiStrings.get(S.chatvm_reread_preset_failed, error.message)) }
                 }
             }
         }
@@ -289,7 +291,7 @@ class ChatViewModel(
     private fun observeWorldBookChanges() {
         viewModelScope.launch {
             dataStore.worldBookChanges.collect {
-                refreshRuntimeState("重新读取世界书失败")
+                refreshRuntimeState(S.chatvm_reread_worldbook_failed)
             }
         }
     }
@@ -297,7 +299,7 @@ class ChatViewModel(
     private fun observePersonaChanges() {
         viewModelScope.launch {
             dataStore.personaChanges.collect {
-                refreshRuntimeState("重新读取用户设定失败")
+                refreshRuntimeState(S.chatvm_reread_persona_failed)
             }
         }
     }
@@ -305,7 +307,7 @@ class ChatViewModel(
     private fun observeProviderChanges() {
         viewModelScope.launch {
             secretStore.changes.collect {
-                refreshRuntimeState("重新读取服务商配置失败")
+                refreshRuntimeState(S.chatvm_reread_provider_failed)
                 refreshImageGenAvailability()
             }
         }
@@ -330,14 +332,14 @@ class ChatViewModel(
                 }.onFailure { error ->
                     // 已删除的会话（删除级联会发出 change 事件）不算读取失败。
                     if (!error.message.orEmpty().contains("Chat session not found")) {
-                        _uiState.update { it.copy(error = "读取会话提交状态失败：${error.message}") }
+                        _uiState.update { it.copy(error = UiStrings.get(S.chatvm_read_session_state_failed, error.message)) }
                     }
                 }
             }
         }
     }
 
-    private suspend fun refreshRuntimeState(errorPrefix: String) {
+    private suspend fun refreshRuntimeState(errorKey: String) {
         val selectedPersonaId = _uiState.value.selectedPersona?.id
         runCatching { runtimeResolver.resolve(selectedPersonaId) }
             .onSuccess { runtime ->
@@ -354,7 +356,7 @@ class ChatViewModel(
                     )
                 }
             }
-            .onFailure { error -> _uiState.update { it.copy(error = "$errorPrefix：${error.message}") } }
+            .onFailure { error -> _uiState.update { it.copy(error = UiStrings.get(errorKey, error.message)) } }
     }
 
     private fun loadInitialData() {
@@ -386,7 +388,7 @@ class ChatViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = "加载数据失败：${e.message}",
+                        error = UiStrings.get(S.chatvm_load_data_failed, e.message),
                     )
                 }
             }
@@ -482,7 +484,7 @@ class ChatViewModel(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            error = "加载角色失败：${e.message}",
+                            error = UiStrings.get(S.chatvm_load_character_failed, e.message),
                         )
                     }
                 }
@@ -508,7 +510,7 @@ class ChatViewModel(
                     }
                     ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.CHAT_CHANGED, "")
                 } catch (error: Exception) {
-                    _uiState.update { it.copy(error = "关闭会话失败：${error.message}") }
+                    _uiState.update { it.copy(error = UiStrings.get(S.chatvm_close_session_failed, error.message)) }
                 }
             }
         }
@@ -547,7 +549,7 @@ class ChatViewModel(
                     ChatTavernAdapter.emitRenderedEventsForMessages(extensionHost, newSession.messages)
                 } catch (e: Exception) {
                     _uiState.update {
-                        it.copy(error = "创建会话失败：${e.message}")
+                        it.copy(error = UiStrings.get(S.chatvm_create_session_failed, e.message))
                     }
                 } finally {
                     _uiState.update { it.copy(isLoading = false) }
@@ -573,7 +575,7 @@ class ChatViewModel(
                     refreshMemory(session.id)
                     resumePendingMemory(session.id)
                 } catch (e: Exception) {
-                    _uiState.update { it.copy(error = "保存记忆模式失败：${e.message}") }
+                    _uiState.update { it.copy(error = UiStrings.get(S.chatvm_save_memory_mode_failed, e.message)) }
                 }
             }
         }
@@ -606,7 +608,7 @@ class ChatViewModel(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
-                _uiState.update { if (it.currentSession?.id == id) it.copy(memoryStatus = "补建失败：${e.message}") else it }
+                _uiState.update { if (it.currentSession?.id == id) it.copy(memoryStatus = UiStrings.get(S.chatvm_memory_rebuild_failed, e.message)) else it }
             } finally {
                 refreshMemory(id)
             }
@@ -623,7 +625,7 @@ class ChatViewModel(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
-                _uiState.update { if (it.currentSession?.id == id) it.copy(memoryStatus = "记忆重试失败：${e.message}") else it }
+                _uiState.update { if (it.currentSession?.id == id) it.copy(memoryStatus = UiStrings.get(S.chatvm_memory_retry_failed, e.message)) else it }
             }
             refreshMemory(id)
         }
@@ -638,7 +640,7 @@ class ChatViewModel(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
-                _uiState.update { it.copy(error = "修改记忆失败：${e.message}") }
+                _uiState.update { it.copy(error = UiStrings.get(S.chatvm_memory_correct_failed, e.message)) }
             }
         }
     }
@@ -654,7 +656,7 @@ class ChatViewModel(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
-                _uiState.update { if (it.currentSession?.id == id) it.copy(memoryStatus = "向量更新失败：${e.message}") else it }
+                _uiState.update { if (it.currentSession?.id == id) it.copy(memoryStatus = UiStrings.get(S.chatvm_memory_vectors_failed, e.message)) else it }
             }
         }
     }
@@ -669,7 +671,7 @@ class ChatViewModel(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
-                _uiState.update { if (it.currentSession?.id == sessionId) it.copy(memoryStatus = "记忆恢复失败：${e.message}") else it }
+                _uiState.update { if (it.currentSession?.id == sessionId) it.copy(memoryStatus = UiStrings.get(S.chatvm_memory_resume_failed, e.message)) else it }
             }
         }
     }
@@ -701,7 +703,7 @@ class ChatViewModel(
                     ChatTavernAdapter.emitRenderedEventsForMessages(extensionHost, session.messages)
                 } catch (e: Exception) {
                     _uiState.update {
-                        it.copy(error = "切换会话失败：${e.message}")
+                        it.copy(error = UiStrings.get(S.chatvm_switch_session_failed, e.message))
                     }
                 } finally {
                     _uiState.update { it.copy(isLoading = false) }
@@ -857,7 +859,7 @@ class ChatViewModel(
                 ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.MESSAGE_DELETED, messageIndex)
                 if (imageRelatives.isNotEmpty() && session != null) {
                     runCatching { deleteImageFilesAndGalleryRecords(session.id, imageRelatives) }
-                        .onFailure { err -> _uiState.update { it.copy(error = "清理消息图片失败：${err.message}") } }
+                        .onFailure { err -> _uiState.update { it.copy(error = UiStrings.get(S.chatvm_cleanup_images_failed, err.message)) } }
                     imageGenCoordinator.refreshGeneratedImages(session.id) { targetSessionId, images ->
                         _uiState.update { if (it.currentSession?.id == targetSessionId) it.copy(generatedImages = images) else it }
                     }
@@ -954,10 +956,10 @@ class ChatViewModel(
                                 // retire 时角色脚本已被卸载，失败恢复需要重新加载。
                                 character?.let { reloadCharacterTavernHelperScripts(it) }
                             }
-                            _uiState.update { it.copy(error = "删除会话失败：${e.message}") }
+                            _uiState.update { it.copy(error = UiStrings.get(S.chatvm_delete_session_failed, e.message)) }
                         } else if (stillExists) {
                             // 后台会话删除失败：只报错，当前会话状态原封不动。
-                            _uiState.update { it.copy(error = "删除会话失败：${e.message}") }
+                            _uiState.update { it.copy(error = UiStrings.get(S.chatvm_delete_session_failed, e.message)) }
                         } else if (!deletingCurrent) {
                             // 后台会话实际已被半提交删除：只报错并尽力刷新列表，
                             // 当前会话视图绝不动。
@@ -965,18 +967,18 @@ class ChatViewModel(
                                 val remaining = character?.let { dataStore.listChatSessionSummaries(characterId = it.id) }.orEmpty()
                                 _uiState.update { it.copy(sessions = remaining) }
                             }
-                            _uiState.update { it.copy(error = "会话已删除，但清理未完成：${e.message}") }
+                            _uiState.update { it.copy(error = UiStrings.get(S.chatvm_deleted_cleanup_failed, e.message)) }
                         } else {
                             clearToNoSession()
-                            _uiState.update { it.copy(error = "会话已删除，但清理未完成：${e.message}") }
+                            _uiState.update { it.copy(error = UiStrings.get(S.chatvm_deleted_cleanup_failed, e.message)) }
                             ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.CHAT_CHANGED, "")
                         }
                     } else if (!deletingCurrent) {
                         // 后台会话已删除、仅列表刷新失败：绝不动当前会话视图。
-                        _uiState.update { it.copy(error = "会话已删除，但刷新会话列表失败：${e.message}") }
+                        _uiState.update { it.copy(error = UiStrings.get(S.chatvm_deleted_refresh_failed, e.message)) }
                     } else {
                         clearToNoSession()
-                        _uiState.update { it.copy(error = "会话已删除，但刷新会话列表失败：${e.message}") }
+                        _uiState.update { it.copy(error = UiStrings.get(S.chatvm_deleted_refresh_failed, e.message)) }
                         ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.CHAT_CHANGED, "")
                     }
                 } finally {
@@ -1023,7 +1025,7 @@ class ChatViewModel(
                     }
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(error = "删除图片失败：${e.message}") }
+                _uiState.update { it.copy(error = UiStrings.get(S.chatvm_delete_image_failed, e.message)) }
             }
         }
     }
@@ -1142,7 +1144,7 @@ class ChatViewModel(
                     _uiState.value.selectedCharacter?.let { reloadCharacterTavernHelperScripts(it) }
                     ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.SETTINGS_UPDATED, "preset")
                 }.onFailure { error ->
-                    _uiState.update { it.copy(error = "加载预设失败：${error.message}") }
+                    _uiState.update { it.copy(error = UiStrings.get(S.chatvm_load_preset_failed, error.message)) }
                 }
             }
         }

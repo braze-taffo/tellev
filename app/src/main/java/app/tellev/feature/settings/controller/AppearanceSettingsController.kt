@@ -1,5 +1,7 @@
 package app.tellev.feature.settings.controller
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.storage.AppPreferences
 import app.tellev.feature.settings.SettingsUiState
 import app.tellev.ui.theme.ThemeAccent
@@ -21,7 +23,7 @@ internal class AppearanceSettingsController(
         stateFlow.update {
             it.copy(
                 themeMode = mode,
-                info = "主题已切换为${mode.displayName()}。",
+                info = UiStrings.get(S.setappctl_theme_switched, mode.displayName()),
             )
         }
     }
@@ -32,7 +34,7 @@ internal class AppearanceSettingsController(
         stateFlow.update {
             it.copy(
                 themeAccent = accent,
-                info = "主题色已切换为${accent.displayName()}。",
+                info = UiStrings.get(S.setappctl_accent_switched, accent.displayName()),
             )
         }
     }
@@ -63,13 +65,13 @@ internal class AppearanceSettingsController(
     }
 
     private fun ThemeMode.displayName(): String = when (this) {
-        ThemeMode.Light -> "浅色"
-        ThemeMode.Dark -> "深色"
-        ThemeMode.System -> "跟随系统"
+        ThemeMode.Light -> UiStrings.get(S.setappctl_theme_light)
+        ThemeMode.Dark -> UiStrings.get(S.setappctl_theme_dark)
+        ThemeMode.System -> UiStrings.get(S.setappctl_theme_system)
     }
 
     private fun ThemeAccent.displayName(): String = when (this) {
-        ThemeAccent.Warm -> "暖橘"
-        ThemeAccent.Classic -> "经典蓝紫"
+        ThemeAccent.Warm -> UiStrings.get(S.setappctl_accent_warm)
+        ThemeAccent.Classic -> UiStrings.get(S.setappctl_accent_classic)
     }
 }
