@@ -56,6 +56,9 @@ globalThis._ = {
   isEqual(a, b) {
     return JSON.stringify(a) === JSON.stringify(b);
   },
+  escapeRegExp(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  },
 };
 
 // Real ejs build used inside the app (bundled by globals.js).
@@ -358,6 +361,131 @@ test('setVariableSchema and findVariables degrade without throwing', async () =>
   assert.equal(out, '[][{}][][]');
 });
 
+// ── Part A2: worldbook entry/activation family ─────────────────────────────
+const BOOK_ENTRIES = [
+  { id: 'e1', comment: '自我介绍', content: '@@activate\n正文一', bookId: 'char-book', bookName: '玄泽书',
+    raw: { uid: 1, key: ['玄泽'], keysecondary: [], constant: false, disable: false, order: 50 } },
+  { id: 'e2', comment: '商店', content: '正文二', bookId: 'char-book', bookName: '玄泽书',
+    raw: { uid: 2, key: ['/商店|店铺/'], constant: false, disable: false, order: 60 } },
+  { id: 'e3', comment: '世界设定', content: '正文三', bookId: 'world-book', bookName: '世界书',
+    raw: { uid: 3, key: [], constant: true, disable: false, order: 10 } },
+  { id: 'e4', comment: '魔剑封印', content: '正文四', bookId: 'world-book', bookName: '世界书',
+    raw: { uid: 4, key: ['魔剑'], disable: true, order: 20 } },
+];
+
+test('getWorldInfoData shapes catalog entries with raw fields and decorators', async () => {
+  const out = await render(
+    "<% const es = await getWorldInfoData() %>" +
+    "[<%= es.length %>][<%= es[0].uid %> <%= es[0].world %>]" +
+    "[<%= JSON.stringify(es[0].decorators) %>][<%= es[0].content %>]" +
+    "[<%= es[0].key.join('+') %>]",
+    { worldCatalog: BOOK_ENTRIES, context: { charLoreBook: 'char-book' } });
+  assert.equal(out, '[2][1 玄泽书][["@@activate"]][正文一][玄泽]');
+});
+
+test('getWorldInfoEntries resolves by book name and sorts by order', async () => {
+  const out = await render(
+    "<% const es = await getWorldInfoEntries('世界书') %>" +
+    "[<%= es.map(e => e.uid).join(',') %>]",
+    { worldCatalog: BOOK_ENTRIES });
+  assert.equal(out, '[3,4]');
+});
+
+test('getWorldInfoEntry and content resolve by comment, uid and regex', async () => {
+  const out = await render(
+    "[<%= (await getWorldInfoEntry('商店')).uid %>]" +
+    "[<%= (await getWorldInfoEntry('世界书', 4)).comment %>]" +
+    "[<%= (await getWorldInfoEntry('世界书', /^世界/)).uid %>]" +
+    "[<%= await getWorldInfoEntryContent('商店') %>]" +
+    "[<%= JSON.stringify(await getWorldInfoEntryContent('不存在')) %>]" +
+    "[<%= (await getWorldInfoComments('世界书')).join('|') %>]" +
+    "[<%= JSON.stringify(await getWorldInfoEntry('不存在条目')) %>]",
+    { worldCatalog: BOOK_ENTRIES, context: { charLoreBook: 'char-book' } });
+  assert.equal(out, '[2][魔剑封印][3][正文二][null][世界设定|魔剑封印][null]');
+});
+
+test('getEnabledLoreBooks lists distinct enabled books', async () => {
+  const out = await render(
+    "<%= getEnabledLoreBooks().join('|') %>",
+    { worldCatalog: BOOK_ENTRIES, context: { charLoreBook: 'char-book' } });
+  // charLoreBook is the book id; the catalog entry's name wins after dedupe.
+  assert.equal(out, '玄泽书|世界书');
+});
+
+test('selectActivatedEntries matches keywords, regex, constants and conditions', async () => {
+  const out = await render(
+    "<% const es = await getEnabledWorldInfoEntries() %>" +
+    "[<%= selectActivatedEntries(es, '他走进了商店买东西').map(e => e.uid).join(',') %>]" +
+    "[<%= selectActivatedEntries(es, '').map(e => e.uid).join(',') %>]" +
+    "[<%= selectActivatedEntries(es, '魔剑', { disabled: false }).map(e => e.uid).join(',') %>]",
+    { worldCatalog: BOOK_ENTRIES });
+  // e1 carries @@activate so it is always on; e3 is constant; e2 matches via
+  // its /商店|店铺/ key; e4 is disabled and filtered by the condition.
+  assert.equal(out, '[3,1,2][3,1][3,1]');
+});
+
+test('selectActivatedEntries applies secondary-key logic', async () => {
+  const entries = [
+    { comment: 'and_any', content: 'A', raw: { uid: 1, key: ['剑'], keysecondary: ['火', '水'], selective: true, selectiveLogic: 0, disable: false } },
+    { comment: 'not_any', content: 'B', raw: { uid: 2, key: ['剑'], keysecondary: ['冰'], selective: true, selectiveLogic: 2, disable: false } },
+    { comment: 'not_all', content: 'C', raw: { uid: 3, key: ['剑'], keysecondary: ['火', '冰'], selective: true, selectiveLogic: 1, disable: false } },
+  ];
+  const out = await render(
+    "<% const es = await getWorldInfoData('b') %>" +
+    "[<%= selectActivatedEntries(es, '剑与火').map(e => e.comment).join(',') %>]" +
+    "[<%= selectActivatedEntries(es, '剑与冰').map(e => e.comment).join(',') %>]",
+    { worldCatalog: entries.map(e => ({ ...e, bookId: 'b' })) });
+  // and_any's secondary keys are 火/水, so trigger 剑与冰 only leaves not_all.
+  assert.equal(out, '[and_any,not_any,not_all][not_all]');
+});
+
+test('@@dont_activate suppresses activation while @@activate forces it', async () => {
+  const entries = [
+    { comment: 'off', content: '@@dont_activate\nX', bookId: 'b', raw: { uid: 1, key: ['剑'], disable: false } },
+    { comment: 'on', content: '@@activate\nY', bookId: 'b', raw: { uid: 2, key: [], disable: false } },
+  ];
+  const out = await render(
+    "<% const es = await getWorldInfoData('b') %>" +
+    "[<%= selectActivatedEntries(es, '剑').map(e => e.comment).join(',') %>]",
+    { worldCatalog: entries });
+  assert.equal(out, '[on]');
+});
+
+test('activateWorldInfo registers entries readable through getActivatedWIEntries', async () => {
+  const out = await render(
+    "<% const e = await activewi('世界书', '世界设定') %>" +
+    "[<%= e.uid %>][<%= getActivatedWIEntries().length %>]" +
+    "<% deactivateActivateWorldInfo() %>[<%= getActivatedWIEntries().length %>]",
+    { worldCatalog: BOOK_ENTRIES });
+  assert.equal(out, '[3][1][0]');
+});
+
+test('per-build deactivate hook clears the activation registry', async () => {
+  await render("<% await activewi('世界书', '世界设定') %>", { worldCatalog: BOOK_ENTRIES });
+  assert.equal(await render("<%= getActivatedWIEntries().length %>"), '1');
+  window.__tellevTemplateDeactivate();
+  assert.equal(await render("<%= getActivatedWIEntries().length %>"), '0');
+});
+
+test('activated entries keep force mutations and survive a second read', async () => {
+  const out = await render(
+    "<% await activateWorldInfo('玄泽书', 1, true) %>" +
+    "<% const a = getActivatedWIEntries()[0] %>" +
+    "[<%= a.constant %>][<%= a.group %>][<%= getActivatedWIEntries().length %>]",
+    { worldCatalog: BOOK_ENTRIES });
+  assert.equal(out, '[true][][1]');
+});
+
+test('activateWorldInfoByKeywords registers keyword matches', async () => {
+  const out = await render(
+    "<% const a = await activateWorldInfoByKeywords('商店') %>" +
+    "[<%= a.map(e => e.uid).join(',') %>]" +
+    "[<%= (await getWorldInfoActivatedData('char-book', '玄泽')).map(e => e.uid).join(',') %>]",
+    { worldCatalog: BOOK_ENTRIES, context: { charLoreBook: 'char-book' } });
+  // e3 constant, e1 @@activate, e2 keyword — e4 disabled stays out.
+  assert.equal(out, '[3,1,2][1]');
+});
+
 let failed = 0;
 for (const { name, fn } of tests) {
   try {
@@ -365,7 +493,7 @@ for (const { name, fn } of tests) {
     console.log(`  ok  ${name}`);
   } catch (error) {
     failed++;
-    console.error(`FAIL  ${name}\n      ${error?.message?.split('\n')[0]}`);
+    console.error(`FAIL  ${name}\n      ${error?.message?.split('\n').slice(0, 4).join(' | ')}`);
   }
 }
 console.log(failed === 0 ? `\nAll ${tests.length} template.js harness tests passed.` : `\n${failed}/${tests.length} FAILED`);

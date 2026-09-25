@@ -141,4 +141,34 @@ class PromptTemplateBridgeHookTest {
         val data = character?.get("data") as? JsonObject
         assertEquals("[\"g1\"]", data?.get("alternate_greetings").toString())
     }
+
+    @Test
+    fun `render request worldCatalog carries raw entry fields`() {
+        val bridge = RecordingBridge()
+        val processor = DefaultPromptTemplateProcessor(javascriptEvaluator = bridge)
+
+        processor.process(
+            PromptTemplateRequest(
+                messages = listOf(PromptMessage(role = MessageRole.System, content = "A<%= 1 %>B")),
+                context = MacroContext(),
+                metadata = buildJsonObject { },
+                worldCatalog = listOf(
+                    PromptTemplateWorldEntry(
+                        id = "e1",
+                        content = "正文",
+                        raw = buildJsonObject { put("key", kotlinx.serialization.json.JsonArray(listOf(kotlinx.serialization.json.JsonPrimitive("玄泽")))) },
+                        bookId = "char-book",
+                        bookName = "玄泽书",
+                        comment = "自我介绍",
+                    ),
+                ),
+            ),
+        )
+
+        val catalog = bridge.lastRequest?.get("worldCatalog") as? kotlinx.serialization.json.JsonArray
+        val entry = catalog?.single() as? JsonObject
+        assertEquals("玄泽书", entry?.get("bookName")?.toString()?.trim('"'))
+        val raw = entry?.get("raw") as? JsonObject
+        assertEquals("[\"玄泽\"]", raw?.get("key").toString())
+    }
 }

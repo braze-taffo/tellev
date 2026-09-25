@@ -51,7 +51,8 @@ internal object PromptTemplateExpressionEvaluator {
                 }))
                 put("worldCatalog", JsonArray(state.worldCatalog.map { entry ->
                     toJsonObject(mapOf("id" to entry.id, "comment" to entry.comment,
-                        "title" to entry.title, "content" to entry.content, "bookId" to entry.bookId, "bookName" to entry.bookName))
+                        "title" to entry.title, "content" to entry.content, "bookId" to entry.bookId, "bookName" to entry.bookName,
+                        "raw" to entry.raw))
                 }))
             }
             val result = bridge.evaluate(request)

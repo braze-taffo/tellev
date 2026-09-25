@@ -10,6 +10,13 @@
 // lifetime for entries registered during that build.
 const promptInjected = new Map();
 
+// ST activateWorldInfo registration map (worldinfo.ts:134). In ST the entries
+// are applied to the generation through the WORLDINFO_FORCE_ACTIVATE event;
+// Tellev's world scan has already run by the time templates render, so the
+// registry is observable through getActivatedWIEntries() and
+// activateWorldInfo's return value — it cannot retroactively extend the scan.
+const activatedWorldEntries = new Map();
+
 // FNV-1a 32-bit — uids only need to be stable within this registry for dedup;
 // they never cross to ST or to the JVM fallback registry.
 function hashUid(text) {
@@ -110,6 +117,49 @@ const DEFAULT_CHAR_DEFINE = '<% if (name) { %><<%- name %>>\n' +
   '<% if (depth_prompt) { %>System: <%- depth_prompt %>\n<% } %>' +
   '</<%- name %>><% } %>';
 
+// ── World-info entry helpers (ST-Prompt-Template worldinfo.ts parity) ─────
+
+// ST parseRegexFromString (world-info.js:2821): `/pattern/flags` → RegExp
+// with `\/` unescaped; anything else is a plain keyword, not a regex.
+function parseRegexFromString(input) {
+  const match = String(input).match(/^\/([\w\W]+?)\/([gimsuy]*)$/);
+  if (!match) return null;
+  if (match[1].match(/(^|[^\\])\//)) return null;
+  try { return new RegExp(match[1].replace('\\/', '/'), match[2]); } catch (_) { return null; }
+}
+
+const KNOWN_DECORATORS = [
+  '@@activate', '@@dont_activate', '@@message_formatting', '@@generate_before',
+  '@@generate_after', '@@render_before', '@@render_after', '@@dont_preload',
+  '@@initial_variables', '@@always_enabled', '@@only_preload', '@@iframe',
+  '@@preprocessing', '@@if', '@@private',
+];
+
+// ST parseDecorators (worldinfo.ts:827): leading `@@...` lines are decorators,
+// `@@@` is the escape form; an unknown decorator makes following decorators
+// plain content (fallback).
+function parseDecorators(content) {
+  if (!String(content).startsWith('@@')) return [[], String(content)];
+  const lines = String(content).split('\n');
+  const decorators = [];
+  let contentStartIndex = 0;
+  let fallbacked = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith('@@')) {
+      if (line.startsWith('@@@') && !fallbacked) { contentStartIndex = i; break; }
+      const candidate = line.startsWith('@@@') ? line.substring(1) : line;
+      const base = candidate.indexOf(' ') === -1 ? candidate : candidate.substring(0, candidate.indexOf(' '));
+      if (KNOWN_DECORATORS.includes(base)) { decorators.push(candidate); fallbacked = false; }
+      else fallbacked = true;
+    } else {
+      contentStartIndex = i;
+      break;
+    }
+  }
+  return [decorators, lines.slice(contentStartIndex).join('\n')];
+}
+
 // ── JSON utilities (ST-Prompt-Template json-patch.ts parity) ─────────────
 // parseJSON tries strict JSON first, then progressively tolerant repairs
 // (trailing commas → unquoted keys → single-quoted strings). ST bundles the
@@ -193,7 +243,13 @@ function roleMatches(message, role) {
     || (role === 'assistant' && !message.is_user && !message.is_system);
 }
 
-window.__tellevTemplateDeactivate = function (count) { return deactivatePrompts(count || 1); };
+window.__tellevTemplateDeactivate = function (count) {
+  // ST clears the activation registry at the end of each generation pass
+  // (handler.ts:401); the per-build deactivate hook gives the same lifetime —
+  // last build's registrations are gone before this build renders.
+  activatedWorldEntries.clear();
+  return deactivatePrompts(count || 1);
+};
 window.__tellevTemplateOutlet = function (content) { return applyOutletPrompts(content); };
 
 // ── Variable model (ST-Prompt-Template variables.ts parity) ──────────────
@@ -524,6 +580,242 @@ window.__tellevTemplate = async function (request) {
     applyVarYamlAnnotate,
     setVariableSchema,
     findVariables,
+  });
+
+  // ── World-info entry/activation family (worldinfo.ts parity) ───────────
+  // Catalog entries carry Tellev's id/comment/title/content plus the card's
+  // raw entry fields (uid, key, keysecondary, constant, disable, ...). ST
+  // shapes expose uid as a number, decorators stripped from content, and the
+  // owning book as `world`.
+  const wiBookOf = e => e.bookName || e.bookId || '';
+  const wiShape = entry => {
+    const raw = entry.raw || {};
+    const [decorators, content] = parseDecorators(entry.content ?? raw.content ?? '');
+    return Object.assign({}, raw, entry, {
+      uid: Number(raw.uid ?? entry.id ?? 0),
+      comment: entry.comment ?? raw.comment ?? '',
+      decorators,
+      content,
+      world: wiBookOf(entry),
+    });
+  };
+  const resolveBook = name => name || env.charLoreBook || env.userLoreBook
+    || env.chatLoreBook || request.currentWorldBookId || null;
+  const byOrder = (a, b) => (a.order ?? 100) - (b.order ?? 100);
+  const getWorldInfoEntries = async (name) => {
+    const book = resolveBook(name);
+    if (!book) return [];
+    const catalog = request.worldCatalog || [];
+    return catalog
+      .filter(e => e.bookId === book || e.bookName === book || wiBookOf(e) === book)
+      .map(wiShape)
+      .sort(byOrder);
+  };
+  const getWorldInfoComments = async (name) =>
+    (await getWorldInfoEntries(name)).map(e => e.comment);
+  const getWorldInfoEntry = async (name, title) => {
+    let book;
+    let key;
+    if (title == null) { key = name; }
+    else { book = name; key = title; }
+    const entries = await getWorldInfoEntries(book);
+    for (const data of entries) {
+      if (data.comment === key || data.uid === key
+        || (data.comment != null && data.comment.match(key))) return data;
+    }
+    console.warn(`[Prompt Template] entry not found: ${title ?? name}`);
+    return null;
+  };
+  const getWorldInfoEntryContent = async (name, title) =>
+    (await getWorldInfoEntry(name, title))?.content ?? null;
+
+  // ST getEnabledLoreBooks: char book / global / persona / extra / chat
+  // sources. Tellev cannot distinguish the non-char sources — the render
+  // catalog's distinct books are exactly the books the scan enabled. Books
+  // are deduped by id (Tellev's charLoreBook is a book id while the catalog
+  // exposes both id and name for the same book).
+  const getEnabledLoreBooks = (chara = true, global = true, persona = true, charaExtra = true, chat = true) => {
+    const results = [];
+    const seen = new Set();
+    const catalog = request.worldCatalog || [];
+    const pushEntry = e => {
+      const key = e.bookId || e.bookName;
+      if (key && !seen.has(key)) { seen.add(key); results.push(e.bookName || e.bookId); }
+    };
+    if (chara && env.charLoreBook) {
+      const charEntry = catalog.find(e => e.bookId === env.charLoreBook || e.bookName === env.charLoreBook);
+      if (charEntry) pushEntry(charEntry);
+      else if (!seen.has(env.charLoreBook)) { seen.add(env.charLoreBook); results.push(env.charLoreBook); }
+    }
+    if (global || persona || charaExtra || chat) {
+      for (const e of catalog) pushEntry(e);
+    }
+    return results;
+  };
+  const getEnabledWorldInfoEntries = async (chara = true, global = true, persona = true, charaExtra = true, chat = true) => {
+    const results = [];
+    for (const book of getEnabledLoreBooks(chara, global, persona, charaExtra, chat)) {
+      const entries = await getWorldInfoEntries(book);
+      if (entries.length > 0) results.push(...entries);
+    }
+    return results.sort(byOrder);
+  };
+
+  // Keyword matching (worldinfo.ts:482): `/re/flags` keys are regex, otherwise
+  // whole-word or substring match, case-folded unless the entry says otherwise.
+  const matchKeys = (haystack, needle, entry) => {
+    const keyRegex = parseRegexFromString(needle);
+    if (keyRegex) return keyRegex.test(haystack);
+    const transform = str => (entry?.caseSensitive ? str : String(str).toLowerCase());
+    const h = transform(haystack);
+    const n = transform(needle);
+    if (entry?.matchWholeWords ?? false) {
+      const words = n.split(/\s+/);
+      if (words.length > 1) return h.includes(n);
+      return new RegExp(`(?:^|\\W)(${_.escapeRegExp(n)})(?:$|\\W)`).test(h);
+    }
+    return h.includes(n);
+  };
+  const getScore = (haystack, entry) => {
+    let numberOfPrimaryKeys = 0, numberOfSecondaryKeys = 0, primaryScore = 0, secondaryScore = 0;
+    if (Array.isArray(entry.key)) {
+      numberOfPrimaryKeys = entry.key.length;
+      for (const key of entry.key) if (matchKeys(haystack, key, entry)) primaryScore++;
+    }
+    if (Array.isArray(entry.keysecondary)) {
+      numberOfSecondaryKeys = entry.keysecondary.length;
+      for (const key of entry.keysecondary) if (matchKeys(haystack, key, entry)) secondaryScore++;
+    }
+    if (!numberOfPrimaryKeys) return 0;
+    if (numberOfSecondaryKeys > 0) {
+      switch (entry.selectiveLogic) {
+        case 0: return primaryScore + secondaryScore; // AND_ANY
+        case 3: return secondaryScore === numberOfSecondaryKeys
+          ? primaryScore + secondaryScore : primaryScore; // AND_ALL
+      }
+    }
+    return primaryScore;
+  };
+  const WI_LOGIC = { AND_ANY: 0, NOT_ALL: 1, NOT_ANY: 2, AND_ALL: 3 };
+  const selectActivatedEntries = (entries, keywords, condition = {}) => {
+    const activated = new Set();
+    const trigger = (Array.isArray(keywords) ? keywords : [keywords]).join('\n\n');
+    for (const data of entries) {
+      if (condition.constant != null && data.constant !== condition.constant) continue;
+      if (condition.disabled != null && data.disable !== condition.disabled) continue;
+      if (condition.vectorized != null && data.vectorized !== condition.vectorized) continue;
+      if (data.useProbability && data.probability < 1 + Math.floor(Math.random() * 100)) continue;
+      if (data.constant) { activated.add(data); continue; }
+      if (data.decorators?.includes('@@activate')) { activated.add(data); continue; }
+      if (data.decorators?.includes('@@dont_activate')) continue;
+      if (data.decorators?.includes('@@only_preload')) continue;
+      const matchedKey = (data.key || []).find(k => matchKeys(trigger, k, data));
+      if (!matchedKey) continue;
+      const hasSecondaryKey = data.selective && Array.isArray(data.keysecondary) && data.keysecondary.length > 0;
+      if (!hasSecondaryKey) { activated.add(data); continue; }
+      const selectiveLogic = data.selectiveLogic ?? WI_LOGIC.AND_ANY;
+      let hasAnyMatch = false;
+      let hasAllMatch = true;
+      for (const secondary of data.keysecondary) {
+        const hasSecondaryMatch = secondary && matchKeys(trigger, String(secondary).trim(), data);
+        if (hasSecondaryMatch) hasAnyMatch = true;
+        if (!hasSecondaryMatch) hasAllMatch = false;
+        if (selectiveLogic === WI_LOGIC.AND_ANY && hasSecondaryMatch) { activated.add(data); break; }
+        if (selectiveLogic === WI_LOGIC.NOT_ALL && !hasSecondaryMatch) { activated.add(data); break; }
+      }
+      if (selectiveLogic === WI_LOGIC.NOT_ANY && !hasAnyMatch) { activated.add(data); continue; }
+      if (selectiveLogic === WI_LOGIC.AND_ALL && hasAllMatch) { activated.add(data); continue; }
+    }
+    if (activated.size <= 0) return [];
+    const grouped = {};
+    for (const data of activated) { const g = data.group || ''; (grouped[g] = grouped[g] || []).push(data); }
+    const ungrouped = grouped[''] || [];
+    if (ungrouped.length > 0 && Object.keys(grouped).length <= 1) return ungrouped.slice().sort(byOrder);
+    const matched = [];
+    for (const [group, datas] of Object.entries(grouped)) {
+      if (group === '') continue;
+      if (datas.length === 1) { matched.push(datas[0]); continue; }
+      const usePrioritize = datas.filter(d => d.groupOverride);
+      if (usePrioritize.length > 0) {
+        const orders = datas.map(d => d.order);
+        const top = Math.min(...orders);
+        if (top) { matched.push(datas[Math.max(orders.findIndex(o => o <= top), 0)]); continue; }
+      }
+      const useScores = datas.filter(d => d.useGroupScoring ?? false);
+      if (useScores.length > 0) {
+        const scores = datas.map(d => getScore(trigger, d));
+        const top = Math.max(...scores);
+        if (top) { matched.push(datas[Math.max(scores.findIndex(s => s >= top), 0)]); continue; }
+      }
+      const useWeights = datas.filter(d => !d.groupOverride && !d.useGroupScoring);
+      if (useWeights.length > 0) {
+        const weights = datas.map(d => d.groupWeight ?? 100);
+        const totalWeight = weights.reduce((a, b) => a + b, 0);
+        let rollValue = 1 + Math.floor(Math.random() * totalWeight);
+        const winner = weights.findIndex(w => (rollValue -= w) <= 0);
+        if (winner >= 0) matched.push(datas[winner]);
+      }
+    }
+    return ungrouped.concat(matched).sort(byOrder);
+  };
+  const getWorldInfoActivatedEntries = async (name, keywords, condition = {}) => {
+    const entries = await getWorldInfoEntries(name);
+    if (!entries) return [];
+    return selectActivatedEntries(entries, keywords, condition);
+  };
+  const activateWorldInfo = async (world, uid, force) => {
+    if (typeof uid === 'boolean') { force = uid; uid = undefined; }
+    const entry = await getWorldInfoEntry(world, uid);
+    if (entry) {
+      activatedWorldEntries.set(`${world}.${uid}`, Object.assign({}, entry, {
+        disable: false,
+        constant: force ? true : entry.constant,
+        cooldown: force ? 0 : entry.cooldown,
+        delay: force ? 0 : entry.delay,
+        vectorized: force ? false : entry.vectorized,
+        delayUntilRecursion: force ? false : entry.vectorized,
+        triggers: force ? [] : entry.triggers,
+        hash: force ? Math.random() + 1 : undefined,
+        content: force ? String(entry.content).replace('@@dont_activate', '') : entry.content,
+        ignoreBudget: force || entry.ignoreBudget,
+        group: force ? '' : entry.group,
+      }));
+    }
+    return entry;
+  };
+  const activateWorldInfoByKeywords = async (keywords, condition = {}) => {
+    const entries = await getEnabledWorldInfoEntries();
+    const activated = selectActivatedEntries(entries, keywords, condition);
+    for (const x of activated) activateWorldInfo(x.world, x.uid, condition.force);
+    return activated;
+  };
+  const applyActivateWorldInfo = () => {
+    if (!applyActivateWorldInfo.warned) {
+      applyActivateWorldInfo.warned = true;
+      console.warn('[tellev] applyActivateWorldInfo: mid-build world re-scan is not supported, registrations stay readable via getActivatedWIEntries');
+    }
+    return '';
+  };
+
+  Object.assign(env, {
+    // Authoritative ejs.ts mounts:
+    getWorldInfoData: getWorldInfoEntries,
+    getWorldInfoActivatedData: getWorldInfoActivatedEntries,
+    getEnabledWorldInfoEntries,
+    selectActivatedEntries,
+    activewi: activateWorldInfo,
+    activateWorldInfo,
+    activateWorldInfoByKeywords,
+    getEnabledLoreBooks,
+    // Documented reference names (reference_cn.md) — a safe superset: in ST
+    // they resolve the same helpers through module exports.
+    getWorldInfoEntries,
+    getWorldInfoEntry,
+    getWorldInfoEntryContent,
+    getWorldInfoComments,
+    getActivatedWIEntries: () => Array.from(activatedWorldEntries.values()),
+    deactivateActivateWorldInfo: () => { activatedWorldEntries.clear(); return ''; },
+    applyActivateWorldInfo,
   });
   const doRender = async () => {
     const content = await render(request.template);
