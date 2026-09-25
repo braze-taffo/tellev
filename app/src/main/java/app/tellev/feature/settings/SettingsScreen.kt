@@ -272,6 +272,14 @@ fun SettingsScreen(
                         onSetChatFontSizeSp = viewModel::setChatFontSizeSp,
                     )
 
+                    languageSectionItems(
+                        state = state,
+                        onSetLanguage = { tag ->
+                            viewModel.setLanguage(tag)
+                            (context as? android.app.Activity)?.recreate()
+                        },
+                    )
+
                     backupSectionItems(
                         onExportClick = { showExportDialog = true },
                         onImportClick = { showImportDialog = true },

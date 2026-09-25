@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">tellev</string>
+
+    <!-- 設定 → 言語 -->
+    <string name="settings_language">言語</string>
+    <string name="settings_language_system">システムに従う</string>
+</resources>

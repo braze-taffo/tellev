@@ -1,4 +1,7 @@
 <resources>
     <string name="app_name">tellev</string>
-</resources>
 
+    <!-- 设置 → 语言 -->
+    <string name="settings_language">语言</string>
+    <string name="settings_language_system">跟随系统</string>
+</resources>

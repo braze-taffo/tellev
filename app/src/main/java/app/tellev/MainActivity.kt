@@ -1,5 +1,6 @@
 package app.tellev
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -11,6 +12,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.lifecycleScope
+import app.tellev.core.i18n.AppLocale
 import app.tellev.core.model.CharacterSummary
 import app.tellev.core.storage.CharacterImporter
 import app.tellev.util.UriUtils
@@ -25,6 +27,10 @@ import java.util.UUID
 class MainActivity : ComponentActivity() {
     private val graph: TellevGraph by lazy { TellevGraph.create(this) }
     private val characterImporter = CharacterImporter()
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocale.wrap(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

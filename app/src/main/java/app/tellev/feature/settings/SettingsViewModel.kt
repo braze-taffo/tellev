@@ -62,6 +62,7 @@ data class SettingsUiState(
     val themeAccent: ThemeAccent = ThemeAccent.Warm,
     val chatBubbleAlpha: Float = 0.6f,
     val chatFontSizeSp: Int = 16,
+    val languageTag: String = "",
     val isLoading: Boolean = false,
     val error: String? = null,
     val info: String? = null,
@@ -216,6 +217,7 @@ class SettingsViewModel(
                         themeAccent = parseThemeAccent(appPreferences.themeAccentName),
                         chatBubbleAlpha = appPreferences.chatBubbleAlpha,
                         chatFontSizeSp = appPreferences.chatFontSizeSp,
+                        languageTag = appPreferences.languageTag,
                         baseUrl = fields.baseUrl,
                         apiKey = fields.apiKey,
                         model = fields.model,
@@ -306,6 +308,7 @@ class SettingsViewModel(
     fun setThemeAccent(accent: ThemeAccent) = appearanceController.setThemeAccent(accent)
     fun setChatBubbleAlpha(alpha: Float) = appearanceController.setChatBubbleAlpha(alpha)
     fun setChatFontSizeSp(size: Int) = appearanceController.setChatFontSizeSp(size)
+    fun setLanguage(tag: String) = appearanceController.setLanguage(tag)
 
     // ── Backup Actions ──
 
