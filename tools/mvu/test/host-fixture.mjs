@@ -24,6 +24,7 @@ export async function createHost({ chat, card = {}, failWrite = () => null }) {
     worldsStore.set(book.id, JSON.parse(JSON.stringify(book)));
   }
   const disabledWorlds = new Set();
+  let savedCharacter = null;
   const native = {
     stGetContext: () => JSON.stringify({ chat, chatId: 'fixture', name1: 'User', name2: card.name || 'Fixture',
       characterWorldBooks: ['fixture'], globalWorldBooks: [],
@@ -44,6 +45,8 @@ export async function createHost({ chat, card = {}, failWrite = () => null }) {
       }
       queueMicrotask(() => w.__tellevWriteDone(id, failure));
     },
+    executeSlashCommands: (rid, raw) => queueMicrotask(() =>
+      w.Tellev.onSlashCommandsResult(rid, JSON.stringify({ results: [], pipe: String(raw ?? '') }))),
     log: (level, message) => { if (level === 'error') errors.push(message); },
     emitFromEventSource: () => {}, emit: () => {}, stReplaceVariables: s => s,
     getSettings: () => '{}', saveSettings: () => {}, registerCommand: () => {}, registerRoute: () => {},
@@ -73,6 +76,16 @@ export async function createHost({ chat, card = {}, failWrite = () => null }) {
           for (const id of body.ids) disabledWorlds.add(id);
           return respond(200, { ok: true });
         }
+        if (method === 'GET' && segments[0] === 'characters' && segments.length === 3 && segments[2] === 'regex') {
+          const stored = savedCharacter?.data?.extensions?.regex_scripts ?? card.regexScripts ?? [];
+          return respond(200, { regex_scripts: stored });
+        }
+        if (method === 'GET' && segments[0] === 'characters' && segments.length === 2) {
+          return respond(200, savedCharacter ?? { name: card.name || 'Fixture', data: {} });
+        }
+        if (method === 'POST' && segments[0] === 'characters' && segments.length === 1) {
+          savedCharacter = body; return respond(200, body);
+        }
         if (method === 'GET' && segments[0] === 'chats' && segments.length === 2) return respond(200, chatToSession());
         if (method === 'POST' && segments[0] === 'chats' && segments[2] === 'messages' && segments[3] === 'insert') {
           const at = Math.max(0, Math.min(chat.length, body.before));
@@ -101,6 +114,6 @@ export async function createHost({ chat, card = {}, failWrite = () => null }) {
     w.eval(await readAsset('chat.js'));
     w.eval(await readAsset('host.js'));
     w.fetch = async () => ({ ok: true, json: async () => ({ pkgVersion: '1.18.0' }), text: async () => '' });
-    return { w, chat, errors, worldsStore, disabledWorlds, native, close: () => w.close() };
+    return { w, chat, errors, worldsStore, disabledWorlds, native, get savedCharacter() { return savedCharacter; }, close: () => w.close() };
   } catch (error) { w.close(); throw error; }
 }

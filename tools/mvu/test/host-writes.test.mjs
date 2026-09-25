@@ -179,3 +179,44 @@ test('deleteChatMessages removes floors by normalized index', async () => {
     assert.equal(chat.length, 0);
   } finally { host.close(); }
 });
+
+// ── Part B3: remaining surface gaps ─────────────────────────────────────────
+test('triggerSlashWithResult aliases triggerSlash and resolves the pipe', async () => {
+  const host = await createHost({ chat: messages() });
+  try {
+    const { w } = host;
+    assert.equal(await w.triggerSlashWithResult('/echo hi'), '/echo hi');
+    assert.equal(w.triggerSlashWithResult, w.TavernHelper.triggerSlashWithResult);
+  } finally { host.close(); }
+});
+
+test('regex family accepts the upstream option object and persists updates', async () => {
+  const host = await createHost({ chat: messages(), card: {
+    name: 'Fixture',
+    regexScripts: [{ id: 'r1', script_name: 's1', findRegex: 'a', replaceString: 'b' }],
+  } });
+  try {
+    const { w } = host;
+    const listed = await w.getTavernRegexes({ type: 'character', name: 'current' });
+    assert.equal(listed.length, 1);
+    const updated = await w.updateTavernRegexesWith({ type: 'character', name: 'current' },
+      regexes => [...regexes, { id: 'r2', script_name: 's2', findRegex: 'c', replaceString: 'd' }]);
+    assert.equal(updated.length, 2);
+    assert.equal(host.savedCharacter?.data?.extensions?.regex_scripts?.length, 2);
+    // Legacy positional order (tellev) keeps working.
+    const legacy = await w.getTavernRegexes('fixture');
+    assert.equal(legacy.length, 2);
+  } finally { host.close(); }
+});
+
+test('formatAsDisplayedMessage runs macro substitution and audio family resolves', async () => {
+  const host = await createHost({ chat: messages() });
+  try {
+    const { w } = host;
+    assert.equal(await w.formatAsDisplayedMessage('文本'), '文本');
+    await w.audioPlay('x');
+    await w.audioEnable('x', true);
+    const proxies = await w.TavernHelper.getProxyPresetNames();
+    assert.equal(proxies.length, 0);
+  } finally { host.close(); }
+});

@@ -537,4 +537,56 @@
   };
   EjsTemplate.evalTemplate = EjsTemplate.evaltemplate = async (code, env = {}, options = {}) =>
     ejs.render(code, env, { ...options, async: true });
+
+  // ── Remaining surface gaps (Part B3) ────────────────────────────────────
+  // Upstream alias (slash.ts): triggerSlashWithResult === triggerSlash.
+  expose('triggerSlashWithResult', cmd => th.triggerSlash(cmd));
+
+  // Upstream takes an option object ({type:'character', name}) rather than a
+  // positional id; keep the positional form working as a legacy fallback.
+  const regexCharacterId = option => {
+    if (option && typeof option === 'object') {
+      const c = context();
+      if (option.type === 'global') return 'global';
+      return option.name && option.name !== 'current' ? option.name : c.characterId;
+    }
+    return option ?? context().characterId;
+  };
+  const rawGetTavernRegexes = th.getTavernRegexes;
+  th.getTavernRegexes = window.getTavernRegexes = option =>
+    rawGetTavernRegexes(regexCharacterId(option));
+  expose('replaceTavernRegexes', async (regexesOrOption, optionOrRegexes) => {
+    // Upstream order (regexes, option); the old tellev order (charId, regexes)
+    // is detected and honored so existing scripts keep working.
+    const [regexes, option] = Array.isArray(regexesOrOption)
+      ? [regexesOrOption, optionOrRegexes]
+      : [optionOrRegexes, regexesOrOption];
+    const charId = regexCharacterId(option);
+    const character = await th.getCharacter(charId);
+    const data = character?.data || {};
+    const ext = data.extensions || {};
+    ext.regex_scripts = regexes;
+    data.extensions = ext;
+    return th.replaceCharacter(charId, { ...(character || {}), data });
+  });
+  expose('updateTavernRegexesWith', async (option, updater) => {
+    const regexes = await th.getTavernRegexes(option);
+    const updated = await updater(regexes) || regexes;
+    await th.replaceTavernRegexes(updated, option);
+    return updated;
+  });
+
+  // formatAsDisplayedMessage (displayed_message.ts): macros + regex applied
+  // over the raw text. Tellev applies card regex upstream already, so the
+  // honest remaining step is macro substitution.
+  expose('formatAsDisplayedMessage', mes => th.substitudeMacros(String(mes ?? '')));
+
+  // Tellev has no proxy presets; the list is always empty.
+  expose('getProxyPresetNames', () => Promise.resolve([]));
+
+  // Audio control family: consistent with the existing playAudio no-ops —
+  // Tellev's extension WebView has no audio pipeline.
+  for (const name of ['audioEnable', 'audioImport', 'audioMode', 'audioPlay', 'audioSelect']) {
+    if (typeof th[name] === 'undefined') expose(name, () => Promise.resolve());
+  }
 })();
