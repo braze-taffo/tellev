@@ -8,6 +8,7 @@ import app.tellev.core.prompt.PromptDiagnostics
 import app.tellev.core.prompt.PromptMessage
 import app.tellev.core.provider.GenerateChunk
 import app.tellev.core.provider.GenerateRequest
+import app.tellev.core.provider.OpenAiCompatibleAdapter
 import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.ProviderConfigPersistence
 import app.tellev.core.provider.ProviderDefaults
@@ -22,6 +23,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import java.util.concurrent.TimeUnit
 
 internal data class SourceChunk(val start: Int, val end: Int, val text: String)
 
@@ -209,6 +213,18 @@ internal class CreationEngine(
     private val providers: ProviderRegistry,
 ) {
     private val json = Json { encodeDefaults = true }
+    // Keep the creation agent's transport separate from chat. Some compatible
+    // relays close an HTTP/2 connection before sending its initial SETTINGS
+    // frame; using HTTP/1.1 here avoids a second, potentially billable POST.
+    private val compatibleCreationAdapter by lazy {
+        OpenAiCompatibleAdapter(client = OkHttpClient.Builder()
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .connectTimeout(5, TimeUnit.MINUTES)
+            .writeTimeout(5, TimeUnit.MINUTES)
+            .readTimeout(5, TimeUnit.MINUTES)
+            .callTimeout(0, TimeUnit.MILLISECONDS)
+            .build())
+    }
 
     suspend fun converse(
         session: CreationSession,
@@ -282,9 +298,12 @@ internal class CreationEngine(
         val selectedId = secrets.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
             ?: ProviderCatalog.OPENAI_COMPATIBLE
         val adapterId = ProviderConfigPersistence.adapterIdFor(selectedId)
-        val adapter = providers.find(adapterId)
+        val selectedAdapter = providers.find(adapterId)
             ?.takeIf { it.supportsChatGeneration }
             ?: error("当前供应商不支持对话生成，请先在设置中选择文字模型")
+        val adapter = if (adapterId == ProviderCatalog.OPENAI_COMPATIBLE &&
+            selectedAdapter is OpenAiCompatibleAdapter
+        ) compatibleCreationAdapter else selectedAdapter
         val config = ProviderConfigPersistence.loadProviderConfig(secrets, selectedId)
         onProgress(CreationStreamUpdate(
             phase = "${phasePrefix}正在连接模型",

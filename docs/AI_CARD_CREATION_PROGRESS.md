@@ -22,6 +22,7 @@
 - 2026-09-25 的流式进度改动通过 `CreationFeatureTest` 和 `:app:assembleDebug`；测试覆盖供应商思考/文字增量、无思考流时不伪造，以及提炼恢复后的绝对分段计数。
 - 用户复测发现“未提供思考流”的提示与长时间等候容易混为一谈，而且正常回复直到草稿完成才出现在聊天里。现已在制卡模块记录当前请求的首个流片时间、增量数量与总耗时；`assistant_message` 可在 JSON 尚未完成时预览，原始结构化草稿改为按需展开。未收到思考文本时明确说明它无法证明模型内部处理情况。上一轮设备请求没有这些时间点，不能凭截图推断供应商是否缓冲。
 - 当前请求会显示供应商及模型名称（不显示密钥），便于核对创作 agent 用的连接。此次修改通过 `CreationFeatureTest` 13 项测试和 `:app:assembleDebug`；更新包通过 `adb install -r` 安装到设备 `HA25GHH4`，包路径和启动入口核对通过。实际服务商的首包/增量时序仍待用户在设备上观察。
+- 用户设备截图显示这轮请求在模型输出前报 `Required SETTINGS preface not received`。这是 OkHttp 等待 HTTP/2 初始 SETTINGS 帧时的连接错误，不能由此判断供应商是否提供思考流。制卡 agent 对自定义 OpenAI-compatible 连接改用独立的 HTTP/1.1 客户端，保留原有连接参数和 5 分钟读写超时，避免自动重试 POST 造成可能的重复计费；聊天供应商客户端与提示词引擎未改。该改动的 `CreationFeatureTest` 与 `:app:assembleDebug` 通过，真实服务商仍需用户复测。
 
 ## 尚未完成的验收
 
