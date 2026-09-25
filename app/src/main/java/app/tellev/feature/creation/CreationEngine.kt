@@ -71,6 +71,7 @@ internal data class CreationStreamUpdate(
     val assistantMessage: String = "",
     val elapsedMillis: Long = 0,
     val firstDeltaMillis: Long? = null,
+    val lastDeltaMillis: Long? = null,
     val deltaCount: Int = 0,
     val providerLabel: String = "",
 )
@@ -336,6 +337,7 @@ internal class CreationEngine(
         val reasoningDeltas = StringBuilder()
         val requestStartedAt = System.nanoTime()
         var firstDeltaMillis: Long? = null
+        var lastDeltaMillis: Long? = null
         var deltaCount = 0
         var lastPublishedAt = 0L
         var publishedOutput = false
@@ -352,7 +354,8 @@ internal class CreationEngine(
             publishedAssistantMessage = publishedAssistantMessage || visible.assistantMessage.isNotBlank()
             onProgress(visible.copy(
                 phase = phasePrefix + visible.phase,
-                elapsedMillis = elapsedMillis(), firstDeltaMillis = firstDeltaMillis, deltaCount = deltaCount,
+                elapsedMillis = elapsedMillis(), firstDeltaMillis = firstDeltaMillis,
+                lastDeltaMillis = lastDeltaMillis, deltaCount = deltaCount,
             ))
         }
         onProgress(CreationStreamUpdate("${phasePrefix}等待模型响应"))
@@ -366,7 +369,8 @@ internal class CreationEngine(
                     reasoningDeltas.append(chunk.reasoning)
                     if (chunk.text.isNotEmpty() || chunk.reasoning.isNotEmpty()) {
                         deltaCount++
-                        if (firstDeltaMillis == null) firstDeltaMillis = elapsedMillis()
+                        lastDeltaMillis = elapsedMillis()
+                        if (firstDeltaMillis == null) firstDeltaMillis = lastDeltaMillis
                         publish()
                     }
                 }
@@ -382,7 +386,8 @@ internal class CreationEngine(
         val visible = visibleCreationStream(raw, completedReasoning?.takeIf(String::isNotBlank) ?: reasoningDeltas.toString())
         onProgress(visible.copy(
             phase = "${phasePrefix}校验结构化草稿",
-            elapsedMillis = elapsedMillis(), firstDeltaMillis = firstDeltaMillis, deltaCount = deltaCount,
+            elapsedMillis = elapsedMillis(), firstDeltaMillis = firstDeltaMillis,
+            lastDeltaMillis = lastDeltaMillis, deltaCount = deltaCount,
         ))
         return MessageReasoning.split(raw).body
     }

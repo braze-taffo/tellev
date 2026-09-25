@@ -153,7 +153,7 @@ fun CreationEditorScreen(
                 }
             }
             when (tab) {
-                0 -> CreationConversation(session, state.busy, viewModel)
+                0 -> CreationConversation(session, state, viewModel)
                 1 -> CharacterDraftEditor(session.card, viewModel, state.busy)
                 2 -> WorldDraftEditor(session, viewModel, state.busy)
                 3 -> FrontendPreview(session.card, viewModel, state.busy)
@@ -191,7 +191,9 @@ private fun CreationActivityPanel(state: CreationUiState, session: CreationSessi
                 Text("任务已运行 ${elapsedSeconds} 秒", style = MaterialTheme.typography.bodySmall)
             }
             if (state.deltaCount > 0) {
-                Text("首个流式片段在 ${state.firstDeltaMillis.orZeroSeconds()} 秒到达；当前请求已收到 ${state.deltaCount} 个片段。",
+                val spanSeconds = ((state.lastDeltaMillis ?: 0L) - (state.firstDeltaMillis ?: 0L))
+                    .coerceAtLeast(0) / 1_000
+                Text("首片在 ${state.firstDeltaMillis.orZeroSeconds()} 秒、末片在 ${state.lastDeltaMillis.orZeroSeconds()} 秒到达；片段持续 $spanSeconds 秒，共 ${state.deltaCount} 个。",
                     style = MaterialTheme.typography.bodySmall)
             } else if (state.busy && state.modelPhase.contains("等待模型响应")) {
                 Text("仍在等待首个流式片段。", style = MaterialTheme.typography.bodySmall)
@@ -252,8 +254,9 @@ private fun CreationActivityPanel(state: CreationUiState, session: CreationSessi
 private fun Long?.orZeroSeconds(): Long = (this ?: 0L) / 1_000
 
 @Composable
-private fun CreationConversation(session: CreationSession, busy: Boolean, viewModel: CreationViewModel) {
+private fun CreationConversation(session: CreationSession, state: CreationUiState, viewModel: CreationViewModel) {
     var input by remember(session.id) { mutableStateOf("") }
+    val busy = state.busy
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
@@ -267,6 +270,29 @@ private fun CreationConversation(session: CreationSession, busy: Boolean, viewMo
                     Column(Modifier.padding(12.dp)) {
                         Text(if (turn.role == "user") "你" else "创作 agent", style = MaterialTheme.typography.labelMedium)
                         Text(turn.text)
+                    }
+                }
+            }
+        }
+        if (busy) {
+            Card(Modifier.fillMaxWidth().padding(vertical = 8.dp).heightIn(max = 180.dp)) {
+                Column(Modifier.padding(12.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("创作 agent · 实时输出（尚未校验）", style = MaterialTheme.typography.labelMedium)
+                    when {
+                        state.liveAssistantMessage.isNotBlank() -> {
+                            Text(state.liveAssistantMessage.takeLast(500))
+                        }
+                        state.liveOutput.isNotBlank() -> {
+                            Text("正在写结构化草稿，已收到 ${state.liveOutput.length} 字；最近片段：",
+                                style = MaterialTheme.typography.bodySmall)
+                            Text(state.liveOutput.takeLast(500), style = MaterialTheme.typography.bodySmall)
+                        }
+                        state.liveReasoning.isNotBlank() -> {
+                            Text("模型正在返回思考文本；内容显示在上方进度面板。",
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                        else -> Text("等待供应商返回首个片段…", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }

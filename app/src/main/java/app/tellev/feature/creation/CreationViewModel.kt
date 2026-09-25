@@ -33,6 +33,7 @@ data class CreationUiState(
     val operationStartedAtMillis: Long = 0,
     val modelElapsedMillis: Long = 0,
     val firstDeltaMillis: Long? = null,
+    val lastDeltaMillis: Long? = null,
     val deltaCount: Int = 0,
     val providerLabel: String = "",
     val error: String? = null,
@@ -62,19 +63,19 @@ class CreationViewModel(
     fun start(kind: CreationKind) {
         if (_state.value.busy) return
         val session = CreationSession(kind = kind)
-        _state.update { it.copy(current = session, error = null, info = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, deltaCount = 0, providerLabel = "") }
+        _state.update { it.copy(current = session, error = null, info = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
         persist(session)
     }
 
     fun open(id: String) = viewModelScope.launch {
         if (_state.value.busy) return@launch
-        _state.update { it.copy(current = null, error = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, deltaCount = 0, providerLabel = "") }
+        _state.update { it.copy(current = null, error = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
         runCatching { repository.load(id) }
             .onSuccess { session -> _state.update { it.copy(current = session, error = null) } }
             .onFailure { fail(it) }
     }
 
-    fun close() { if (!_state.value.busy) _state.update { it.copy(current = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, deltaCount = 0, providerLabel = "") } }
+    fun close() { if (!_state.value.busy) _state.update { it.copy(current = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") } }
 
     fun send(text: String) {
         val session = _state.value.current ?: return
@@ -88,7 +89,7 @@ class CreationViewModel(
                 current = withUser, busy = true, error = null,
                 extractionProgress = "", operationLabel = "创作对话", modelPhase = "准备请求", liveReasoning = "", liveOutput = "",
                 liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(),
-                modelElapsedMillis = 0, firstDeltaMillis = null, deltaCount = 0, providerLabel = "",
+                modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "",
             ) }
             try {
                 write(withUser)
@@ -131,7 +132,7 @@ class CreationViewModel(
             return
         }
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, error = null, extractionProgress = "", operationLabel = "保存原文", modelPhase = "正在保存原文", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, deltaCount = 0, providerLabel = "") }
+            _state.update { it.copy(busy = true, error = null, extractionProgress = "", operationLabel = "保存原文", modelPhase = "正在保存原文", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
             try {
                 val (hash, length) = repository.saveSource(session.id, text)
                 val next = session.copy(
@@ -163,7 +164,7 @@ class CreationViewModel(
                 busy = true, error = null, operationLabel = "世界书长文提炼",
                 modelPhase = "读取已保存原文", liveReasoning = "", liveOutput = "", liveAssistantMessage = "",
                 operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0,
-                firstDeltaMillis = null, deltaCount = 0, providerLabel = "",
+                firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "",
             ) }
             try {
                 val source = repository.readSource(starting.id, starting.sourceSha256)
@@ -177,7 +178,7 @@ class CreationViewModel(
                     _state.update { it.copy(
                         extractionProgress = "第 $chunkNumber/${chunkCount.total} 段：正在处理 ${chunk.start}–${chunk.end} / ${source.length} 字符；已保存至 ${current.sourceCursor}",
                         modelPhase = "提炼第 $chunkNumber 段", liveReasoning = "", liveOutput = "", liveAssistantMessage = "",
-                        modelElapsedMillis = 0, firstDeltaMillis = null, deltaCount = 0,
+                        modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0,
                     ) }
                     val reply = engine.extractChunk(chunk, starting.sourceName, ::showModelProgress)
                     _state.update { it.copy(modelPhase = "核对第 $chunkNumber 段的原文证据") }
@@ -325,6 +326,7 @@ class CreationViewModel(
             liveAssistantMessage = progress.assistantMessage,
             modelElapsedMillis = progress.elapsedMillis,
             firstDeltaMillis = progress.firstDeltaMillis,
+            lastDeltaMillis = progress.lastDeltaMillis,
             deltaCount = progress.deltaCount,
             providerLabel = progress.providerLabel.ifBlank { it.providerLabel },
         ) }

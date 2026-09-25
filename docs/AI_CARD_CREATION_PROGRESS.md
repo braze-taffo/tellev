@@ -25,6 +25,7 @@
 - 用户设备截图显示这轮请求在模型输出前报 `Required SETTINGS preface not received`。这是 OkHttp 等待 HTTP/2 初始 SETTINGS 帧时的连接错误，不能由此判断供应商是否提供思考流。制卡 agent 对自定义 OpenAI-compatible 连接改用独立的 HTTP/1.1 客户端，保留原有连接参数和 5 分钟读写超时，避免自动重试 POST 造成可能的重复计费；聊天供应商客户端与提示词引擎未改。该改动的 `CreationFeatureTest` 与 `:app:assembleDebug` 通过，真实服务商仍需用户复测。
 - 用户确认提示词兼容修复完成后，本分支已合入官方 `release/v1.6.6.1` 提示词修复提交（合并提交 `15e8b9d`），无冲突；合并后的 `CreationFeatureTest`、完整 `:app:testDebugUnitTest` 与 `:app:assembleDebug` 均通过。合并版 `app.tellev.debug`（`1.6.6.1-debug`，versionCode 36）已用 ADB 安装到设备 `HA25GHH4`，启动入口为 `app.tellev.MainActivity`。设备请求与流式表现仍由用户复测。
 - 已在官方 `master` 工作树 `tellev-mvu-fix` 合入制卡分支（`af38bdf`）。合并前对已有角色卡未提交改动做了补丁备份，恢复后核对：除新增的制卡入口与路由外，原改动内容一致；它们仍保持未提交状态。主工作树的完整 `:app:testDebugUnitTest` 和 `:app:assembleDebug` 均通过，构建的 `app.tellev.debug`（`1.6.6.1-debug`）已重新安装到设备 `HA25GHH4`，安装及启动入口核对通过。未推送或发布，设备上的真实模型请求仍待用户复测。
+- 用户复测时设备截图显示当前创作请求确实收到了 2785 个文字增量片段，首片在该请求开始后 9 秒到达；这证明请求走了流式接收路径，但旧界面没有记录末片时间，无法判断片段是持续到达还是最后集中涌入。对话列表原先也只在完整 JSON 校验保存后出现 agent 回复，造成“突然蹦出来”的感受。现已在对话区显示未校验的实时 `assistant_message`，在模型尚未写出该字段时显示最近的真实结构化输出，并增加首末片时间跨度；不伪造供应商未返回的思考。制卡针对测试及 Debug 构建通过，更新版 `app.tellev.debug` 已通过 ADB 安装到设备，包版本与启动入口核对通过；新界面实际流式表现仍待用户复测。
 
 ## 尚未完成的验收
 

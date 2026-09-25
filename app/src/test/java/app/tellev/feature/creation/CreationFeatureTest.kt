@@ -164,6 +164,7 @@ class CreationFeatureTest {
             .converse(CreationSession(kind = CreationKind.Character), "写一个人物", updates::add)
         assertEquals("想先确定视角吗？", reply.message)
         assertEquals("ai-creation-agent", provider.lastRequest?.preset?.id)
+        assertTrue(provider.lastRequest?.stream == true)
         assertTrue(provider.lastRequest?.prompt?.messages?.first()?.content.orEmpty().contains("第三人称限知"))
         assertTrue(provider.lastRequest?.preset?.prompts.isNullOrEmpty())
         assertEquals(0, updates.last().deltaCount)
@@ -259,6 +260,7 @@ class CreationFeatureTest {
         assertTrue(updates.any { it.output == response && it.reasoning == "先确定角色目标。" })
         assertEquals(3, updates.last().deltaCount)
         assertTrue(updates.last().firstDeltaMillis != null)
+        assertTrue((updates.last().lastDeltaMillis ?: -1) >= (updates.last().firstDeltaMillis ?: 0))
     }
 
     @Test
