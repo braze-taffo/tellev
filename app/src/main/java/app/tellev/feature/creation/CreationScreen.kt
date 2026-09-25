@@ -44,6 +44,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -121,7 +122,16 @@ fun CreationEditorScreen(
             })
     }) { padding ->
         if (session == null) {
-            Box(Modifier.fillMaxSize().padding(padding)) { Text("正在读取草稿…") }
+            // Loading failures (missing/corrupt card) must surface here, or the
+            // editor would sit on "正在读取草稿…" forever.
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                Text(
+                    state.error ?: "正在读取草稿…",
+                    color = if (state.error != null) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
             return@Scaffold
         }
         Column(Modifier.fillMaxSize().padding(padding)) {

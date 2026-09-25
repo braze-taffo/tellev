@@ -284,10 +284,10 @@ internal class CreationEngine(
 
         可用工具（arguments 一律是 JSON 对象）：
         read_card：无参数。返回角色卡草稿全字段、世界书名称与条目总数。
-        list_lore：{"offset":0,"limit":20,"keyword":""}。分页返回条目索引（id、title、keys、constant、insertion_order）与 total。
-        read_lore：{"ids":["L1","L2"]}。按 id 返回至多 20 条条目的全部字段。
-        set_card_fields：arguments 即要修改的 card 字段。字段级合并，未提及字段保留。合法字段：name,description,personality,scenario,firstMessage,alternateGreetings(字符串数组),exampleMessages,systemPrompt,postHistoryInstructions,creatorNotes,tags(字符串数组),frontendHtml。
-        upsert_lore：{"entries":[...]}。修改带 id（只发改动字段），新建不带 id（至少给 title、keys、content）。条目字段：title,keys(字符串数组),content,secondaryKeys(字符串数组),selective(布尔),constant(布尔),insertionOrder(整数),depth(整数),position(整数),probability(整数),matchWholeWords(布尔),note(字符串，审核备注，不进入聊天模型上下文)。sourceQuote 等溯源字段由系统管理，写入会被忽略。
+        list_lore：{"offset":0,"limit":20,"keyword":""}。分页返回条目索引（id、title、keys、constant、insertionOrder）与 total。
+        read_lore：{"ids":["L1","L2"]}。按 id 返回至多 20 条条目的全部字段；读取输出的字段名与写入字段名一致。
+        set_card_fields：arguments 即要修改的 card 字段。字段级合并，未提及字段保留。合法字段：name,description,personality,scenario,firstMessage,alternateGreetings(字符串数组),exampleMessages,systemPrompt,postHistoryInstructions,creatorNotes,tags(字符串数组),frontendHtml。世界书会话没有角色卡，只能用 name 修改世界书名称，其余字段会被拒绝。
+        upsert_lore：{"entries":[...]}。修改带 id（只发改动字段），新建不带 id（至少给 title、keys、content）。条目字段：title,keys(字符串数组),content,secondaryKeys(字符串数组),selective(布尔),constant(布尔),insertionOrder(整数),depth(整数),position(整数),probability(整数),matchWholeWords(布尔),note(字符串，审核备注，不进入聊天模型上下文)。ST 原生字段名（key、keysecondary、order、secondary_keys 等）会被自动映射；sourceQuote 等溯源字段由系统管理，写入会被忽略；未识别的字段会被忽略并在 warnings 中提示。
         remove_lore：{"ids":[...]}。按 id 删除条目。
     """.trimIndent()
 

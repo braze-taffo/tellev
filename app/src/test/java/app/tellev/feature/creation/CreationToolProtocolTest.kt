@@ -303,5 +303,115 @@ class CreationToolProtocolTest {
         assertTrue(rendered.endsWith("</tool_result>"))
     }
 
+    // ── 对抗复核修复回归 ──────────────────────────────────────
+
+    @Test
+    fun nonPrimitiveNameIsInvalidBlockNotCrash() {
+        val result = parseToolCallBlocks("<tool_call>{\"name\":[\"read_card\"],\"arguments\":{}}</tool_call>")
+        assertEquals(1, result.blocks.size)
+        assertTrue(result.blocks.single() is ToolCallBlock.Invalid)
+    }
+
+    @Test
+    fun readAndListLoreUseWriteSideFieldNames() {
+        val box = CreationToolBox(testSession())
+        val read = box.execute(ToolCallRequest("read_lore", buildJsonObject { put("ids", strings("L1")) }))
+        assertTrue(read.ok)
+        val view = read.payload["found"]!!.jsonArray.single().jsonObject
+        assertEquals(50, view["insertionOrder"]!!.jsonPrimitive.int)
+        assertTrue(view.containsKey("secondaryKeys"))
+        assertTrue(view.containsKey("matchWholeWords"))
+        assertFalse(view.containsKey("insertion_order"))
+        assertFalse(view.containsKey("secondary_keys"))
+        assertFalse(view.containsKey("match_whole_words"))
+        val list = box.execute(ToolCallRequest("list_lore", buildJsonObject { }))
+        val row = list.payload["entries"]!!.jsonArray[0].jsonObject
+        assertTrue(row.containsKey("insertionOrder"))
+        assertFalse(row.containsKey("insertion_order"))
+    }
+
+    @Test
+    fun upsertAcceptsStNativeAndSnakeCaseFieldNames() {
+        val box = CreationToolBox(testSession())
+        val result = box.execute(ToolCallRequest("upsert_lore", buildJsonObject {
+            put("entries", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "L1")
+                    put("insertion_order", 61)
+                    put("secondary_keys", strings("夜"))
+                    put("match_whole_words", true)
+                })
+                add(buildJsonObject {
+                    put("title", "塔楼")
+                    put("key", strings("塔楼"))
+                    put("order", 5)
+                    put("content", "塔楼俯瞰全城。")
+                })
+            })
+        }))
+        assertTrue(result.ok)
+        val updated = box.session.lore.first { it.id == "L1" }
+        assertEquals(61, updated.insertionOrder)
+        assertEquals(listOf("夜"), updated.secondaryKeys)
+        assertTrue(updated.matchWholeWords)
+        // 模型照抄 ST 字段名（key/order）也不能变成静默 no-op。
+        val created = box.session.lore.first { it.title == "塔楼" }
+        assertEquals(listOf("塔楼"), created.keys)
+        assertEquals(5, created.insertionOrder)
+    }
+
+    @Test
+    fun upsertWarnsAboutUnrecognizedFields() {
+        val box = CreationToolBox(testSession())
+        val result = box.execute(ToolCallRequest("upsert_lore", buildJsonObject {
+            put("entries", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "L1")
+                    put("colour", "red")
+                    put("content", "新内容")
+                })
+            })
+        }))
+        assertTrue(result.ok)
+        val outcome = result.payload["results"]!!.jsonArray[0].jsonObject
+        val warnings = outcome["warnings"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertTrue(warnings.any { it.contains("colour") })
+        assertEquals("新内容", box.session.lore.first { it.id == "L1" }.content)
+    }
+
+    @Test
+    fun removeThenCreateDoesNotReuseIdNumbers() {
+        val session = testSession().copy(
+            lore = testSession().lore + LoreDraft("高塔", listOf("高塔"), "高塔。").copy(id = "L3"),
+        )
+        val box = CreationToolBox(session)
+        assertTrue(box.execute(ToolCallRequest("remove_lore", buildJsonObject { put("ids", strings("L3")) })).ok)
+        val created = box.execute(ToolCallRequest("upsert_lore", buildJsonObject {
+            put("entries", buildJsonArray {
+                add(buildJsonObject {
+                    put("title", "新塔")
+                    put("keys", strings("新塔"))
+                    put("content", "新塔取代旧塔。")
+                })
+            })
+        }))
+        assertTrue(created.ok)
+        // 删掉最大号 L3 后新建必须拿到 L4：id 不复用，旧 tool_result 里的 L3 不会指错条目。
+        assertEquals(listOf("L1", "L2", "L4"), box.session.lore.map { it.id })
+        assertEquals(4, box.session.nextLoreNumber)
+    }
+
+    @Test
+    fun worldBookSessionSetNameRenamesBookAndRejectsCardFields() {
+        val box = CreationToolBox(CreationSession(kind = CreationKind.WorldBook, worldName = "旧名"))
+        val rename = box.execute(ToolCallRequest("set_card_fields", buildJsonObject { put("name", " 新名 ") }))
+        assertTrue(rename.ok)
+        assertEquals("新名", box.session.worldName)
+        assertEquals("新名", rename.payload["world_name"]!!.jsonPrimitive.content)
+        val rejected = box.execute(ToolCallRequest("set_card_fields", buildJsonObject { put("description", "不应生效") }))
+        assertFalse(rejected.ok)
+        assertTrue(rejected.payload["error"]!!.jsonPrimitive.content.contains("世界书"))
+    }
+
     private fun box() = CreationToolBox(testSession())
 }

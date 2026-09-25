@@ -78,6 +78,11 @@ data class CreationSession(
     val sourceLength: Int = 0,
     val savedArtifactId: String = "",
     val updatedAt: Long = System.currentTimeMillis(),
+    /**
+     * Monotonic lore-id counter: "L$n" numbers are never reused, even after
+     * removals. 0 = unassigned; the toolbox derives it from current lore max.
+     */
+    val nextLoreNumber: Int = 0,
     /** Merge base for editing an existing stored card; keeps id/avatar/raw/extensions. */
     val originalCard: CharacterCard? = null,
     /** Merge base for editing an existing stored (or embedded) world book. */
@@ -144,13 +149,17 @@ fun CreationSession.withAssignedLoreIds(): CreationSession {
     if (lore.all { it.id.isNotBlank() }) return this
     val used = lore.mapNotNull { it.id.removePrefix("L").toIntOrNull() }.toMutableSet()
     var next = 1
-    return copy(lore = lore.map { entry ->
+    val filled = lore.map { entry ->
         if (entry.id.isNotBlank()) entry else {
             while (next in used) next++
             used += next
             entry.copy(id = "L$next")
         }
-    })
+    }
+    return copy(
+        lore = filled,
+        nextLoreNumber = maxOf(nextLoreNumber, used.maxOrNull() ?: 0),
+    )
 }
 
 /** All generated fields are kept in the standard V2 data object. */
@@ -159,8 +168,12 @@ fun CreationSession.toCharacterCard(): CharacterCard {
     fun withFrontend(opening: String): String = listOf(opening.trim(), card.frontendHtml.trim())
         .filter { it.isNotBlank() }.joinToString("\n\n")
     val opening = withFrontend(card.firstMessage)
+    // Both the typed card and raw.data must carry the same list: the exporter
+    // lets raw.data shadow alternate_greetings, so a divergence would strip
+    // the frontend fragment from the saved card.
+    val greetings = card.alternateGreetings.map(::withFrontend)
     val base = originalCard
-    val raw = if (base != null) mergedCardRaw(base.raw, card, opening) else buildJsonObject {
+    val raw = if (base != null) mergedCardRaw(base.raw, card, opening, greetings) else buildJsonObject {
         put("spec", "chara_card_v2")
         put("spec_version", "2.0")
         put("data", buildJsonObject {
@@ -177,7 +190,7 @@ fun CreationSession.toCharacterCard(): CharacterCard {
         personality = card.personality,
         scenario = card.scenario,
         firstMessage = opening,
-        alternateGreetings = card.alternateGreetings.map(::withFrontend),
+        alternateGreetings = greetings,
         exampleMessages = card.exampleMessages,
         creatorNotes = card.creatorNotes,
         tags = card.tags,
@@ -194,7 +207,12 @@ fun CreationSession.toCharacterCard(): CharacterCard {
  * revert on save. Top-level raw keys (spec, extensions, creator notes, …) and
  * unknown data keys pass through untouched.
  */
-private fun mergedCardRaw(originalRaw: JsonObject, draft: CharacterDraft, opening: String): JsonObject {
+private fun mergedCardRaw(
+    originalRaw: JsonObject,
+    draft: CharacterDraft,
+    opening: String,
+    alternateGreetings: List<String>,
+): JsonObject {
     val data = originalRaw["data"] as? JsonObject ?: JsonObject(emptyMap())
     val updatedData = JsonObject(buildMap {
         putAll(data)
@@ -206,7 +224,7 @@ private fun mergedCardRaw(originalRaw: JsonObject, draft: CharacterDraft, openin
         put("mes_example", JsonPrimitive(draft.exampleMessages))
         put("creator_notes", JsonPrimitive(draft.creatorNotes))
         put("tags", JsonArray(draft.tags.map(::JsonPrimitive)))
-        put("alternate_greetings", JsonArray(draft.alternateGreetings.map(::JsonPrimitive)))
+        put("alternate_greetings", JsonArray(alternateGreetings.map(::JsonPrimitive)))
         put("system_prompt", JsonPrimitive(draft.systemPrompt))
         put("post_history_instructions", JsonPrimitive(draft.postHistoryInstructions))
     })

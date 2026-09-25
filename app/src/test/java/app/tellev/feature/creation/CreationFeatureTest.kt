@@ -25,6 +25,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -501,5 +502,142 @@ class CreationFeatureTest {
             }),
         ).ok)
         assertEquals("L6", box.session.lore.last().id)
+    }
+
+    // ── 对抗复核修复回归（保真与 uid） ────────────────────────
+
+    private fun embeddedBookCard(entries: List<WorldBookEntry>): CharacterCard = CharacterCard(
+        id = "char_x",
+        name = "林月",
+        description = "描述",
+        firstMessage = "开场",
+        characterBook = WorldBook(id = "char_x", name = "北境", entries = entries),
+        raw = buildJsonObject {
+            put("spec", "chara_card_v2")
+            put("spec_version", "2.0")
+            put("data", buildJsonObject { put("name", "林月") })
+        },
+    )
+
+    private fun exportedEmbeddedEntries(exported: String): List<kotlinx.serialization.json.JsonObject> {
+        val data = Json.parseToJsonElement(exported).jsonObject["data"]!!.jsonObject
+        return data["character_book"]!!.jsonObject["entries"]!!.jsonObject.values
+            .map { it.jsonObject }
+            .sortedBy { it["uid"]!!.jsonPrimitive.int }
+    }
+
+    @Test
+    fun importedCharacterEditKeepsUnmodeledEntryFieldsThroughRebuild() {
+        val original = embeddedBookCard(listOf(
+            WorldBookEntry(
+                id = "7", keys = listOf("钟楼"), content = "旧城有钟楼。", useGroupScoring = true,
+                raw = buildJsonObject {
+                    put("uid", 7)
+                    put("sticky", 5)
+                    put("cooldown", 3)
+                    put("delay", 1)
+                    put("extensions", buildJsonObject { put("custom_flag", "keep") })
+                },
+            ),
+        ))
+        val session = CreationSession.fromCharacter(original)
+        val box = CreationToolBox(session)
+        assertTrue(box.execute(
+            ToolCallRequest("upsert_lore", buildJsonObject {
+                put("entries", JsonArray(listOf(buildJsonObject {
+                    put("id", "L1")
+                    put("content", "旧城的钟楼每晚敲响。")
+                })))
+            }),
+        ).ok)
+
+        val entry = exportedEmbeddedEntries(CharacterExporter().exportToJson(box.session.toCharacterCard())).single()
+        assertEquals("旧城的钟楼每晚敲响。", entry["content"]!!.jsonPrimitive.content)
+        // tellev 未建模的 ST 字段必须从 entry.raw 存活，不能被重建路径清掉。
+        assertEquals(5, entry["sticky"]!!.jsonPrimitive.int)
+        assertEquals(3, entry["cooldown"]!!.jsonPrimitive.int)
+        assertEquals(1, entry["delay"]!!.jsonPrimitive.int)
+        assertEquals("keep", entry["extensions"]!!.jsonObject["custom_flag"]!!.jsonPrimitive.content)
+        assertEquals("true", entry["useGroupScoring"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun exportedEmbeddedBookAssignsFreshUidsToNewEntries() {
+        val original = embeddedBookCard(listOf(
+            WorldBookEntry(id = "0", keys = listOf("a"), content = "甲"),
+            WorldBookEntry(id = "1", keys = listOf("b"), content = "乙"),
+            WorldBookEntry(id = "2", keys = listOf("c"), content = "丙"),
+        ))
+        val box = CreationToolBox(CreationSession.fromCharacter(original))
+        assertTrue(box.execute(
+            ToolCallRequest("remove_lore", buildJsonObject { put("ids", JsonArray(listOf(JsonPrimitive("L1")))) }),
+        ).ok)
+        assertTrue(box.execute(
+            ToolCallRequest("upsert_lore", buildJsonObject {
+                put("entries", JsonArray(listOf(buildJsonObject {
+                    put("title", "新地")
+                    put("keys", JsonArray(listOf(JsonPrimitive("新地"))))
+                    put("content", "新地点。")
+                })))
+            }),
+        ).ok)
+
+        val entries = exportedEmbeddedEntries(CharacterExporter().exportToJson(box.session.toCharacterCard()))
+        assertEquals(listOf(1, 2, 3), entries.map { it["uid"]!!.jsonPrimitive.int })
+        // 新条目 uid 必须高于全部导入 uid，不能撞上保留下来的 1/2。
+        assertEquals("新地点。", entries.last()["content"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun serializedWorldBookAssignsFreshUidsToNewEntries() {
+        val book = WorldBook(
+            id = "wb_1",
+            name = "北境",
+            entries = listOf(
+                WorldBookEntry(id = "1", keys = listOf("a"), content = "甲", raw = buildJsonObject { put("uid", 1) }),
+                WorldBookEntry(id = "n1", keys = listOf("b"), content = "乙"),
+            ),
+        )
+        val serialized = WorldBookCodec.serializeWorldBook(book)
+        val uids = serialized["entries"]!!.jsonObject.values
+            .map { it.jsonObject["uid"]!!.jsonPrimitive.int }
+            .sorted()
+        assertEquals(listOf(1, 2), uids)
+    }
+
+    @Test
+    fun editedCardAlternateGreetingsKeepFrontendInRawAndTyped() {
+        val html = "<details class=\"card\"><summary>状态</summary>平静</details>"
+        val original = CharacterCard(
+            id = "char_y",
+            name = "林月",
+            description = "描述",
+            firstMessage = "开场",
+            alternateGreetings = listOf("旧备选"),
+            raw = buildJsonObject {
+                put("spec", "chara_card_v2")
+                put("spec_version", "2.0")
+                put("data", buildJsonObject {
+                    put("name", "林月")
+                    put("alternate_greetings", JsonArray(listOf(JsonPrimitive("旧备选"))))
+                })
+            },
+        )
+        val box = CreationToolBox(CreationSession.fromCharacter(original))
+        assertTrue(box.execute(
+            ToolCallRequest("set_card_fields", buildJsonObject {
+                put("alternateGreetings", JsonArray(listOf(JsonPrimitive("新备选"))))
+                put("frontendHtml", html)
+            }),
+        ).ok)
+
+        val card = box.session.toCharacterCard()
+        val expected = listOf("新备选\n\n$html")
+        // typed 与 raw.data 必须一致：导出器让 raw 遮蔽 typed，分叉会丢前端片段。
+        assertEquals(expected, card.alternateGreetings)
+        val exported = CharacterExporter().exportToJson(card)
+        val data = Json.parseToJsonElement(exported).jsonObject["data"]!!.jsonObject
+        assertEquals(expected, data["alternate_greetings"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(expected, CharacterImporter().importFromJson(exported).alternateGreetings)
     }
 }

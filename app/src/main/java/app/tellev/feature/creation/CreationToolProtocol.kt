@@ -10,7 +10,6 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 internal const val TOOL_CALL_OPEN = "<tool_call>"
@@ -60,7 +59,9 @@ internal fun parseToolCallBlocks(body: String): ToolBlocksParseResult {
             blocks += ToolCallBlock.Invalid("工具块内不是合法 JSON 对象", match.value)
             continue
         }
-        val name = root["name"]?.jsonPrimitive?.contentOrNull
+        // jsonPrimitive throws on non-primitive values; a bad block must stay a
+        // recoverable Invalid instead of killing the round.
+        val name = (root["name"] as? JsonPrimitive)?.contentOrNull
         if (name.isNullOrBlank()) {
             blocks += ToolCallBlock.Invalid("缺少 name 字段", match.value)
             continue
@@ -88,6 +89,27 @@ internal data class ToolResult(val ok: Boolean, val name: String, val payload: J
 /** Provenance and merge-base fields are system-managed; writes to them are ignored. */
 private val SYSTEM_MANAGED_LORE_FIELDS = setOf(
     "sourceQuote", "sourceOffset", "sourceName", "sourceSha256", "originalEntry",
+)
+
+/** Lore entry fields a tool call may set; anything else is echoed back as a warning. */
+private val LORE_WRITABLE_FIELDS = setOf(
+    "id", "title", "keys", "content", "secondaryKeys", "selective", "constant",
+    "insertionOrder", "depth", "position", "probability", "matchWholeWords", "note",
+)
+
+/**
+ * ST-native and snake_case aliases accepted on write. Without this, a model
+ * echoing the field names it saw in an imported card would be silently ignored
+ * by the LoreDraft decoder (ignoreUnknownKeys) while being told "updated".
+ */
+private val LORE_KEY_ALIASES = mapOf(
+    "key" to "keys",
+    "keysecondary" to "secondaryKeys",
+    "secondary_keys" to "secondaryKeys",
+    "order" to "insertionOrder",
+    "insertion_order" to "insertionOrder",
+    "match_whole_words" to "matchWholeWords",
+    "comment" to "title",
 )
 
 private val CARD_FIELD_WHITELIST = setOf(
@@ -178,7 +200,7 @@ internal class CreationToolBox(initial: CreationSession) {
                             put("title", entry.title)
                             put("keys", JsonArray(entry.keys.map(::JsonPrimitive)))
                             put("constant", entry.constant)
-                            put("insertion_order", entry.insertionOrder)
+                            put("insertionOrder", entry.insertionOrder)
                         }
                     }),
                 )
@@ -186,19 +208,20 @@ internal class CreationToolBox(initial: CreationSession) {
         )
     }
 
+    /** Field names mirror LoreDraft exactly so the model can echo what it read. */
     private fun loreModelView(entry: LoreDraft): JsonObject = buildJsonObject {
         put("id", entry.id)
         put("title", entry.title)
         put("keys", JsonArray(entry.keys.map(::JsonPrimitive)))
         put("content", entry.content)
-        put("secondary_keys", JsonArray(entry.secondaryKeys.map(::JsonPrimitive)))
+        put("secondaryKeys", JsonArray(entry.secondaryKeys.map(::JsonPrimitive)))
         put("selective", entry.selective)
         put("constant", entry.constant)
-        put("insertion_order", entry.insertionOrder)
+        put("insertionOrder", entry.insertionOrder)
         put("depth", entry.depth)
         put("position", entry.position)
         put("probability", entry.probability)
-        put("match_whole_words", entry.matchWholeWords)
+        put("matchWholeWords", entry.matchWholeWords)
         put("note", entry.note)
     }
 
@@ -222,9 +245,30 @@ internal class CreationToolBox(initial: CreationSession) {
         require(unknown.isEmpty()) {
             "未知 card 字段：${unknown.sorted().joinToString(", ")}。合法字段：${CARD_FIELD_WHITELIST.sorted().joinToString(", ")}"
         }
+        if (session.kind == CreationKind.WorldBook) {
+            // 世界书会话没有角色卡：name 重定向到世界书名称，其余 card 字段不可用。
+            val unsupported = patch.keys - setOf("name")
+            require(unsupported.isEmpty()) {
+                "世界书会话只能用 name 修改世界书名称，不支持：${unsupported.sorted().joinToString(", ")}"
+            }
+            val name = (patch["name"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+            require(name.isNotEmpty()) { "name 不能为空" }
+            session = session.copy(
+                worldName = name,
+                nextLoreNumber = loreIdCursor,
+                updatedAt = System.currentTimeMillis(),
+            )
+            return ToolResult(
+                ok = true, name = "set_card_fields",
+                payload = buildJsonObject {
+                    put("applied", JsonArray(listOf(JsonPrimitive("name"))))
+                    put("world_name", name)
+                },
+            )
+        }
         val current = encodeJson.encodeToJsonElement(session.card).jsonObject
         val merged = decodeJson.decodeFromJsonElement<CharacterDraft>(JsonObject(current + patch))
-        session = session.copy(card = merged, updatedAt = System.currentTimeMillis())
+        session = session.copy(card = merged, nextLoreNumber = loreIdCursor, updatedAt = System.currentTimeMillis())
         return ToolResult(
             ok = true, name = "set_card_fields",
             payload = buildJsonObject {
@@ -234,10 +278,18 @@ internal class CreationToolBox(initial: CreationSession) {
         )
     }
 
-    /** Numbering follows [list] so several new entries inside one batch stay unique. */
-    private fun nextLoreId(list: List<LoreDraft>): String {
-        val used = list.mapNotNull { it.id.removePrefix("L").toIntOrNull() }.toSet()
-        return "L${(used.maxOrNull() ?: 0) + 1}"
+    /**
+     * Monotonic session-level counter: ids are never reused, even after
+     * remove_lore, so an id mentioned in earlier tool results always refers to
+     * the same entry within this session.
+     */
+    private var loreIdCursor: Int = session.nextLoreNumber.takeIf { it > 0 }
+        ?: session.lore.mapNotNull { it.id.removePrefix("L").toIntOrNull() }.maxOrNull() ?: 0
+
+    private fun nextLoreId(): String {
+        require(loreIdCursor < Int.MAX_VALUE - 1)
+        loreIdCursor += 1
+        return "L$loreIdCursor"
     }
 
     private fun upsertLore(arguments: JsonObject): ToolResult {
@@ -251,15 +303,18 @@ internal class CreationToolBox(initial: CreationSession) {
         for (element in entries) {
             val incoming = element as? JsonObject
                 ?: throw IllegalArgumentException("entries 中的每一项必须是 JSON 对象")
-            val stripped = JsonObject(incoming.filterKeys { it !in SYSTEM_MANAGED_LORE_FIELDS })
-            val id = stripped["id"]?.let { (it as? JsonPrimitive)?.contentOrNull }
+            val normalized = normalizeLoreKeys(incoming)
+            val unknownKeys = normalized.keys - LORE_WRITABLE_FIELDS
+            val unknownWarnings = unknownKeys.sorted().map { "未识别字段被忽略：$it（合法字段见工具说明）" }
+            val id = normalized["id"]?.let { (it as? JsonPrimitive)?.contentOrNull }
             if (id.isNullOrBlank()) {
-                val created = decodeJson.decodeFromJsonElement<LoreDraft>(stripped).copy(id = nextLoreId(working))
+                val created = decodeJson.decodeFromJsonElement<LoreDraft>(normalized).copy(id = nextLoreId())
                 working += created
                 outcomes += buildJsonObject {
                     put("id", created.id)
                     put("status", "created")
-                    put("warnings", JsonArray(creationWarnings(created).map(::JsonPrimitive)))
+                    put("fields", JsonArray((normalized.keys - "id").sorted().map(::JsonPrimitive)))
+                    put("warnings", JsonArray((unknownWarnings + creationWarnings(created)).map(::JsonPrimitive)))
                 }
             } else {
                 val index = working.indexOfFirst { it.id == id }
@@ -268,16 +323,17 @@ internal class CreationToolBox(initial: CreationSession) {
                     continue
                 }
                 val existing = encodeJson.encodeToJsonElement(working[index]).jsonObject
-                val updated = decodeJson.decodeFromJsonElement<LoreDraft>(JsonObject(existing + stripped))
+                val updated = decodeJson.decodeFromJsonElement<LoreDraft>(JsonObject(existing + normalized))
                 working[index] = updated
                 outcomes += buildJsonObject {
                     put("id", updated.id)
                     put("status", "updated")
-                    put("warnings", JsonArray(titleConflictWarnings(updated, id, working).map(::JsonPrimitive)))
+                    put("fields", JsonArray((normalized.keys - "id").sorted().map(::JsonPrimitive)))
+                    put("warnings", JsonArray((unknownWarnings + titleConflictWarnings(updated, id, working)).map(::JsonPrimitive)))
                 }
             }
         }
-        session = session.copy(lore = working, updatedAt = System.currentTimeMillis())
+        session = session.copy(lore = working, nextLoreNumber = loreIdCursor, updatedAt = System.currentTimeMillis())
         return ToolResult(
             ok = true, name = "upsert_lore",
             payload = buildJsonObject {
@@ -286,6 +342,13 @@ internal class CreationToolBox(initial: CreationSession) {
             },
         )
     }
+
+    /** Strip system-managed keys, then map ST-native aliases onto draft field names. */
+    private fun normalizeLoreKeys(incoming: JsonObject): JsonObject = JsonObject(buildMap {
+        incoming.forEach { (key, value) ->
+            if (key !in SYSTEM_MANAGED_LORE_FIELDS) put(LORE_KEY_ALIASES[key] ?: key, value)
+        }
+    })
 
     private fun creationWarnings(entry: LoreDraft): List<String> = buildList {
         if (entry.title.isBlank()) add("缺少标题")
