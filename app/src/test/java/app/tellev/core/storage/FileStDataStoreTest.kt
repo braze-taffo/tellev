@@ -1226,6 +1226,12 @@ class FileStDataStoreTest {
             id = "saved_char",
             name = "Saved Char",
             description = "A compatible card",
+            firstMessage = "Hello, {{user}}",
+            alternateGreetings = listOf("Welcome back"),
+            systemPrompt = "Stay in character",
+            postHistoryInstructions = "Continue the scene",
+            creator = "Card maker",
+            characterVersion = "2.1",
             tags = listOf("compat"),
         )
 
@@ -1235,7 +1241,47 @@ class FileStDataStoreTest {
             .parseToJsonElement(layout.characters.resolve("saved_char.json").readText())
             .jsonObject
         assertEquals("chara_card_v2", saved["spec"]!!.jsonPrimitive.content)
+        assertEquals("2.0", saved["spec_version"]!!.jsonPrimitive.content)
+        assertEquals("Saved Char", saved["name"]!!.jsonPrimitive.content)
+        assertEquals("Hello, {{user}}", saved["first_mes"]!!.jsonPrimitive.content)
         assertEquals("Saved Char", saved["data"]!!.jsonObject["name"]!!.jsonPrimitive.content)
+        val data = saved["data"]!!.jsonObject
+        assertEquals("Welcome back", data["alternate_greetings"]!!.jsonArray[0].jsonPrimitive.content)
+        assertEquals("Stay in character", data["system_prompt"]!!.jsonPrimitive.content)
+        assertEquals("Continue the scene", data["post_history_instructions"]!!.jsonPrimitive.content)
+        assertEquals("Card maker", data["creator"]!!.jsonPrimitive.content)
+        assertEquals("2.1", data["character_version"]!!.jsonPrimitive.content)
+
+        val restored = store.readCharacter("saved_char")
+        assertEquals(card.alternateGreetings, restored.alternateGreetings)
+        assertEquals(card.systemPrompt, restored.systemPrompt)
+        assertEquals(card.postHistoryInstructions, restored.postHistoryInstructions)
+        assertEquals(card.creator, restored.creator)
+        assertEquals(card.characterVersion, restored.characterVersion)
+    }
+
+    @Test
+    fun `saveCharacter retains prompt fields supplied only in raw card data`() = runBlocking {
+        val card = CharacterCard(
+            id = "raw_card",
+            name = "Raw Card",
+            raw = buildJsonObject {
+                put("data", buildJsonObject {
+                    put("system_prompt", "  keep leading space")
+                    put("post_history_instructions", "keep instructions")
+                    put("creator", "Raw author")
+                    put("character_version", "3.0")
+                })
+            },
+        )
+
+        store.saveCharacter(card)
+
+        val restored = store.readCharacter("raw_card")
+        assertEquals("  keep leading space", restored.systemPrompt)
+        assertEquals("keep instructions", restored.postHistoryInstructions)
+        assertEquals("Raw author", restored.creator)
+        assertEquals("3.0", restored.characterVersion)
     }
 
     @Test

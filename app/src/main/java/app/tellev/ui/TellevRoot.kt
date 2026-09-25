@@ -263,9 +263,22 @@ fun TellevRoot() {
                     CharactersListScreen(
                         viewModel = charactersViewModel,
                         onCreateWithAi = { navController.navigate("creation/home") },
+                        onCreateClick = { navController.navigate("characters/create") },
                         onCharacterClick = { characterId ->
                             charactersViewModel.selectCharacter(characterId)
                             navController.navigate("characters/detail/$characterId")
+                        },
+                    )
+                }
+                composable("characters/create") {
+                    CharacterDetailScreen(
+                        viewModel = charactersViewModel,
+                        onBack = { navController.popBackStack() },
+                        isCreating = true,
+                        onCreated = { characterId ->
+                            navController.navigate("characters/detail/$characterId") {
+                                popUpTo("characters/create") { inclusive = true }
+                            }
                         },
                     )
                 }

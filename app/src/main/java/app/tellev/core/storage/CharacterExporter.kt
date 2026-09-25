@@ -15,7 +15,7 @@ import kotlinx.serialization.json.putJsonObject
 
 /**
  * Exports character cards to JSON or PNG format.
- * Uses V2 spec format for JSON output.
+ * Creates V2 cards and preserves the spec of imported cards.
  * Removes the chat field on export; preserves the user's `fav` flag.
  */
 class CharacterExporter(
@@ -23,7 +23,7 @@ class CharacterExporter(
 ) {
 
     /**
-     * Export a character card as a V2 spec JSON string.
+     * Export a character card as a SillyTavern-compatible JSON string.
      * Removes the chat field; preserves the original `fav` flag.
      */
     fun exportToJson(card: CharacterCard): String {
@@ -46,6 +46,21 @@ class CharacterExporter(
             }
             put("spec", card.raw["spec"] ?: JsonPrimitive("chara_card_v2"))
             put("spec_version", card.raw["spec_version"] ?: JsonPrimitive("2.0"))
+            // SillyTavern writes these legacy mirrors alongside data for older readers.
+            put("name", card.name)
+            put("description", card.description)
+            put("personality", card.personality)
+            put("scenario", card.scenario)
+            put("first_mes", card.firstMessage)
+            put("mes_example", card.exampleMessages)
+            put("creatorcomment", card.creatorNotes)
+            put("tags", buildJsonArray { card.tags.forEach { add(JsonPrimitive(it)) } })
+            if (card.raw.containsKey("creator_notes")) put("creator_notes", card.creatorNotes)
+            if (card.raw.containsKey("alternate_greetings")) {
+                putJsonArray("alternate_greetings") {
+                    card.alternateGreetings.forEach { add(JsonPrimitive(it)) }
+                }
+            }
             put("data", buildDataObject(card, rawData))
         }
     }
@@ -65,18 +80,19 @@ class CharacterExporter(
             put("first_mes", card.firstMessage)
             put("mes_example", card.exampleMessages)
             put("creator_notes", card.creatorNotes)
-            if (rawData?.containsKey("character_version") != true) {
-                put("character_version", "1.0")
-            }
+            // A raw card supplied by an extension may omit the typed fields.
+            // Keep its existing values until the editor explicitly changes them.
+            fun field(key: String, value: String): JsonElement =
+                if (value.isEmpty()) rawData?.get(key) ?: JsonPrimitive("") else JsonPrimitive(value)
+            put("system_prompt", field("system_prompt", card.systemPrompt))
+            put("post_history_instructions", field("post_history_instructions", card.postHistoryInstructions))
+            put("creator", field("creator", card.creator))
+            put("character_version", field("character_version", card.characterVersion))
             put("tags", buildJsonArray {
                 card.tags.forEach { add(JsonPrimitive(it)) }
             })
-            if (rawData?.containsKey("system_prompt") != true) put("system_prompt", "")
-            if (rawData?.containsKey("post_history_instructions") != true) put("post_history_instructions", "")
-            if (rawData?.containsKey("alternate_greetings") != true) {
-                putJsonArray("alternate_greetings") {
-                    card.alternateGreetings.forEach { add(JsonPrimitive(it)) }
-                }
+            putJsonArray("alternate_greetings") {
+                card.alternateGreetings.forEach { add(JsonPrimitive(it)) }
             }
             if (rawData?.containsKey("extensions") != true) putJsonObject("extensions") {}
 

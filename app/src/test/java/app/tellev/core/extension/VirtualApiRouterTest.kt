@@ -1,6 +1,7 @@
 package app.tellev.core.extension
 
 import app.tellev.core.model.ChatMessage
+import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.PresetCategory
@@ -60,6 +61,27 @@ class VirtualApiRouterTest {
         assertEquals(200, response.status)
         val body = json.parseToJsonElement(response.body).jsonObject
         assertTrue(body["characters"]?.jsonArray?.isEmpty() == true)
+    }
+
+    @Test
+    fun `character edit route updates card data fields`() = runBlocking {
+        store.saveCharacter(CharacterCard(
+            id = "edited_card",
+            name = "Edited Card",
+            description = "Before",
+            systemPrompt = "Old prompt",
+        ))
+
+        val response = router.route(VirtualApiRequest(
+            "POST",
+            "/api/characters/edit",
+            body = """{"id":"edited_card","description":"After","system_prompt":"New prompt"}""",
+        ))
+
+        assertEquals(200, response.status)
+        val restored = store.readCharacter("edited_card")
+        assertEquals("After", restored.description)
+        assertEquals("New prompt", restored.systemPrompt)
     }
 
     // ── parseSimpleQuery URL-decoding (guard for the parseSimpleQuery fix) ──

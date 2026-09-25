@@ -1,12 +1,14 @@
 package app.tellev.feature.characters
 
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -78,6 +80,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -89,11 +92,15 @@ import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CharactersListScreen(
     viewModel: CharactersViewModel,
+    onCreateClick: () -> Unit,
     onCharacterClick: (String) -> Unit,
     onCreateWithAi: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -104,6 +111,29 @@ fun CharactersListScreen(
     var searchQuery by remember { mutableStateOf("") }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var pendingExport by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri: Uri? ->
+        val requested = pendingExport
+        pendingExport = null
+        if (uri != null && requested != null) {
+            scope.launch {
+                try {
+                    val json = viewModel.exportCharacterToJson(requested.first) ?: return@launch
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openOutputStream(uri)?.use { output ->
+                            output.write(json.toByteArray(Charsets.UTF_8))
+                        } ?: error("无法写入所选位置")
+                    }
+                    snackbarHostState.showSnackbar("已保存 ${requested.second}.json")
+                } catch (e: Exception) {
+                    snackbarHostState.showSnackbar("导出失败：${e.message}")
+                }
+            }
+        }
+    }
 
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -148,6 +178,9 @@ fun CharactersListScreen(
                 title = { Text("角色") },
                 actions = {
                     TextButton(onClick = onCreateWithAi) { Text("AI 创建") }
+                    IconButton(onClick = { importLauncher.launch("*/*") }) {
+                        Icon(Icons.Default.FileUpload, contentDescription = "导入角色卡")
+                    }
                     IconButton(onClick = { searchActive = !searchActive }) {
                         Icon(
                             if (searchActive) Icons.Default.Close else Icons.Default.Search,
@@ -162,9 +195,9 @@ fun CharactersListScreen(
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                onClick = { importLauncher.launch("*/*") },
-                icon = { Icon(Icons.Default.FileUpload, contentDescription = "导入") },
-                text = { Text("导入") },
+                onClick = onCreateClick,
+                icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                text = { Text("新建角色") },
             )
         },
         modifier = modifier,
@@ -235,7 +268,7 @@ fun CharactersListScreen(
                             if (searchQuery.isEmpty()) {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "点击“导入”添加角色卡",
+                                    text = "点击“新建角色”开始创建，或从右上角导入角色卡",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                 )
@@ -259,12 +292,10 @@ fun CharactersListScreen(
                                 onDuplicate = { viewModel.duplicateCharacter(character.id) },
                                 onDelete = { viewModel.deleteCharacter(character.id) },
                                 onExport = {
-                                    scope.launch {
-                                        val json = viewModel.exportCharacterToJson(character.id)
-                                        if (json != null) {
-                                            snackbarHostState.showSnackbar("已将 ${character.name} 导出为 JSON")
-                                        }
-                                    }
+                                    pendingExport = character.id to character.name
+                                    val safeName = character.name.replace(Regex("""[\\/:*?"<>|]"""), "_")
+                                        .ifBlank { "character" }
+                                    exportLauncher.launch("$safeName.json")
                                 },
                             )
                         }
@@ -425,12 +456,23 @@ fun CharacterDetailScreen(
     viewModel: CharactersViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    isCreating: Boolean = false,
+    onCreated: (String) -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsState()
-    val character = state.selectedCharacter
+    val draft = remember { CharacterCard(id = "char_${UUID.randomUUID()}", name = "") }
+    val character = if (isCreating) draft else state.selectedCharacter
+
+    LaunchedEffect(isCreating) {
+        if (isCreating) viewModel.loadWorldBooks()
+    }
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var pendingAvatarPng by remember { mutableStateOf<ByteArray?>(null) }
+    val pendingAvatar = remember(pendingAvatarPng) {
+        pendingAvatarPng?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
+    }
 
     val avatarPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -442,7 +484,13 @@ fun CharacterDetailScreen(
                         context.contentResolver.openInputStream(it)?.readBytes()
                     }
                     if (bytes != null) {
-                        viewModel.setCharacterAvatar(bytes)
+                        if (isCreating) {
+                            pendingAvatarPng = withContext(Dispatchers.IO) {
+                                app.tellev.util.decodeImageAsPng(bytes, maxEdge = 1024)
+                            } ?: error("无法解析所选图片")
+                        } else {
+                            viewModel.setCharacterAvatar(bytes)
+                        }
                     }
                 } catch (e: Exception) {
                     snackbarHostState.showSnackbar("读取图片失败：${e.message}")
@@ -456,26 +504,63 @@ fun CharacterDetailScreen(
     var personality by remember(character?.id) { mutableStateOf(character?.personality ?: "") }
     var scenario by remember(character?.id) { mutableStateOf(character?.scenario ?: "") }
     var firstMessage by remember(character?.id) { mutableStateOf(character?.firstMessage ?: "") }
+    var alternateGreetings by remember(character?.id) { mutableStateOf(character?.alternateGreetings ?: emptyList()) }
     var exampleMessages by remember(character?.id) { mutableStateOf(character?.exampleMessages ?: "") }
     var creatorNotes by remember(character?.id) { mutableStateOf(character?.creatorNotes ?: "") }
+    var systemPrompt by remember(character?.id) { mutableStateOf(character?.systemPrompt ?: "") }
+    var postHistoryInstructions by remember(character?.id) { mutableStateOf(character?.postHistoryInstructions ?: "") }
+    var creator by remember(character?.id) { mutableStateOf(character?.creator ?: "") }
+    var characterVersion by remember(character?.id) { mutableStateOf(character?.characterVersion ?: "") }
     var tags by remember(character?.id) { mutableStateOf(character?.tags ?: emptyList()) }
     var newTag by remember { mutableStateOf("") }
+    var saveAttempted by remember { mutableStateOf(false) }
     // External world-book binding (data.extensions.world). Empty string = unbound.
     var linkedWorldName by remember(character?.id) {
         mutableStateOf(character?.let { CharacterWorldBinding.linkedWorldBookName(it) } ?: "")
     }
     var showWorldPicker by remember { mutableStateOf(false) }
 
-    fun updatedCard(c: CharacterCard) = c.copy(
-        name = name,
-        description = description,
-        personality = personality,
-        scenario = scenario,
-        firstMessage = firstMessage,
-        exampleMessages = exampleMessages,
-        creatorNotes = creatorNotes,
-        tags = tags,
-    )
+    fun updatedCard(c: CharacterCard): CharacterCard {
+        val rawData = c.raw["data"] as? JsonObject ?: JsonObject(emptyMap())
+        val updatedData = JsonObject(rawData + mapOf(
+            "system_prompt" to JsonPrimitive(systemPrompt),
+            "post_history_instructions" to JsonPrimitive(postHistoryInstructions),
+            "creator" to JsonPrimitive(creator),
+            "character_version" to JsonPrimitive(characterVersion),
+        ))
+        return c.copy(
+            name = name.trim(),
+            description = description,
+            personality = personality,
+            scenario = scenario,
+            firstMessage = firstMessage,
+            alternateGreetings = alternateGreetings,
+            exampleMessages = exampleMessages,
+            creatorNotes = creatorNotes,
+            systemPrompt = systemPrompt,
+            postHistoryInstructions = postHistoryInstructions,
+            creator = creator,
+            characterVersion = characterVersion,
+            tags = tags,
+            raw = JsonObject(c.raw + ("data" to updatedData)),
+        )
+    }
+
+    fun saveCard() {
+        saveAttempted = true
+        if (name.isBlank() || state.isLoading) return
+        val card = CharacterWorldBinding.withLinkedWorldBookName(
+            updatedCard(character ?: return),
+            linkedWorldName,
+        )
+        if (isCreating) {
+            scope.launch {
+                if (viewModel.createCharacter(card, pendingAvatarPng)) onCreated(card.id)
+            }
+        } else {
+            viewModel.saveCharacter(card)
+        }
+    }
 
     LaunchedEffect(state.error) {
         state.error?.let {
@@ -495,7 +580,7 @@ fun CharacterDetailScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(character?.name ?: "角色详情") },
+                title = { Text(if (isCreating) "新建角色" else character?.name ?: "角色详情") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -503,18 +588,10 @@ fun CharacterDetailScreen(
                 },
                 actions = {
                     IconButton(
-                        onClick = {
-                            character?.let { c ->
-                                viewModel.saveCharacter(
-                                    CharacterWorldBinding.withLinkedWorldBookName(
-                                        updatedCard(c),
-                                        linkedWorldName,
-                                    ),
-                                )
-                            }
-                        },
+                        onClick = ::saveCard,
+                        enabled = !state.isLoading,
                     ) {
-                        Icon(Icons.Default.FileDownload, contentDescription = "保存")
+                        Icon(Icons.Default.FileDownload, contentDescription = if (isCreating) "创建角色" else "保存")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -553,18 +630,26 @@ fun CharacterDetailScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                // Avatar: the card image itself; tap to replace it.
+                // A picked image stays in the draft until the character is created.
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    CharacterAvatar(
-                        file = state.avatarFiles[character.id],
-                        fallbackText = name,
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clickable { avatarPicker.launch("image/*") },
-                        fallbackTextStyle = MaterialTheme.typography.headlineMedium,
-                    )
+                    if (pendingAvatar != null && isCreating) {
+                        Image(
+                            bitmap = pendingAvatar,
+                            contentDescription = "角色头像预览",
+                            modifier = Modifier.size(72.dp).clip(CircleShape).clickable { avatarPicker.launch("image/*") },
+                        )
+                    } else {
+                        CharacterAvatar(
+                            file = if (isCreating) null else state.avatarFiles[character.id],
+                            fallbackText = name,
+                            modifier = Modifier
+                                .size(72.dp)
+                                .clickable { avatarPicker.launch("image/*") },
+                            fallbackTextStyle = MaterialTheme.typography.headlineMedium,
+                        )
+                    }
                     Spacer(modifier = Modifier.width(16.dp))
                     Column {
                         Text(
@@ -573,12 +658,12 @@ fun CharacterDetailScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            text = "ID: ${character.id}",
+                            text = if (isCreating) "仅名称必填，其余内容可稍后补充" else "ID: ${character.id}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         )
                         TextButton(onClick = { avatarPicker.launch("image/*") }) {
-                            Text("更换头像")
+                            Text(if (isCreating) "选择头像（可选）" else "更换头像")
                         }
                     }
                 }
@@ -590,6 +675,8 @@ fun CharacterDetailScreen(
                     label = { Text("名称") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
+                    isError = saveAttempted && name.isBlank(),
+                    supportingText = if (saveAttempted && name.isBlank()) {{ Text("请输入角色名称") }} else null,
                 )
 
                 // Description
@@ -632,6 +719,32 @@ fun CharacterDetailScreen(
                     maxLines = 12,
                 )
 
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("替代开场白", style = MaterialTheme.typography.titleSmall)
+                    alternateGreetings.forEachIndexed { index, greeting ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = greeting,
+                                onValueChange = { value ->
+                                    alternateGreetings = alternateGreetings.toMutableList().also { it[index] = value }
+                                },
+                                label = { Text("开场白 ${index + 2}") },
+                                modifier = Modifier.weight(1f),
+                                minLines = 2,
+                                maxLines = 8,
+                            )
+                            IconButton(onClick = {
+                                alternateGreetings = alternateGreetings.toMutableList().also { it.removeAt(index) }
+                            }) {
+                                Icon(Icons.Default.Close, contentDescription = "移除替代开场白")
+                            }
+                        }
+                    }
+                    OutlinedButton(onClick = { alternateGreetings = alternateGreetings + "" }) {
+                        Text("添加替代开场白")
+                    }
+                }
+
                 // Example Messages
                 OutlinedTextField(
                     value = exampleMessages,
@@ -650,6 +763,40 @@ fun CharacterDetailScreen(
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
                     maxLines = 6,
+                )
+
+                OutlinedTextField(
+                    value = systemPrompt,
+                    onValueChange = { systemPrompt = it },
+                    label = { Text("系统提示词（可选）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    maxLines = 8,
+                )
+
+                OutlinedTextField(
+                    value = postHistoryInstructions,
+                    onValueChange = { postHistoryInstructions = it },
+                    label = { Text("历史后指令（可选）") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    maxLines = 8,
+                )
+
+                OutlinedTextField(
+                    value = creator,
+                    onValueChange = { creator = it },
+                    label = { Text("创作者") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+
+                OutlinedTextField(
+                    value = characterVersion,
+                    onValueChange = { characterVersion = it },
+                    label = { Text("角色版本") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
                 )
 
                 // Tags
@@ -761,17 +908,11 @@ fun CharacterDetailScreen(
 
                 // Save button
                 FilledTonalButton(
-                    onClick = {
-                        viewModel.saveCharacter(
-                            CharacterWorldBinding.withLinkedWorldBookName(
-                                updatedCard(character),
-                                linkedWorldName,
-                            ),
-                        )
-                    },
+                    onClick = ::saveCard,
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.isLoading,
                 ) {
-                    Text("保存修改")
+                    Text(if (isCreating) "创建角色" else "保存修改")
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
