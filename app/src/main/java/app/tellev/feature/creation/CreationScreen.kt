@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -132,9 +133,9 @@ fun CreationEditorScreen(
                 TextButton(onClick = viewModel::retry) { Text("重试上一轮") }
             }
             state.info?.let { Text(it, modifier = Modifier.padding(horizontal = 12.dp)) }
-            if (state.busy || state.modelPhase.isNotBlank()) {
-                CreationActivityPanel(state, session, viewModel)
-            } else if (session.sourceLength > 0) {
+            if (tab != 0 && (state.busy || state.modelPhase.isNotBlank())) {
+                CreationCompactStatus(state, viewModel)
+            } else if (tab != 0 && session.sourceLength > 0) {
                 val savedFraction = session.sourceCursor.toFloat() / session.sourceLength
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
                     LinearProgressIndicator(progress = { savedFraction }, modifier = Modifier.fillMaxWidth())
@@ -163,9 +164,20 @@ fun CreationEditorScreen(
 }
 
 @Composable
+private fun CreationCompactStatus(state: CreationUiState, viewModel: CreationViewModel) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (state.busy) CircularProgressIndicator(modifier = Modifier.height(18.dp))
+        Text(state.extractionProgress.ifBlank { state.modelPhase },
+            modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+        if (state.busy) TextButton(onClick = viewModel::cancelGeneration) { Text("停止") }
+    }
+}
+
+@Composable
 private fun CreationActivityPanel(state: CreationUiState, session: CreationSession, viewModel: CreationViewModel) {
-    var showRawStream by remember(session.id) { mutableStateOf(false) }
-    var showFullStream by remember(session.id) { mutableStateOf(false) }
+    var showRawStream by remember(session.id, state.operationStartedAtMillis) { mutableStateOf(false) }
+    var showFullStream by remember(session.id, state.operationStartedAtMillis) { mutableStateOf(false) }
     var clockMillis by remember(state.operationStartedAtMillis) { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(state.busy, state.operationStartedAtMillis) {
         while (state.busy) {
@@ -212,7 +224,9 @@ private fun CreationActivityPanel(state: CreationUiState, session: CreationSessi
             }
             if (state.busy && state.liveAssistantMessage.isNotBlank()) {
                 Text("agent 正在回复", style = MaterialTheme.typography.labelMedium)
-                Text(state.liveAssistantMessage)
+                Column(Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState())) {
+                    Text(state.liveAssistantMessage.takeLast(1_000))
+                }
             }
             if (state.liveReasoning.isNotBlank()) {
                 Text("模型返回的思考文本", style = MaterialTheme.typography.labelMedium)
@@ -257,8 +271,15 @@ private fun Long?.orZeroSeconds(): Long = (this ?: 0L) / 1_000
 private fun CreationConversation(session: CreationSession, state: CreationUiState, viewModel: CreationViewModel) {
     var input by remember(session.id) { mutableStateOf("") }
     val busy = state.busy
+    val listState = rememberLazyListState()
+    var showCompletedDetails by remember(session.id, state.operationStartedAtMillis) { mutableStateOf(false) }
+    LaunchedEffect(session.id, session.turns.size, state.operationStartedAtMillis, busy) {
+        // Follow the in-flight message, then return focus to the saved agent reply.
+        listState.scrollToItem(session.turns.size + if (busy) 1 else 0)
+    }
     Column(Modifier.fillMaxSize().padding(12.dp)) {
-        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyColumn(Modifier.weight(1f), state = listState,
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
                 Text(
                     "可以从一句设想开始。也可以指定叙事视角、人物关系、风格、开场、世界规则或前端形式；agent 会给出草稿供你修改。",
@@ -273,27 +294,20 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                     }
                 }
             }
-        }
-        if (busy) {
-            Card(Modifier.fillMaxWidth().padding(vertical = 8.dp).heightIn(max = 180.dp)) {
-                Column(Modifier.padding(12.dp).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("创作 agent · 实时输出（尚未校验）", style = MaterialTheme.typography.labelMedium)
-                    when {
-                        state.liveAssistantMessage.isNotBlank() -> {
-                            Text(state.liveAssistantMessage.takeLast(500))
+            if (busy || state.modelPhase.isNotBlank()) {
+                item(key = "creation-progress") {
+                    if (busy || showCompletedDetails) {
+                        CreationActivityPanel(state, session, viewModel)
+                    } else {
+                        TextButton(onClick = { showCompletedDetails = true }) {
+                            Text("查看本轮进度 · ${state.modelPhase}")
                         }
-                        state.liveOutput.isNotBlank() -> {
-                            Text("正在写结构化草稿，已收到 ${state.liveOutput.length} 字；最近片段：",
-                                style = MaterialTheme.typography.bodySmall)
-                            Text(state.liveOutput.takeLast(500), style = MaterialTheme.typography.bodySmall)
-                        }
-                        state.liveReasoning.isNotBlank() -> {
-                            Text("模型正在返回思考文本；内容显示在上方进度面板。",
-                                style = MaterialTheme.typography.bodySmall)
-                        }
-                        else -> Text("等待供应商返回首个片段…", style = MaterialTheme.typography.bodySmall)
                     }
+                }
+            } else if (session.sourceLength > 0) {
+                item(key = "source-progress") {
+                    Text("原文已提炼 ${session.sourceCursor}/${session.sourceLength} 字符；可从已保存位置继续。",
+                        style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
