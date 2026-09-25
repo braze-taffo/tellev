@@ -24,7 +24,7 @@
 - 当前请求会显示供应商及模型名称（不显示密钥），便于核对创作 agent 用的连接。此次修改通过 `CreationFeatureTest` 13 项测试和 `:app:assembleDebug`；更新包通过 `adb install -r` 安装到设备 `HA25GHH4`，包路径和启动入口核对通过。实际服务商的首包/增量时序仍待用户在设备上观察。
 - 用户设备截图显示这轮请求在模型输出前报 `Required SETTINGS preface not received`。这是 OkHttp 等待 HTTP/2 初始 SETTINGS 帧时的连接错误，不能由此判断供应商是否提供思考流。制卡 agent 对自定义 OpenAI-compatible 连接改用独立的 HTTP/1.1 客户端，保留原有连接参数和 5 分钟读写超时，避免自动重试 POST 造成可能的重复计费；聊天供应商客户端与提示词引擎未改。该改动的 `CreationFeatureTest` 与 `:app:assembleDebug` 通过，真实服务商仍需用户复测。
 - 用户确认提示词兼容修复完成后，本分支已合入官方 `release/v1.6.6.1` 提示词修复提交（合并提交 `15e8b9d`），无冲突；合并后的 `CreationFeatureTest`、完整 `:app:testDebugUnitTest` 与 `:app:assembleDebug` 均通过。合并版 `app.tellev.debug`（`1.6.6.1-debug`，versionCode 36）已用 ADB 安装到设备 `HA25GHH4`，启动入口为 `app.tellev.MainActivity`。设备请求与流式表现仍由用户复测。
-- 官方 `master` 工作树 `tellev-mvu-fix` 目前仍有角色卡相关的未提交改动，且与制卡模块入口改动重叠；本分支保留完整合并结果，暂未覆盖或暂存这些现有改动。
+- 已在官方 `master` 工作树 `tellev-mvu-fix` 合入制卡分支（`af38bdf`）。合并前对已有角色卡未提交改动做了补丁备份，恢复后核对：除新增的制卡入口与路由外，原改动内容一致；它们仍保持未提交状态。主工作树的完整 `:app:testDebugUnitTest` 和 `:app:assembleDebug` 均通过，构建的 `app.tellev.debug`（`1.6.6.1-debug`）已重新安装到设备 `HA25GHH4`，安装及启动入口核对通过。未推送或发布，设备上的真实模型请求仍待用户复测。
 
 ## 尚未完成的验收
 
