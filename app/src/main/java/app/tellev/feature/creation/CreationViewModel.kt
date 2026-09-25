@@ -66,6 +66,29 @@ class CreationViewModel(
             .onFailure { fail(it) }
     }
 
+    fun deleteDraft(id: String) {
+        if (_state.value.busy) return
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, error = null) }
+            try {
+                writeMutex.withLock { repository.delete(id) }
+                _state.update { state -> state.copy(
+                    sessions = state.sessions.filterNot { it.id == id },
+                    current = state.current?.takeUnless { it.id == id },
+                    coverPreviewPng = if (state.current?.id == id) null else state.coverPreviewPng,
+                    info = "创作草稿已删除。",
+                ) }
+                refresh()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail(e)
+            } finally {
+                _state.update { it.copy(busy = false) }
+            }
+        }
+    }
+
     fun start(kind: CreationKind) {
         if (_state.value.busy) return
         val session = CreationSession(kind = kind)

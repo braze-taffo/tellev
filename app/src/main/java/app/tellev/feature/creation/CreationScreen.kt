@@ -8,6 +8,7 @@ import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,6 +26,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,6 +51,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -70,7 +73,21 @@ fun CreationHomeScreen(
     onOpenEditor: () -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
+    var pendingDelete by remember { mutableStateOf<CreationSession?>(null) }
     LaunchedEffect(Unit) { viewModel.refresh() }
+    pendingDelete?.let { draft ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("删除创作草稿？") },
+            text = { Text("将删除“${draft.card.name.ifBlank { draft.worldName.ifBlank { "未命名草稿" } }}”的对话、原文和封面。已保存到角色列表或世界书的成品会保留。") },
+            confirmButton = {
+                TextButton(onClick = { viewModel.deleteDraft(draft.id); pendingDelete = null }, enabled = !state.busy) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } },
+        )
+    }
     Scaffold(topBar = { TopAppBar(title = { Text("AI 协作创作") }, navigationIcon = {
         TextButton(onClick = onBack) { Text("返回") }
     }) }) { padding ->
@@ -80,24 +97,30 @@ fun CreationHomeScreen(
         ) {
             Text("与独立创作 agent 对话，制作角色卡、前端或世界书。", style = MaterialTheme.typography.bodyMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { viewModel.start(CreationKind.Character); onOpenEditor() }) { Text("新建角色卡") }
-                OutlinedButton(onClick = { viewModel.start(CreationKind.WorldBook); onOpenEditor() }) { Text("新建世界书") }
+                Button(onClick = { viewModel.start(CreationKind.Character); onOpenEditor() }, enabled = !state.busy) { Text("新建角色卡") }
+                OutlinedButton(onClick = { viewModel.start(CreationKind.WorldBook); onOpenEditor() }, enabled = !state.busy) { Text("新建世界书") }
             }
             Text("创作草稿", style = MaterialTheme.typography.titleMedium)
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.sessions, key = CreationSession::id) { session ->
-                    Card(onClick = { viewModel.open(session.id); onOpenEditor() }, modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(14.dp)) {
-                            Text(session.card.name.ifBlank { session.worldName.ifBlank {
-                                if (session.kind == CreationKind.Character) "未命名角色" else "未命名世界书"
-                            } })
-                            Text(
-                                "${if (session.kind == CreationKind.Character) "角色卡" else "世界书"} · ${session.turns.size} 轮 · ${session.lore.size} 条世界书内容",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                            if (session.sourceLength > 0) {
-                                Text("原文已提炼 ${session.sourceCursor}/${session.sourceLength} 字符", style = MaterialTheme.typography.bodySmall)
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f).clickable(enabled = !state.busy) {
+                                viewModel.open(session.id)
+                                onOpenEditor()
+                            }.padding(14.dp)) {
+                                Text(session.card.name.ifBlank { session.worldName.ifBlank {
+                                    if (session.kind == CreationKind.Character) "未命名角色" else "未命名世界书"
+                                } })
+                                Text(
+                                    "${if (session.kind == CreationKind.Character) "角色卡" else "世界书"} · ${session.turns.size} 轮 · ${session.lore.size} 条世界书内容",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                if (session.sourceLength > 0) {
+                                    Text("原文已提炼 ${session.sourceCursor}/${session.sourceLength} 字符", style = MaterialTheme.typography.bodySmall)
+                                }
                             }
+                            TextButton(onClick = { pendingDelete = session }, enabled = !state.busy) { Text("删除") }
                         }
                     }
                 }

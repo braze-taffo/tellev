@@ -27,6 +27,34 @@ import java.nio.file.Files
 
 class CreationFeatureTest {
     @Test
+    fun deletingDraftRemovesItsSourceAndCoverButKeepsOtherDraftsAndSavedCard() = runBlocking {
+        val directory = Files.createTempDirectory("creation-delete").toFile()
+        try {
+            val draftsRoot = directory.resolve("drafts")
+            val repository = CreationRepository(draftsRoot)
+            val removed = CreationSession(kind = CreationKind.Character, savedArtifactId = "saved-card")
+            val kept = CreationSession(kind = CreationKind.WorldBook)
+            val (sourceHash, _) = repository.saveSource(removed.id, "世界设定原文")
+            val coverHash = repository.saveCover(removed.id, PngCardParser.createMinimalPng())
+            repository.save(removed.copy(sourceSha256 = sourceHash, coverSha256 = coverHash))
+            repository.save(kept)
+            val savedCard = directory.resolve("characters/saved-card.png")
+            checkNotNull(savedCard.parentFile).mkdirs()
+            savedCard.writeText("已保存成品")
+
+            repository.delete(removed.id)
+
+            assertEquals(listOf(kept.id), repository.list().map { it.id })
+            assertFalse(draftsRoot.resolve("${removed.id}.$sourceHash.source.txt").exists())
+            assertFalse(draftsRoot.resolve("${removed.id}.$coverHash.cover.png").exists())
+            assertEquals("已保存成品", savedCard.readText())
+        } finally {
+            directory.deleteRecursively()
+        }
+        Unit
+    }
+
+    @Test
     fun coverPersistsWithDraftAndExportsAsImportablePngCard() = runBlocking {
         val directory = Files.createTempDirectory("creation-cover").toFile()
         try {
