@@ -2,6 +2,7 @@ package app.tellev.core.extension
 
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.CharacterCard
+import app.tellev.core.model.WorldBook
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.PresetCategory
@@ -540,6 +541,53 @@ class VirtualApiRouterTest {
         assertEquals("hello", body[1].jsonObject["mes"]?.jsonPrimitive?.content)
         assertEquals(true, body[1].jsonObject["is_user"]?.jsonPrimitive?.content?.toBooleanStrictOrNull())
         assertEquals(false, body[2].jsonObject["is_user"]?.jsonPrimitive?.content?.toBooleanStrictOrNull())
+    }
+
+    // ── Part B1/B2: worldbook delete/rebind + chat insert/delete routes ──
+
+    @Test
+    fun `DELETE _api_worlds removes the book`() = runBlocking {
+        store.saveWorldBook(WorldBook(id = "w1", name = "w1", entries = emptyList()))
+        val response = router.route(VirtualApiRequest("DELETE", "/api/worlds/w1"))
+        assertEquals(200, response.status)
+        assertTrue(store.listWorldBooks().none { it.id == "w1" })
+    }
+
+    @Test
+    fun `POST _api_worldinfo_disabled saves the activation set`() = runBlocking {
+        val response = router.route(VirtualApiRequest(
+            "POST",
+            "/api/worldinfo/disabled",
+            body = """{"ids":["w1","w2"]}""",
+        ))
+        assertEquals(200, response.status)
+        assertEquals(setOf("w1", "w2"), store.readDisabledWorldIds())
+    }
+
+    @Test
+    fun `POST _api_chats id_messages_insert inserts at index`() = runBlocking {
+        saveSessionFor("Char")
+        val response = router.route(VirtualApiRequest(
+            "POST",
+            "/api/chats/chat-Char/messages/insert",
+            body = """{"message":{"id":"m2","role":"system","name":"system","content":"插入","createdAtMillis":5},"before":0}""",
+        ))
+        assertEquals(200, response.status)
+        val session = store.readChatSession("chat-Char")
+        assertEquals(2, session.messages.size)
+        assertEquals("插入", session.messages[0].content)
+    }
+
+    @Test
+    fun `POST _api_chats id_messages_delete removes listed ids`() = runBlocking {
+        saveSessionFor("Char")
+        val response = router.route(VirtualApiRequest(
+            "POST",
+            "/api/chats/chat-Char/messages/delete",
+            body = """{"message_ids":["m1"]}""",
+        ))
+        assertEquals(200, response.status)
+        assertTrue(store.readChatSession("chat-Char").messages.isEmpty())
     }
 
     private class InMemorySecretStore : SecretStore {

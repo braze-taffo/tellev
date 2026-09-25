@@ -13,6 +13,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -53,6 +54,60 @@ internal class ChatApiHandler(
         // coordinator's in-flight tail and notifyWritten re-adopts the bumped revision.
         externalChatWrites.quiesce(sessionId)
         dataStore.appendMessage(sessionId, message)
+        externalChatWrites.notifyWritten(sessionId)
+        return jsonResponse(200, buildJsonObject { put("ok", true) }, json)
+    }
+
+    /**
+     * POST /api/chats/{id}/messages/delete { message_ids: [...] } — removes
+     * the listed messages (id strings as they appear in the session), backing
+     * TavernHelper.deleteChatMessages. Same coordinator courtesy as append.
+     */
+    suspend fun handleDeleteMessages(
+        sessionId: String,
+        request: VirtualApiRequest,
+    ): VirtualApiResponse {
+        val body = parseBodyAsJsonObject(request, json)
+        val ids = (body["message_ids"] as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.content }
+            ?.toSet()
+            ?: return errorResponse(400, "Missing message_ids array", json)
+        externalChatWrites.quiesce(sessionId)
+        val session = runCatching { dataStore.readChatSession(sessionId) }.getOrNull()
+            ?: run {
+                externalChatWrites.notifyWritten(sessionId)
+                return errorResponse(404, "Chat not found: $sessionId", json)
+            }
+        val kept = session.messages.filterNot { it.id in ids }
+        dataStore.saveChatSession(session.copy(messages = kept))
+        externalChatWrites.notifyWritten(sessionId)
+        return jsonResponse(200, buildJsonObject { put("ok", true); put("deleted", session.messages.size - kept.size) }, json)
+    }
+
+    /**
+     * POST /api/chats/{id}/messages/insert { message: {...}, before: n } —
+     * inserts the message at index n (clamped), backing
+     * TavernHelper.createChatMessages' insert_before option.
+     */
+    suspend fun handleInsertMessage(
+        sessionId: String,
+        request: VirtualApiRequest,
+    ): VirtualApiResponse {
+        val body = parseBodyAsJsonObject(request, json)
+        val messageElement = body["message"]
+            ?: return errorResponse(400, "Missing message", json)
+        val message = runCatching { json.decodeFromJsonElement(ChatMessage.serializer(), messageElement) }
+            .getOrElse { return errorResponse(400, "Invalid message: ${it.message}", json) }
+        val before = (body["before"] as? JsonPrimitive)?.content?.toIntOrNull()
+            ?: return errorResponse(400, "Missing before index", json)
+        externalChatWrites.quiesce(sessionId)
+        val session = runCatching { dataStore.readChatSession(sessionId) }.getOrNull()
+            ?: run {
+                externalChatWrites.notifyWritten(sessionId)
+                return errorResponse(404, "Chat not found: $sessionId", json)
+            }
+        val at = before.coerceIn(0, session.messages.size)
+        dataStore.saveChatSession(session.copy(messages = session.messages.toMutableList().apply { add(at, message) }))
         externalChatWrites.notifyWritten(sessionId)
         return jsonResponse(200, buildJsonObject { put("ok", true) }, json)
     }

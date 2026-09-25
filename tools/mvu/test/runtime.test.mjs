@@ -96,7 +96,7 @@ test('real EJS supports async JavaScript, worldbook includes and variable writes
     const result=await w.__tellevTemplate({template:'<% const xs=[1,2,3].map(x=>x*2); setvar("n", xs.reduce((a,b)=>a+b,0)); %><%= await include("nested") %>',
       local:{},global:{},worldCatalog:[{comment:'nested',content:'<%= getvar("n") %><b>原样输出</b>'}]});
     assert.equal(result.content,'12<b>原样输出</b>');
-    assert.equal(result.local.n,12);
+    assert.equal(result.message.n,12);
     const wi=await w.__tellevTemplate({template:'<%= await getwi(null,"section") %>',
       currentWorldBookId:'book',worldCatalog:[{bookId:'book',id:'1',comment:'section',content:'<%= 6*7 %>'}]});
     assert.equal(wi.content,'42');

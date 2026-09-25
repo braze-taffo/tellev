@@ -45,6 +45,27 @@ internal class WorldBookApiHandler(
         return jsonResponse(200, buildJsonObject { put("ok", true) }, json)
     }
 
+    /** DELETE /api/worlds/{id} — backs TavernHelper.deleteWorldbook. */
+    suspend fun handleDeleteWorld(id: String): VirtualApiResponse {
+        dataStore.deleteWorldBook(id)
+        return jsonResponse(200, buildJsonObject { put("ok", true) }, json)
+    }
+
+    /**
+     * POST /api/worldinfo/disabled { ids: [...] } — the negative activation
+     * set (worlds absent from the set are active), backing
+     * TavernHelper.rebindGlobalWorldbooks: the rebound list is every known
+     * world minus the disabled ids.
+     */
+    suspend fun handleSaveDisabledWorlds(request: VirtualApiRequest): VirtualApiResponse {
+        val body = parseBodyAsJsonObject(request, json)
+        val ids = (body["ids"] as? kotlinx.serialization.json.JsonArray)
+            ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+            ?: return errorResponse(400, "Missing ids array", json)
+        dataStore.saveDisabledWorldIds(ids.toSet())
+        return jsonResponse(200, buildJsonObject { put("ok", true) }, json)
+    }
+
     suspend fun handleStGetWorldInfo(request: VirtualApiRequest): VirtualApiResponse {
         val bodyObj = parseBodyAsJsonObjectOrNull(request, json)
         val name = bodyObj?.get("name")?.jsonPrimitive?.content

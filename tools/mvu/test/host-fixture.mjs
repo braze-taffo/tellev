@@ -16,10 +16,18 @@ export async function createHost({ chat, card = {}, failWrite = () => null }) {
   });
   const w = dom.window;
   w.fetch = async () => ({ ok: true, json: async () => ({ pkgVersion: '1.18.0' }), text: async () => '' });
-  w.tellevNative = {
+  // In-memory stores backing the virtual API routes the host's write family
+  // calls; mirrored from WorldBookApiHandler/ChatApiHandler semantics.
+  chat.forEach((m, i) => { if (m.id === undefined) m.id = `fixture-msg-${i}`; });
+  const worldsStore = new Map();
+  for (const book of card.worldBooks ?? [{ id: 'fixture', name: 'fixture', entries: card.character_book?.entries || [], raw: {} }]) {
+    worldsStore.set(book.id, JSON.parse(JSON.stringify(book)));
+  }
+  const disabledWorlds = new Set();
+  const native = {
     stGetContext: () => JSON.stringify({ chat, chatId: 'fixture', name1: 'User', name2: card.name || 'Fixture',
       characterWorldBooks: ['fixture'], globalWorldBooks: [],
-      worldBooks: [{ name: 'fixture', entries: card.character_book?.entries || [] }] }),
+      worldBooks: [...worldsStore.values()] }),
     stGetVariablesForScope: s => JSON.stringify(scopes[s] || {}),
     stSetVariablesForScope: (s, v) => { scopes[s] = JSON.parse(v); },
     stGetAllVariables: () => JSON.stringify({ ...scopes.global, ...scopes.local }),
@@ -40,8 +48,49 @@ export async function createHost({ chat, card = {}, failWrite = () => null }) {
     emitFromEventSource: () => {}, emit: () => {}, stReplaceVariables: s => s,
     getSettings: () => '{}', saveSettings: () => {}, registerCommand: () => {}, registerRoute: () => {},
     extensionReady: () => {}, extensionFailed: e => errors.push(e),
-    apiCall: id => queueMicrotask(() => w.Tellev.onApiResult?.(id, 200, '{}')),
+    apiCall: (id, method, path, bodyJson) => queueMicrotask(() => {
+      const respond = (status, body) => w.Tellev.onApiResponse?.(id, status, JSON.stringify(body ?? {}));
+      const body = bodyJson ? JSON.parse(bodyJson) : null;
+      const segments = path.replace(/^\/api\//, '').split('/').map(decodeURIComponent);
+      const chatToSession = () => ({ id: 'fixture', messages: chat.map(m => ({
+        id: m.id, role: m.is_user ? 'user' : (m.is_system ? 'system' : 'assistant'),
+        name: m.name ?? '', content: m.mes ?? '' })) });
+      try {
+        if (method === 'GET' && path === '/api/worlds') return respond(200, { worlds: [...worldsStore.values()] });
+        if (method === 'GET' && segments[0] === 'worlds' && segments.length === 2) {
+          const book = worldsStore.get(segments[1]);
+          return book ? respond(200, book) : respond(404, { error: 'not found' });
+        }
+        if (method === 'POST' && path === '/api/worlds') {
+          worldsStore.set(body.id, body); return respond(200, { ok: true });
+        }
+        if (method === 'DELETE' && segments[0] === 'worlds' && segments.length === 2) {
+          worldsStore.delete(segments[1]); disabledWorlds.delete(segments[1]);
+          return respond(200, { ok: true });
+        }
+        if (method === 'POST' && path === '/api/worldinfo/disabled') {
+          for (const id of disabledWorlds) disabledWorlds.delete(id);
+          for (const id of body.ids) disabledWorlds.add(id);
+          return respond(200, { ok: true });
+        }
+        if (method === 'GET' && segments[0] === 'chats' && segments.length === 2) return respond(200, chatToSession());
+        if (method === 'POST' && segments[0] === 'chats' && segments[2] === 'messages' && segments[3] === 'insert') {
+          const at = Math.max(0, Math.min(chat.length, body.before));
+          chat.splice(at, 0, { id: body.message.id, name: body.message.name,
+            mes: body.message.content, is_user: body.message.role === 'user',
+            is_system: body.message.role === 'system', swipe_id: 0, variables: [] });
+          return respond(200, { ok: true });
+        }
+        if (method === 'POST' && segments[0] === 'chats' && segments[2] === 'messages' && segments[3] === 'delete') {
+          const drop = new Set(body.message_ids);
+          for (let i = chat.length - 1; i >= 0; i--) if (drop.has(chat[i].id)) chat.splice(i, 1);
+          return respond(200, { ok: true });
+        }
+        respond(200, {});
+      } catch (error) { respond(500, { error: String(error) }); }
+    }),
   };
+  w.tellevNative = native;
   try {
     w.eval(await readAsset('globals.js'));
     const html = await readFile(new URL('../../../app/build/compat-host.html', import.meta.url), 'utf8');
@@ -52,6 +101,6 @@ export async function createHost({ chat, card = {}, failWrite = () => null }) {
     w.eval(await readAsset('chat.js'));
     w.eval(await readAsset('host.js'));
     w.fetch = async () => ({ ok: true, json: async () => ({ pkgVersion: '1.18.0' }), text: async () => '' });
-    return { w, chat, errors, close: () => w.close() };
+    return { w, chat, errors, worldsStore, disabledWorlds, native, close: () => w.close() };
   } catch (error) { w.close(); throw error; }
 }
