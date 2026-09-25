@@ -19,6 +19,10 @@ import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.Persona
 import app.tellev.core.model.WorldBook
+import app.tellev.core.memory.MemoryMode
+import app.tellev.core.memory.MemoryRecord
+import app.tellev.core.memory.MemoryService
+import app.tellev.core.memory.withMemoryMode
 import app.tellev.core.prompt.PromptEngine
 import app.tellev.core.provider.GenerationRuntimeResolver
 import app.tellev.core.provider.ProviderConfig
@@ -31,6 +35,7 @@ import app.tellev.core.storage.GeneratedImageStore
 import app.tellev.core.storage.StDataStore
 import app.tellev.feature.chat.ChatSessionInit.withCharacterGreetingSwipes
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -72,6 +77,11 @@ data class ChatUiState(
     val selectedPreset: GenerationPreset? = null,
     val sessions: List<ChatSessionSummary> = emptyList(),
     val error: String? = null,
+    val memoryStatus: String? = null,
+    val memoryRecords: List<MemoryRecord> = emptyList(),
+    val memoryNeedsRebuild: Boolean = false,
+    val memoryPluginEnabled: Boolean = false,
+    val memoryVectorEnabled: Boolean = false,
     val isLoading: Boolean = false,
     // ── 生图：仅在至少一个引擎已配置时对 UI 可见 ──
     val imageGenAvailable: Boolean = false,
@@ -127,12 +137,13 @@ class ChatViewModel(
     )
     private val messageActions = ChatMessageActions(sessionRuntime)
     private val runtimeResolver = GenerationRuntimeResolver(dataStore, providerRegistry, secretStore)
+    private val memoryService = MemoryService(dataStore, providerRegistry, secretStore)
     private val generatedImageStore = GeneratedImageStore(dataStore.layout)
     private val imageGenCoordinator = ChatImageGenerationCoordinator(
         dataStore, providerRegistry, secretStore, generatedImageStore,
     )
     private val generationCoordinator = ChatGenerationCoordinator(
-        dataStore, providerRegistry, promptEngine, extensionHost, sessionRuntime, runtimeResolver,
+        dataStore, providerRegistry, promptEngine, extensionHost, sessionRuntime, runtimeResolver, memoryService,
     )
 
     private var characterScriptJob: Job? = null
@@ -449,8 +460,12 @@ class ChatViewModel(
                             sessions = selection.allSessions,
                             disabledWorldIds = selection.disabledWorldIds,
                             isLoading = false,
+                            memoryStatus = null,
+                            memoryRecords = emptyList(),
                         )
                     }
+                    refreshMemory(session.id)
+                    resumePendingMemory(session.id)
 
                     val scriptJob = viewModelScope.launch(Dispatchers.Default) {
                         reloadCharacterTavernHelperScripts(character)
@@ -522,8 +537,11 @@ class ChatViewModel(
                             generatedImages = emptyList(),
                             chatBackgroundFile = null,
                             sessions = sessions,
+                            memoryStatus = null,
+                            memoryRecords = emptyList(),
                         )
                     }
+                    refreshMemory(newSession.id)
                     reloadCharacterTavernHelperScripts(character)
                     ChatTavernAdapter.emitChatChanged(extensionHost, newSession)
                     ChatTavernAdapter.emitRenderedEventsForMessages(extensionHost, newSession.messages)
@@ -534,6 +552,124 @@ class ChatViewModel(
                 } finally {
                     _uiState.update { it.copy(isLoading = false) }
                 }
+            }
+        }
+    }
+
+    /** First explicit choice wins; existing and new chats use the same path. */
+    fun selectMemoryMode(mode: MemoryMode) {
+        viewModelScope.launch {
+            sessionRuntime.sessionTransitions.withLock {
+                val session = _uiState.value.currentSession ?: return@withLock
+                if (MemoryMode.of(session) != null) return@withLock
+                try {
+                    val selected = session.withMemoryMode(mode)
+                    sessionRuntime.persistSessionMutation(session, selected) { updated ->
+                        _uiState.update { state ->
+                            if (state.currentSession?.id == updated.id) state.copy(currentSession = updated) else state
+                        }
+                    }
+                    if (mode != MemoryMode.NONE) memoryService.initialize(_uiState.value.currentSession ?: selected, mode)
+                    refreshMemory(session.id)
+                    resumePendingMemory(session.id)
+                } catch (e: Exception) {
+                    _uiState.update { it.copy(error = "保存记忆模式失败：${e.message}") }
+                }
+            }
+        }
+    }
+
+    fun refreshMemory(sessionId: String? = null) {
+        val id = sessionId ?: _uiState.value.currentSession?.id ?: return
+        viewModelScope.launch {
+            val document = runCatching { memoryService.store.read(id) }.getOrNull()
+            val settings = runCatching { memoryService.settings.read() }.getOrNull()
+            _uiState.update { state ->
+                if (state.currentSession?.id != id) state else state.copy(
+                    memoryRecords = document?.records.orEmpty(),
+                    memoryNeedsRebuild = document?.needsRebuild == true,
+                    memoryStatus = document?.error ?: document?.stage,
+                    memoryPluginEnabled = settings?.enabled == true,
+                    memoryVectorEnabled = settings?.vectorEnabled == true,
+                )
+            }
+        }
+    }
+
+    fun rebuildMemory() {
+        val id = _uiState.value.currentSession?.id ?: return
+        viewModelScope.launch {
+            try {
+                memoryService.processPending(id, flushIdle = true, rebuild = true) { stage ->
+                    _uiState.update { if (it.currentSession?.id == id) it.copy(memoryStatus = stage) else it }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                _uiState.update { if (it.currentSession?.id == id) it.copy(memoryStatus = "补建失败：${e.message}") else it }
+            } finally {
+                refreshMemory(id)
+            }
+        }
+    }
+
+    fun retryMemory() {
+        val id = _uiState.value.currentSession?.id ?: return
+        viewModelScope.launch {
+            try {
+                memoryService.processPending(id, force = true) { stage ->
+                    _uiState.update { if (it.currentSession?.id == id) it.copy(memoryStatus = stage) else it }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                _uiState.update { if (it.currentSession?.id == id) it.copy(memoryStatus = "记忆重试失败：${e.message}") else it }
+            }
+            refreshMemory(id)
+        }
+    }
+
+    fun correctMemory(recordId: String, newText: String?) {
+        val id = _uiState.value.currentSession?.id ?: return
+        viewModelScope.launch {
+            try {
+                memoryService.correct(id, recordId, newText)
+                refreshMemory(id)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "修改记忆失败：${e.message}") }
+            }
+        }
+    }
+
+    fun rebuildMemoryVectors() {
+        val id = _uiState.value.currentSession?.id ?: return
+        viewModelScope.launch {
+            try {
+                memoryService.rebuildVectors(id) { stage ->
+                    _uiState.update { if (it.currentSession?.id == id) it.copy(memoryStatus = stage) else it }
+                }
+                refreshMemory(id)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                _uiState.update { if (it.currentSession?.id == id) it.copy(memoryStatus = "向量更新失败：${e.message}") else it }
+            }
+        }
+    }
+
+    private fun resumePendingMemory(sessionId: String) {
+        viewModelScope.launch {
+            try {
+                memoryService.processPending(sessionId, flushIdle = true) { stage ->
+                    _uiState.update { if (it.currentSession?.id == sessionId) it.copy(memoryStatus = stage) else it }
+                }
+                refreshMemory(sessionId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                _uiState.update { if (it.currentSession?.id == sessionId) it.copy(memoryStatus = "记忆恢复失败：${e.message}") else it }
             }
         }
     }
@@ -552,8 +688,11 @@ class ChatViewModel(
                             currentSession = session,
                             messages = session.messages,
                             chatBackgroundFile = ChatSessionAssets.chatBackgroundFileFor(session, dataStore.layout),
+                            memoryStatus = null,
+                            memoryRecords = emptyList(),
                         )
                     }
+                    refreshMemory(session.id)
                     _uiState.value.selectedCharacter?.let { reloadCharacterTavernHelperScripts(it) }
                     imageGenCoordinator.refreshGeneratedImages(session.id) { targetSessionId, images ->
                         _uiState.update { if (it.currentSession?.id == targetSessionId) it.copy(generatedImages = images) else it }

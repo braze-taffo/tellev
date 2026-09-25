@@ -3,6 +3,8 @@ package app.tellev.core.storage.repository
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GroupChat
+import app.tellev.core.memory.MemoryStore
+import app.tellev.core.memory.MemoryMode
 import app.tellev.core.storage.GeneratedImage
 import app.tellev.core.storage.GeneratedImageStore
 import app.tellev.core.storage.JournaledFileWriter
@@ -123,9 +125,22 @@ internal class ChatRepository(
             ?: session.characterId?.let { layout.chats.resolve(it) }
             ?: layout.chats.resolve("_orphan")
         parent.createDirectories()
-
-        val lines = ChatJsonlCodec.serializeChatSessionJsonl(session, json)
-        val receipt = durableFiles.write(parent.resolve("${session.id}.jsonl"), lines.joinToString("\n").toByteArray(Charsets.UTF_8), operationId, expectedRevision)
+        val path = parent.resolve("${session.id}.jsonl")
+        val lockedMode = if (Files.isRegularFile(path)) runCatching {
+            Files.newBufferedReader(path).use { reader ->
+                val header = json.parseToJsonElement(reader.readLine()).jsonObject
+                val metadata = header["chat_metadata"] as? JsonObject
+                metadata?.get(MemoryMode.METADATA_KEY)?.jsonPrimitive?.content
+                    ?.let { value -> MemoryMode.entries.firstOrNull { it.name == value } }
+            }
+        }.getOrNull() else null
+        val incomingMode = MemoryMode.of(session)
+        require(lockedMode == null || incomingMode == null || lockedMode == incomingMode) { "对话记忆模式已锁定" }
+        val effective = if (lockedMode != null && incomingMode == null) session.copy(
+            metadata = JsonObject(session.metadata + (MemoryMode.METADATA_KEY to JsonPrimitive(lockedMode.name))),
+        ) else session
+        val lines = ChatJsonlCodec.serializeChatSessionJsonl(effective, json)
+        val receipt = durableFiles.write(path, lines.joinToString("\n").toByteArray(Charsets.UTF_8), operationId, expectedRevision)
         chatChanges.tryEmit(session.id)
         return receipt
     }
@@ -159,6 +174,7 @@ internal class ChatRepository(
             val chatText = runCatching { path.readText() }.getOrDefault("")
             val galleryText = runCatching { galleryStore.galleryFile(id).readText() }.getOrDefault("")
             durableFiles.delete(path)
+            runCatching { MemoryStore(layout).delete(id) }
             runCatching {
                 (imagePathsReferencedBy(chatText) + imagePathsReferencedBy(galleryText)).forEach { relative ->
                     val file = layout.root.resolve(relative).normalize()

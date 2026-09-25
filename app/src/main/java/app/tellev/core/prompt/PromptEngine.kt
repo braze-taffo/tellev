@@ -332,8 +332,12 @@ class DefaultPromptEngine(
             macroEngine = macroEngine,
         )
         val anInjections = PromptInjectionProcessor.collectAuthorsNoteWorldInfo(worldScan)
+        val memoryInjection = request.metadata["tellevMemoryContext"]?.jsonPrimitive?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
+            ?.let { listOf(ExtensionInjection(it, 0, 0, MessageRole.System, 0, key = "tellev-core-memory")) }
+            ?: emptyList()
         val allInjectionsForBudget =
-            presetOrder.absoluteInjections + extensionInjections + characterInjections + anInjections
+            presetOrder.absoluteInjections + extensionInjections + characterInjections + anInjections + memoryInjection
         val injectionTokens = PromptInjectionProcessor.injectionTokenCost(allInjectionsForBudget)
         val quietTokens = quietPrompt?.let { TokenBudget.estimateTokens(it) + 4 } ?: 0
         val budgetedRaw = TokenBudget.fitToBudget(

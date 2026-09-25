@@ -3,6 +3,7 @@ package app.tellev.feature.chat
 import androidx.lifecycle.ViewModelStore
 import app.tellev.core.extension.*
 import app.tellev.core.model.*
+import app.tellev.core.memory.MemoryService
 import app.tellev.core.prompt.*
 import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.security.SecretStore
@@ -44,7 +45,8 @@ class ChatWriteLifecycleTest {
                     assertTrue(state.value.isGenerating)
                     throw CancellationException("injected preparation cancellation")
                 }
-            }, host, runtime, app.tellev.core.provider.GenerationRuntimeResolver(disk, registry, TestSecrets()))
+            }, host, runtime, app.tellev.core.provider.GenerationRuntimeResolver(disk, registry, TestSecrets()),
+                MemoryService(disk, registry, TestSecrets()))
             repeat(2) {
                 assertTrue(coordinator.sendMessageWithRole("hello", emptyList(), MessageRole.User,
                     uiState = state, scope = scope, characterScriptJob = null))

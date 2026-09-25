@@ -76,6 +76,7 @@ import androidx.compose.ui.unit.dp
 import app.tellev.LocalTellevGraph
 import app.tellev.core.extension.WebViewJsExtensionHost
 import app.tellev.core.model.Attachment
+import app.tellev.core.memory.MemoryMode
 import app.tellev.core.storage.GeneratedImage
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
@@ -139,6 +140,7 @@ private fun ChatContentScreen(
     modifier: Modifier = Modifier,
 ) {
     val runtimeToken = viewModel.currentRuntimeToken(state.currentSession?.id)
+    LaunchedEffect(state.currentSession?.id) { viewModel.refreshMemory() }
     val listState = key(state.currentSession?.id) {
         // Start at the current end; do not compose old HTML cards at the top only
         // to destroy them immediately when the initial follow effect runs.
@@ -151,6 +153,7 @@ private fun ChatContentScreen(
     var showSessionMenu by remember { mutableStateOf(false) }
     var sessionPendingDelete by remember { mutableStateOf<ChatSessionSummary?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var showMemoryDialog by remember(state.currentSession?.id) { mutableStateOf(false) }
     var showCharacterInterface by remember(state.currentSession?.id) { mutableStateOf(false) }
     LaunchedEffect(state.characterUiExtensionId) {
         if (state.characterUiExtensionId == null) showCharacterInterface = false
@@ -270,6 +273,10 @@ private fun ChatContentScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        MemoryMode.of(state.currentSession)?.let { mode ->
+                            val status = if (state.memoryPluginEnabled) state.memoryStatus else "已暂停"
+                            Text("记忆：${mode.label}${status?.let { " · $it" } ?: ""}", style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
             },
@@ -336,6 +343,10 @@ private fun ChatContentScreen(
                         expanded = showMoreMenu,
                         onDismissRequest = { showMoreMenu = false },
                     ) {
+                        DropdownMenuItem(
+                            text = { Text("长期记忆…") },
+                            onClick = { viewModel.refreshMemory(); showMemoryDialog = true; showMoreMenu = false },
+                        )
                         DropdownMenuItem(
                             text = { Text("聊天背景…") },
                             onClick = {
@@ -711,4 +722,5 @@ private fun ChatContentScreen(
             }
         }
     }
+    MemoryChatDialogs(state, viewModel, showMemoryDialog) { showMemoryDialog = false }
 }

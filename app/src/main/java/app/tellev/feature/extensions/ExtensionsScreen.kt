@@ -116,6 +116,8 @@ fun ExtensionsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(16.dp),
             ) {
+                item(key = "memory_module") { MemoryExtensionCard() }
+
                 item(key = "built_in_header") {
                     SectionHeader(
                         title = "内置兼容模块",

@@ -8,8 +8,11 @@ import app.tellev.core.model.ChatSession
 import app.tellev.core.model.MessageReasoning
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.withGenerationReasoning
+import app.tellev.core.memory.MemoryService
 import app.tellev.core.prompt.PromptBuildRequest
 import app.tellev.core.prompt.PromptEngine
+import app.tellev.core.prompt.TokenBudget
+import app.tellev.core.prompt.DEFAULT_MAX_CONTEXT_TOKENS
 import app.tellev.core.provider.GenerateChunk
 import app.tellev.core.provider.GenerateRequest
 import app.tellev.core.provider.GenerationRuntimeResolver
@@ -22,6 +25,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -49,6 +53,7 @@ internal class ChatGenerationCoordinator(
     private val extensionHost: ExtensionHost,
     private val sessionRuntime: ChatSessionRuntime,
     private val runtimeResolver: GenerationRuntimeResolver,
+    private val memoryService: MemoryService,
 ) {
     var generationJob: Job? = null
         private set
@@ -224,6 +229,25 @@ internal class ChatGenerationCoordinator(
                 sessionRuntime.flushSessionWrites(updatedSession.id, extensionHost)
                 val promptSession = requireNotNull(uiState.value.currentSession?.takeIf { it.id == updatedSession.id })
                 val promptMessages = promptSession.messages
+                val possibleRawIds = mutableSetOf<String>()
+                val rawBudget = ((preset.maxContextTokens ?: DEFAULT_MAX_CONTEXT_TOKENS) -
+                    (preset.maxCompletionTokens ?: preset.maxTokens ?: 0)).coerceAtLeast(0)
+                var rawTokens = 0
+                for (message in promptMessages.asReversed()) {
+                    possibleRawIds.add(message.id)
+                    rawTokens += TokenBudget.estimateTokens(message.content) + 4
+                    if (rawTokens > rawBudget) break
+                }
+                val memoryContext = try {
+                    memoryService.context(
+                        promptSession, inputMessage.content,
+                        possibleRawIds,
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    "" // Memory retrieval cannot prevent a normal chat reply.
+                }
                 val promptRequest = PromptBuildRequest(
                     character = character,
                     persona = runtime.persona,
@@ -253,7 +277,7 @@ internal class ChatGenerationCoordinator(
                             promptEngine = promptEngine,
                         ) + ("userInputNormalProcessed" to JsonPrimitive(
                             CharacterRegexApplier.isNormalProcessed(inputMessage),
-                        )),
+                        )) + ("tellevMemoryContext" to JsonPrimitive(memoryContext)),
                     ),
                 )
 
@@ -396,6 +420,39 @@ internal class ChatGenerationCoordinator(
                             }
                             ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.CHARACTER_MESSAGE_RENDERED, assistantMessageIndex, eventType)
                             sessionRuntime.flushSessionWrites(finalSession.id, extensionHost)
+                            scope.launch {
+                                try {
+                                    memoryService.processPending(finalSession.id) { stage ->
+                                        uiState.update { if (it.currentSession?.id == finalSession.id) it.copy(memoryStatus = stage) else it }
+                                    }
+                                    val document = memoryService.store.read(finalSession.id)
+                                    uiState.update { state -> if (state.currentSession?.id == finalSession.id) state.copy(
+                                        memoryRecords = document?.records.orEmpty(),
+                                        memoryNeedsRebuild = document?.needsRebuild == true,
+                                    ) else state }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (error: Exception) {
+                                    uiState.update { if (it.currentSession?.id == finalSession.id) it.copy(memoryStatus = "记忆整理失败：${error.message}") else it }
+                                }
+                            }
+                            scope.launch {
+                                delay(60_000)
+                                try {
+                                    memoryService.processPending(finalSession.id, flushIdle = true) { stage ->
+                                        uiState.update { if (it.currentSession?.id == finalSession.id) it.copy(memoryStatus = stage) else it }
+                                    }
+                                    val document = memoryService.store.read(finalSession.id)
+                                    uiState.update { state -> if (state.currentSession?.id == finalSession.id) state.copy(
+                                        memoryRecords = document?.records.orEmpty(),
+                                        memoryNeedsRebuild = document?.needsRebuild == true,
+                                    ) else state }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (error: Exception) {
+                                    uiState.update { if (it.currentSession?.id == finalSession.id) it.copy(memoryStatus = "记忆整理失败：${error.message}") else it }
+                                }
+                            }
                             uiState.update { it.copy(isGenerating = false) }
                             ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.GENERATION_ENDED, finalMessages.size)
                             ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.GENERATE_AFTER_DATA, finalMessages.size)
