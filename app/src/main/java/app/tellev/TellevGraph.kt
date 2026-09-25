@@ -119,7 +119,7 @@ class TellevGraph private constructor(
             val macroEngine = DefaultMacroEngine()
             val templateEvaluator = app.tellev.core.prompt.WebViewTemplateEvaluator(context)
             val promptEngine = DefaultPromptEngine(macroEngine,
-                app.tellev.core.prompt.DefaultPromptTemplateProcessor(javascriptEvaluator = templateEvaluator::evaluate))
+                app.tellev.core.prompt.DefaultPromptTemplateProcessor(javascriptEvaluator = templateEvaluator))
             // One shared client for every provider HTTP call (chat streaming,
             // image generation, TTS, translation) with uniform 5-minute
             // timeouts: reasoning models can stay silent between SSE bytes

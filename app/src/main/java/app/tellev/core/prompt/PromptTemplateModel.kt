@@ -11,6 +11,26 @@ data class PromptTemplateRequest(
     val worldEntries: List<PromptTemplateWorldEntry> = emptyList(),
     val worldCatalog: List<PromptTemplateWorldEntry> = emptyList(),
     val currentWorldBookId: String? = null,
+    /**
+     * Initial message-scope variables for the current generation (ST clones the
+     * previous floor's variables into the floor being generated). Tellev seeds
+     * this from the last message carrying variables / the card's init vars.
+     */
+    val messageVariables: JsonObject? = null,
+    /**
+     * Visible chat floors in ST's message shape for the getChatMessage(s) /
+     * matchChatMessages template family (ST-Prompt-Template chat.ts).
+     */
+    val chat: List<PromptTemplateChatMessage> = emptyList(),
+)
+
+/** ST `chat` entry subset used by the chat-reading template functions. */
+data class PromptTemplateChatMessage(
+    val id: Int,
+    val isUser: Boolean,
+    val isSystem: Boolean,
+    val name: String? = null,
+    val content: String,
 )
 
 data class PromptTemplateWorldEntry(
@@ -40,16 +60,25 @@ data class PromptTemplateResult(
 data class PromptTemplateVariableUpdates(
     val local: JsonObject? = null,
     val global: JsonObject? = null,
+    /**
+     * Message-scope (per-floor) variables written during the generate phase
+     * (ST default scope for setvar). The generation coordinator attaches this
+     * to the newly created assistant message — ChatMessage.variables[swipe].
+     */
+    val message: JsonObject? = null,
 )
 
 internal data class TemplateState(
     val context: MacroContext,
     val localVariables: MutableMap<String, Any?>,
     val globalVariables: MutableMap<String, Any?>,
+    val messageVariables: MutableMap<String, Any?> = linkedMapOf(),
     val initialLocalVariables: Map<String, Any?>,
     val initialGlobalVariables: Map<String, Any?>,
+    val initialMessageVariables: Map<String, Any?> = emptyMap(),
     val worldCatalog: List<PromptTemplateWorldEntry>,
     val currentWorldBookId: String?,
+    val chatMessages: List<PromptTemplateChatMessage> = emptyList(),
     val worldInfoStack: MutableList<String> = mutableListOf(),
     val variables: MutableMap<String, Any?> = linkedMapOf(),
     val locals: MutableMap<String, Any?> = mutableMapOf(),
@@ -58,6 +87,25 @@ internal data class TemplateState(
     fun warn(message: String) {
         warnings += message
     }
+
+    /**
+     * A throwaway copy for rendering historical floors: ST renders each floor
+     * once at creation (is_ejs_processed guard), so re-running a floor's
+     * template on every build must not re-apply its writes. Reads see the
+     * current values; writes land in these copies and are dropped.
+     */
+    fun isolatedSnapshot(): TemplateState = TemplateState(
+        context = context,
+        localVariables = PromptTemplateExpressionEvaluator.deepCopyMap(localVariables),
+        globalVariables = PromptTemplateExpressionEvaluator.deepCopyMap(globalVariables),
+        messageVariables = PromptTemplateExpressionEvaluator.deepCopyMap(messageVariables),
+        initialLocalVariables = initialLocalVariables,
+        initialGlobalVariables = initialGlobalVariables,
+        initialMessageVariables = initialMessageVariables,
+        worldCatalog = worldCatalog,
+        currentWorldBookId = currentWorldBookId,
+        variables = PromptTemplateExpressionEvaluator.deepCopyMap(variables),
+    )
 }
 
 internal sealed interface TemplateToken {

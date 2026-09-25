@@ -18,6 +18,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -243,10 +244,12 @@ class DefaultPromptEngineTest {
             ),
         )
 
+        // ST default scope: bare setvar writes the message layer (variables.ts:307).
         assertEquals(
             "calm",
-            result.promptTemplateVariableUpdates.local?.get("mood")?.jsonPrimitive?.content,
+            result.promptTemplateVariableUpdates.message?.get("mood")?.jsonPrimitive?.content,
         )
+        assertNull(result.promptTemplateVariableUpdates.local)
         assertEquals(
             "two",
             result.promptTemplateVariableUpdates.global?.get("chapter")?.jsonPrimitive?.content,
@@ -559,7 +562,10 @@ class DefaultPromptEngineTest {
 
         assertTrue(result.messages.first().content.contains("2"))
         assertEquals("1", scoped["x"])
-        assertEquals(JsonPrimitive(2.0), result.promptTemplateVariableUpdates.local?.get("x"))
+        // incvar's ST default outscope is the message layer (variables.ts:360);
+        // the macro's local write stays untouched in the local update diff.
+        assertNull(result.promptTemplateVariableUpdates.local)
+        assertEquals(JsonPrimitive(2.0), result.promptTemplateVariableUpdates.message?.get("x"))
         assertEquals("active", activeChat["x"])
     }
     @Test

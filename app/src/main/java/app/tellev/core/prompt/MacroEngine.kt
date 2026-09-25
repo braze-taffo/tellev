@@ -47,6 +47,12 @@ data class MacroContext(
     val lastCharMessage: String = "",
     /** {{lastMessageId}} — index of the last message in the chat. */
     val lastMessageId: String = "",
+    /** ST-Prompt-Template template constant: chat index of the last user message (-1 when none). */
+    val lastUserMessageId: Int = -1,
+    /** ST-Prompt-Template template constant: chat index of the last character message (-1 when none). */
+    val lastCharMessageId: Int = -1,
+    /** ST-Prompt-Template template constant: the character card id. */
+    val characterId: String = "",
     /** {{greeting::N}} — alternate greetings (index 1+ = alternateGreetings[N-1]). */
     val alternateGreetings: List<String> = emptyList(),
     /**

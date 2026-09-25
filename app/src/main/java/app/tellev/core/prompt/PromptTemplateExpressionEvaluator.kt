@@ -1,5 +1,6 @@
 package app.tellev.core.prompt
 
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -24,26 +25,35 @@ internal object PromptTemplateExpressionEvaluator {
     fun renderTemplate(
         template: String,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
+        isolated: Boolean = false,
     ): String {
         if (!template.contains("<%")) return template
-        javascriptEvaluator?.let { evaluate ->
+        javascriptEvaluator?.let { bridge ->
             val request = buildJsonObject {
                 put("template", JsonPrimitive(template))
                 put("local", toJsonObject(state.localVariables))
                 put("global", toJsonObject(state.globalVariables))
+                put("messageVariables", toJsonObject(state.messageVariables))
                 put("definitions", toJsonObject(state.locals))
-                put("context", toJsonObject(mapOf(
-                    "user" to state.context.userName, "char" to state.context.characterName,
-                    "name1" to state.context.userName, "name2" to state.context.characterName,
-                )))
+                put("context", toJsonObject(templateContextMap(state)))
                 put("currentWorldBookId", state.currentWorldBookId?.let(::JsonPrimitive) ?: JsonNull)
+                put("isolated", JsonPrimitive(isolated))
+                put("chat", JsonArray(state.chatMessages.map { message ->
+                    buildJsonObject {
+                        put("id", JsonPrimitive(message.id))
+                        put("is_user", JsonPrimitive(message.isUser))
+                        put("is_system", JsonPrimitive(message.isSystem))
+                        message.name?.let { put("name", JsonPrimitive(it)) }
+                        put("mes", JsonPrimitive(message.content))
+                    }
+                }))
                 put("worldCatalog", JsonArray(state.worldCatalog.map { entry ->
                     toJsonObject(mapOf("id" to entry.id, "comment" to entry.comment,
                         "title" to entry.title, "content" to entry.content, "bookId" to entry.bookId, "bookName" to entry.bookName))
                 }))
             }
-            val result = evaluate(request)
+            val result = bridge.evaluate(request)
             fun replace(target: MutableMap<String, Any?>, field: String) {
                 val values = result[field] as? JsonObject ?: return
                 target.clear()
@@ -51,6 +61,7 @@ internal object PromptTemplateExpressionEvaluator {
             }
             replace(state.localVariables, "local")
             replace(state.globalVariables, "global")
+            replace(state.messageVariables, "message")
             replace(state.locals, "definitions")
             refreshMergedVariables(state)
             return (result["content"] as? JsonPrimitive)?.content.orEmpty()
@@ -64,7 +75,7 @@ internal object PromptTemplateExpressionEvaluator {
         start: Int,
         end: Int,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): String {
         val out = StringBuilder()
         var index = start
@@ -122,7 +133,7 @@ internal object PromptTemplateExpressionEvaluator {
     private fun executeCode(
         code: String,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): String {
         val output = StringBuilder()
         val statements = splitTopLevel(code, ';').map { it.trim() }.filter { it.isNotEmpty() }
@@ -157,7 +168,7 @@ internal object PromptTemplateExpressionEvaluator {
     private fun evaluateList(
         expression: String,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): List<Any?> {
         return when (val value = evaluate(expression, state, javascriptEvaluator)) {
             is List<*> -> value
@@ -173,7 +184,7 @@ internal object PromptTemplateExpressionEvaluator {
     fun evaluate(
         rawExpression: String,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): Any? {
         var expression = rawExpression.trim().removeSuffix(";").trim()
         if (expression.startsWith("await ")) expression = expression.removePrefix("await ").trim()
@@ -188,7 +199,8 @@ internal object PromptTemplateExpressionEvaluator {
 
         splitByOperator(expression, "??")?.let { (left, right) ->
             val leftValue = evaluate(left, state, javascriptEvaluator)
-            return if (leftValue == null || leftValue == "") evaluate(right, state, javascriptEvaluator) else leftValue
+            // JS ?? only falls through on null/undefined — empty strings pass.
+            return if (leftValue == null) evaluate(right, state, javascriptEvaluator) else leftValue
         }
         splitByOperator(expression, "||")?.let { (left, right) ->
             val leftValue = evaluate(left, state, javascriptEvaluator)
@@ -218,6 +230,7 @@ internal object PromptTemplateExpressionEvaluator {
         expression.toDoubleOrNull()?.let { return it }
 
         parseArrayLiteral(expression, state, javascriptEvaluator)?.let { return it }
+        parseObjectLiteral(expression, state, javascriptEvaluator)?.let { return it }
 
         includesPattern.matchEntire(expression)?.let { match ->
             val target = stringify(evaluate(match.groupValues[1], state, javascriptEvaluator))
@@ -242,79 +255,128 @@ internal object PromptTemplateExpressionEvaluator {
         name: String,
         args: List<Any?>,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): Any? {
         return when (name) {
             "getwi", "getWorldInfo" -> resolveWorldInfo(args, state, javascriptEvaluator)
-            // ST-Prompt-Template exposes both lowercase aliases (legacy) and the
-            // camelCase scope-explicit family (ejs.ts:279-307); accept both.
-            "getvar", "getchatvar", "getLocalVar" -> {
+            // ST-Prompt-Template variables.ts family. Second arguments are
+            // OPTIONS (string shorthand / map), not default values — ST only
+            // accepts defaults via {defaults: ...}. Scope defaults follow ST:
+            // reads default to the merged cache, writes default to message.
+            "getvar", "getchatvar" -> {
                 val key = stringify(args.getOrNull(0))
-                val fallback = args.getOrNull(1)
-                getPath(state.localVariables, key) ?: fallback ?: ""
+                val hints = varOptionHints(args.getOrNull(1))
+                getPath(scopeMap(state, hints.scope), key) ?: hints.defaults
+            }
+            "getLocalVar" -> {
+                val key = stringify(args.getOrNull(0))
+                val hints = varOptionHints(args.getOrNull(1))
+                getPath(state.localVariables, key) ?: hints.defaults
             }
             "getglobalvar", "getGlobalVar" -> {
                 val key = stringify(args.getOrNull(0))
-                val fallback = args.getOrNull(1)
-                getPath(state.globalVariables, key) ?: fallback ?: ""
+                val hints = varOptionHints(args.getOrNull(1))
+                getPath(state.globalVariables, key) ?: hints.defaults
             }
-            "setvar", "setchatvar", "setLocalVar" -> {
+            "getMessageVar" -> {
                 val key = stringify(args.getOrNull(0))
-                setLocalVariable(state, key, args.getOrNull(1))
-                ""
+                val hints = varOptionHints(args.getOrNull(1))
+                getPath(state.messageVariables, key) ?: hints.defaults
+            }
+            "setvar" -> {
+                val key = stringify(args.getOrNull(0))
+                setVariableScoped(state, key, args.getOrNull(1), varOptionHints(args.getOrNull(2)))
+            }
+            "setchatvar", "setLocalVar" -> {
+                val key = stringify(args.getOrNull(0))
+                setVariableScoped(state, key, args.getOrNull(1), varOptionHints(args.getOrNull(2)), forcedScope = "local")
             }
             "setglobalvar", "setGlobalVar" -> {
                 val key = stringify(args.getOrNull(0))
-                setGlobalVariable(state, key, args.getOrNull(1))
-                ""
+                setVariableScoped(state, key, args.getOrNull(1), varOptionHints(args.getOrNull(2)), forcedScope = "global")
             }
-            "incvar", "incLocalVar" -> {
+            "setMessageVar" -> {
+                val key = stringify(args.getOrNull(0))
+                setVariableScoped(state, key, args.getOrNull(1), varOptionHints(args.getOrNull(2)), forcedScope = "message")
+            }
+            "incvar" -> {
                 val key = stringify(args.getOrNull(0))
                 val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
-                val next = numeric(getPath(state.localVariables, key)) + amount
-                setLocalVariable(state, key, next)
-                formatNumber(next)
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)))
             }
-            "decvar", "decLocalVar" -> {
+            "incLocalVar" -> {
                 val key = stringify(args.getOrNull(0))
                 val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
-                val next = numeric(getPath(state.localVariables, key)) - amount
-                setLocalVariable(state, key, next)
-                formatNumber(next)
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)), forcedOutscope = "local")
             }
             "incglobalvar", "incGlobalVar" -> {
                 val key = stringify(args.getOrNull(0))
                 val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
-                val next = numeric(getPath(state.globalVariables, key)) + amount
-                setGlobalVariable(state, key, next)
-                formatNumber(next)
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)), forcedOutscope = "global")
+            }
+            "incMessageVar" -> {
+                val key = stringify(args.getOrNull(0))
+                val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)), forcedOutscope = "message")
+            }
+            "decvar" -> {
+                val key = stringify(args.getOrNull(0))
+                val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)), decrease = true)
+            }
+            "decLocalVar" -> {
+                val key = stringify(args.getOrNull(0))
+                val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)), forcedOutscope = "local", decrease = true)
             }
             "decglobalvar", "decGlobalVar" -> {
                 val key = stringify(args.getOrNull(0))
                 val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
-                val next = numeric(getPath(state.globalVariables, key)) - amount
-                setGlobalVariable(state, key, next)
-                formatNumber(next)
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)), forcedOutscope = "global", decrease = true)
             }
-            "delvar", "delLocalVar" -> {
+            "decMessageVar" -> {
                 val key = stringify(args.getOrNull(0))
-                deletePath(state.localVariables, key)
-                refreshMergedVariables(state)
+                val amount = args.getOrNull(1)?.let { numeric(it) } ?: 1.0
+                changeVariableScoped(state, key, amount, varOptionHints(args.getOrNull(2)), forcedOutscope = "message", decrease = true)
+            }
+            "delvar" -> {
+                deleteVariableScoped(state, stringify(args.getOrNull(0)), varOptionHints(args.getOrNull(1)))
+                ""
+            }
+            "delLocalVar" -> {
+                deleteVariableScoped(state, stringify(args.getOrNull(0)), varOptionHints(args.getOrNull(1)), forcedScope = "local")
                 ""
             }
             "delGlobalVar" -> {
-                val key = stringify(args.getOrNull(0))
-                deletePath(state.globalVariables, key)
-                refreshMergedVariables(state)
+                deleteVariableScoped(state, stringify(args.getOrNull(0)), varOptionHints(args.getOrNull(1)), forcedScope = "global")
+                ""
+            }
+            "delMessageVar" -> {
+                deleteVariableScoped(state, stringify(args.getOrNull(0)), varOptionHints(args.getOrNull(1)), forcedScope = "message")
                 ""
             }
             // ST insertVariable (variables.ts:559): array -> push / splice at
             // index (negative counts from the end); otherwise assign.
-            "insvar", "insertLocalVar" -> {
-                insertVariable(state.localVariables, args) { path, value -> setLocalVariable(state, path, value) }
+            "insvar" -> {
+                val hints = varOptionHints(args.getOrNull(3))
+                insertVariable(scopeMap(state, hints.scope ?: "message"), args) { path, value ->
+                    setVariableScoped(state, path, value, VarOptionHints(scope = hints.scope ?: "message"))
+                }
+            }
+            "insertLocalVar" -> {
+                insertVariable(state.localVariables, args) { path, value ->
+                    setVariableScoped(state, path, value, VarOptionHints(scope = "local"))
+                }
             }
             "insertGlobalVar" -> {
-                insertVariable(state.globalVariables, args) { path, value -> setGlobalVariable(state, path, value) }
+                insertVariable(state.globalVariables, args) { path, value ->
+                    setVariableScoped(state, path, value, VarOptionHints(scope = "global"))
+                }
+            }
+            "insertMessageVar" -> {
+                insertVariable(state.messageVariables, args) { path, value ->
+                    setVariableScoped(state, path, value, VarOptionHints(scope = "message"))
+                }
             }
             "String" -> stringify(args.getOrNull(0))
             "Number" -> numeric(args.getOrNull(0))
@@ -338,6 +400,94 @@ internal object PromptTemplateExpressionEvaluator {
                 root
             }
             "_.has" -> getPath(args.getOrNull(0), stringify(args.getOrNull(1))) != null
+            // ST-Prompt-Template inject.ts parity; the WebView path implements
+            // the same trio in template.js (see PromptInjectedRegistry docs).
+            "injectPrompt" -> {
+                val key = stringify(args.getOrNull(0))
+                val prompt = stringify(args.getOrNull(1))
+                // Coerce numeric strings like JS arithmetic does ("2" → 2).
+                val order = args.getOrNull(2)?.let { numeric(it).toInt() } ?: 100
+                val sticky = args.getOrNull(3)?.let { numeric(it).toInt() } ?: 0
+                val uid = args.getOrNull(4)?.let { stringify(it) } ?: ""
+                PromptInjectedRegistry.inject(key, prompt, order, sticky, uid)
+                ""
+            }
+            "getPromptsInjected" -> {
+                val key = stringify(args.getOrNull(0))
+                // ST generate-phase default (inject.ts:56 + handler.ts:247):
+                // outlet on, collected by the end-of-build scan. A non-empty
+                // postprocess forces inline collection even when outlet is on
+                // (inject.ts:59-60) — the scan cannot postprocess.
+                @Suppress("UNCHECKED_CAST")
+                val postprocess = (args.getOrNull(1) as? List<Any?>)?.mapNotNull { pp ->
+                    (pp as? Map<*, *>)?.let { m ->
+                        val search = m["search"]
+                        val replace = stringify(m["replace"] ?: "")
+                        when (search) {
+                            is Regex -> search to replace
+                            null -> null
+                            else -> stringify(search) to replace
+                        }
+                    }
+                } ?: emptyList()
+                val outlet = args.getOrNull(2)?.let { truthy(it) } ?: true
+                if (outlet && postprocess.isEmpty()) {
+                    "{{outletPromptsInjected:${key}}}"
+                } else {
+                    PromptInjectedRegistry.get(key, postprocess)
+                }
+            }
+            "hasPromptsInjected" -> PromptInjectedRegistry.has(stringify(args.getOrNull(0)))
+            "SillyTavern.getContext" -> emptyMap<String, Any?>()
+            "execute" -> ""
+            // ST-Prompt-Template json-patch.ts / chat.ts parity; the WebView
+            // path implements the same functions in template.js.
+            "parseJSON" -> parseJsonTolerant(stringify(args.getOrNull(0)))
+            "jsonPatch" -> applyJsonPatch(args.getOrNull(0), args.getOrNull(1))
+            "patchVariables" -> {
+                val key = stringify(args.getOrNull(0))
+                val hints = varOptionHints(args.getOrNull(2))
+                val doc = getPath(scopeMap(state, hints.scope), key) ?: linkedMapOf<String, Any?>()
+                val change = args.getOrNull(1)
+                val patch = if (change is String) parseJsonTolerant(change) else change
+                setVariableScoped(state, key, applyJsonPatch(doc, patch), hints)
+            }
+            "getChatMessage" -> {
+                val index = args.getOrNull(0)?.let { numeric(it).toInt() } ?: 0
+                val role = args.getOrNull(1)?.let { stringify(it) }
+                chatMessages(state, role).getOrNull(if (index > -1) index else chatMessages(state, role).size + index)
+                    ?.content.orEmpty()
+            }
+            "getChatMessages" -> {
+                // ST overloads: (count) / (count, role) / (start, end) / (start, end, role).
+                // Returns a list of contents; <%= %> renders it comma-joined
+                // like Array.toString.
+                val role = (args.getOrNull(1) as? String) ?: args.getOrNull(2)?.let { stringify(it) }
+                val messages = chatMessages(state, role)
+                val first = args.getOrNull(0)?.let { numeric(it).toInt() } ?: messages.size
+                val end = args.getOrNull(1) as? Number
+                sliceChat(messages, first, end?.toInt()).map { it.content }
+            }
+            "matchChatMessages" -> {
+                val patterns = when (val pattern = args.getOrNull(0)) {
+                    is List<*> -> pattern.map { stringify(it) }
+                    null -> emptyList()
+                    else -> listOf(stringify(pattern))
+                }
+                val options = args.getOrNull(1) as? Map<*, *>
+                val role = options?.get("role")?.let { stringify(it) }
+                val messages = chatMessages(state, role)
+                val window = sliceChat(
+                    messages,
+                    (options?.get("start") as? Number)?.toInt() ?: -2,
+                    (options?.get("end") as? Number)?.toInt(),
+                ).map { it.content }
+                val and = options?.get("and") == true
+                window.any { message ->
+                    if (and) patterns.all { message.contains(it) }
+                    else patterns.any { message.contains(it) }
+                }
+            }
             else -> {
                 state.warn("Unsupported prompt template function: $name")
                 UnsupportedExpression
@@ -348,7 +498,7 @@ internal object PromptTemplateExpressionEvaluator {
     private fun resolveWorldInfo(
         args: List<Any?>,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): String {
         val requestedBook = args.getOrNull(0)?.let(::stringify)?.takeIf { it.isNotBlank() }
         val query = args.getOrNull(1)?.let(::stringify)?.trim().orEmpty()
@@ -389,6 +539,47 @@ internal object PromptTemplateExpressionEvaluator {
         }
     }
 
+    /**
+     * ST-Prompt-Template prepareContext (ejs.ts:211) constants that Tellev can
+     * source from existing data. These become bare identifiers inside EJS
+     * (`_with` scope); a missing name is a hard ReferenceError, so every name
+     * a card might reference is declared even when the value has to be null or
+     * empty. Names Tellev cannot source meaningfully (faker, SillyTavern
+     * internals, the execute STscript runner) are stubbed JS-side in
+     * template.js.
+     */
+    private fun templateContextMap(state: TemplateState): Map<String, Any?> = mapOf(
+        "user" to state.context.userName,
+        "name1" to state.context.userName,
+        "userName" to state.context.userName,
+        "char" to state.context.characterName,
+        "name2" to state.context.characterName,
+        "charName" to state.context.characterName,
+        "assistantName" to state.context.characterName,
+        "lastMessage" to state.context.lastMessage,
+        "lastUserMessage" to state.context.lastUserMessage,
+        "lastCharMessage" to state.context.lastCharMessage,
+        "lastMessageId" to (state.context.lastMessageId.toIntOrNull() ?: state.context.lastMessageId),
+        "lastUserMessageId" to state.context.lastUserMessageId,
+        "lastCharMessageId" to state.context.lastCharMessageId,
+        "characterId" to state.context.characterId,
+        "chatId" to "",
+        "charAvatar" to "",
+        "userAvatar" to "",
+        "model" to state.context.modelName,
+        "runType" to "generate",
+        "generateType" to "normal",
+        // ST binds the char-embedded lorebook name; Tellev's currentWorldBookId
+        // is the same book — but only when the card actually ships one
+        // (embeddedCharacterBookId synthesizes an id even for bookless cards).
+        "charLoreBook" to state.currentWorldBookId
+            ?.takeIf { id -> state.worldCatalog.any { it.bookId == id } },
+        "userLoreBook" to null,
+        "chatLoreBook" to null,
+        "groups" to emptyList<Any?>(),
+        "groupId" to "",
+    )
+
     private fun JsonObject.stringContent(key: String): String? =
         (this[key] as? JsonPrimitive)?.content
 
@@ -400,12 +591,32 @@ internal object PromptTemplateExpressionEvaluator {
         return when (expression) {
             "char", "name2", "charName", "characterName" -> state.context.characterName
             "user", "name1", "userName" -> state.context.userName
+            "assistantName" -> state.context.characterName
             "description", "charDescription" -> state.context.characterDescription
             "personality" -> state.context.characterPersonality
             "scenario" -> state.context.characterScenario
             "mes_example", "dialogueExamples" -> state.context.exampleMessages
             "firstMessage" -> state.context.firstMessage
             "lastMessage" -> state.context.lastMessage
+            "lastUserMessage" -> state.context.lastUserMessage
+            "lastCharMessage" -> state.context.lastCharMessage
+            "lastMessageId" -> (state.context.lastMessageId.toIntOrNull() ?: state.context.lastMessageId)
+            "lastUserMessageId" -> state.context.lastUserMessageId
+            "lastCharMessageId" -> state.context.lastCharMessageId
+            "characterId" -> state.context.characterId
+            "chatId", "charAvatar", "userAvatar" -> ""
+            "faker" -> null
+            "model" -> state.context.modelName
+            "runType" -> "generate"
+            "generateType" -> "normal"
+            "charLoreBook" -> state.currentWorldBookId
+                ?.takeIf { id -> state.worldCatalog.any { it.bookId == id } }
+            "userLoreBook", "chatLoreBook" -> null
+            "groups" -> emptyList<Any?>()
+            "groupId" -> ""
+            // ST exposes SillyTavern.getContext(); Tellev stubs it to a
+            // permissive empty context (template.js does the same on WebView).
+            "SillyTavern" -> emptyMap<String, Any?>()
             "group" -> state.context.groupMemberNames
             "variables", "vars" -> state.variables
             else -> {
@@ -454,6 +665,9 @@ internal object PromptTemplateExpressionEvaluator {
         )
     }
 
+    /** Initial message-scope variables for the current generation. */
+    fun messageVariableMap(element: JsonObject?): Map<String, Any?> = variableMap(element)
+
     private fun variableMap(element: JsonElement?): Map<String, Any?> {
         return (element?.let(::toKotlinValue) as? Map<*, *>)
             ?.mapNotNull { (key, value) -> (key as? String)?.let { it to value } }
@@ -465,6 +679,302 @@ internal object PromptTemplateExpressionEvaluator {
         state.variables.clear()
         state.variables.putAll(deepCopyMap(state.globalVariables))
         state.variables.putAll(deepCopyMap(state.localVariables))
+        // ST merges the message layer on top (variables.ts:52-59): message >
+        // local > global. Floors' own snapshots are not tracked per message.
+        state.variables.putAll(deepCopyMap(state.messageVariables))
+    }
+
+    // ── ST variables.ts option/scope model ───────────────────────────────
+
+    private fun chatMessages(state: TemplateState, role: String?): List<PromptTemplateChatMessage> =
+        state.chatMessages.filter { message ->
+            when (role) {
+                null -> true
+                "user" -> message.isUser
+                "system" -> message.isSystem
+                "assistant" -> !message.isUser && !message.isSystem
+                else -> true
+            }
+        }
+
+    /** ST slice semantics: positive = from start, negative = from end; (start, end) range. */
+    private fun sliceChat(
+        messages: List<PromptTemplateChatMessage>,
+        startOrCount: Int,
+        end: Int?,
+    ): List<PromptTemplateChatMessage> = when {
+        startOrCount > 0 && end != null -> messages.sliceSafe(startOrCount, end)
+        startOrCount > 0 -> messages.take(startOrCount)
+        startOrCount < 0 && end != null -> messages.sliceSafe(messages.size + startOrCount, messages.size + end)
+        startOrCount < 0 -> messages.takeLast(-startOrCount)
+        else -> emptyList()
+    }
+
+    private fun <T> List<T>.sliceSafe(start: Int, end: Int): List<T> {
+        val from = start.coerceIn(0, size)
+        val to = end.coerceIn(from, size)
+        return subList(from, to)
+    }
+
+    /**
+     * Tolerant JSON parse (ST uses the jsonrepair lib): strict first, then
+     * trailing-comma / unquoted-key / single-quote repairs, each validated by
+     * a full reparse before acceptance.
+     */
+    private fun parseJsonTolerant(text: String): Any? {
+        val trimmed = text.trim()
+        try {
+            return toKotlinValue(Json.parseToJsonElement(trimmed))
+        } catch (_: Exception) {}
+        val noTrailing = trimmed.replace(Regex(",\\s*([}\\]])"), "$1")
+        val unquotedKeys = noTrailing.replace(Regex("([{,]\\s*)([A-Za-z_$][\\w$]*)\\s*:"), "$1\"$2\":")
+        val singleQuoted = unquotedKeys.replace(Regex("'((?:[^'\"\\\\]|\\\\.)*)'"), "\"$1\"")
+        for (attempt in listOf(noTrailing, unquotedKeys, singleQuoted)) {
+            try {
+                return toKotlinValue(Json.parseToJsonElement(attempt))
+            } catch (_: Exception) {}
+        }
+        throw IllegalArgumentException("parseJSON: unable to repair input")
+    }
+
+    /** RFC 6902 JSON Patch over Kotlin maps/lists (ST jsonPatch, lodash-backed). */
+    private fun applyJsonPatch(doc: Any?, patches: Any?): Any? {
+        val working = deepCopyValue(doc)
+        val operations = patches as? List<*> ?: return working
+        for (operation in operations) {
+            val patch = operation as? Map<*, *> ?: continue
+            val op = patch["op"] as? String ?: continue
+            val path = patch["path"]?.toString() ?: continue
+            val fromPath = patch["from"]?.toString()
+            when (op) {
+                "add", "replace", "set", "assign" -> setPointer(working, path, patch["value"])
+                "remove" -> removePointer(working, path)
+                "move" -> {
+                    val from = fromPath ?: continue
+                    val moved = getPointer(working, from)
+                    if (moved != null) {
+                        removePointer(working, from)
+                        setPointer(working, path, moved)
+                    }
+                }
+                "copy" -> {
+                    val from = fromPath ?: continue
+                    getPointer(working, from)?.let { setPointer(working, path, it) }
+                }
+                "test" -> {
+                    // ST: test failure aborts and returns the ORIGINAL document.
+                    if (!jsonEquals(getPointer(working, path), patch["value"])) return doc
+                }
+            }
+        }
+        return working
+    }
+
+    private fun pointerSegments(pointer: String): List<String> {
+        if (pointer.isEmpty()) return emptyList()
+        if (!pointer.startsWith("/")) throw IllegalArgumentException("Invalid JSON Pointer: must start with \"/\".")
+        return pointer.substring(1).split("/").map { it.replace("~1", "/").replace("~0", "~") }
+    }
+
+    private fun getPointer(doc: Any?, pointer: String): Any? {
+        var current: Any? = doc
+        for (segment in pointerSegments(pointer)) {
+            current = when (current) {
+                is Map<*, *> -> current[segment]
+                is List<*> -> segment.toIntOrNull()?.let { current.getOrNull(it) }
+                else -> return null
+            }
+        }
+        return current
+    }
+
+    private fun setPointer(doc: Any?, pointer: String, value: Any?) {
+        val segments = pointerSegments(pointer)
+        if (segments.isEmpty()) return
+        if (segments.last() == "-") {
+            val parent = getPointer(doc, parentPointer(segments))
+            if (parent is MutableList<*>) {
+                @Suppress("UNCHECKED_CAST")
+                (parent as MutableList<Any?>).add(value)
+            }
+            return
+        }
+        val parent = getPointer(doc, parentPointer(segments)) ?: return
+        when (parent) {
+            is MutableMap<*, *> -> @Suppress("UNCHECKED_CAST") (parent as MutableMap<String, Any?>)[segments.last()] = value
+            is MutableList<*> -> segments.last().toIntOrNull()?.let { index ->
+                @Suppress("UNCHECKED_CAST")
+                val list = parent as MutableList<Any?>
+                while (list.size < index) list.add(null)
+                if (index == list.size) list.add(value) else list[index] = value
+            }
+        }
+    }
+
+    private fun removePointer(doc: Any?, pointer: String): Boolean {
+        val segments = pointerSegments(pointer)
+        if (segments.isEmpty()) return false
+        val parent = getPointer(doc, parentPointer(segments)) ?: return false
+        return when (parent) {
+            is MutableMap<*, *> -> @Suppress("UNCHECKED_CAST") (parent as MutableMap<String, Any?>).remove(segments.last()) != null
+            is MutableList<*> -> segments.last().toIntOrNull()?.let { index ->
+                if (index in parent.indices) { @Suppress("UNCHECKED_CAST") (parent as MutableList<Any?>).removeAt(index); true } else false
+            } ?: false
+            else -> false
+        }
+    }
+
+    private fun parentPointer(segments: List<String>): String {
+        val parent = segments.dropLast(1)
+        // Empty pointer = the whole document (root-level key).
+        if (parent.isEmpty()) return ""
+        return "/" + parent.joinToString("/")
+    }
+
+    private fun jsonEquals(left: Any?, right: Any?): Boolean {
+        val leftNormalized = if (left is Number) left.toDouble() else left
+        val rightNormalized = if (right is Number) right.toDouble() else right
+        return leftNormalized == rightNormalized
+    }
+
+    private class VarOptionHints(
+        val scope: String? = null,
+        val inscope: String? = null,
+        val outscope: String? = null,
+        val flags: String? = null,
+        val results: String? = null,
+        val merge: Boolean = false,
+        val defaults: Any? = null,
+    )
+
+    /** ST optionsConverter (variables.ts:744): string shorthand / boolean / map. */
+    private fun varOptionHints(arg: Any?): VarOptionHints = when (arg) {
+        null -> VarOptionHints()
+        is String -> when (arg) {
+            "old", "new", "fullcache" -> VarOptionHints(results = arg)
+            "nx", "xx", "nxs", "xxs", "n" -> VarOptionHints(flags = arg)
+            "cache", "global", "local", "message", "initial" ->
+                VarOptionHints(scope = arg, inscope = arg, outscope = arg)
+            else -> VarOptionHints()
+        }
+        // ST: dryRun=true permits writing during the preparation phase; there
+        // is no separate preparation phase here, so it is a no-op.
+        is Boolean -> VarOptionHints()
+        is Map<*, *> -> VarOptionHints(
+            scope = arg["scope"] as? String,
+            inscope = (arg["inscope"] ?: arg["scope"]) as? String,
+            outscope = (arg["outscope"] ?: arg["scope"]) as? String,
+            flags = arg["flags"] as? String,
+            results = arg["results"] as? String,
+            merge = arg["merge"] == true,
+            defaults = arg["defaults"],
+        )
+        else -> VarOptionHints()
+    }
+
+    /** Read scope resolution: null/'cache' → merged snapshot (ST default 'cache'). */
+    private fun scopeMap(state: TemplateState, scope: String?): MutableMap<String, Any?> = when (scope) {
+        "global" -> state.globalVariables
+        "local" -> state.localVariables
+        "message" -> state.messageVariables
+        else -> state.variables
+    }
+
+    private fun setVariableScoped(
+        state: TemplateState,
+        key: String,
+        value: Any?,
+        hints: VarOptionHints,
+        forcedScope: String? = null,
+    ): Any? {
+        // ST setVariable: switch (scope || 'message') — bare setvar defaults
+        // to the message layer (variables.ts:307).
+        val scope = forcedScope ?: hints.scope ?: "message"
+        val target = when (scope) {
+            "global" -> state.globalVariables
+            "local" -> state.localVariables
+            "message" -> state.messageVariables
+            else -> null
+        }
+        // ST checks nxs/xxs via getVariable with the same options: the write
+        // scope when explicit, the cache for the default scope.
+        val checkSource = target ?: state.variables
+        val oldValue = if (hints.results == "old" || hints.merge) getPath(state.variables, key) else null
+        if (hints.flags == "nxs" && getPath(checkSource, key) != null) {
+            return if (hints.results == "old") oldValue else null
+        }
+        if (hints.flags == "xxs" && getPath(checkSource, key) == null) {
+            return if (hints.results == "old") oldValue else null
+        }
+        var newValue = value
+        if (hints.merge) newValue = mergeValues(oldValue, value)
+        if (target != null) {
+            if (newValue == null) deletePath(target, key) else setPath(target, key, newValue)
+            refreshMergedVariables(state)
+        } else if (newValue != null) {
+            // scope 'cache'/'initial': cache-sync only (ST has no write case).
+            setPath(state.variables, key, newValue)
+        }
+        return when (hints.results) {
+            "old" -> oldValue
+            "fullcache" -> state.variables
+            else -> newValue
+        }
+    }
+
+    /** ST increaseVariable/decreaseVariable: reads inscope (default cache), writes outscope (default message). */
+    private fun changeVariableScoped(
+        state: TemplateState,
+        key: String,
+        amount: Double,
+        hints: VarOptionHints,
+        forcedOutscope: String? = null,
+        decrease: Boolean = false,
+    ): String {
+        val source = scopeMap(state, hints.inscope)
+        val target = scopeMap(state, forcedOutscope ?: hints.outscope ?: "message")
+        val current = numeric(getPath(source, key))
+        val next = if (decrease) current - amount else current + amount
+        setPath(target, key, next)
+        refreshMergedVariables(state)
+        return formatNumber(next)
+    }
+
+    private fun deleteVariableScoped(
+        state: TemplateState,
+        key: String,
+        hints: VarOptionHints,
+        forcedScope: String? = null,
+    ) {
+        val scope = forcedScope ?: hints.scope ?: "message"
+        val target = scopeMap(state, scope)
+        deletePath(target, key)
+        if (scope != "cache") refreshMergedVariables(state)
+    }
+
+    /** ST merge option: arrays concat onto arrays, otherwise lodash-style deep merge with arrays replaced. */
+    private fun mergeValues(oldValue: Any?, value: Any?): Any? = when {
+        (oldValue == null || oldValue is List<*>) && value is List<*> -> {
+            val list = (oldValue as? List<*>)?.toMutableList() ?: mutableListOf()
+            list.addAll(value)
+            list
+        }
+        oldValue is MutableMap<*, *> && value is Map<*, *> -> deepMergeMaps(oldValue, value)
+        else -> value
+    }
+
+    private fun deepMergeMaps(dst: MutableMap<*, *>, src: Map<*, *>): Any? {
+        @Suppress("UNCHECKED_CAST")
+        val out = deepCopyMap(dst as Map<String, Any?>)
+        src.forEach { (key, srcValue) ->
+            val dstValue = out[key.toString()]
+            out[key.toString()] = if (dstValue is MutableMap<*, *> && srcValue is Map<*, *>) {
+                deepMergeMaps(dstValue, srcValue)
+            } else {
+                srcValue
+            }
+        }
+        return out
     }
 
     private fun setLocalVariable(state: TemplateState, path: String, value: Any?) {
@@ -523,12 +1033,38 @@ internal object PromptTemplateExpressionEvaluator {
     private fun parseArrayLiteral(
         expression: String,
         state: TemplateState,
-        javascriptEvaluator: ((JsonObject) -> JsonObject)? = null,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
     ): List<Any?>? {
         if (!expression.startsWith("[") || !expression.endsWith("]")) return null
         val inner = expression.drop(1).dropLast(1)
         if (inner.isBlank()) return emptyList()
         return splitArguments(inner).map { evaluate(it, state, javascriptEvaluator) }
+    }
+
+    /**
+     * Simple `{key: value}` literals — enough for ST variable options
+     * (`{defaults: 0}`, `{scope: 'global'}`, `{flags: 'nxs'}`). Keys are bare
+     * identifiers or quoted strings; values are full expressions.
+     */
+    private fun parseObjectLiteral(
+        expression: String,
+        state: TemplateState,
+        javascriptEvaluator: PromptTemplateJsBridge? = null,
+    ): Map<String, Any?>? {
+        if (!expression.startsWith("{") || !expression.endsWith("}")) return null
+        val inner = expression.drop(1).dropLast(1).trim()
+        val out = linkedMapOf<String, Any?>()
+        if (inner.isEmpty()) return out
+        for (part in splitTopLevel(inner, ',')) {
+            val pair = splitTopLevel(part.trim(), ':')
+            if (pair.size != 2) return null
+            val rawKey = pair[0].trim()
+            val key = parseStringLiteral(rawKey)
+                ?: rawKey.takeIf { Regex("[A-Za-z_$][\\w$]*").matches(it) }
+                ?: return null
+            out[key] = evaluate(pair[1].trim(), state, javascriptEvaluator)
+        }
+        return out
     }
 
     private fun getPath(root: Any?, path: String): Any? {

@@ -155,7 +155,9 @@ class PromptTemplateProcessorTest {
         )
 
         assertEquals("", result.messages.single().content)
-        assertEquals("calm", result.variableUpdates.local?.get("mood")?.jsonPrimitive?.content)
+        // ST default scope: bare setvar writes the message layer (variables.ts:307).
+        assertNull(result.variableUpdates.local)
+        assertEquals("calm", result.variableUpdates.message?.get("mood")?.jsonPrimitive?.content)
         assertEquals("two", result.variableUpdates.global?.get("chapter")?.jsonPrimitive?.content)
     }
 
@@ -201,7 +203,7 @@ class PromptTemplateProcessorTest {
                         role = MessageRole.System,
                         content = "<% delLocalVar('gone') %>" +
                             "<% insertLocalVar('list', 'b') %><% insertLocalVar('list', 'a', 0) %>" +
-                            "<%= getLocalVar('list.0') %><%= getLocalVar('list.1') %>|<%= getLocalVar('gone', 'deleted') %>|" +
+                            "<%= getLocalVar('list.0') %><%= getLocalVar('list.1') %>|<%= getLocalVar('gone', {defaults: 'deleted'}) %>|" +
                             "<% insertGlobalVar('scalar', 'v') %><%= getGlobalVar('scalar') %>",
                     ),
                 ),
