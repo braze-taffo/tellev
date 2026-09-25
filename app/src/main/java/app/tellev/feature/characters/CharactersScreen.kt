@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.MoreVert
@@ -96,6 +97,7 @@ fun CharactersListScreen(
     viewModel: CharactersViewModel,
     onCharacterClick: (String) -> Unit,
     onCreateWithAi: () -> Unit = {},
+    onEditWithAi: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -256,6 +258,7 @@ fun CharactersListScreen(
                                 character = character,
                                 avatarFile = state.avatarFiles[character.id],
                                 onClick = { onCharacterClick(character.id) },
+                                onEditWithAi = { onEditWithAi(character.id) },
                                 onDuplicate = { viewModel.duplicateCharacter(character.id) },
                                 onDelete = { viewModel.deleteCharacter(character.id) },
                                 onExport = {
@@ -281,6 +284,7 @@ private fun CharacterListItem(
     character: app.tellev.core.model.CharacterSummary,
     avatarFile: java.io.File?,
     onClick: () -> Unit,
+    onEditWithAi: () -> Unit,
     onDuplicate: () -> Unit,
     onDelete: () -> Unit,
     onExport: () -> Unit,
@@ -360,6 +364,14 @@ private fun CharacterListItem(
                     expanded = showContextMenu,
                     onDismissRequest = { showContextMenu = false },
                 ) {
+                    DropdownMenuItem(
+                        text = { Text("AI 编辑") },
+                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                        onClick = {
+                            onEditWithAi()
+                            showContextMenu = false
+                        },
+                    )
                     DropdownMenuItem(
                         text = { Text("复制") },
                         leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
