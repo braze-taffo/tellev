@@ -1,0 +1,84 @@
+chars_export_write_failed	无法写入所选位置
+chars_export_saved	已保存 %1$s.json
+chars_export_failed	导出失败：%1$s
+chars_import_failed	导入失败：%1$s
+chars_title	角色
+chars_ai_create	AI 创建
+chars_import_cd	导入角色卡
+chars_search_close_cd	关闭搜索
+chars_search_cd	搜索
+chars_new_character	新建角色
+chars_search_placeholder	按名称或标签搜索...
+chars_clear_cd	清除
+chars_no_match	没有匹配的角色
+chars_empty_list	暂无角色
+chars_empty_hint	点击“新建角色”开始创建，或从右上角导入角色卡
+chars_more_options_cd	更多选项
+chars_ai_edit	AI 编辑
+chars_write_worldbook	基于此卡写世界书
+chars_duplicate	复制
+chars_export_json	导出 JSON
+chars_delete	删除
+chars_delete_title	删除角色
+chars_delete_confirm	确定要删除“%1$s”吗？此操作无法撤销。
+chars_cancel	取消
+chars_detail_title	角色详情
+chars_back_cd	返回
+chars_create_character	创建角色
+chars_save_cd	保存
+chars_image_parse_failed	无法解析所选图片
+chars_read_image_failed	读取图片失败：%1$s
+chars_back_to_list	返回角色列表
+chars_avatar_preview_cd	角色头像预览
+chars_card_section	角色卡
+chars_name_only_hint	仅名称必填，其余内容可稍后补充
+chars_character_id	ID: %1$s
+chars_pick_avatar_optional	选择头像（可选）
+chars_change_avatar	更换头像
+chars_field_name	名称
+chars_name_required	请输入角色名称
+chars_field_description	描述
+chars_field_personality	性格
+chars_field_scenario	场景
+chars_field_first_message	开场白
+chars_alternate_greetings	替代开场白
+chars_greeting_n	开场白 %1$d
+chars_remove_greeting_cd	移除替代开场白
+chars_add_greeting	添加替代开场白
+chars_field_example_messages	示例对话
+chars_field_creator_notes	创建者备注
+chars_field_system_prompt	系统提示词（可选）
+chars_field_post_history	历史后指令（可选）
+chars_field_creator	创作者
+chars_field_version	角色版本
+chars_field_tags	标签
+chars_remove_tag_cd	移除标签
+chars_add_tag	添加标签
+chars_add_cd	添加
+chars_character_book	角色书
+chars_book_entries	“%1$s” · %2$d 条条目
+chars_world_binding	世界书绑定
+chars_world_unbound	未绑定（仅使用上方角色书）
+chars_world_missing	“%1$s”（该世界书未导入或已删除）
+chars_pick_worldbook	选择世界书
+chars_save_changes	保存修改
+chars_world_none	不绑定
+chars_world_empty_hint	暂无世界书。请先在“世界书”页导入或创建。
+chars_entries_count	%1$d 条条目
+about_unknown	未知
+about_title	关于
+about_version	版本 %1$s
+about_app_desc	面向 AI 角色扮演聊天的原生 Android 客户端。
+about_based_on_st	基于 SillyTavern
+about_st_desc	tellev 是基于 SillyTavern 兼容格式构建的原生客户端，沿用角色卡、世界书和主要数据结构，以便和原项目数据互通。
+about_visit_st	访问 SillyTavern
+about_license	许可证
+about_license_free_software	本程序是自由软件：你可以按照自由软件基金会发布的 GNU Affero General Public License 第 3 版或更新版本重新分发或修改它。
+about_license_warranty	本程序按“原样”分发，不提供任何担保，包括适销性或特定用途适用性的默示担保。详情请参阅 GNU Affero General Public License。
+about_source_code	源代码
+about_open_source	tellev 是开源项目，欢迎贡献。
+about_credits	致谢
+about_built_with	使用 Jetpack Compose 和 Material 3 构建。
+about_card_format	角色卡格式基于 SillyTavern V2/V3 规格。
+about_tech_stack	网络层使用 OkHttp，JSON 处理使用 kotlinx.serialization。
+about_thanks_community	感谢 SillyTavern 社区。

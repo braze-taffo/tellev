@@ -3,6 +3,7 @@ package app.tellev
 import android.app.Application
 import android.content.Context
 import app.tellev.core.i18n.AppLocale
+import app.tellev.core.i18n.UiStrings
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
@@ -16,6 +17,7 @@ class TellevApplication : Application(), ImageLoaderFactory {
 
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(AppLocale.wrap(base))
+        UiStrings.init(resources)
     }
 
     override fun newImageLoader(): ImageLoader =

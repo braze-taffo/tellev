@@ -1,0 +1,206 @@
+# key<TAB>en<TAB>ja<TAB>ko — zh comes from module TSVs; missing/untranslated keys fall back to zh.
+settings_language	Language	言語	언어
+settings_language_system	Follow system	システムに従う	시스템 설정 따름
+chars_export_write_failed	Could not write to the selected location	選択した場所に書き込めませんでした	선택한 위치에 쓸 수 없습니다
+chars_export_saved	Saved %1$s.json	%1$s.json を保存しました	%1$s.json 저장됨
+chars_export_failed	Export failed: %1$s	エクスポートに失敗しました：%1$s	내보내기 실패: %1$s
+chars_import_failed	Import failed: %1$s	インポートに失敗しました：%1$s	가져오기 실패: %1$s
+chars_title	Characters	キャラクター	캐릭터
+chars_ai_create	AI Create	AI作成	AI 생성
+chars_import_cd	Import character card	キャラカードをインポート	캐릭터 카드 가져오기
+chars_search_close_cd	Close search	検索を閉じる	검색 닫기
+chars_search_cd	Search	検索	검색
+chars_new_character	New Character	新規キャラクター	새 캐릭터
+chars_search_placeholder	Search by name or tag...	名前またはタグで検索...	이름 또는 태그로 검색...
+chars_clear_cd	Clear	クリア	지우기
+chars_no_match	No matching characters	一致するキャラクターがいません	일치하는 캐릭터가 없습니다
+chars_empty_list	No characters yet	キャラクターがいません	캐릭터가 없습니다
+chars_empty_hint	Tap "New Character" to create one, or import a card from the top-right corner	「新規キャラクター」をタップして作成するか、右上からキャラカードをインポートしてください	"새 캐릭터"를 눌러 만들거나 오른쪽 위에서 캐릭터 카드를 가져오세요
+chars_more_options_cd	More options	その他のオプション	더 많은 옵션
+chars_ai_edit	AI Edit	AI編集	AI 편집
+chars_write_worldbook	Write world book from this card	このカードからワールドブックを作成	이 카드로 월드북 작성
+chars_duplicate	Duplicate	複製	복제
+chars_export_json	Export JSON	JSONをエクスポート	JSON 내보내기
+chars_delete	Delete	削除	삭제
+chars_delete_title	Delete Character	キャラクターを削除	캐릭터 삭제
+chars_delete_confirm	Delete "%1$s"? This cannot be undone.	「%1$s」を削除しますか？この操作は取り消せません。	"%1$s"을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+chars_cancel	Cancel	キャンセル	취소
+chars_detail_title	Character Details	キャラクター詳細	캐릭터 상세
+chars_back_cd	Back	戻る	뒤로
+chars_create_character	Create Character	キャラクターを作成	캐릭터 만들기
+chars_save_cd	Save	保存	저장
+chars_image_parse_failed	Could not parse the selected image	選択した画像を解析できませんでした	선택한 이미지를 해석할 수 없습니다
+chars_read_image_failed	Failed to read image: %1$s	画像の読み取りに失敗しました：%1$s	이미지 읽기 실패: %1$s
+chars_back_to_list	Back to character list	キャラクター一覧に戻る	캐릭터 목록으로 돌아가기
+chars_avatar_preview_cd	Character avatar preview	キャラクターアバターのプレビュー	캐릭터 아바타 미리보기
+chars_card_section	Character Card	キャラカード	캐릭터 카드
+chars_name_only_hint	Only the name is required; everything else can be added later	名前だけ必須です。他の項目は後で入力できます	이름만 필수이며 나머지는 나중에 입력할 수 있습니다
+chars_character_id	ID: %1$s	ID: %1$s	ID: %1$s
+chars_pick_avatar_optional	Choose avatar (optional)	アバターを選択（任意）	아바타 선택(선택 사항)
+chars_change_avatar	Change avatar	アバターを変更	아바타 변경
+chars_field_name	Name	名前	이름
+chars_name_required	Please enter a character name	キャラクター名を入力してください	캐릭터 이름을 입력하세요
+chars_field_description	Description	説明	설명
+chars_field_personality	Personality	性格	성격
+chars_field_scenario	Scenario	シナリオ	시나리오
+chars_field_first_message	First message	最初のメッセージ	첫 메시지
+chars_alternate_greetings	Alternate greetings	代替の最初のメッセージ	대체 인사말
+chars_greeting_n	Greeting %1$d	最初のメッセージ %1$d	인사말 %1$d
+chars_remove_greeting_cd	Remove alternate greeting	代替メッセージを削除	대체 인사말 제거
+chars_add_greeting	Add alternate greeting	代替メッセージを追加	대체 인사말 추가
+chars_field_example_messages	Example dialogs	例会話	예시 대화
+chars_field_creator_notes	Creator's notes	作成者のメモ	제작자 메모
+chars_field_system_prompt	System prompt (optional)	システムプロンプト（任意）	시스템 프롬프트(선택 사항)
+chars_field_post_history	Post-history instructions (optional)	履歴後指示（任意）	기록 후 지시(선택 사항)
+chars_field_creator	Creator	作成者	제작자
+chars_field_version	Character version	キャラクターバージョン	캐릭터 버전
+chars_field_tags	Tags	タグ	태그
+chars_remove_tag_cd	Remove tag	タグを削除	태그 제거
+chars_add_tag	Add tag	タグを追加	태그 추가
+chars_add_cd	Add	追加	추가
+chars_character_book	Character book	キャラクターブック	캐릭터 북
+chars_book_entries	"%1$s" · %2$d entries	「%1$s」· %2$d件	"%1$s" · 항목 %2$d개
+chars_world_binding	World book binding	ワールドブックのバインド	월드북 연결
+chars_world_unbound	Not bound (uses only the character book above)	未バインド（上のキャラクターブックのみ使用）	연결되지 않음(위의 캐릭터 북만 사용)
+chars_world_missing	"%1$s" (this world book is not imported or has been deleted)	「%1$s」（このワールドブックは未インポートまたは削除済み）	"%1$s"(해당 월드북을 가져오지 않았거나 삭제됨)
+chars_pick_worldbook	Select world book	ワールドブックを選択	월드북 선택
+chars_save_changes	Save changes	変更を保存	변경 사항 저장
+chars_world_none	None	なし	없음
+chars_world_empty_hint	No world books yet. Import or create one on the "World Books" page first.	ワールドブックがありません。先に「ワールドブック」ページでインポートまたは作成してください。	월드북이 없습니다. 먼저 "월드북" 페이지에서 가져오거나 만드세요.
+chars_entries_count	%1$d entries	%1$d件	항목 %1$d개
+about_unknown	Unknown	不明	알 수 없음
+about_title	About	このアプリについて	정보
+about_version	Version %1$s	バージョン %1$s	버전 %1$s
+about_app_desc	A native Android client for AI roleplay chat.	AIロールプレイチャットのためのネイティブAndroidクライアント。	AI 롤플레이 채팅을 위한 네이티브 Android 클라이언트입니다.
+about_based_on_st	Based on SillyTavern	SillyTavernベース	SillyTavern 기반
+about_st_desc	tellev is a native client built on SillyTavern-compatible formats, reusing its character cards, world books and core data structures so data stays interchangeable with the original project.	tellevはSillyTavern互換フォーマットに基づくネイティブクライアントで、キャラカード・ワールドブック・主要なデータ構造をそのまま使い、元のプロジェクトとのデータ互換を保っています。	tellev은 SillyTavern 호환 형식을 기반으로 한 네이티브 클라이언트로, 캐릭터 카드·월드북·주요 데이터 구조를 그대로 사용해 원본 프로젝트와 데이터를 주고받을 수 있습니다.
+about_visit_st	Visit SillyTavern	SillyTavernを見る	SillyTavern 방문
+about_license	License	ライセンス	라이선스
+about_license_free_software	This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, version 3 or any later version.	本プログラムはフリーソフトウェアです。フリーソフトウェア財団が公開するGNU Affero General Public Licenseのバージョン3またはそれ以降の条件の下で、再配布および改変ができます。	이 프로그램은 자유 소프트웨어입니다. 자유소프트웨어재단이 배포하는 GNU Affero General Public License 버전 3 또는 그 이상의 조건에 따라 재배포하거나 수정할 수 있습니다.
+about_license_warranty	This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for details.	本プログラムは有用であることを期待して配布されていますが、市場性や特定目的への適合性の黙示的保証を含め、いかなる保証もありません。詳細はGNU Affero General Public Licenseをご覧ください。	이 프로그램은 유용할 것이라는 희망으로 배포되지만, 상품성이나 특정 목적 적합성의 묵시적 보증을 포함한 어떠한 보증도 제공되지 않습니다. 자세한 내용은 GNU Affero General Public License를 참조하세요.
+about_source_code	Source code	ソースコード	소스 코드
+about_open_source	tellev is open source; contributions are welcome.	tellevはオープンソースです。コントリビューションを歓迎します。	tellev은 오픈소스입니다. 기여를 환영합니다.
+about_credits	Credits	クレジット	크레딧
+about_built_with	Built with Jetpack Compose and Material 3.	Jetpack ComposeとMaterial 3で構築。	Jetpack Compose와 Material 3로 빌드되었습니다.
+about_card_format	Character card format is based on the SillyTavern V2/V3 spec.	キャラカード形式はSillyTavern V2/V3仕様に基づいています。	캐릭터 카드 형식은 SillyTavern V2/V3 사양을 기반으로 합니다.
+about_tech_stack	Networking uses OkHttp; JSON is handled by kotlinx.serialization.	ネットワークはOkHttp、JSON処理はkotlinx.serializationを使用。	네트워크는 OkHttp, JSON 처리는 kotlinx.serialization을 사용합니다.
+about_thanks_community	Thanks to the SillyTavern community.	SillyTavernコミュニティに感謝を。	SillyTavern 커뮤니티에 감사드립니다.
+chat_memory_paused	Paused	一時停止	일시 중지
+chat_memory_label	Memory: %1$s	記憶：%1$s	기억: %1$s
+chat_back	Back	戻る	뒤로
+chat_card_interface	Card view	カード画面	카드 화면
+chat_sessions	Sessions	セッション	세션
+chat_delete_session	Delete session	セッションを削除	세션 삭제
+chat_new_session	New session	新規セッション	새 세션
+chat_more_options	More options	その他のオプション	더 많은 옵션
+chat_long_term_memory	Long-term memory...	長期記憶…	장기 기억…
+chat_chat_background	Chat background...	チャット背景…	채팅 배경…
+chat_clear_background	Clear background	背景をクリア	배경 지우기
+chat_switch_persona	Switch persona	ペルソナを切り替え	페르소나 전환
+chat_error_save_image	Failed to save image: %1$s	画像の保存に失敗しました：%1$s	이미지 저장 실패: %1$s
+chat_error_read_image	Failed to read image: %1$s	画像の読み取りに失敗しました：%1$s	이미지 읽기 실패: %1$s
+chat_default_character_name	Assistant	アシスタント	어시스턴트
+chat_view_generated_images	View generated images (%1$d)	生成画像を表示（%1$d）	생성 이미지 보기(%1$d)
+chat_generated_images_title	Generated Images	生成画像	생성 이미지
+chat_hide_prompt	Hide prompt	プロンプトを隠す	프롬프트 접기
+chat_view_image_prompt	View image prompt	画像プロンプトを表示	이미지 프롬프트 보기
+chat_delete	Delete	削除	삭제
+chat_close	Close	閉じる	닫기
+chat_cancel	Cancel	キャンセル	취소
+chat_delete_image_title	Delete Image	画像を削除	이미지 삭제
+chat_delete_image_message	This image file will be permanently deleted. This cannot be undone.	この画像ファイルは完全に削除され、元に戻せません。	이 이미지 파일은 영구 삭제되며 복구할 수 없습니다.
+chat_delete_session_message	All messages, images and the chat background of "%1$s" will be permanently deleted. This cannot be undone.	「%1$s」のすべてのメッセージ・画像・チャット背景が完全に削除され、元に戻せません。	"%1$s"의 모든 메시지, 이미지, 채팅 배경이 영구 삭제되며 복구할 수 없습니다.
+chat_image_gen_failed	Image generation failed	画像生成に失敗しました	이미지 생성 실패
+chat_scene_diagnostic_title	Scene summary diagnostics	シーン要約の診断	장면 요약 진단
+chat_copy_diagnostic	Copy diagnostics	診断をコピー	진단 복사
+chat_exported	Exported	エクスポートしました	내보냈습니다
+chat_export_failed	Export failed	エクスポートに失敗しました	내보내기 실패
+chat_actions	Actions	アクション	작업
+chat_regenerate	Regenerate	再生成	다시 생성
+chat_export_generation_diagnostics	Export generation diagnostics	生成診断をエクスポート	생성 진단 내보내기
+chat_export_raw_response	Export raw response	生の応答をエクスポート	원본 응답 내보내기
+chat_edit	Edit	編集	편집
+chat_bubble_delete	Delete	削除	삭제
+chat_no_body	No content received	本文を受信していません	본문을 받지 못했습니다
+chat_retry	Retry	再試行	재시도
+chat_hide_image_prompt	Hide image prompt	画像プロンプトを隠す	이미지 프롬프트 접기
+chat_bubble_view_image_prompt	View image prompt	画像プロンプトを表示	이미지 프롬프트 보기
+chat_reasoning	Reasoning	思考プロセス	사고 과정
+chat_reasoning_expand_hint	Reasoning · tap to expand	思考プロセス · タップで展開	사고 과정 · 탭하여 펼치기
+chat_bubble_cancel	Cancel	キャンセル	취소
+chat_bubble_save	Save	保存	저장
+chat_image_content_desc	Chat image	チャット画像	채팅 이미지
+chat_generating_image	Generating image...	画像を生成中…	이미지 생성 중…
+chat_cancel_image_gen	Cancel image generation	画像生成をキャンセル	이미지 생성 취소
+chat_remove_attachment	Remove attachment	添付を削除	첨부 파일 제거
+chat_add_image	Add image	画像を追加	이미지 추가
+chat_generate_image	Generate image	画像を生成	이미지 생성
+chat_input_hint	Message	メッセージ를入力	메시지 입력
+chat_stop_generation	Stop	生成を停止	생성 중지
+chat_send_message	Send message	メッセージを送信	메시지 보내기
+chat_select_memory_mode_title	Choose a memory mode for this chat	このセッションの記憶モードを選択	이 대화의 기억 모드 선택
+chat_select_memory_mode_message	This mode applies to this chat only and cannot be changed later; reopening it switches back automatically. Older messages are not processed automatically — you can backfill them later.	選択するとこのセッションのみに適用され、後から変更はできません。開き直すと自動的に対応するモードに戻ります。過去のチャットは自動処理されません。後から手動で補完できます。	선택하면 이 대화에만 적용되며 나중에 변경할 수 없습니다. 다시 열면 자동으로 해당 모드로 돌아갑니다. 이전 채팅 기록은 자동 처리되지 않으며 나중에 수동으로 보완할 수 있습니다.
+chat_memory_manager_title	Long-term memory · %1$s	長期記憶 · %1$s	장기 기억 · %1$s
+chat_memory_ready	Ready	準備完了	준비됨
+chat_memory_global_disabled	Global memory is off; extraction and injection are paused.	グローバル記憶スイッチがオフのため、抽出と注入は停止中です。	전역 기억 스위치가 꺼져 있어 추출과 주입이 모두 중지되었습니다.
+chat_memory_locked_none	This chat is locked to no-memory mode.	このセッションは記憶なしにロックされています。	이 대화는 기억 없음으로 잠겨 있습니다.
+chat_memory_needs_rebuild	Chat content changed; previous extractions are deactivated. Please rebuild manually.	チャット内容が変更されたため、以前の抽出結果は無効になりました。手動で再構築してください。	채팅 내용이 변경되어 기존 추출 결과가 비활성화되었습니다. 수동으로 다시 만들어 주세요.
+chat_rebuild_vectors	Rebuild vector index	ベクトルインデックスを再構築	벡터 인덱스 재구축
+chat_show_active_only	Active memories only	有効な記憶のみ表示	유효한 기억만 보기
+chat_show_inactive	Show inactive memories	無効な記憶も表示	만료된 기억 보기
+chat_memory_inactive_prefix	[inactive]	[無効]	[만료]
+chat_memory_source_label	Source: %1$s	ソース：%1$s	출처: %1$s
+chat_memory_source_manual	Maintained manually	ユーザーが手動で管理	사용자가 직접 관리
+chat_correct	Correct	修正	수정
+chat_memory_delete	Delete	削除	삭제
+chat_memory_close	Close	閉じる	닫기
+chat_retry_pending	Retry pending	未処理を再試行	대기 중 재시도
+chat_backfill_history	Backfill history	履歴を補完	기록 보완
+chat_backfill_title	Backfill memory	履歴記憶を補完	기록 기억 보완
+chat_backfill_message	About %1$d character replies in this chat will be processed, requiring at least %2$d memory-model requests. Re-extraction replaces current memories and may incur model costs.	このセッションの約%1$d件のキャラクター応答を処理します。記憶モデルへのリクエストは最低%2$d回と予想されます。再抽出は現在の記憶を置き換え、モデル費用がかかる場合があります。	이 대화의 캐릭터 응답 약 %1$d개를 처리하며, 기억 모델 요청이 최소 %2$d회 필요할 수 있습니다. 다시 추출하면 현재 기억을 대체하며 모델 비용이 발생할 수 있습니다.
+chat_start_backfill	Start backfill	補完を開始	보완 시작
+chat_memory_cancel	Cancel	キャンセル	취소
+chat_rebuild_vectors_message	The vector API will be called for about %1$d memories; this may incur costs.	約%1$d件の記憶についてベクトルAPIを呼び出します。費用がかかる場合があります。	약 %1$d개의 기억에 대해 벡터 API를 호출합니다. 비용이 발생할 수 있습니다.
+chat_start	Start	開始	시작
+chat_correct_memory_title	Correct memory	記憶を修正	기억 수정
+chat_content_label	Content	内容	내용
+chat_memory_save	Save	保存	저장
+chat_image_generation_title	Generate Image	画像を生成	이미지 생성
+chat_engine_label	Image engine	画像エンジン	이미지 엔진
+chat_view_last_diagnostic	View last summary diagnostics	最後の要約診断を表示	마지막 요약 진단 보기
+chat_engine_not_configured	(not configured)	（未設定）	(미설정)
+chat_summarize_scene	Summarize current scene with AI	AIで現在のシーンを要約	AI로 현재 장면 요약
+chat_positive_prompt	Positive prompt	ポジティブプロンプト	긍정 프롬프트
+chat_summarize_scene_hint	An image prompt will be generated automatically from the recent context of this chat.	このセッションの最近のコンテキストから画像プロンプトを自動生成します。	이 대화의 최근 맥락에서 이미지 프롬프트가 자동 생성됩니다.
+chat_negative_prompt	Negative prompt (optional)	ネガティブプロンプト（任意）	부정 프롬프트(선택 사항)
+chat_generate	Generate	生成	생성
+chat_image_gen_cancel	Cancel	キャンセル	취소
+chat_select_character	Select character	キャラクターを選択	캐릭터 선택
+chat_no_characters	No characters	キャラクターがいません	캐릭터가 없습니다
+chat_import_hint	Import a character card on the Characters page first.	先に「キャラクター」ページでキャラカードをインポートしてください。	먼저 "캐릭터" 페이지에서 캐릭터 카드를 가져오세요.
+chat_character_card_interface	Character card view	キャラカード画面	캐릭터 카드 화면
+chat_close_character_card_interface	Close character card view	キャラカード画面を閉じる	캐릭터 카드 화면 닫기
+chat_previous_page	Previous	前のページ	이전 페이지
+chat_next_page	Next	次のページ	다음 페이지
+nav_tab_chat	Chat	チャット	채팅
+nav_tab_characters	Characters	キャラクター	캐릭터
+nav_tab_world	World Books	ワールドブック	월드북
+nav_tab_extensions	Extensions	拡張	확장
+nav_tab_settings	Settings	設定	설정
+nav_preset_limit_title	Please check your current generation preset	現在の生成プリセットを確認してください	현재 생성 프리셋을 확인하세요
+nav_preset_limit_message	The legacy default preset caps context at only 4096 and output at 300, which can badly truncate world books and replies. The new built-in defaults are 1,000,000 / 131,072. Imported or manually edited presets are never overwritten — go to "Settings → Generation Presets" to switch or review the current preset.	旧デフォルトプリセットはコンテキスト上限4096・出力上限300しかなく、ワールドブックや応答が大きく切り詰められる可能性があります。新版の内蔵デフォルトは1,000,000 / 131,072に調整済みです。インポートまたは手動変更したプリセットは強制上書きされません。「設定 → 生成プリセット」から切り替え・確認してください。	기존 기본 프리셋은 컨텍스트上限 4096, 출력上限 300으로 월드북과 응답이 크게 잘릴 수 있습니다. 새 기본값은 1,000,000 / 131,072로 조정되었습니다. 가져오거나 직접 수정한 프리셋은 강제로 덮어쓰지 않으니 "설정 → 생성 프리셋"에서 확인하세요.
+nav_later	Later	後で	나중에
+nav_go_to_preset_settings	Open preset settings	プリセット設定へ	프리셋 설정으로 이동
+nav_qq_group_title	Join our QQ group	QQグループに参加	QQ 그룹 참여
+nav_qq_qrcode_desc	QQ group QR code	QQグループQRコード	QQ 그룹 QR 코드
+nav_qq_group_number	Group: 754350480	グループ番号：754350480	그룹 번호: 754350480
+nav_qq_group_hint	Scan the code or search the group number to join — share feedback and tips.	QRコードをスキャンするかグループ番号で検索して参加してください。不具合報告や情報交換にどうぞ。	QR코드를 스캔하거나 그룹 번호를 검색해 참여하세요. 피드백과 정보 교환 환영합니다.
+nav_got_it	Got it	OK	알겠습니다
+nav_group_number_copied	Group number copied	グループ番号をコピーしました	그룹 번호가 복사되었습니다
+nav_copy_group_number	Copy group number	グループ番号をコピー	그룹 번호 복사
+nav_update_title	New version available	新しいバージョンがあります	새 버전이 있습니다
+nav_update_message	New version %1$s is available (current: v%2$s).	新バージョン%1$sがリリースされました（現在：v%2$s）。	새 버전 %1$s이(가) 출시되었습니다. 현재 버전: v%2$s.
+nav_update_apk_size	Download is about %1$s MB	ダウンロードは約%1$s MBです	설치 파일은 약 %1$s MB입니다
+nav_update_now	Update now	今すぐアップデート	지금 업데이트
+nav_update_download_started	Downloading new version...	新バージョンをダウンロード中…	새 버전 다운로드 중…
+ui_placeholder_message	Architecture entry point ready; features live in their own modules.	アーキテクチャのエントリポイントです。機能は各モジュールに実装します。	아키텍처 진입점이 준비되었습니다. 기능은 각 모듈에 구현합니다.

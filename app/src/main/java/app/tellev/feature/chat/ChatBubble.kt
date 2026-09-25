@@ -50,6 +50,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -57,6 +58,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import app.tellev.R
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.GenerationPreset
@@ -107,7 +109,7 @@ internal fun ChatBubble(
                     requireNotNull(context.contentResolver.openOutputStream(uri)).bufferedWriter().use { it.write(payload) }
                 }.isSuccess
             }
-            android.widget.Toast.makeText(context, if (success) "已导出" else "导出失败", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(context, if (success) context.getString(R.string.chat_exported) else context.getString(R.string.chat_export_failed), android.widget.Toast.LENGTH_SHORT).show()
         }
     }
     val isUser = message.role == MessageRole.User
@@ -144,7 +146,7 @@ internal fun ChatBubble(
                 ) {
                     Icon(
                         Icons.Default.MoreVert,
-                        contentDescription = "操作",
+                        contentDescription = stringResource(R.string.chat_actions),
                         modifier = Modifier.size(16.dp),
                     )
                 }
@@ -154,7 +156,7 @@ internal fun ChatBubble(
                 ) {
                     if (canRegenerate) {
                         DropdownMenuItem(
-                            text = { Text("重新生成") },
+                            text = { Text(stringResource(R.string.chat_regenerate)) },
                             leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
                             onClick = {
                                 onRegenerate()
@@ -164,7 +166,7 @@ internal fun ChatBubble(
                     }
                     if (message.generationDiagnostics() != null) {
                         DropdownMenuItem(
-                            text = { Text("导出生成诊断") },
+                            text = { Text(stringResource(R.string.chat_export_generation_diagnostics)) },
                             onClick = {
                                 pendingDiagnosticExport = message.generationDiagnostics().toString()
                                 showActions = false
@@ -172,7 +174,7 @@ internal fun ChatBubble(
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("导出原始回复") },
+                            text = { Text(stringResource(R.string.chat_export_raw_response)) },
                             onClick = {
                                 pendingDiagnosticExport = message.generationDiagnostics(includeResponse = true).toString()
                                 showActions = false
@@ -181,7 +183,7 @@ internal fun ChatBubble(
                         )
                     }
                     DropdownMenuItem(
-                        text = { Text("编辑") },
+                        text = { Text(stringResource(R.string.chat_edit)) },
                         leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
                         onClick = {
                             onEdit()
@@ -189,7 +191,7 @@ internal fun ChatBubble(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("删除") },
+                        text = { Text(stringResource(R.string.chat_bubble_delete)) },
                         leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
                         onClick = {
                             onDelete()
@@ -209,8 +211,8 @@ internal fun ChatBubble(
         }
         if (!isUser && parts.body.isBlank() && parts.reasoning.isNotBlank()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("未收到正文", modifier = Modifier.padding(8.dp))
-                if (canRegenerate) TextButton(onClick = onRegenerate) { Text("重试") }
+                Text(stringResource(R.string.chat_no_body), modifier = Modifier.padding(8.dp))
+                if (canRegenerate) TextButton(onClick = onRegenerate) { Text(stringResource(R.string.chat_retry)) }
             }
         }
         val hasFrontend = renderSegments.any { it is TavernRenderSegment.Frontend }
@@ -298,7 +300,7 @@ internal fun ChatBubble(
                 if (!imagePrompt.isNullOrBlank()) {
                     var showPrompt by remember(message.id) { mutableStateOf(false) }
                     TextButton(onClick = { showPrompt = !showPrompt }) {
-                        Text(if (showPrompt) "收起图片提示词" else "查看图片提示词")
+                        Text(if (showPrompt) stringResource(R.string.chat_hide_image_prompt) else stringResource(R.string.chat_bubble_view_image_prompt))
                     }
                     if (showPrompt) {
                         SelectionContainer {
@@ -429,7 +431,7 @@ internal fun ReasoningBlock(content: String, highlightDialogue: Boolean, bubbleA
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-                text = if (expanded) "思考过程" else "思考过程 · 点击展开",
+                text = if (expanded) stringResource(R.string.chat_reasoning) else stringResource(R.string.chat_reasoning_expand_hint),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -563,11 +565,11 @@ internal fun EditMessageCard(
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(onClick = onCancel) {
-                    Text("取消")
+                    Text(stringResource(R.string.chat_bubble_cancel))
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 TextButton(onClick = { onConfirm(text) }) {
-                    Text("保存")
+                    Text(stringResource(R.string.chat_bubble_save))
                 }
             }
         }
@@ -589,7 +591,7 @@ internal fun ChatBubbleImage(file: java.io.File) {
             .data(file)
             .size(coil.size.SizeResolver(decodeBudget))
             .build(),
-        contentDescription = "聊天图片",
+        contentDescription = stringResource(R.string.chat_image_content_desc),
         contentScale = ContentScale.FillWidth,
         modifier = Modifier
             .fillMaxWidth()

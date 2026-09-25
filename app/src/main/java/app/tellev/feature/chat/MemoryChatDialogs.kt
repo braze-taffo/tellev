@@ -18,7 +18,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 import app.tellev.core.memory.MemoryMode
 import app.tellev.core.memory.MemoryRecord
 import app.tellev.core.model.MessageRole
@@ -31,8 +33,8 @@ internal fun MemoryChatDialogs(state: ChatUiState, viewModel: ChatViewModel, sho
         if (!state.memoryPluginEnabled) return
         AlertDialog(
             onDismissRequest = {},
-            title = { Text("为这条对话选择记忆模式") },
-            text = { Text("选择后仅这条对话使用该模式，之后不能转换。打开它时会自动切回相应模式。旧聊天记录不会自动整理；可稍后手动补建。") },
+            title = { Text(stringResource(R.string.chat_select_memory_mode_title)) },
+            text = { Text(stringResource(R.string.chat_select_memory_mode_message)) },
             confirmButton = {
                 Column {
                     MemoryMode.entries.forEach { choice ->
@@ -52,41 +54,41 @@ internal fun MemoryChatDialogs(state: ChatUiState, viewModel: ChatViewModel, sho
     val replyCount = session.messages.count { it.role == MessageRole.Character || it.role == MessageRole.Assistant }
     AlertDialog(
         onDismissRequest = onClose,
-        title = { Text("长期记忆 · ${mode.label}") },
+        title = { Text(stringResource(R.string.chat_memory_manager_title, mode.label)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(state.memoryStatus ?: "就绪")
-                if (!state.memoryPluginEnabled && mode != MemoryMode.NONE) Text("全局记忆开关已关闭，提取和注入均暂停。")
-                if (mode == MemoryMode.NONE) Text("此对话已锁定为无记忆。")
-                if (state.memoryNeedsRebuild) Text("聊天内容已变更，旧提取结果已停用。请手动重建。")
+                Text(state.memoryStatus ?: stringResource(R.string.chat_memory_ready))
+                if (!state.memoryPluginEnabled && mode != MemoryMode.NONE) Text(stringResource(R.string.chat_memory_global_disabled))
+                if (mode == MemoryMode.NONE) Text(stringResource(R.string.chat_memory_locked_none))
+                if (state.memoryNeedsRebuild) Text(stringResource(R.string.chat_memory_needs_rebuild))
                 if (state.memoryVectorEnabled && mode != MemoryMode.NONE) {
-                    TextButton(onClick = { confirmVectors = true }) { Text("重建向量索引") }
+                    TextButton(onClick = { confirmVectors = true }) { Text(stringResource(R.string.chat_rebuild_vectors)) }
                 }
                 TextButton(onClick = { showInactive = !showInactive }) {
-                    Text(if (showInactive) "只看有效记忆" else "显示已失效记忆")
+                    Text(if (showInactive) stringResource(R.string.chat_show_active_only) else stringResource(R.string.chat_show_inactive))
                 }
                 LazyColumn(Modifier.heightIn(max = 420.dp)) {
                     items(state.memoryRecords.filter { showInactive || it.active }.asReversed(), key = { it.id }) { record ->
                         Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                            Text("${if (record.active) "" else "[已失效] "}${record.kind} · ${record.text}")
+                            Text((if (record.active) "" else stringResource(R.string.chat_memory_inactive_prefix) + " ") + "${record.kind} · ${record.text}")
                             val source = record.sourceIds.mapNotNull { id ->
                                 state.messages.firstOrNull { it.id == id }?.let { "${it.name}: ${it.content.take(80)}" }
                             }
-                            Text("来源：${source.joinToString(" / ").ifBlank { "用户手动维护" }}")
+                            Text(stringResource(R.string.chat_memory_source_label, source.joinToString(" / ").ifBlank { stringResource(R.string.chat_memory_source_manual) }))
                             Row {
-                                TextButton(onClick = { editing = record; editText = record.text }) { Text("纠正") }
-                                TextButton(onClick = { viewModel.correctMemory(record.id, null) }) { Text("删除") }
+                                TextButton(onClick = { editing = record; editText = record.text }) { Text(stringResource(R.string.chat_correct)) }
+                                TextButton(onClick = { viewModel.correctMemory(record.id, null) }) { Text(stringResource(R.string.chat_memory_delete)) }
                             }
                         }
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onClose) { Text("关闭") } },
+        confirmButton = { TextButton(onClick = onClose) { Text(stringResource(R.string.chat_memory_close)) } },
         dismissButton = {
             if (mode != MemoryMode.NONE) Row {
-                TextButton(onClick = viewModel::retryMemory) { Text("重试待处理") }
-                TextButton(onClick = { confirmRebuild = true }) { Text("补建历史") }
+                TextButton(onClick = viewModel::retryMemory) { Text(stringResource(R.string.chat_retry_pending)) }
+                TextButton(onClick = { confirmRebuild = true }) { Text(stringResource(R.string.chat_backfill_history)) }
             }
         },
     )
@@ -95,33 +97,33 @@ internal fun MemoryChatDialogs(state: ChatUiState, viewModel: ChatViewModel, sho
         else (replyCount + 9) / 10
         AlertDialog(
             onDismissRequest = { confirmRebuild = false },
-            title = { Text("补建历史记忆") },
-            text = { Text("将整理本对话约 $replyCount 条角色回复，预计至少 $estimated 次记忆模型请求。重新提取会替换当前记忆并产生模型费用。") },
+            title = { Text(stringResource(R.string.chat_backfill_title)) },
+            text = { Text(stringResource(R.string.chat_backfill_message, replyCount, estimated)) },
             confirmButton = {
-                TextButton(onClick = { confirmRebuild = false; viewModel.rebuildMemory() }) { Text("开始补建") }
+                TextButton(onClick = { confirmRebuild = false; viewModel.rebuildMemory() }) { Text(stringResource(R.string.chat_start_backfill)) }
             },
-            dismissButton = { TextButton(onClick = { confirmRebuild = false }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { confirmRebuild = false }) { Text(stringResource(R.string.chat_memory_cancel)) } },
         )
     }
     if (confirmVectors) {
         val count = state.memoryRecords.count { it.active }
         AlertDialog(
             onDismissRequest = { confirmVectors = false },
-            title = { Text("重建向量索引") },
-            text = { Text("将为约 $count 条记忆调用向量接口；这可能产生费用。") },
-            confirmButton = { TextButton(onClick = { confirmVectors = false; viewModel.rebuildMemoryVectors() }) { Text("开始") } },
-            dismissButton = { TextButton(onClick = { confirmVectors = false }) { Text("取消") } },
+            title = { Text(stringResource(R.string.chat_rebuild_vectors)) },
+            text = { Text(stringResource(R.string.chat_rebuild_vectors_message, count)) },
+            confirmButton = { TextButton(onClick = { confirmVectors = false; viewModel.rebuildMemoryVectors() }) { Text(stringResource(R.string.chat_start)) } },
+            dismissButton = { TextButton(onClick = { confirmVectors = false }) { Text(stringResource(R.string.chat_memory_cancel)) } },
         )
     }
     editing?.let { record ->
         AlertDialog(
             onDismissRequest = { editing = null },
-            title = { Text("纠正记忆") },
-            text = { OutlinedTextField(editText, { editText = it }, label = { Text("内容") }, modifier = Modifier.fillMaxWidth()) },
+            title = { Text(stringResource(R.string.chat_correct_memory_title)) },
+            text = { OutlinedTextField(editText, { editText = it }, label = { Text(stringResource(R.string.chat_content_label)) }, modifier = Modifier.fillMaxWidth()) },
             confirmButton = {
-                TextButton(onClick = { viewModel.correctMemory(record.id, editText); editing = null }, enabled = editText.isNotBlank()) { Text("保存") }
+                TextButton(onClick = { viewModel.correctMemory(record.id, editText); editing = null }, enabled = editText.isNotBlank()) { Text(stringResource(R.string.chat_memory_save)) }
             },
-            dismissButton = { TextButton(onClick = { editing = null }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { editing = null }) { Text(stringResource(R.string.chat_memory_cancel)) } },
         )
     }
 }

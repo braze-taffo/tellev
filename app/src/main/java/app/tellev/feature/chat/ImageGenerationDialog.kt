@@ -21,7 +21,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 
 /** Image-generation dialog: manual prompt or AI scene summary of the chat. */
 @Composable
@@ -41,15 +43,15 @@ internal fun ImageGenerationDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("生成图片") },
+        title = { Text(stringResource(R.string.chat_image_generation_title)) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text("生图引擎", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.chat_engine_label), style = MaterialTheme.typography.titleSmall)
                 if (onShowDiagnostic != null) {
-                    TextButton(onClick = onShowDiagnostic) { Text("查看上次总结诊断") }
+                    TextButton(onClick = onShowDiagnostic) { Text(stringResource(R.string.chat_view_last_diagnostic)) }
                 }
                 ChatImageEngine.entries.forEach { engine ->
                     val configured = engine.providerId in configuredEngines
@@ -65,7 +67,7 @@ internal fun ImageGenerationDialog(
                             enabled = configured,
                         )
                         Text(
-                            text = engine.label + if (configured) "" else "（未配置）",
+                            text = engine.label + if (configured) "" else stringResource(R.string.chat_engine_not_configured),
                             style = MaterialTheme.typography.bodyMedium,
                             color = if (configured) {
                                 MaterialTheme.colorScheme.onSurface
@@ -83,7 +85,7 @@ internal fun ImageGenerationDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("由 AI 总结当前场景", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.chat_summarize_scene), style = MaterialTheme.typography.bodyMedium)
                     Switch(
                         checked = summarizeScene,
                         onCheckedChange = { summarizeScene = it },
@@ -94,7 +96,7 @@ internal fun ImageGenerationDialog(
                     OutlinedTextField(
                         value = prompt,
                         onValueChange = { prompt = it },
-                        label = { Text("正面提示词") },
+                        label = { Text(stringResource(R.string.chat_positive_prompt)) },
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 3,
                         maxLines = 8,
@@ -102,7 +104,7 @@ internal fun ImageGenerationDialog(
                     )
                 } else {
                     Text(
-                        text = "将使用当前对话最近的上下文自动生成生图提示词。",
+                        text = stringResource(R.string.chat_summarize_scene_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 4.dp),
@@ -112,7 +114,7 @@ internal fun ImageGenerationDialog(
                 OutlinedTextField(
                     value = negative,
                     onValueChange = { negative = it },
-                    label = { Text("负面提示词（可选）") },
+                    label = { Text(stringResource(R.string.chat_negative_prompt)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 1,
                     maxLines = 4,
@@ -125,12 +127,12 @@ internal fun ImageGenerationDialog(
                 onClick = { selectedEngine?.let { onGenerate(prompt.trim(), negative.trim(), summarizeScene, it.providerId) } },
                 enabled = selectedEngineId in configuredEngines && (summarizeScene || prompt.isNotBlank()),
             ) {
-                Text("生成")
+                Text(stringResource(R.string.chat_generate))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.chat_image_gen_cancel))
             }
         },
     )

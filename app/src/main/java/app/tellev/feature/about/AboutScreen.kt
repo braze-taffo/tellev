@@ -35,21 +35,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val unknownVersion = stringResource(R.string.about_unknown)
     val versionName = remember(context) {
-        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "未知"
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: unknownVersion
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("关于") },
+                title = { Text(stringResource(R.string.about_title)) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                 ),
@@ -91,13 +94,13 @@ fun AboutScreen(modifier: Modifier = Modifier) {
                         fontWeight = FontWeight.Bold,
                     )
                     Text(
-                        text = "版本 $versionName",
+                        text = stringResource(R.string.about_version, versionName),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "面向 AI 角色扮演聊天的原生 Android 客户端。",
+                        text = stringResource(R.string.about_app_desc),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -125,13 +128,13 @@ fun AboutScreen(modifier: Modifier = Modifier) {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "基于 SillyTavern",
+                            text = stringResource(R.string.about_based_on_st),
                             style = MaterialTheme.typography.titleSmall,
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "tellev 是基于 SillyTavern 兼容格式构建的原生客户端，沿用角色卡、世界书和主要数据结构，以便和原项目数据互通。",
+                        text = stringResource(R.string.about_st_desc),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -140,7 +143,7 @@ fun AboutScreen(modifier: Modifier = Modifier) {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "访问 SillyTavern",
+                            text = stringResource(R.string.about_visit_st),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Medium,
@@ -179,7 +182,7 @@ fun AboutScreen(modifier: Modifier = Modifier) {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "许可证",
+                            text = stringResource(R.string.about_license),
                             style = MaterialTheme.typography.titleSmall,
                         )
                     }
@@ -191,13 +194,13 @@ fun AboutScreen(modifier: Modifier = Modifier) {
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "本程序是自由软件：你可以按照自由软件基金会发布的 GNU Affero General Public License 第 3 版或更新版本重新分发或修改它。",
+                        text = stringResource(R.string.about_license_free_software),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "本程序按“原样”分发，不提供任何担保，包括适销性或特定用途适用性的默示担保。详情请参阅 GNU Affero General Public License。",
+                        text = stringResource(R.string.about_license_warranty),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -227,13 +230,13 @@ fun AboutScreen(modifier: Modifier = Modifier) {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "源代码",
+                            text = stringResource(R.string.about_source_code),
                             style = MaterialTheme.typography.titleSmall,
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "tellev 是开源项目，欢迎贡献。",
+                        text = stringResource(R.string.about_open_source),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -255,28 +258,28 @@ fun AboutScreen(modifier: Modifier = Modifier) {
                         .padding(16.dp),
                 ) {
                     Text(
-                        text = "致谢",
+                        text = stringResource(R.string.about_credits),
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "使用 Jetpack Compose 和 Material 3 构建。",
+                        text = stringResource(R.string.about_built_with),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        text = "角色卡格式基于 SillyTavern V2/V3 规格。",
+                        text = stringResource(R.string.about_card_format),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        text = "网络层使用 OkHttp，JSON 处理使用 kotlinx.serialization。",
+                        text = stringResource(R.string.about_tech_stack),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "感谢 SillyTavern 社区。",
+                        text = stringResource(R.string.about_thanks_community),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

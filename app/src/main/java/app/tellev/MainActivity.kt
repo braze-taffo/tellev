@@ -13,6 +13,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.lifecycleScope
 import app.tellev.core.i18n.AppLocale
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.CharacterSummary
 import app.tellev.core.storage.CharacterImporter
 import app.tellev.util.UriUtils
@@ -30,6 +31,8 @@ class MainActivity : ComponentActivity() {
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLocale.wrap(newBase))
+        // 重建后即刻以新语言解析非 Composable 侧的文案（ViewModel 消息等）。
+        UiStrings.init(resources)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
