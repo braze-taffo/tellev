@@ -267,6 +267,9 @@ fun TellevRoot() {
                         onEditWithAi = { characterId ->
                             navController.navigate("creation/edit/character/$characterId")
                         },
+                        onCreateWorldBookWithAi = { characterId ->
+                            navController.navigate("creation/from-character/world/$characterId")
+                        },
                         onCharacterClick = { characterId ->
                             charactersViewModel.selectCharacter(characterId)
                             navController.navigate("characters/detail/$characterId")
@@ -402,6 +405,24 @@ fun TellevRoot() {
                         if (kind == app.tellev.feature.creation.CreationKind.Character) {
                             charactersViewModel.loadCharacters()
                         } else {
+                            worldViewModel.loadBooks()
+                        }
+                    },
+                )
+            }
+            composable(
+                route = "creation/from-character/world/{cardId}",
+                arguments = listOf(navArgument("cardId") { type = NavType.StringType }),
+            ) { backStackEntry ->
+                val cardId = backStackEntry.arguments?.getString("cardId").orEmpty()
+                LaunchedEffect(cardId) {
+                    if (cardId.isNotBlank()) creationViewModel.startWorldBookFromCharacter(cardId)
+                }
+                CreationEditorScreen(
+                    viewModel = creationViewModel,
+                    onBack = { navController.popBackStack() },
+                    onSaved = { kind, _ ->
+                        if (kind == app.tellev.feature.creation.CreationKind.WorldBook) {
                             worldViewModel.loadBooks()
                         }
                     },

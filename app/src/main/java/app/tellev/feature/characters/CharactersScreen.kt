@@ -105,6 +105,7 @@ fun CharactersListScreen(
     onCharacterClick: (String) -> Unit,
     onCreateWithAi: () -> Unit = {},
     onEditWithAi: (String) -> Unit = {},
+    onCreateWorldBookWithAi: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -292,6 +293,7 @@ fun CharactersListScreen(
                                 avatarFile = state.avatarFiles[character.id],
                                 onClick = { onCharacterClick(character.id) },
                                 onEditWithAi = { onEditWithAi(character.id) },
+                                onCreateWorldBookWithAi = { onCreateWorldBookWithAi(character.id) },
                                 onDuplicate = { viewModel.duplicateCharacter(character.id) },
                                 onDelete = { viewModel.deleteCharacter(character.id) },
                                 onExport = {
@@ -316,6 +318,7 @@ private fun CharacterListItem(
     avatarFile: java.io.File?,
     onClick: () -> Unit,
     onEditWithAi: () -> Unit,
+    onCreateWorldBookWithAi: () -> Unit,
     onDuplicate: () -> Unit,
     onDelete: () -> Unit,
     onExport: () -> Unit,
@@ -400,6 +403,13 @@ private fun CharacterListItem(
                         leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
                         onClick = {
                             onEditWithAi()
+                            showContextMenu = false
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("基于此卡写世界书") },
+                        onClick = {
+                            onCreateWorldBookWithAi()
                             showContextMenu = false
                         },
                     )

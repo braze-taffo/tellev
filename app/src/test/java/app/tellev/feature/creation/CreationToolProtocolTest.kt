@@ -16,6 +16,20 @@ import org.junit.Test
 
 class CreationToolProtocolTest {
 
+    @Test
+    fun nativeToolArgumentsAcceptObjectFromCompatibleRelay() {
+        val blocks = parseNativeCreationCalls(JsonArray(listOf(buildJsonObject {
+            put("function", buildJsonObject {
+                put("name", "creation_tool")
+                put("arguments", buildJsonObject {
+                    put("name", "read_card")
+                    put("arguments", buildJsonObject { })
+                })
+            })
+        })))
+        assertEquals("read_card", (blocks.single() as ToolCallBlock.Valid).call.name)
+    }
+
     // ── 工具块解析 ──────────────────────────────────────────────
 
     @Test
@@ -78,6 +92,61 @@ class CreationToolProtocolTest {
     fun prosePreviewCutsBothClosedAndUnclosedBlocks() {
         assertEquals("可见文本尾部", proseWithoutToolBlocks("可见文本<tool_call>{}</tool_call>尾部"))
         assertEquals("开头", proseWithoutToolBlocks("开头<tool_call>{\"partial"))
+    }
+
+    @Test
+    fun parsesObservedDoubledPipeDsmlReadCard() {
+        val raw = """
+            <｜｜DSML｜｜ calls>
+            <｜｜DSML｜｜ invoke name="read_card">
+
+            </｜｜DSML｜｜ invoke>
+            </｜｜DSML｜｜ calls>
+        """.trimIndent()
+        val parsed = parseToolCallBlocks(raw)
+        val call = (parsed.blocks.single() as ToolCallBlock.Valid).call
+        assertEquals("read_card", call.name)
+        assertTrue(call.arguments.isEmpty())
+        assertEquals("", parsed.prose)
+        assertFalse(parsed.hasUnclosedBlock)
+        assertTrue(CreationToolBox(testSession()).execute(call).ok)
+    }
+
+    @Test
+    fun parsesCanonicalDsmlParametersAndKeepsOrder() {
+        val raw = """
+            准备更新。
+            <｜DSML｜tool_calls>
+            <｜DSML｜invoke name="list_lore">
+            <｜DSML｜parameter name="keyword" string="true">云城</｜DSML｜parameter>
+            <｜DSML｜parameter name="limit" string="false">5</｜DSML｜parameter>
+            </｜DSML｜invoke>
+            <｜DSML｜invoke name="read_card"></｜DSML｜invoke>
+            </｜DSML｜tool_calls>
+            已提交。
+        """.trimIndent()
+        val parsed = parseToolCallBlocks(raw)
+        assertEquals(2, parsed.blocks.size)
+        val first = (parsed.blocks[0] as ToolCallBlock.Valid).call
+        assertEquals("list_lore", first.name)
+        assertEquals("云城", first.arguments["keyword"]!!.jsonPrimitive.content)
+        assertEquals(5, first.arguments["limit"]!!.jsonPrimitive.int)
+        assertEquals("read_card", (parsed.blocks[1] as ToolCallBlock.Valid).call.name)
+        assertEquals("准备更新。\n\n已提交。", parsed.prose)
+        assertFalse(parsed.hasUnclosedBlock)
+    }
+
+    @Test
+    fun incompleteOrInvalidDsmlCannotBecomeVisibleReply() {
+        val partial = "先读取。<｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name=\"read_card\">"
+        assertEquals("先读取。", proseWithoutToolBlocks(partial))
+        assertTrue(parseToolCallBlocks(partial).hasUnclosedBlock)
+
+        val invalid = "<｜DSML｜tool_calls><｜DSML｜invoke name=\"read_card\">坏内容</｜DSML｜invoke></｜DSML｜tool_calls>"
+        val parsed = parseToolCallBlocks(invalid)
+        assertTrue(parsed.blocks.single() is ToolCallBlock.Invalid)
+        assertEquals("", parsed.prose)
+        assertFalse(parsed.hasUnclosedBlock)
     }
 
     // ── 执行器 ──────────────────────────────────────────────────
@@ -286,6 +355,17 @@ class CreationToolProtocolTest {
     }
 
     @Test
+    fun removeLoreRejectsMixedTypeIdsInsteadOfSilentlySkippingThem() {
+        val box = CreationToolBox(testSession())
+        val result = box.execute(ToolCallRequest("remove_lore", buildJsonObject {
+            put("ids", buildJsonArray { add(JsonPrimitive("L1")); add(JsonPrimitive(7)) })
+        }))
+        assertFalse(result.ok)
+        assertTrue(result.payload["error"]!!.jsonPrimitive.content.contains("第 2 项"))
+        assertEquals(listOf("L1", "L2"), box.session.lore.map { it.id })
+    }
+
+    @Test
     fun unknownToolNameFailsWithAvailableToolsListed() {
         val box = CreationToolBox(testSession())
         val result = box.execute(ToolCallRequest("hack", buildJsonObject { }))
@@ -301,6 +381,8 @@ class CreationToolProtocolTest {
         val rendered = result.render()
         assertTrue(rendered.startsWith("<tool_result name=\"read_card\" ok=\"true\">"))
         assertTrue(rendered.endsWith("</tool_result>"))
+        assertTrue(ToolResult(false, "bad\" name", buildJsonObject { }).render()
+            .startsWith("<tool_result name=\"unknown\""))
     }
 
     // ── 对抗复核修复回归 ──────────────────────────────────────

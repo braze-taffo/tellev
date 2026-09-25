@@ -79,6 +79,8 @@ data class CreationSession(
     val sourceCursor: Int = 0,
     val sourceLength: Int = 0,
     val savedArtifactId: String = "",
+    /** Complete tool calls were saved before this model turn ended; continue instead of replaying it. */
+    val partialTurnSaved: Boolean = false,
     val updatedAt: Long = System.currentTimeMillis(),
     /**
      * Monotonic lore-id counter: "L$n" numbers are never reused, even after
@@ -89,6 +91,8 @@ data class CreationSession(
     val originalCard: CharacterCard? = null,
     /** Merge base for editing an existing stored (or embedded) world book. */
     val originalBook: WorldBook? = null,
+    /** Editable SillyTavern extension tree; unknown keys remain untouched. */
+    val advancedExtensions: JsonObject = JsonObject(emptyMap()),
 ) {
     companion object {
         fun fromCharacter(card: CharacterCard): CreationSession {
@@ -116,6 +120,7 @@ data class CreationSession(
                 savedArtifactId = card.id,
                 originalCard = card,
                 originalBook = book,
+                advancedExtensions = (data?.get("extensions") as? JsonObject) ?: JsonObject(emptyMap()),
             ).withAssignedLoreIds()
         }
 
@@ -126,6 +131,21 @@ data class CreationSession(
             savedArtifactId = book.id,
             originalBook = book,
         ).withAssignedLoreIds()
+
+        /** Start an independent world book using a card as source material. */
+        fun worldBookFromCharacter(card: CharacterCard): CreationSession {
+            val source = fromCharacter(card)
+            return source.copy(
+                id = "creation_${UUID.randomUUID()}",
+                kind = CreationKind.WorldBook,
+                worldName = card.characterBook?.name?.takeIf(String::isNotBlank)
+                    ?: "${card.name}世界书",
+                savedArtifactId = "",
+                sourceName = card.name,
+                // The source card remains available to read_card, while the
+                // new book receives its own id on save.
+            )
+        }
     }
 }
 
@@ -175,7 +195,7 @@ fun CreationSession.toCharacterCard(): CharacterCard {
     // the frontend fragment from the saved card.
     val greetings = card.alternateGreetings.map(::withFrontend)
     val base = originalCard
-    val raw = if (base != null) mergedCardRaw(base.raw, card, opening, greetings) else buildJsonObject {
+    val rawBeforeExtensions = if (base != null) mergedCardRaw(base.raw, card, opening, greetings) else buildJsonObject {
         put("spec", "chara_card_v2")
         put("spec_version", "2.0")
         put("data", buildJsonObject {
@@ -185,6 +205,11 @@ fun CreationSession.toCharacterCard(): CharacterCard {
             put("character_version", "1.0")
         })
     }
+    val rawData = rawBeforeExtensions["data"] as? JsonObject ?: JsonObject(emptyMap())
+    val extensions = advancedExtensions.takeIf { it.isNotEmpty() }
+        ?: rawData["extensions"] as? JsonObject ?: JsonObject(emptyMap())
+    val raw = JsonObject(rawBeforeExtensions + ("data" to JsonObject(rawData +
+        ("extensions" to extensions))))
     return CharacterCard(
         id = savedArtifactId.ifBlank { "char_${UUID.randomUUID()}" },
         name = card.name.trim(),

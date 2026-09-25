@@ -15,6 +15,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -29,6 +30,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OpenAiCompatibleAdapterTest {
+    @Test
+    fun `creation stream reports EOF during reasoning instead of completing partial reply`() = runBlocking {
+        val wire = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"还在思考\"}}]}\n"
+        val adapter = OpenAiCompatibleAdapter(client = client {
+            response(it, 200, wire, "text/event-stream")
+        })
+        val request = generateRequest(true, GenerationPreset("p", "p", "openai-compatible"))
+            .copy(metadata = buildJsonObject { put("require_stream_terminator", JsonPrimitive(true)) })
+        val chunks = adapter.streamGenerate(config("test"), request).toList()
+        assertTrue(chunks.any { it is GenerateChunk.Delta && it.reasoning == "还在思考" })
+        assertEquals("provider_incomplete_stream", chunks.filterIsInstance<GenerateChunk.Failed>().single().error.code)
+        assertTrue(chunks.none { it is GenerateChunk.Completed })
+    }
+
     @Test
     fun `relay error terminates response and a later request can succeed`() = runBlocking {
         for (stream in listOf(false, true)) for (partial in listOf(false, true)) {
@@ -442,6 +457,40 @@ class OpenAiCompatibleAdapterTest {
             "{\"q\":\"道渊\"}",
             toolCalls[0].jsonObject["function"]?.jsonObject?.get("arguments")?.jsonPrimitive?.content,
         )
+    }
+
+    @Test
+    fun `creation native tool contract cannot be replaced by chat extra body`() = runBlocking {
+        var captured = ""
+        val adapter = OpenAiCompatibleAdapter(client = client { chain ->
+            captured = chain.request().body?.let { body -> Buffer().apply { body.writeTo(this) }.readUtf8() }.orEmpty()
+            response(chain, 200, """{"choices":[{"message":{"content":"ok"}}]}""")
+        })
+        val config = config("model").copy(options = buildJsonObject {
+            put("extraBody", buildJsonObject {
+                put("tools", JsonArray(emptyList()))
+                put("tool_choice", "none")
+                put("max_tokens", 1)
+                put("stop", JsonArray(listOf(JsonPrimitive("<tool_call>"))))
+            })
+        })
+        val tool = buildJsonObject {
+            put("type", "function")
+            put("function", buildJsonObject { put("name", "creation_tool") })
+        }
+        val request = generateRequest(false, GenerationPreset("p", "p", "openai-compatible"))
+            .copy(metadata = buildJsonObject {
+                put("creation_agent", true)
+                put("tools", JsonArray(listOf(tool)))
+                put("tool_choice", "auto")
+            })
+        adapter.streamGenerate(config, request).toList()
+        val payload = Json.parseToJsonElement(captured).jsonObject
+        assertEquals("creation_tool", payload["tools"]!!.jsonArray.single()
+            .jsonObject["function"]!!.jsonObject["name"]!!.jsonPrimitive.content)
+        assertEquals("auto", payload["tool_choice"]!!.jsonPrimitive.content)
+        assertEquals("77", payload["max_tokens"]!!.jsonPrimitive.content)
+        assertFalse("stop" in payload)
     }
 
 

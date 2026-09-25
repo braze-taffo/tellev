@@ -189,6 +189,7 @@ class OpenAiCompatibleAdapter(
                     val captureDiagnostics = request.metadata["capture_response_diagnostics"]?.jsonPrimitive?.contentOrNull == "true"
                     val responseSample = StringBuilder()
                     var dataFrames = 0
+                    var sawDone = false
                     var fullText = ""
                     var reasoningText = ""
                     var finishReason: String? = null
@@ -201,7 +202,7 @@ class OpenAiCompatibleAdapter(
                         val line = source.readUtf8Line().orEmpty()
                         if (!line.startsWith("data:")) continue
                         val data = line.removePrefix("data:").trim()
-                        if (data == "[DONE]") break
+                        if (data == "[DONE]") { sawDone = true; break }
                         responseError(data)?.let { error ->
                             emit(GenerateChunk.Failed(error))
                             return@use
@@ -251,6 +252,15 @@ class OpenAiCompatibleAdapter(
                         emit(GenerateChunk.Failed(TellevError(
                             code = "provider_invalid_stream",
                             message = "服务商未返回有效的流式响应，请检查中转站接口或稍后重试",
+                        )))
+                        return@use
+                    }
+                    if (request.metadata["require_stream_terminator"]?.jsonPrimitive?.contentOrNull == "true" &&
+                        !sawDone && finishReason == null
+                    ) {
+                        emit(GenerateChunk.Failed(TellevError(
+                            code = "provider_incomplete_stream",
+                            message = "模型流在完成标记前结束（已收到 $dataFrames 个数据帧）",
                         )))
                         return@use
                     }
@@ -361,7 +371,12 @@ class OpenAiCompatibleAdapter(
                 request.metadata["top_logprobs"]?.let { put("top_logprobs", it) }
             }
 
-            val reserved = setOf("messages", "model", "stream", "stream_options")
+            val creationAgent = request.metadata["creation_agent"]?.jsonPrimitive?.contentOrNull == "true"
+            val reserved = setOf("messages", "model", "stream", "stream_options") +
+                if (creationAgent) setOf(
+                    "tools", "tool_choice", "stop", "temperature", "top_p",
+                    "max_tokens", "max_completion_tokens", outputLengthField, "response_format",
+                ) else emptySet()
             (config.options["extraBody"] as? JsonObject)?.forEach { (key, value) ->
                 if (key !in reserved) put(key, value)
             }
@@ -513,7 +528,11 @@ class OpenAiCompatibleAdapter(
                 val id = obj["id"]?.jsonPrimitive?.contentOrNull
                 val func = obj["function"]?.jsonObject
                 val name = func?.get("name")?.jsonPrimitive?.contentOrNull
-                val arguments = func?.get("arguments")?.jsonPrimitive?.contentOrNull
+                val arguments = when (val value = func?.get("arguments")) {
+                    is JsonPrimitive -> value.contentOrNull
+                    is JsonObject -> value.toString()
+                    else -> null
+                }
                 ToolCallDelta(index = index, id = id, name = name, arguments = arguments)
             }.getOrNull()
         }

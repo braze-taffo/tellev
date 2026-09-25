@@ -4,6 +4,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -30,60 +31,165 @@ internal data class ToolBlocksParseResult(
 )
 
 private val completeBlockRegex = Regex("""$TOOL_CALL_OPEN([\s\S]*?)$TOOL_CALL_CLOSE""")
+// Some compatible providers return DeepSeek-style DSML in message content even
+// though this agent asks for <tool_call>. Accept both the documented form and
+// the doubled-pipe, spaced form observed on device.
+private val dsmlTagRegex = Regex("""<(/?)[｜|]{1,2}DSML[｜|]{1,2}\s*(tool_calls|calls|invoke|parameter)([^>]*)>""")
+private val dsmlWrapperRegex = Regex("""<DSML:(?:tool_calls|calls)>([\s\S]*?)</DSML:(?:tool_calls|calls)>""")
+private val dsmlInvokeRegex = Regex("""<DSML:invoke([^>]*)>([\s\S]*?)</DSML:invoke>""")
+private val dsmlParameterRegex = Regex("""<DSML:parameter([^>]*)>([\s\S]*?)</DSML:parameter>""")
+private val dsmlAttributeRegex = Regex("""([A-Za-z_]+)\s*=\s*"([^"]*)"""")
+
+private fun normalizeDsmlTags(raw: String): String = dsmlTagRegex.replace(raw) { match ->
+    "<${match.groupValues[1]}DSML:${match.groupValues[2]}${match.groupValues[3]}>"
+}
+
+private fun completeToolRanges(body: String): List<IntRange> =
+    (completeBlockRegex.findAll(body).map { it.range } + dsmlWrapperRegex.findAll(body).map { it.range })
+        .sortedBy { it.first }.toList()
+
+private fun removeCompleteToolBlocks(body: String): String {
+    val remainder = StringBuilder()
+    var cursor = 0
+    for (range in completeToolRanges(body)) {
+        if (range.first < cursor) continue
+        remainder.append(body, cursor, range.first)
+        cursor = range.last + 1
+    }
+    remainder.append(body, cursor, body.length)
+    return remainder.toString()
+}
+
+private fun firstToolStart(body: String): Int = listOf(
+    body.indexOf(TOOL_CALL_OPEN), body.indexOf("<DSML:"), body.indexOf("<｜"), body.indexOf("<|DSML"),
+).filter { it >= 0 }.minOrNull() ?: body.length
 
 /** Text the user-facing stream should show: everything except tool-call blocks. */
 internal fun proseWithoutToolBlocks(raw: String): String {
-    val remainder = StringBuilder()
-    var cursor = 0
-    for (match in completeBlockRegex.findAll(raw)) {
-        remainder.append(raw, cursor, match.range.first)
-        cursor = match.range.last + 1
+    val remainder = removeCompleteToolBlocks(normalizeDsmlTags(raw))
+    return remainder.substring(0, firstToolStart(remainder)).trim()
+}
+
+private fun dsmlAttributes(raw: String): Map<String, String>? {
+    val found = dsmlAttributeRegex.findAll(raw).toList()
+    if (dsmlAttributeRegex.replace(raw, "").isNotBlank()) return null
+    if (found.map { it.groupValues[1] }.distinct().size != found.size) return null
+    return found.associate { it.groupValues[1] to it.groupValues[2] }
+}
+
+private fun parseDsmlInvoke(match: MatchResult, json: Json): ToolCallBlock {
+    val attrs = dsmlAttributes(match.groupValues[1])
+    val name = attrs?.get("name")?.takeIf(String::isNotBlank)
+    if (name == null || attrs?.keys != setOf("name")) {
+        return ToolCallBlock.Invalid("DSML invoke 缺少合法 name", match.value)
     }
-    remainder.append(raw, cursor, raw.length)
-    return remainder.toString().substringBefore(TOOL_CALL_OPEN).trim()
+    val inner = match.groupValues[2]
+    val arguments = mutableMapOf<String, JsonElement>()
+    for (parameter in dsmlParameterRegex.findAll(inner)) {
+        val parameterAttrs = dsmlAttributes(parameter.groupValues[1])
+        val key = parameterAttrs?.get("name")?.takeIf(String::isNotBlank)
+        val stringFlag = parameterAttrs?.get("string")
+        if (key == null || (parameterAttrs?.keys.orEmpty() - setOf("name", "string")).isNotEmpty() ||
+            stringFlag !in setOf(null, "true", "false") || key in arguments
+        ) {
+            return ToolCallBlock.Invalid("DSML parameter 属性无效或重复", match.value)
+        }
+        val value = if (stringFlag == "false") {
+            runCatching { json.parseToJsonElement(parameter.groupValues[2].trim()) }.getOrNull()
+                ?: return ToolCallBlock.Invalid("DSML parameter 不是合法 JSON", match.value)
+        } else JsonPrimitive(parameter.groupValues[2])
+        arguments[key] = value
+    }
+    if (dsmlParameterRegex.replace(inner, "").isNotBlank()) {
+        return ToolCallBlock.Invalid("DSML invoke 含无法解析的内容", match.value)
+    }
+    return ToolCallBlock.Valid(ToolCallRequest(name, JsonObject(arguments)))
+}
+
+private fun parseDsmlWrapper(match: MatchResult, json: Json): List<ToolCallBlock> {
+    val inner = match.groupValues[1]
+    val invokes = dsmlInvokeRegex.findAll(inner).toList()
+    if (invokes.isEmpty()) return listOf(ToolCallBlock.Invalid("DSML 工具块没有完整 invoke", match.value))
+    val blocks = invokes.map { parseDsmlInvoke(it, json) }.toMutableList()
+    if (dsmlInvokeRegex.replace(inner, "").isNotBlank()) {
+        blocks += ToolCallBlock.Invalid("DSML 工具块含无法解析的内容", match.value)
+    }
+    return blocks
 }
 
 internal fun parseToolCallBlocks(body: String): ToolBlocksParseResult {
-    val blocks = mutableListOf<ToolCallBlock>()
+    val normalized = normalizeDsmlTags(body)
+    val indexedBlocks = mutableListOf<Pair<Int, ToolCallBlock>>()
     val json = Json { ignoreUnknownKeys = true }
-    for (match in completeBlockRegex.findAll(body)) {
+    for (match in completeBlockRegex.findAll(normalized)) {
         val inner = match.groupValues[1].trim()
             .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
         if (inner.isEmpty()) {
-            blocks += ToolCallBlock.Invalid("工具块内容为空", match.value)
+            indexedBlocks += match.range.first to ToolCallBlock.Invalid("工具块内容为空", match.value)
             continue
         }
         val parsed = runCatching { json.parseToJsonElement(inner).jsonObject }
         val root = parsed.getOrNull()
         if (root == null) {
-            blocks += ToolCallBlock.Invalid("工具块内不是合法 JSON 对象", match.value)
+            indexedBlocks += match.range.first to ToolCallBlock.Invalid("工具块内不是合法 JSON 对象", match.value)
             continue
         }
         // jsonPrimitive throws on non-primitive values; a bad block must stay a
         // recoverable Invalid instead of killing the round.
         val name = (root["name"] as? JsonPrimitive)?.contentOrNull
         if (name.isNullOrBlank()) {
-            blocks += ToolCallBlock.Invalid("缺少 name 字段", match.value)
+            indexedBlocks += match.range.first to ToolCallBlock.Invalid("缺少 name 字段", match.value)
             continue
         }
         val arguments = root["arguments"] as? JsonObject
         if (root.containsKey("arguments") && arguments == null) {
-            blocks += ToolCallBlock.Invalid("arguments 必须是 JSON 对象", match.value)
+            indexedBlocks += match.range.first to ToolCallBlock.Invalid("arguments 必须是 JSON 对象", match.value)
             continue
         }
-        blocks += ToolCallBlock.Valid(ToolCallRequest(name, arguments ?: JsonObject(emptyMap())))
+        indexedBlocks += match.range.first to ToolCallBlock.Valid(ToolCallRequest(name, arguments ?: JsonObject(emptyMap())))
     }
-    val opens = Regex.fromLiteral(TOOL_CALL_OPEN).findAll(body).count()
+    for (match in dsmlWrapperRegex.findAll(normalized)) {
+        indexedBlocks += parseDsmlWrapper(match, json).map { match.range.first to it }
+    }
+    val remainder = removeCompleteToolBlocks(normalized)
     return ToolBlocksParseResult(
-        blocks = blocks,
+        blocks = indexedBlocks.sortedBy { it.first }.map { it.second },
         prose = proseWithoutToolBlocks(body),
-        hasUnclosedBlock = opens > blocks.size,
+        hasUnclosedBlock = firstToolStart(remainder) < remainder.length,
     )
 }
 
+/** OpenAI-compatible providers can return function calls outside message.content. */
+internal fun parseNativeCreationCalls(calls: JsonArray?): List<ToolCallBlock> = calls?.map { element ->
+    val function = (element as? JsonObject)?.get("function") as? JsonObject
+    val nativeName = (function?.get("name") as? JsonPrimitive)?.contentOrNull.orEmpty()
+    val rawValue = function?.get("arguments")
+    val rawArguments = when (rawValue) {
+        is JsonPrimitive -> rawValue.contentOrNull.orEmpty()
+        is JsonObject -> rawValue.toString()
+        else -> ""
+    }
+    val arguments = if (rawValue is JsonObject) rawValue
+        else runCatching { Json.parseToJsonElement(rawArguments) as? JsonObject }.getOrNull()
+    if (arguments == null) {
+        ToolCallBlock.Invalid("原生工具 $nativeName 的 arguments 不是完整 JSON 对象", rawArguments.take(200))
+    } else if (nativeName == "creation_tool") {
+        val name = (arguments["name"] as? JsonPrimitive)?.contentOrNull
+        val nested = arguments["arguments"] as? JsonObject
+        if (name.isNullOrBlank() || nested == null) {
+            ToolCallBlock.Invalid("creation_tool 缺少 name 或 arguments 对象", rawArguments.take(200))
+        } else ToolCallBlock.Valid(ToolCallRequest(name, nested))
+    } else if (nativeName.isBlank()) {
+        ToolCallBlock.Invalid("原生工具缺少名称", rawArguments.take(200))
+    } else ToolCallBlock.Valid(ToolCallRequest(nativeName, arguments))
+} ?: emptyList()
+
 internal data class ToolResult(val ok: Boolean, val name: String, val payload: JsonObject) {
-    fun render(): String = "<tool_result name=\"$name\" ok=\"${if (ok) "true" else "false"}\">" +
-        payload.toString() + "</tool_result>"
+    fun render(): String {
+        val safeName = name.takeIf { Regex("[A-Za-z_][A-Za-z_0-9]{0,63}").matches(it) } ?: "unknown"
+        return "<tool_result name=\"$safeName\" ok=\"${if (ok) "true" else "false"}\">" +
+            payload.toString() + "</tool_result>"
+    }
 }
 
 /** Provenance and merge-base fields are system-managed; writes to them are ignored. */
@@ -136,9 +242,15 @@ internal class CreationToolBox(initial: CreationSession) {
             "set_card_fields" -> setCardFields(call.arguments)
             "upsert_lore" -> upsertLore(call.arguments)
             "remove_lore" -> removeLore(call.arguments)
+            "list_assets", "read_script", "upsert_script", "upsert_regex", "read_regex",
+            "set_variables", "read_variables", "remove_asset" -> {
+                val (updated, result) = CreationAdvancedAssets.execute(session, call)
+                session = updated
+                result
+            }
             else -> ToolResult(
                 ok = false, name = call.name,
-                payload = errorPayload("未知工具。可用：read_card, list_lore, read_lore, set_card_fields, upsert_lore, remove_lore"),
+                payload = errorPayload("未知工具。可用：read_card, list_lore, read_lore, set_card_fields, upsert_lore, remove_lore, list_assets, read_script, upsert_script, read_regex, upsert_regex, read_variables, set_variables, remove_asset"),
             )
         }
     } catch (e: IllegalArgumentException) {
@@ -153,6 +265,11 @@ internal class CreationToolBox(initial: CreationSession) {
         ok = true, name = "read_card",
         payload = buildJsonObject {
             put("kind", if (session.kind == CreationKind.Character) "角色卡" else "世界书")
+            val sourceCard = session.originalCard
+            if (session.kind == CreationKind.WorldBook && sourceCard != null) {
+                put("source_card_name", sourceCard.name)
+                put("source_card_is_reference_only", true)
+            }
             put("card", encodeJson.encodeToJsonElement(session.card))
             put("world_name", session.worldName)
             put("lore_count", session.lore.size)
@@ -175,7 +292,11 @@ internal class CreationToolBox(initial: CreationSession) {
         val value = this[name] ?: return emptyList()
         val array = value as? JsonArray
             ?: throw IllegalArgumentException("$name 必须是字符串数组")
-        return array.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+        return array.mapIndexed { index, item ->
+            val primitive = item as? JsonPrimitive
+            require(primitive != null && primitive.isString) { "$name 第 ${index + 1} 项必须是字符串" }
+            primitive.content
+        }
     }
 
     private fun listLore(arguments: JsonObject): ToolResult {

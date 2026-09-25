@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -62,6 +63,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 
@@ -247,7 +252,13 @@ fun CreationEditorScreen(
                 Text(state.error.orEmpty(), color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp))
             }
             if (session.turns.lastOrNull()?.role == "user" && !state.busy) {
-                TextButton(onClick = viewModel::retry) { Text("重试上一轮") }
+                if (session.partialTurnSaved) {
+                    TextButton(onClick = { viewModel.send("请从已保存的草稿继续完成上一轮未完成的工作；不要重复创建已经写入的条目。") }) {
+                        Text("继续未完成的创作")
+                    }
+                } else {
+                    TextButton(onClick = viewModel::retry) { Text("重试上一轮") }
+                }
             }
             state.info?.let { Text(it, modifier = Modifier.padding(horizontal = 12.dp)) }
             if (tab != 0 && (state.busy || state.modelPhase.isNotBlank())) {
@@ -268,6 +279,7 @@ fun CreationEditorScreen(
                 FilterChip(selected = tab == 2, onClick = { tab = 2 }, label = { Text("世界书") })
                 if (session.kind == CreationKind.Character) {
                     FilterChip(selected = tab == 3, onClick = { tab = 3 }, label = { Text("前端预览") })
+                    FilterChip(selected = tab == 4, onClick = { tab = 4 }, label = { Text("高级资源") })
                 }
             }
             when (tab) {
@@ -280,6 +292,7 @@ fun CreationEditorScreen(
                 )
                 2 -> WorldDraftEditor(session, viewModel, state.busy, onExportJson = { prepareWorldBookExport() })
                 3 -> FrontendPreview(session.card, viewModel, state.busy)
+                4 -> AdvancedAssetsPanel(session, viewModel, state.busy)
             }
         }
     }
@@ -408,6 +421,11 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
+            if (session.turns.isEmpty()) {
+                item(key = "creation-brief") {
+                    CreationBriefForm(session.kind, busy, viewModel::send)
+                }
+            }
             items(session.turns) { turn ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp)) {
@@ -437,8 +455,96 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
             value = input, onValueChange = { input = it }, modifier = Modifier.fillMaxWidth(),
             label = { Text("告诉 agent 想创作什么") }, minLines = 2, maxLines = 6,
         )
+        if (session.turns.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { viewModel.send("请继续引导，只问我当前最关键的 1 至 2 个问题，并先整理已有设定。") }, enabled = !busy) {
+                    Text("继续引导")
+                }
+                TextButton(onClick = { viewModel.send("这一部分交给你决定。请结合已确定设定写入草稿，并说明你的选择。") }, enabled = !busy) {
+                    Text("交给 AI 决定")
+                }
+                TextButton(onClick = { viewModel.send(if (session.kind == CreationKind.Character)
+                    "请根据目前已有信息立即完成可编辑的角色卡初稿和适用的世界书条目，缺口用合理设定补齐并标明待核对处。"
+                    else "请根据目前已有信息立即完成可编辑的世界书条目初稿，区分已确定事实与待核对设定。") }, enabled = !busy) {
+                    Text("生成初稿")
+                }
+                if (session.kind == CreationKind.WorldBook) {
+                    TextButton(onClick = { viewModel.send("请从现在起逐条与我讨论世界书条目。先提议一条，等我确认或修改后再写入草稿，然后讨论下一条。") }, enabled = !busy) {
+                        Text("逐条讨论")
+                    }
+                }
+                if (session.kind == CreationKind.Character) {
+                    TextButton(onClick = { viewModel.send("请根据这张卡的设定，实际创建可运行的变量结构和动态状态栏。先检查已有脚本、变量与正则，再分模块写入草稿；不要只输出让玩家复制的提示词。每个模块写完说明作用和待验证点。") }, enabled = !busy) {
+                        Text("制作动态状态栏")
+                    }
+                }
+            }
+        }
         Button(onClick = { viewModel.send(input); input = "" }, enabled = !busy && input.isNotBlank(),
             modifier = Modifier.fillMaxWidth()) { Text("发送") }
+    }
+}
+
+@Composable
+private fun CreationBriefForm(kind: CreationKind, busy: Boolean, onStart: (String) -> Unit) {
+    var guided by remember(kind) { mutableStateOf(true) }
+    var title by remember(kind) { mutableStateOf("") }
+    var premise by remember(kind) { mutableStateOf("") }
+    var relationship by remember(kind) { mutableStateOf("") }
+    var userPersona by remember(kind) { mutableStateOf("") }
+    var characters by remember(kind) { mutableStateOf("") }
+    var multipleCharacters by remember(kind) { mutableStateOf(false) }
+    var detail by remember(kind) { mutableStateOf(CreationDetail.Normal) }
+    var loreOneByOne by remember(kind) { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("创作起点", style = MaterialTheme.typography.titleMedium)
+            Text("填写已想好的部分即可；也可以跳过表单，直接在下方对话。", style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(selected = guided, onClick = { guided = true }, label = { Text("边聊边写") })
+                FilterChip(selected = !guided, onClick = { guided = false }, label = { Text("直接出初稿") })
+            }
+            OutlinedTextField(value = title, onValueChange = { title = it }, modifier = Modifier.fillMaxWidth(),
+                label = { Text(if (kind == CreationKind.Character) "角色或故事名（可选）" else "世界书名（可选）") })
+            OutlinedTextField(value = premise, onValueChange = { premise = it }, modifier = Modifier.fillMaxWidth(),
+                label = { Text(if (kind == CreationKind.Character) "角色与故事的核心设定（可选）" else "世界观、地点、势力和规则（可选）") },
+                minLines = 2, maxLines = 5)
+            if (kind == CreationKind.Character) {
+                OutlinedTextField(value = relationship, onValueChange = { relationship = it }, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("角色与用户的关系（可选）") })
+                OutlinedTextField(value = userPersona, onValueChange = { userPersona = it }, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("用户扮演的身份（可选）") })
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(checked = multipleCharacters, onCheckedChange = { multipleCharacters = it })
+                    Text("群像或多角色卡", modifier = Modifier.padding(start = 8.dp))
+                }
+                if (multipleCharacters) {
+                    OutlinedTextField(value = characters, onValueChange = { characters = it }, modifier = Modifier.fillMaxWidth(),
+                        label = { Text("每行一人：姓名、与用户的关系、简介") }, minLines = 3, maxLines = 6)
+                    if (characters.lineSequence().count { it.isNotBlank() } < 2) {
+                        Text("请至少写两位角色，每人占一行。", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Text("内容篇幅", style = MaterialTheme.typography.labelMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    CreationDetail.entries.forEach { option ->
+                        FilterChip(selected = detail == option, onClick = { detail = option }, label = { Text(option.label) })
+                    }
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(checked = loreOneByOne, onCheckedChange = { loreOneByOne = it })
+                    Text("逐条讨论，确认后写入", modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+            Button(onClick = { onStart(CreationBrief(kind, guided, title, premise, relationship,
+                userPersona, if (multipleCharacters) characters else "", detail, loreOneByOne).toPrompt()) },
+                enabled = !busy && (!multipleCharacters || characters.lineSequence().count { it.isNotBlank() } >= 2),
+                modifier = Modifier.fillMaxWidth()) {
+                Text(if (guided) "开始引导创作" else if (kind == CreationKind.WorldBook && loreOneByOne) "开始逐条讨论" else "生成第一版草稿")
+            }
+        }
     }
 }
 
@@ -482,6 +588,36 @@ private fun CharacterDraftEditor(
         DraftField("备选开场（以空行分隔）", card.alternateGreetings.joinToString("\n\n"), busy, 5) { value ->
             viewModel.editCard { c -> c.copy(alternateGreetings = value.split(Regex("\\n\\s*\\n")).map(String::trim).filter(String::isNotBlank)) }
         }
+    }
+}
+
+@Composable
+private fun AdvancedAssetsPanel(session: CreationSession, viewModel: CreationViewModel, busy: Boolean) {
+    val extensions = session.advancedExtensions.takeIf { it.isNotEmpty() }
+        ?: ((session.originalCard?.raw?.get("data") as? JsonObject)?.get("extensions") as? JsonObject)
+        ?: JsonObject(emptyMap())
+    val helper = extensions["tavern_helper"] as? JsonObject
+    val scripts = helper?.get("scripts") as? JsonArray ?: JsonArray(emptyList())
+    val regexes = extensions["regex_scripts"] as? JsonArray ?: JsonArray(emptyList())
+    val variables = helper?.get("variables") as? JsonObject ?: JsonObject(emptyMap())
+    fun JsonObject.label(key: String): String = (this[key] as? JsonPrimitive)?.contentOrNull.orEmpty()
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("TavernHelper 脚本 ${scripts.size} · 正则 ${regexes.size} · 变量 ${variables.size}",
+            style = MaterialTheme.typography.titleMedium)
+        Text("在对话里让 AI 创建或修改这些资源。脚本会随角色卡 JSON/PNG 导出；运行效果需在聊天中验证。",
+            style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = { viewModel.send("请检查并概述当前脚本、正则和变量，列出缺少的运行模块及下一步。") },
+            enabled = !busy) { Text("让 AI 检查资源") }
+        scripts.forEach { item ->
+            val script = item as? JsonObject ?: return@forEach
+            Text("${script.label("name")} · ${if (script.label("enabled") == "true") "启用" else "未启用"} · ${script.label("content").length} 字符")
+        }
+        regexes.forEach { item ->
+            val regex = item as? JsonObject ?: return@forEach
+            Text("正则：${regex.label("scriptName")}")
+        }
+        if (variables.isNotEmpty()) Text("变量：${variables.keys.joinToString("、")}")
     }
 }
 

@@ -286,9 +286,48 @@ class CreationFeatureTest {
         val system = requests.single().prompt.messages.first().content
         assertTrue(system.contains("第三人称限知"))
         assertTrue(system.contains("<tool_call>"))
+        assertTrue(system.contains("原生 creation_tool"))
+        assertEquals("creation_tool", requests.single().metadata["tools"]!!.jsonArray.single()
+            .jsonObject["function"]!!.jsonObject["name"]!!.jsonPrimitive.content)
         assertTrue(requests.single().preset.prompts.isNullOrEmpty())
         assertEquals(0, updates.last().deltaCount)
         assertTrue(updates.any { it.providerLabel.startsWith("Fake · ") })
+    }
+
+    @Test
+    fun nativeToolCallIsExecutedEvenWhenContentHasUnclosedToolPrefix() = runBlocking {
+        val requests = mutableListOf<GenerateRequest>()
+        val provider = object : ProviderAdapter {
+            private var calls = 0
+            override val id = "openai-compatible"
+            override val displayName = "Fake"
+            override val capabilities = setOf(ProviderCapability.Chat)
+            override suspend fun checkStatus(config: ProviderConfig) = ProviderStatus(true, "ok")
+            override suspend fun listModels(config: ProviderConfig): List<ProviderModel> = emptyList()
+            override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> {
+                requests += request
+                return if (++calls == 1) flowOf(GenerateChunk.Completed(
+                    text = "<tool_call>{\"name\":\"",
+                    finishReason = "tool_calls",
+                    toolCalls = JsonArray(listOf(buildJsonObject {
+                        put("id", "call_1")
+                        put("type", "function")
+                        put("function", buildJsonObject {
+                            put("name", "creation_tool")
+                            put("arguments", "{\"name\":\"set_card_fields\",\"arguments\":{\"name\":\"林月\"}}")
+                        })
+                    })),
+                )) else flowOf(GenerateChunk.Completed("已写入角色名称。"))
+            }
+        }
+        val reply = engine(provider).converse(CreationSession(kind = CreationKind.Character), "创建林月")
+        assertEquals("林月", reply.session.card.name)
+        assertEquals("已写入角色名称。", reply.message)
+        assertEquals(2, requests.size)
+        assertTrue(requests[1].prompt.messages.last().content.contains("ok=\"true\""))
+        assertFalse(requests[1].prompt.messages.any {
+            it.role == app.tellev.core.model.MessageRole.Assistant && it.content.contains("<tool_call>")
+        })
     }
 
     @Test
@@ -314,6 +353,35 @@ class CreationFeatureTest {
     }
 
     @Test
+    fun completedToolWriteIsCheckpointedBeforeLaterStreamFailure() = runBlocking {
+        val checkpoints = mutableListOf<CreationSession>()
+        val provider = object : ProviderAdapter {
+            private var calls = 0
+            override val id = "openai-compatible"
+            override val displayName = "Fake"
+            override val capabilities = setOf(ProviderCapability.Chat)
+            override suspend fun checkStatus(config: ProviderConfig) = ProviderStatus(true, "ok")
+            override suspend fun listModels(config: ProviderConfig): List<ProviderModel> = emptyList()
+            override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> =
+                if (++calls == 1) flowOf(GenerateChunk.Completed(
+                    "<tool_call>{\"name\":\"set_card_fields\",\"arguments\":{\"name\":\"林月\"}}</tool_call>",
+                )) else flowOf(
+                    GenerateChunk.Delta("", reasoning = "正在安排开场"),
+                    GenerateChunk.Failed(TellevError("provider_network", "socket closed", retryable = true)),
+                )
+        }
+        val failure = runCatching {
+            engine(provider).converse(
+                CreationSession(kind = CreationKind.Character), "写一个人物",
+                onCheckpoint = { checkpoints += it },
+            )
+        }.exceptionOrNull()
+        assertEquals("林月", checkpoints.single().card.name)
+        assertTrue(failure?.message?.contains("思考输出中断") == true)
+        assertTrue(failure?.message?.contains("provider_network") == true)
+    }
+
+    @Test
     fun malformedToolBlockIsFedBackAndRecovered() = runBlocking {
         val requests = mutableListOf<GenerateRequest>()
         val provider = fakeProvider(
@@ -333,16 +401,32 @@ class CreationFeatureTest {
     }
 
     @Test
-    fun twoConsecutiveUnusableRoundsFailTheTurn() = runBlocking {
+    fun threeConsecutiveUnusableRoundsFailTheTurn() = runBlocking {
         val requests = mutableListOf<GenerateRequest>()
         val provider = fakeProvider(
-            listOf("<tool_call>{\"na", "<tool_call>{\"na"),
+            listOf("<tool_call>{\"na", "<tool_call>{\"na", "<tool_call>{\"na"),
             requests = requests,
         )
         val failure = runCatching {
             engine(provider).converse(CreationSession(kind = CreationKind.Character), "写一个人物")
         }.exceptionOrNull()
-        assertEquals("AI 连续两轮未返回可用的工具调用或纯文本回复；本轮未应用，请点击「重试上一轮」。", failure?.message)
+        assertTrue(failure?.message?.contains("制卡工具回路连续三轮") == true)
+        assertTrue(failure?.message?.contains("正文 ") == true)
+        assertEquals(0.0, requests[1].preset.temperature)
+    }
+
+    @Test
+    fun truncatedPlainReplyIsRetriedInsteadOfAcceptedAsComplete() = runBlocking {
+        val requests = mutableListOf<GenerateRequest>()
+        val provider = fakeProvider(
+            listOf("这里先写开", "完整回复。"),
+            finishReasons = listOf("length", null),
+            requests = requests,
+        )
+        val reply = engine(provider).converse(CreationSession(kind = CreationKind.Character), "写开场")
+        assertEquals("完整回复。", reply.message)
+        assertEquals(2, requests.size)
+        assertTrue(requests[1].prompt.messages.last().content.contains("正文被长度上限截断"))
     }
 
     @Test
@@ -362,6 +446,7 @@ class CreationFeatureTest {
         assertEquals(CreationEngine.TOOL_ROUND_LIMIT, requests.size)
         assertTrue(reply.message.contains("继续"))
         assertEquals(1, reply.session.lore.size)
+        assertTrue(requests.last().prompt.messages.size <= 10)
         // 第 30 轮起预告上限：第 31 轮请求里应能看到提示。
         assertTrue(requests[CreationEngine.TOOL_ROUND_WARNING_FROM].prompt.messages.any { it.content.contains("上限") })
     }
@@ -508,6 +593,132 @@ class CreationFeatureTest {
     }
 
     // ── 导入编辑与保真 ────────────────────────────────────────
+
+    @Test
+    fun worldBookFromCharacterSavesSeparatelyAndKeepsEmbeddedEntryData() {
+        val source = CharacterCard(
+            id = "char_source",
+            name = "玄浑纪",
+            description = "修真世界",
+            characterBook = WorldBook(
+                id = "embedded_book",
+                name = "玄浑世界",
+                entries = listOf(WorldBookEntry(
+                    id = "7", keys = listOf("宗门"), content = "旧设定",
+                    raw = buildJsonObject { put("uid", 7); put("custom", "保留") },
+                )),
+                raw = buildJsonObject { put("name", "玄浑世界"); put("custom_book", "保留") },
+            ),
+        )
+        val session = CreationSession.worldBookFromCharacter(source)
+        assertEquals(CreationKind.WorldBook, session.kind)
+        assertEquals("", session.savedArtifactId)
+        assertEquals("char_source", session.originalCard?.id)
+        val box = CreationToolBox(session)
+        assertTrue(box.execute(ToolCallRequest("upsert_lore", buildJsonObject {
+            put("entries", JsonArray(listOf(buildJsonObject {
+                put("id", "L1")
+                put("content", "新设定")
+            })))
+        })).ok)
+        val book = box.session.toWorldBook()
+        assertTrue(book.id != source.id && book.id != source.characterBook?.id)
+        val exported = Json.parseToJsonElement(worldBookExportBytes(book).toString(Charsets.UTF_8)).jsonObject
+        assertEquals("保留", exported["custom_book"]?.jsonPrimitive?.content)
+        val entry = WorldBookCodec.parseWorldBookEntries(exported).single()
+        assertEquals("新设定", entry.content)
+        assertEquals("保留", entry.raw["custom"]?.jsonPrimitive?.content)
+        assertEquals("旧设定", source.characterBook?.entries?.single()?.content)
+    }
+
+    @Test
+    fun advancedCardAssetsRoundTripThroughSillyTavernJson() {
+        val initial = CreationSession(kind = CreationKind.Character,
+            card = CharacterDraft(name = "属性卡", firstMessage = "开场"))
+        val box = CreationToolBox(initial)
+        assertTrue(box.execute(ToolCallRequest("upsert_script", buildJsonObject {
+            put("id", "status")
+            put("name", "状态栏")
+            put("content", "const hp = 10;\n")
+        })).ok)
+        assertTrue(box.execute(ToolCallRequest("upsert_script", buildJsonObject {
+            put("id", "status")
+            put("name", "状态栏")
+            put("content", "window.hp = hp;")
+            put("mode", "append")
+            put("enabled", true)
+        })).ok)
+        assertTrue(box.execute(ToolCallRequest("set_variables", buildJsonObject {
+            put("values", buildJsonObject { put("气血", 10) })
+        })).ok)
+        assertTrue(box.execute(ToolCallRequest("upsert_regex", buildJsonObject {
+            put("scriptName", "状态栏折叠")
+            put("findRegex", "/<status>([\\s\\S]*?)<\\/status>/g")
+            put("replaceString", "$1")
+            put("placement", JsonArray(listOf(JsonPrimitive(2))))
+        })).ok)
+        val exported = CharacterExporter().exportToJson(box.session.toCharacterCard())
+        val imported = CharacterImporter().importFromJson(exported)
+        val extensions = Json.parseToJsonElement(exported).jsonObject["data"]!!.jsonObject["extensions"]!!.jsonObject
+        assertEquals(1, extensions["regex_scripts"]!!.jsonArray.size)
+        assertEquals("10", extensions["tavern_helper"]!!.jsonObject["variables"]!!.jsonObject["气血"]!!.jsonPrimitive.content)
+        assertEquals("const hp = 10;\nwindow.hp = hp;",
+            app.tellev.core.extension.CharacterTavernHelperScripts.extract(imported).single().content)
+    }
+
+    @Test
+    fun editingImportedScriptPreservesOtherScriptsAndUnknownExtensionFields() {
+        val imported = CharacterCard(id = "old", name = "旧卡", raw = buildJsonObject {
+            put("spec", "chara_card_v3")
+            put("spec_version", "3.0")
+            put("data", buildJsonObject {
+                put("extensions", buildJsonObject {
+                    put("custom_extension", "原值")
+                    put("tavern_helper", buildJsonObject {
+                        put("scripts", JsonArray(listOf(
+                            buildJsonObject {
+                                put("type", "script"); put("id", "a"); put("name", "状态栏")
+                                put("enabled", true); put("content", "旧脚本"); put("custom", "保留")
+                            },
+                            buildJsonObject {
+                                put("type", "script"); put("id", "b"); put("name", "战斗")
+                                put("enabled", true); put("content", "不修改")
+                            },
+                        )))
+                    })
+                })
+            })
+        })
+        val box = CreationToolBox(CreationSession.fromCharacter(imported))
+        assertTrue(box.execute(ToolCallRequest("upsert_script", buildJsonObject {
+            put("id", "a"); put("name", "状态栏"); put("content", "新脚本")
+        })).ok)
+        val exported = Json.parseToJsonElement(CharacterExporter().exportToJson(box.session.toCharacterCard())).jsonObject
+        assertEquals("chara_card_v3", exported["spec"]?.jsonPrimitive?.content)
+        val ext = exported["data"]!!.jsonObject["extensions"]!!.jsonObject
+        assertEquals("原值", ext["custom_extension"]?.jsonPrimitive?.content)
+        val scripts = ext["tavern_helper"]!!.jsonObject["scripts"]!!.jsonArray
+        assertEquals(2, scripts.size)
+        assertEquals("保留", scripts[0].jsonObject["custom"]?.jsonPrimitive?.content)
+        assertEquals("新脚本", scripts[0].jsonObject["content"]?.jsonPrimitive?.content)
+        assertEquals("不修改", scripts[1].jsonObject["content"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun malformedAdvancedToolArgumentsDoNotChangeDraft() {
+        val box = CreationToolBox(CreationSession(kind = CreationKind.Character,
+            card = CharacterDraft(name = "校验")))
+        val wrongEnabled = box.execute(ToolCallRequest("upsert_script", buildJsonObject {
+            put("name", "状态栏"); put("content", "code"); put("enabled", "true")
+        }))
+        assertFalse(wrongEnabled.ok)
+        val wrongPlacement = box.execute(ToolCallRequest("upsert_regex", buildJsonObject {
+            put("scriptName", "折叠"); put("findRegex", "x")
+            put("placement", JsonArray(listOf(JsonPrimitive("2"))))
+        }))
+        assertFalse(wrongPlacement.ok)
+        assertTrue(box.session.advancedExtensions.isEmpty())
+    }
 
     @Test
     fun importedCharacterEditKeepsExtensionsAdvancedFieldsAndShadowedKeys() {

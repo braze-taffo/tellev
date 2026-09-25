@@ -15,6 +15,7 @@ import app.tellev.core.storage.codec.WorldBookCodec
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -145,6 +146,23 @@ class CreationViewModel(
         }
     }
 
+    /** Make a separate world book from a stored card and its embedded entries. */
+    fun startWorldBookFromCharacter(cardId: String) = viewModelScope.launch {
+        if (_state.value.busy || cardId.isBlank()) return@launch
+        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = "读取角色卡", modelPhase = "正在读取角色卡", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
+        try {
+            val session = CreationSession.worldBookFromCharacter(store.readCharacter(cardId))
+            _state.update { it.copy(current = session, modelPhase = "已载入来源角色卡") }
+            persist(session)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            fail(e)
+        } finally {
+            _state.update { it.copy(busy = false) }
+        }
+    }
+
     /** Load a stored world book into a new creation session for AI editing. */
     fun startFromWorldBook(bookId: String) = viewModelScope.launch {
         if (_state.value.busy || bookId.isBlank()) return@launch
@@ -180,23 +198,35 @@ class CreationViewModel(
             ) }
             try {
                 write(withUser)
-                val reply = engine.converse(session, text.trim(), ::showModelProgress)
+                val reply = engine.converse(session, text.trim(), ::showModelProgress) { working ->
+                    val checkpoint = working.copy(
+                        turns = withUser.turns,
+                        partialTurnSaved = true,
+                        updatedAt = System.currentTimeMillis(),
+                    )
+                    // Finish the atomic checkpoint even if Stop arrives during disk I/O.
+                    withContext(NonCancellable) { write(checkpoint) }
+                    _state.update { it.copy(current = checkpoint) }
+                }
                 _state.update { it.copy(modelPhase = "校验并保存草稿") }
                 val next = reply.session.copy(
                     turns = withUser.turns + CreationTurn(
                         "agent", reply.message.ifBlank { "草稿已更新，请检查右侧内容。" },
                     ),
+                    partialTurnSaved = false,
                     updatedAt = System.currentTimeMillis(),
                 )
                 write(next)
                 _state.update { it.copy(current = next, info = null, modelPhase = "本轮完成") }
                 refresh()
             } catch (e: CancellationException) {
-                _state.update { it.copy(modelPhase = "已停止；本轮草稿未应用") }
+                _state.update { it.copy(modelPhase = if (it.current?.partialTurnSaved == true)
+                    "已停止；已完成的草稿修改已保存，可继续处理" else "已停止；本轮草稿未应用") }
                 throw e
             } catch (e: Exception) {
                 fail(e)
-                _state.update { it.copy(modelPhase = "本轮失败，草稿未应用") }
+                _state.update { it.copy(modelPhase = if (it.current?.partialTurnSaved == true)
+                    "请求中断；已完成的草稿修改已保存，可继续处理" else "本轮失败，草稿未应用") }
             } finally {
                 _state.update { it.copy(busy = false) }
             }
@@ -205,7 +235,7 @@ class CreationViewModel(
 
     fun retry() {
         val session = _state.value.current ?: return
-        if (_state.value.busy || session.turns.lastOrNull()?.role != "user") return
+        if (_state.value.busy || session.partialTurnSaved || session.turns.lastOrNull()?.role != "user") return
         val last = session.turns.last().text
         val before = session.copy(turns = session.turns.dropLast(1))
         _state.update { it.copy(current = before) }
