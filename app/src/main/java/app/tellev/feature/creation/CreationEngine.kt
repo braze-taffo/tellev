@@ -2,6 +2,7 @@ package app.tellev.feature.creation
 
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.MessageReasoning
+import app.tellev.core.model.TellevError
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.prompt.PromptBuildResult
 import app.tellev.core.prompt.PromptDiagnostics
@@ -28,6 +29,17 @@ import okhttp3.Protocol
 import java.util.concurrent.TimeUnit
 
 internal data class SourceChunk(val start: Int, val end: Int, val text: String)
+
+/** Only a failed TCP connect is safe to replay: no HTTP request reached the provider. */
+internal fun shouldRetryCreationConnect(
+    error: TellevError,
+    receivedDelta: Boolean,
+    alreadyRetried: Boolean,
+): Boolean = !receivedDelta && !alreadyRetried &&
+    error.code == "provider_network" &&
+    error.causeType in setOf("SocketTimeoutException", "ConnectException") &&
+    (error.message.startsWith("failed to connect to", ignoreCase = true) ||
+        error.message.contains("connect timed out", ignoreCase = true))
 
 /** Covers the entire source, including a final short tail, without silent truncation. */
 internal fun nextSourceChunk(source: String, cursor: Int, maxChars: Int = 7_000): SourceChunk? {
@@ -220,7 +232,9 @@ internal class CreationEngine(
     private val compatibleCreationAdapter by lazy {
         OpenAiCompatibleAdapter(client = OkHttpClient.Builder()
             .protocols(listOf(Protocol.HTTP_1_1))
-            .connectTimeout(5, TimeUnit.MINUTES)
+            // The model may take minutes to answer, but opening a TCP socket should not.
+            // A shorter connect limit lets OkHttp try another resolved address sooner.
+            .connectTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(5, TimeUnit.MINUTES)
             .readTimeout(5, TimeUnit.MINUTES)
             .callTimeout(0, TimeUnit.MILLISECONDS)
@@ -359,28 +373,43 @@ internal class CreationEngine(
             ))
         }
         onProgress(CreationStreamUpdate("${phasePrefix}等待模型响应"))
-        adapter.streamGenerate(
-            config,
-            GenerateRequest(prompt = prompt, preset = agentPreset, stream = true),
-        ).collect { chunk ->
-            when (chunk) {
-                is GenerateChunk.Delta -> {
-                    deltas.append(chunk.text)
-                    reasoningDeltas.append(chunk.reasoning)
-                    if (chunk.text.isNotEmpty() || chunk.reasoning.isNotEmpty()) {
-                        deltaCount++
-                        lastDeltaMillis = elapsedMillis()
-                        if (firstDeltaMillis == null) firstDeltaMillis = lastDeltaMillis
-                        publish()
+        var retriedConnect = false
+        do {
+            var retryConnect = false
+            adapter.streamGenerate(
+                config,
+                GenerateRequest(prompt = prompt, preset = agentPreset, stream = true),
+            ).collect { chunk ->
+                when (chunk) {
+                    is GenerateChunk.Delta -> {
+                        deltas.append(chunk.text)
+                        reasoningDeltas.append(chunk.reasoning)
+                        if (chunk.text.isNotEmpty() || chunk.reasoning.isNotEmpty()) {
+                            deltaCount++
+                            lastDeltaMillis = elapsedMillis()
+                            if (firstDeltaMillis == null) firstDeltaMillis = lastDeltaMillis
+                            publish()
+                        }
+                    }
+                    is GenerateChunk.Completed -> {
+                        completed = chunk.text
+                        completedReasoning = chunk.reasoning
+                    }
+                    is GenerateChunk.Failed -> {
+                        if (adapter === compatibleCreationAdapter &&
+                            shouldRetryCreationConnect(chunk.error, deltaCount > 0, retriedConnect)
+                        ) {
+                            retryConnect = true
+                            onProgress(CreationStreamUpdate(
+                                phase = "${phasePrefix}连接失败，正在重试（1/1）",
+                                elapsedMillis = elapsedMillis(),
+                            ))
+                        } else error(chunk.error.message)
                     }
                 }
-                is GenerateChunk.Completed -> {
-                    completed = chunk.text
-                    completedReasoning = chunk.reasoning
-                }
-                is GenerateChunk.Failed -> error(chunk.error.message)
             }
-        }
+            retriedConnect = retriedConnect || retryConnect
+        } while (retryConnect)
         val raw = (completed?.takeIf(String::isNotBlank) ?: deltas.toString())
             .takeIf(String::isNotBlank) ?: error("模型未返回内容")
         val visible = visibleCreationStream(raw, completedReasoning?.takeIf(String::isNotBlank) ?: reasoningDeltas.toString())

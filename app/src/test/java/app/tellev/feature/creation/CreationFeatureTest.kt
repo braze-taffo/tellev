@@ -1,5 +1,6 @@
 package app.tellev.feature.creation
 
+import app.tellev.core.model.TellevError
 import app.tellev.core.storage.CharacterExporter
 import app.tellev.core.storage.CharacterImporter
 import app.tellev.core.storage.codec.WorldBookCodec
@@ -24,6 +25,25 @@ import org.junit.Test
 import java.nio.file.Files
 
 class CreationFeatureTest {
+    @Test
+    fun connectionRetryOnlyAllowsPreRequestConnectFailureOnce() {
+        val connectFailure = TellevError(
+            code = "provider_network",
+            message = "failed to connect to api.example/172.67.167.23 (port 443) after 30000ms: isConnected failed: ETIMEDOUT",
+            retryable = true,
+            causeType = "SocketTimeoutException",
+        )
+        assertTrue(shouldRetryCreationConnect(connectFailure, receivedDelta = false, alreadyRetried = false))
+        assertFalse(shouldRetryCreationConnect(connectFailure, receivedDelta = true, alreadyRetried = false))
+        assertFalse(shouldRetryCreationConnect(connectFailure, receivedDelta = false, alreadyRetried = true))
+        assertFalse(shouldRetryCreationConnect(
+            connectFailure.copy(message = "Read timed out"), receivedDelta = false, alreadyRetried = false,
+        ))
+        assertFalse(shouldRetryCreationConnect(
+            connectFailure.copy(code = "provider_http_500"), receivedDelta = false, alreadyRetried = false,
+        ))
+    }
+
     @Test
     fun sourceChunkingCoversEveryCharacterAndPreservesFinalTail() {
         val source = (1..350).joinToString("\n") { "第${it}段：${"设定".repeat(30)}" } + "\n最后一句。"
