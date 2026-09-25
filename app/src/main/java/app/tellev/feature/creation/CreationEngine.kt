@@ -164,10 +164,10 @@ internal class CreationEngine(
 
         /**
          * Reasoning models spend their completion budget on thinking first; an
-         * 8K cap died mid-thought (~1900 streamed chunks). 32K leaves room for
-         * reasoning plus a batched tool round.
+         * 8K cap died mid-thought (~1900 streamed chunks). Modern models start
+         * at 128K output, so ask for that and let the provider clamp if lower.
          */
-        internal const val MAX_OUTPUT_TOKENS = 32_768
+        internal const val MAX_OUTPUT_TOKENS = 128_000
     }
 
     // Keep the creation agent's transport separate from chat. Some compatible
