@@ -26,15 +26,23 @@ object AppLocale {
 
     /** 把给定 context 包装成当前所选语言的等价 context；跟随系统时原样返回。 */
     fun wrap(base: Context): Context {
-        val tag = storedTag(base.applicationContext)
+        val tag = storedTag(base)
         if (tag == SYSTEM) return base
         val config = Configuration(base.resources.configuration)
         config.setLocales(LocaleList.forLanguageTags(tag))
         return base.createConfigurationContext(config)
     }
 
-    private fun storedTag(appContext: Context): String =
-        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    /**
+     * 直接读传入的 context。不能用 `base.applicationContext`：本方法在
+     * Application.attachBaseContext 阶段就会被调用，而 LoadedApk 是在
+     * `instrumentation.newApplication()`（即 attachBaseContext 执行点）返回之后才给
+     * mApplication 赋值，此时 getApplicationContext() 返回 null，取它的
+     * getSharedPreferences 会直接 NPE。
+     * base 与 applicationContext 指向同一个包，shared_prefs 文件相同。
+     */
+    private fun storedTag(context: Context): String =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(PREF_KEY_LANGUAGE_TAG, SYSTEM) ?: SYSTEM
 
     /** 与 AppPreferences 的默认 SharedPreferences 保持一致，避免 attach 阶段引入依赖。 */

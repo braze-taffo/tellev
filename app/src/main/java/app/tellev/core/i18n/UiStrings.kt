@@ -26,7 +26,12 @@ object UiStrings {
         val res = resources
         if (res != null) {
             val id = S.idByName[name]
-            if (id != null) return res.getString(id, *args)
+            // 无参数时必须走 getString(id)：带参重载无条件 String.format，
+            // 而含字面 % 的条目（%model%、<%= %> 这类 formatted="false"）会被当成
+            // 格式转换符，抛 UnknownFormatConversionException。
+            if (id != null) {
+                return if (args.isEmpty()) res.getString(id) else res.getString(id, *args)
+            }
         }
         val zh = S.fallbackZh[name] ?: return "[missing:$name]"
         return if (args.isEmpty()) zh else String.format(Locale.getDefault(), zh, *args)
