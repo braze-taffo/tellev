@@ -21,6 +21,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.Image
@@ -679,35 +680,43 @@ private fun WorldDraftEditor(
             }
         }
     }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+    // A verticalScroll Column composing every lore card (251 entries × 8 text
+    // fields ≈ 32k LayoutNodes / ~300k mutable states ≈ 200MB heap) froze the
+    // main thread in GC and caused the world-draft OOM/ANR. LazyColumn keeps
+    // only visible entry cards composed.
+    LazyColumn(Modifier.fillMaxSize().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        DraftField(stringResource(R.string.crs_field_worldbook_name), session.worldName, busy) { viewModel.editWorldName(it) }
-        OutlinedButton(onClick = onExportJson, enabled = !busy) {
-            Text(stringResource(R.string.crs_export_worldbook_json))
-        }
-        OutlinedTextField(
-            value = pastedSource, onValueChange = { pastedSource = it }, modifier = Modifier.fillMaxWidth(),
-            label = { Text(stringResource(R.string.crs_field_paste_source)) }, minLines = 3, maxLines = 6, enabled = !busy,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { viewModel.setSource("粘贴原文", pastedSource); pastedSource = "" },
-                enabled = !busy && pastedSource.isNotBlank()) { Text(stringResource(R.string.crs_save_source)) }
-            OutlinedButton(onClick = { filePicker.launch(arrayOf("text/plain", "*/*")) }, enabled = !busy) { Text(stringResource(R.string.crs_import_text_file)) }
-        }
-        if (session.sourceLength > 0) {
-            Text(stringResource(R.string.crs_source_status, session.sourceName, session.sourceCursor, session.sourceLength))
-            Button(onClick = viewModel::extractSource,
-                enabled = !busy && session.sourceCursor < session.sourceLength) {
-                Text(if (session.sourceCursor == 0) stringResource(R.string.crs_start_extract) else stringResource(R.string.crs_continue_extract))
+        item(key = "header") {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            DraftField(stringResource(R.string.crs_field_worldbook_name), session.worldName, busy) { viewModel.editWorldName(it) }
+            OutlinedButton(onClick = onExportJson, enabled = !busy) {
+                Text(stringResource(R.string.crs_export_worldbook_json))
+            }
+            OutlinedTextField(
+                value = pastedSource, onValueChange = { pastedSource = it }, modifier = Modifier.fillMaxWidth(),
+                label = { Text(stringResource(R.string.crs_field_paste_source)) }, minLines = 3, maxLines = 6, enabled = !busy,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { viewModel.setSource("粘贴原文", pastedSource); pastedSource = "" },
+                    enabled = !busy && pastedSource.isNotBlank()) { Text(stringResource(R.string.crs_save_source)) }
+                OutlinedButton(onClick = { filePicker.launch(arrayOf("text/plain", "*/*")) }, enabled = !busy) { Text(stringResource(R.string.crs_import_text_file)) }
+            }
+            if (session.sourceLength > 0) {
+                Text(stringResource(R.string.crs_source_status, session.sourceName, session.sourceCursor, session.sourceLength))
+                Button(onClick = viewModel::extractSource,
+                    enabled = !busy && session.sourceCursor < session.sourceLength) {
+                    Text(if (session.sourceCursor == 0) stringResource(R.string.crs_start_extract) else stringResource(R.string.crs_continue_extract))
+                }
+            }
+            Text(stringResource(R.string.crs_lore_count, session.lore.size), style = MaterialTheme.typography.titleMedium)
+            val repeatedTitles = session.lore.groupBy { it.title.trim().lowercase() }
+                .filter { (title, entries) -> title.isNotBlank() && entries.size > 1 }
+            if (repeatedTitles.isNotEmpty()) {
+                Text(stringResource(R.string.crs_duplicate_titles, repeatedTitles.size), color = MaterialTheme.colorScheme.error)
+            }
             }
         }
-        Text(stringResource(R.string.crs_lore_count, session.lore.size), style = MaterialTheme.typography.titleMedium)
-        val repeatedTitles = session.lore.groupBy { it.title.trim().lowercase() }
-            .filter { (title, entries) -> title.isNotBlank() && entries.size > 1 }
-        if (repeatedTitles.isNotEmpty()) {
-            Text(stringResource(R.string.crs_duplicate_titles, repeatedTitles.size), color = MaterialTheme.colorScheme.error)
-        }
-        session.lore.forEachIndexed { index, item ->
+        itemsIndexed(session.lore, key = { index, _ -> "lore-$index" }) { index, item ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     DraftField(stringResource(R.string.crs_field_lore_title), item.title, busy) { viewModel.editLore(index, item.copy(title = it)) }
@@ -737,8 +746,10 @@ private fun WorldDraftEditor(
                 }
             }
         }
-        OutlinedButton(onClick = { viewModel.editLore(session.lore.size, LoreDraft("新条目", emptyList(), "")) },
-            enabled = !busy) { Text(stringResource(R.string.crs_add_entry)) }
+        item(key = "add-entry") {
+            OutlinedButton(onClick = { viewModel.editLore(session.lore.size, LoreDraft("新条目", emptyList(), "")) },
+                enabled = !busy) { Text(stringResource(R.string.crs_add_entry)) }
+        }
     }
 }
 
