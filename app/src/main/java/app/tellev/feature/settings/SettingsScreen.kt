@@ -39,9 +39,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.tellev.R
+import app.tellev.core.guide.GuideKind
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.Persona
 import app.tellev.core.model.PresetCategory
+import app.tellev.feature.guide.GuideDialog
 import app.tellev.feature.update.UpdateViewModel
 import app.tellev.util.UriUtils
 
@@ -76,6 +78,7 @@ fun SettingsScreen(
     var editingPersona by remember { mutableStateOf<Persona?>(null) }
     var showExportDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
+    var guideToShow by remember { mutableStateOf<GuideKind?>(null) }
     var apiKeyVisible by remember { mutableStateOf(false) }
     var pendingPresetImportUri by remember { mutableStateOf<Uri?>(null) }
     var pendingPresetExport by remember { mutableStateOf<GenerationPreset?>(null) }
@@ -295,6 +298,7 @@ fun SettingsScreen(
                         versionName = versionName,
                         updateState = updateState,
                         updateViewModel = updateViewModel,
+                        onOpenGuide = { guideToShow = it },
                     )
                 }
             }
@@ -390,6 +394,10 @@ fun SettingsScreen(
                 showExportDialog = false
             },
         )
+    }
+
+    guideToShow?.let { kind ->
+        GuideDialog(kind = kind, onDismiss = { guideToShow = null })
     }
 
     if (!providerDetailsOnly && showImportDialog) {

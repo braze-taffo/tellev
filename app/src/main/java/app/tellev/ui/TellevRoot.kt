@@ -56,6 +56,10 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.tellev.LocalTellevGraph
 import app.tellev.R
+import app.tellev.core.guide.GuideKind
+import app.tellev.core.guide.StartupGuide
+import app.tellev.core.guide.decideStartupGuide
+import app.tellev.core.guide.hasAnyUserData
 import app.tellev.feature.about.AboutScreen
 import app.tellev.feature.characters.CharacterDetailScreen
 import app.tellev.feature.characters.CharactersListScreen
@@ -71,6 +75,7 @@ import app.tellev.feature.chat.ChatViewModelFactory
 import app.tellev.feature.extensions.ExtensionsScreen
 import app.tellev.feature.extensions.ExtensionsViewModel
 import app.tellev.feature.extensions.ExtensionsViewModelFactory
+import app.tellev.feature.guide.GuideDialog
 import app.tellev.feature.settings.SettingsScreen
 import app.tellev.feature.settings.SettingsViewModel
 import app.tellev.feature.settings.SettingsViewModelFactory
@@ -81,6 +86,8 @@ import app.tellev.feature.world.WorldBookEntryEditScreen
 import app.tellev.feature.world.WorldBooksListScreen
 import app.tellev.feature.world.WorldViewModel
 import app.tellev.feature.world.WorldViewModelFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private enum class TellevTab(
     val route: String,
@@ -189,6 +196,21 @@ fun TellevRoot() {
     }
     LaunchedEffect(Unit) {
         showQqGroupNotice = graph.appPreferences.shouldShowQqGroupNotice()
+    }
+    // 首次打开指引：覆盖升级看「本次更新了什么」，全新安装看新手引导。
+    // 判定放在 IO 上——那条「全新安装」分支要枚举磁盘目录。
+    var startupGuide by rememberSaveable { mutableStateOf<StartupGuide?>(null) }
+    LaunchedEffect(packageInfo.firstInstallTime, packageInfo.lastUpdateTime) {
+        startupGuide = withContext(Dispatchers.IO) {
+            decideStartupGuide(
+                currentVersion = currentVersion,
+                lastGuideVersion = graph.appPreferences.updateGuideShownVersion,
+                onboardingShown = graph.appPreferences.onboardingShown,
+                firstInstallTime = packageInfo.firstInstallTime,
+                lastUpdateTime = packageInfo.lastUpdateTime,
+                hasUserData = { hasAnyUserData(graph.dataStore.layout) },
+            )
+        }
     }
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -490,7 +512,27 @@ fun TellevRoot() {
         }
     }
 
-    if (showPresetLimitUpgradeNotice) {
+    // 首次打开指引排在所有启动弹窗最前面：它是本版本发布的主角。看到它时
+    // 下面几个通知与更新提示都让位，保证一次只弹一个。
+    val guide = startupGuide
+    if (guide != null) {
+        GuideDialog(
+            kind = when (guide) {
+                StartupGuide.Onboarding -> GuideKind.Onboarding
+                StartupGuide.UpdateGuide -> GuideKind.Update
+            },
+            onDismiss = {
+                if (guide == StartupGuide.Onboarding) {
+                    graph.appPreferences.markOnboardingShown(currentVersion)
+                } else {
+                    graph.appPreferences.markUpdateGuideShown(currentVersion)
+                }
+                startupGuide = null
+            },
+        )
+    }
+
+    if (showPresetLimitUpgradeNotice && startupGuide == null) {
         fun closeNotice() {
             graph.appPreferences.markPresetLimitUpgradeNoticeHandled()
             showPresetLimitUpgradeNotice = false
@@ -522,9 +564,9 @@ fun TellevRoot() {
         )
     }
 
-    // Queued after the beta-relay and preset-limit notices so at most one
-    // dialog is up at a time.
-    if (showQqGroupNotice && !showPresetLimitUpgradeNotice) {
+    // Queued after the guide and the notices above so at most one dialog is up
+    // at a time.
+    if (showQqGroupNotice && !showPresetLimitUpgradeNotice && startupGuide == null) {
         val clipboard = LocalClipboardManager.current
         fun closeNotice() {
             graph.appPreferences.markQqGroupNoticeHandled()
@@ -583,7 +625,7 @@ fun TellevRoot() {
     if (
         pendingUpdate != null &&
         dismissedUpdateVersion != pendingUpdate.version &&
-        !showPresetLimitUpgradeNotice && !showQqGroupNotice
+        !showPresetLimitUpgradeNotice && !showQqGroupNotice && startupGuide == null
     ) {
         AlertDialog(
             onDismissRequest = { dismissedUpdateVersion = pendingUpdate.version },

@@ -5,7 +5,7 @@ import android.content.Context
 /**
  * Lightweight app-level preferences backed by SharedPreferences, mirroring the
  * pattern in [app.tellev.core.security.AndroidKeystoreSecretStore]. Currently
- * tracks small app-wide migration and update-check markers.
+ * tracks small app-wide migration, update-check and one-shot notice markers.
  */
 class AppPreferences(
     context: Context,
@@ -101,11 +101,40 @@ class AppPreferences(
         prefs.edit().putBoolean(KEY_QQ_GROUP_NOTICE_HANDLED, true).apply()
     }
 
+    /**
+     * 最后一次提示过「本次更新了什么」的版本号；空串 = 从未提示过。
+     * 判定规则见 [app.tellev.core.guide.decideStartupGuide]。
+     */
+    var updateGuideShownVersion: String
+        get() = prefs.getString(KEY_UPDATE_GUIDE_VERSION, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_UPDATE_GUIDE_VERSION, value).apply()
+
+    /** 新手引导只对全新安装提示一次。 */
+    var onboardingShown: Boolean
+        get() = prefs.getBoolean(KEY_ONBOARDING_SHOWN, false)
+        set(value) = prefs.edit().putBoolean(KEY_ONBOARDING_SHOWN, value).apply()
+
+    /** 关掉更新指引：记下版本，下次只在版本再变时提示。 */
+    fun markUpdateGuideShown(version: String) {
+        updateGuideShownVersion = version
+    }
+
+    /**
+     * 关掉新手引导：既标记引导看过，也把更新指引的版本记为当前版本——
+     * 新装用户不该紧接着再看一次「本次更新了什么」。
+     */
+    fun markOnboardingShown(version: String) {
+        onboardingShown = true
+        updateGuideShownVersion = version
+    }
+
     private companion object {
         const val KEY_LAST_CHECK = "last_update_check_ms"
         const val KEY_AUTO_UPDATE_CHECK = "auto_update_check"
         const val KEY_PRESET_LIMIT_NOTICE_HANDLED = "preset_limits_1_5_1_notice_handled"
         const val KEY_QQ_GROUP_NOTICE_HANDLED = "qq_group_notice_handled"
+        const val KEY_UPDATE_GUIDE_VERSION = "update_guide_shown_version"
+        const val KEY_ONBOARDING_SHOWN = "onboarding_guide_shown"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_THEME_ACCENT = "theme_accent"
         const val KEY_CHAT_BUBBLE_ALPHA = "chat_bubble_alpha"

@@ -224,28 +224,9 @@ class UpdateChecker(
         compareVersions(currentVersion, latest.version) < 0
 
     /**
-     * Compares two semver-ish strings. Leading `v` is stripped, only leading
-     * numeric dot-groups are considered, and missing segments default to 0,
-     * so `1.4` == `1.4.0` and `1.4.10` > `1.4.9`.
+     * Compares two semver-ish strings; see [compareSemverVersions] for the rules.
      */
-    fun compareVersions(a: String, b: String): Int {
-        val pa = parseSemver(a)
-        val pb = parseSemver(b)
-        val len = maxOf(pa.size, pb.size)
-        for (i in 0 until len) {
-            val x = pa.getOrElse(i) { 0 }
-            val y = pb.getOrElse(i) { 0 }
-            if (x != y) return x.compareTo(y)
-        }
-        return 0
-    }
-
-    private fun parseSemver(version: String): List<Int> {
-        val cleaned = version.trim().removePrefix("v").removePrefix("V")
-        val match = Regex("""^(\d+(\.\d+){0,3})""").find(cleaned)
-        val core = match?.groupValues?.get(1) ?: cleaned
-        return core.split('.').mapNotNull { it.toIntOrNull() }.ifEmpty { listOf(0) }
-    }
+    fun compareVersions(a: String, b: String): Int = compareSemverVersions(a, b)
 
     /**
      * Streams the APK for [info] to [target], trying [mirrors] in order until

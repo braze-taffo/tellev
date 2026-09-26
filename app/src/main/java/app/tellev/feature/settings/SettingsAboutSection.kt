@@ -30,6 +30,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import app.tellev.R
+import app.tellev.core.guide.GuideKind
 import app.tellev.feature.update.UpdateUiState
 import app.tellev.feature.update.UpdateViewModel
 
@@ -37,6 +38,7 @@ internal fun LazyListScope.aboutSectionItems(
     versionName: String,
     updateState: UpdateUiState,
     updateViewModel: UpdateViewModel,
+    onOpenGuide: (GuideKind) -> Unit,
 ) {
     item(key = "about_section") {
         val context = LocalContext.current
@@ -94,6 +96,21 @@ internal fun LazyListScope.aboutSectionItems(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                // 指引只在首次打开自动弹一次，这里给个常驻入口便于随时重看
+                // （错过弹窗的老用户、想复查入口的用户）。
+                OutlinedButton(
+                    onClick = { onOpenGuide(GuideKind.Update) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.setabout_guide_update))
+                }
+                OutlinedButton(
+                    onClick = { onOpenGuide(GuideKind.Onboarding) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.setabout_guide_onboarding))
+                }
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                 Text(
                     text = stringResource(R.string.setabout_license),

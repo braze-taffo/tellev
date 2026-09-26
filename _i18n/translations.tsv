@@ -1145,3 +1145,15 @@ extmem_custom_entry	Enter separately	個別に入力	개별 입력
 extdbg_loaded	Extension loaded	拡張を読み込みました	확장이 로드되었습니다
 extdbg_unloaded	Extension unloaded	拡張をアンロードしました	확장이 언로드되었습니다
 extdbg_load_failed	Extension load failed	拡張の読み込みに失敗しました	확장 로드에 실패했습니다
+guide_title_update	Update guide	更新ガイド	업데이트 안내
+guide_title_onboarding	Getting started	はじめかた	시작 안내
+guide_label_where	Where to find it	見つけ方	찾는 곳
+guide_label_how	How to use it	使い方	사용 방법
+guide_action_prev	Back	戻る	이전
+guide_action_next	Next	次へ	다음
+guide_action_start	Get started	はじめる	시작하기
+guide_page_indicator	Page %1$d / %2$d	%1$d / %2$d ページ	%1$d / %2$d 페이지
+guide_load_failed	Could not load the guide	ガイドを読み込めませんでした	안내를 불러오지 못했습니다
+guide_close	Close guide	ガイドを閉じる	안내 닫기
+setabout_guide_update	What is new	更新内容	업데이트 내용
+setabout_guide_onboarding	Getting started	はじめかた	시작 안내

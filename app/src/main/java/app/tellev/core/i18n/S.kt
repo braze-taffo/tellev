@@ -132,6 +132,18 @@ object S {
     const val memmod_mode_none = "memmod_mode_none"
     const val memmod_mode_archive = "memmod_mode_archive"
     const val memmod_mode_episodic = "memmod_mode_episodic"
+    const val guide_title_update = "guide_title_update"
+    const val guide_title_onboarding = "guide_title_onboarding"
+    const val guide_label_where = "guide_label_where"
+    const val guide_label_how = "guide_label_how"
+    const val guide_action_prev = "guide_action_prev"
+    const val guide_action_next = "guide_action_next"
+    const val guide_action_start = "guide_action_start"
+    const val guide_page_indicator = "guide_page_indicator"
+    const val guide_load_failed = "guide_load_failed"
+    const val guide_close = "guide_close"
+    const val setabout_guide_update = "setabout_guide_update"
+    const val setabout_guide_onboarding = "setabout_guide_onboarding"
     const val crs_add_entry = "crs_add_entry"
     const val crs_agent_replying = "crs_agent_replying"
     const val crs_assets_hint = "crs_assets_hint"
@@ -1282,6 +1294,18 @@ object S {
         "memmod_mode_none" to R.string.memmod_mode_none,
         "memmod_mode_archive" to R.string.memmod_mode_archive,
         "memmod_mode_episodic" to R.string.memmod_mode_episodic,
+        "guide_title_update" to R.string.guide_title_update,
+        "guide_title_onboarding" to R.string.guide_title_onboarding,
+        "guide_label_where" to R.string.guide_label_where,
+        "guide_label_how" to R.string.guide_label_how,
+        "guide_action_prev" to R.string.guide_action_prev,
+        "guide_action_next" to R.string.guide_action_next,
+        "guide_action_start" to R.string.guide_action_start,
+        "guide_page_indicator" to R.string.guide_page_indicator,
+        "guide_load_failed" to R.string.guide_load_failed,
+        "guide_close" to R.string.guide_close,
+        "setabout_guide_update" to R.string.setabout_guide_update,
+        "setabout_guide_onboarding" to R.string.setabout_guide_onboarding,
         "crs_add_entry" to R.string.crs_add_entry,
         "crs_agent_replying" to R.string.crs_agent_replying,
         "crs_assets_hint" to R.string.crs_assets_hint,
@@ -2433,6 +2457,18 @@ object S {
         "memmod_mode_none" to "无记忆",
         "memmod_mode_archive" to "柏宝书式",
         "memmod_mode_episodic" to "STARmem 式",
+        "guide_title_update" to "更新指引",
+        "guide_title_onboarding" to "新手引导",
+        "guide_label_where" to "在哪找到",
+        "guide_label_how" to "怎么用",
+        "guide_action_prev" to "上一步",
+        "guide_action_next" to "下一步",
+        "guide_action_start" to "开始使用",
+        "guide_page_indicator" to "第 %1\$d / %2\$d 页",
+        "guide_load_failed" to "指引内容加载失败",
+        "guide_close" to "关闭指引",
+        "setabout_guide_update" to "更新内容指引",
+        "setabout_guide_onboarding" to "新手引导",
         "crs_add_entry" to "添加条目",
         "crs_agent_replying" to "agent 正在回复",
         "crs_assets_hint" to "在对话里让 AI 创建或修改这些资源。脚本会随角色卡 JSON/PNG 导出；运行效果需在聊天中验证。",
