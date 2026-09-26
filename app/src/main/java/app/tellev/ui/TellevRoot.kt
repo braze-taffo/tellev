@@ -393,7 +393,7 @@ fun TellevRoot() {
                         if (kind == app.tellev.feature.creation.CreationKind.Character) {
                             charactersViewModel.loadCharacters()
                         } else {
-                            worldViewModel.loadBooks()
+                            worldViewModel.loadBookSummaries()
                         }
                     },
                 )
@@ -413,7 +413,7 @@ fun TellevRoot() {
                         if (kind == app.tellev.feature.creation.CreationKind.Character) {
                             charactersViewModel.loadCharacters()
                         } else {
-                            worldViewModel.loadBooks()
+                            worldViewModel.loadBookSummaries()
                         }
                     },
                 )
@@ -431,7 +431,7 @@ fun TellevRoot() {
                     onBack = { navController.popBackStack() },
                     onSaved = { kind, _ ->
                         if (kind == app.tellev.feature.creation.CreationKind.WorldBook) {
-                            worldViewModel.loadBooks()
+                            worldViewModel.loadBookSummaries()
                         }
                     },
                 )
@@ -444,7 +444,7 @@ fun TellevRoot() {
                         if (kind == app.tellev.feature.creation.CreationKind.Character) {
                             charactersViewModel.loadCharacters()
                         } else {
-                            worldViewModel.loadBooks()
+                            worldViewModel.loadBookSummaries()
                         }
                     },
                 )

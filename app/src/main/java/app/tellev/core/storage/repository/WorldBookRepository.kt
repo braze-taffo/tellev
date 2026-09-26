@@ -3,6 +3,7 @@ package app.tellev.core.storage.repository
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.WorldBook
+import app.tellev.core.model.WorldBookSummary
 import app.tellev.core.storage.JournaledFileWriter
 import app.tellev.core.storage.StDirectoryLayout
 import app.tellev.core.storage.codec.WorldBookCodec
@@ -40,6 +41,21 @@ internal class WorldBookRepository(
                 name = raw["name"]?.jsonPrimitive?.content ?: path.nameWithoutExtension,
                 entries = entries,
                 raw = raw,
+            )
+        }
+    }
+
+    /**
+     * Name and entry count per book. Each file's parsed JSON is transient here: only
+     * the summary survives, so the world book screen no longer keeps every book's
+     * entries and raw tree resident for the whole session.
+     */
+    suspend fun listWorldBookSummaries(): List<WorldBookSummary> = withContext(Dispatchers.IO) {
+        StorageFileOps.readJsonFiles(layout.worlds, json).map { (path, raw) ->
+            WorldBookSummary(
+                id = path.nameWithoutExtension,
+                name = raw["name"]?.jsonPrimitive?.content ?: path.nameWithoutExtension,
+                entryCount = (raw["entries"] as? JsonObject)?.size ?: 0,
             )
         }
     }

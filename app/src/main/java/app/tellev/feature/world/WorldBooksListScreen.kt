@@ -57,7 +57,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.tellev.R
-import app.tellev.core.model.WorldBook
+import app.tellev.core.model.WorldBookSummary
 import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -105,7 +105,7 @@ fun WorldBooksListScreen(
     // snapshot, so without this refresh the switches shown here would lag the
     // file by one selection.
     LaunchedEffect(Unit) {
-        viewModel.loadBooks()
+        viewModel.loadBookSummaries()
     }
 
     LaunchedEffect(state.error) {
@@ -156,7 +156,7 @@ fun WorldBooksListScreen(
         modifier = modifier,
     ) { padding ->
         Crossfade(
-            targetState = state.isLoading && state.worldBooks.isEmpty(),
+            targetState = state.isLoading && state.worldBookSummaries.isEmpty(),
             label = "world_loading",
         ) { isLoading ->
             if (isLoading) {
@@ -168,7 +168,7 @@ fun WorldBooksListScreen(
                 ) {
                     CircularProgressIndicator()
                 }
-            } else if (state.worldBooks.isEmpty()) {
+            } else if (state.worldBookSummaries.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -204,7 +204,7 @@ fun WorldBooksListScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                 ) {
-                    items(state.worldBooks, key = { it.id }) { book ->
+                    items(state.worldBookSummaries, key = { it.id }) { book ->
                         WorldBookListItem(
                             book = book,
                             activated = book.id !in state.disabledWorldIds,
@@ -407,7 +407,7 @@ fun WorldBooksListScreen(
 
 @Composable
 private fun WorldBookListItem(
-    book: WorldBook,
+    book: WorldBookSummary,
     activated: Boolean,
     onClick: () -> Unit,
     onEditWithAi: () -> Unit,
@@ -438,7 +438,7 @@ private fun WorldBookListItem(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = stringResource(R.string.wblist_entry_count, book.entries.size),
+                    text = stringResource(R.string.wblist_entry_count, book.entryCount),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

@@ -7,6 +7,7 @@ import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
+import app.tellev.core.model.WorldBookSummary
 import app.tellev.core.model.WorldInfoSettings
 import app.tellev.core.model.PromptSettings
 import app.tellev.core.storage.StDataStore
@@ -25,7 +26,7 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 data class WorldUiState(
-    val worldBooks: List<WorldBook> = emptyList(),
+    val worldBookSummaries: List<WorldBookSummary> = emptyList(),
     val disabledWorldIds: Set<String> = emptySet(),
     val selectedBook: WorldBook? = null,
     val selectedEntry: WorldBookEntry? = null,
@@ -55,18 +56,22 @@ class WorldViewModel(
     private var pendingSaves = 0
 
     init {
-        loadBooks()
+        loadBookSummaries()
         viewModelScope.launch {
-            dataStore.worldBookChanges.collect { loadBooks() }
+            // Summaries only. Refreshing the list used to re-parse every book's entries
+            // (and its raw JSON tree), which is where both the "very laggy world book
+            // screen" and a large permanent heap cost came from. The book being viewed
+            // keeps its own loaded copy.
+            dataStore.worldBookChanges.collect { loadBookSummaries() }
         }
     }
 
-    fun loadBooks() {
+    fun loadBookSummaries() {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             try {
-                val books = dataStore.listWorldBooks()
+                val books = dataStore.listWorldBookSummaries()
                 val disabledWorldIds = dataStore.readDisabledWorldIds()
                 val worldInfoSettings = dataStore.readWorldInfoSettings()
                 val promptSettings = dataStore.readPromptSettings()
@@ -74,7 +79,7 @@ class WorldViewModel(
                 currentCoroutineContext().ensureActive()
                 _uiState.update {
                     it.copy(
-                        worldBooks = books,
+                        worldBookSummaries = books,
                         disabledWorldIds = disabledWorldIds,
                         worldInfoSettings = worldInfoSettings,
                         promptSettings = promptSettings,
@@ -212,8 +217,10 @@ class WorldViewModel(
                     val updated = transform(dataStore.readWorldBook(bookId))
                     dataStore.saveWorldBook(updated)
                     _uiState.update { current ->
-                        val state = current.copy(worldBooks = current.worldBooks.map {
-                            if (it.id == bookId) updated else it
+                        val state = current.copy(worldBookSummaries = current.worldBookSummaries.map {
+                            if (it.id == bookId) {
+                                WorldBookSummary(updated.id, updated.name, updated.entries.size)
+                            } else it
                         })
                         if (version == selectionVersion && state.selectedBook?.id == bookId) {
                             state.copy(
@@ -254,7 +261,7 @@ class WorldViewModel(
                         info = UiStrings.get(S.wbvm_book_created, name),
                     )
                 }
-                loadBooks()
+                loadBookSummaries()
                 selectBook(book.id)
             } catch (e: CancellationException) {
                 throw e
@@ -274,11 +281,11 @@ class WorldViewModel(
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
                 val book = dataStore.importWorldBook(jsonBytes, sourceFileName)
-                val books = dataStore.listWorldBooks()
+                val books = dataStore.listWorldBookSummaries()
                 val disabledWorldIds = dataStore.readDisabledWorldIds()
                 _uiState.update {
                     it.copy(
-                        worldBooks = books,
+                        worldBookSummaries = books,
                         disabledWorldIds = disabledWorldIds,
                         isLoading = false,
                         info = UiStrings.get(S.wbvm_book_imported, book.name),
@@ -309,7 +316,7 @@ class WorldViewModel(
                         info = UiStrings.get(S.wbvm_book_deleted),
                     )
                 }
-                loadBooks()
+                loadBookSummaries()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

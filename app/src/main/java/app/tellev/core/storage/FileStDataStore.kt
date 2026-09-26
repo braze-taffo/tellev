@@ -11,6 +11,7 @@ import app.tellev.core.model.PresetCategory
 import app.tellev.core.model.PresetImportResult
 import app.tellev.core.model.PromptSettings
 import app.tellev.core.model.WorldBook
+import app.tellev.core.model.WorldBookSummary
 import app.tellev.core.model.WorldInfoSettings
 import app.tellev.core.storage.coordinator.BackupCoordinator
 import app.tellev.core.storage.coordinator.EmbeddedAssetsCoordinator
@@ -220,6 +221,9 @@ class FileStDataStore(
 
     override suspend fun listWorldBooks(): List<WorldBook> =
         worldBookRepository.listWorldBooks()
+
+    override suspend fun listWorldBookSummaries(): List<WorldBookSummary> =
+        worldBookRepository.listWorldBookSummaries()
 
     override suspend fun readWorldBook(id: String): WorldBook =
         worldBookRepository.readWorldBook(id)

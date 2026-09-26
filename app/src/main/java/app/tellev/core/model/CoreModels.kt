@@ -199,6 +199,17 @@ data class WorldBook(
     val raw: JsonObject = buildJsonObject { },
 )
 
+/**
+ * Listing row for the world book screen: name plus entry count, without the entries
+ * or the raw JSON tree. Keeping every book fully parsed just to render this screen
+ * was a large permanent heap cost; the full book is read when one is opened.
+ */
+data class WorldBookSummary(
+    val id: String,
+    val name: String,
+    val entryCount: Int,
+)
+
 @Serializable
 data class WorldBookEntry(
     val id: String,

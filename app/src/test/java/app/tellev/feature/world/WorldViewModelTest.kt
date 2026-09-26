@@ -59,7 +59,7 @@ class WorldViewModelTest {
             disk.saveWorldBook(WorldBook("b", "B", emptyList()))
             withContext(main) {
                 val vm = WorldViewModel(fixture.store).also { models.put("world", it) }
-                waitUntil { !vm.uiState.value.isLoading && vm.uiState.value.worldBooks.size == 2 }
+                waitUntil { !vm.uiState.value.isLoading && vm.uiState.value.worldBookSummaries.size == 2 }
                 vm.selectBook("a")
                 waitUntil { vm.uiState.value.selectedBook?.id == "a" }
                 fixture.block(vm)
@@ -140,6 +140,24 @@ class WorldViewModelTest {
         delay(100)
         assertEquals("b", vm.uiState.value.selectedBook?.id)
         assertNull(vm.uiState.value.error)
+    }
+
+    @Test fun `listing keeps summaries only until a book is opened`() = exercise { vm ->
+        // 世界书页只保留摘要：条目内容（及其 raw 树）要等打开某本时才读，
+        // 否则整库常驻内存，正是真机上点世界书卡顿并闪退的来源。
+        val summaries = vm.uiState.value.worldBookSummaries.associateBy { it.id }
+        assertEquals(setOf("a", "b"), summaries.keys)
+        assertEquals("A", summaries.getValue("a").name)
+        assertEquals(2, summaries.getValue("a").entryCount)
+        assertEquals(0, summaries.getValue("b").entryCount)
+    }
+
+    @Test fun `refresh after an external write updates the count without reloading everything`() = exercise { vm ->
+        disk.saveWorldBook(
+            WorldBook("a", "A", listOf(first, second, WorldBookEntry("3", listOf("third"), content = "added"))),
+        )
+        vm.loadBookSummaries()
+        waitUntil { vm.uiState.value.worldBookSummaries.first { it.id == "a" }.entryCount == 3 }
     }
 
     @Test fun `reading one book does not decode unrelated malformed books`() = exercise { _ ->

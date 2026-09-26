@@ -13,6 +13,7 @@ import app.tellev.core.model.PresetImportResult
 import app.tellev.core.model.Persona
 import app.tellev.core.model.PromptSettings
 import app.tellev.core.model.WorldBook
+import app.tellev.core.model.WorldBookSummary
 import app.tellev.core.model.WorldInfoSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -80,6 +81,15 @@ interface StDataStore {
     suspend fun saveGroup(group: GroupChat)
 
     suspend fun listWorldBooks(): List<WorldBook>
+
+    /**
+     * Listing rows for the world book screen. Callers that need entry content
+     * (generation, the extension API, editing) keep using [listWorldBooks] /
+     * [readWorldBook]; this one only costs a transient parse per file.
+     */
+    suspend fun listWorldBookSummaries(): List<WorldBookSummary> =
+        listWorldBooks().map { WorldBookSummary(it.id, it.name, it.entries.size) }
+
     suspend fun readWorldBook(id: String): WorldBook
     suspend fun saveWorldBook(book: WorldBook)
     suspend fun importWorldBook(jsonBytes: ByteArray, sourceFileName: String): WorldBook {
