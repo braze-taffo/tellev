@@ -103,7 +103,7 @@ class CreationViewModelCancelTest {
             ).also { models.put("creation", it) }
             withContext(main) {
                 vm.start(CreationKind.WorldBook)
-                waitUntil { vm.state.value.current != null }
+                waitUntil { vm.state.value.current != null && !vm.state.value.busy }
                 val sessionId = vm.state.value.current!!.id
 
                 vm.send("加一条新城设定")
@@ -142,11 +142,15 @@ class CreationViewModelCancelTest {
                 ProviderRegistry(listOf(fixture.provider))).also { models.put("creation", it) }
             withContext(main) {
                 vm.start(CreationKind.WorldBook)
-                waitUntil { vm.state.value.current != null }
+                waitUntil { vm.state.value.current != null && !vm.state.value.busy }
                 val id = vm.state.value.current!!.id
                 vm.send("加一条新城设定")
                 waitUntil { !vm.state.value.busy && vm.state.value.error != null }
-                assertTrue(vm.state.value.modelPhase.contains("已保存"))
+                assertTrue(
+                    "phase=${vm.state.value.modelPhase} partial=${vm.state.value.current?.partialTurnSaved} " +
+                        "error=${vm.state.value.error}",
+                    vm.state.value.modelPhase.contains("已保存"),
+                )
                 vm.close()
                 vm.open(id)
                 waitUntil { vm.state.value.current?.id == id }
