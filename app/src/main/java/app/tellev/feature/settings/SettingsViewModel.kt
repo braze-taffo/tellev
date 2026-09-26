@@ -5,6 +5,8 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.Persona
 import app.tellev.core.model.PresetCategory
@@ -62,6 +64,7 @@ data class SettingsUiState(
     val themeAccent: ThemeAccent = ThemeAccent.Warm,
     val chatBubbleAlpha: Float = 0.6f,
     val chatFontSizeSp: Int = 16,
+    val languageTag: String = "",
     val isLoading: Boolean = false,
     val error: String? = null,
     val info: String? = null,
@@ -216,6 +219,7 @@ class SettingsViewModel(
                         themeAccent = parseThemeAccent(appPreferences.themeAccentName),
                         chatBubbleAlpha = appPreferences.chatBubbleAlpha,
                         chatFontSizeSp = appPreferences.chatFontSizeSp,
+                        languageTag = appPreferences.languageTag,
                         baseUrl = fields.baseUrl,
                         apiKey = fields.apiKey,
                         model = fields.model,
@@ -235,7 +239,7 @@ class SettingsViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = "加载设置失败：${e.message}",
+                        error = UiStrings.get(S.setvm_load_failed, e.message),
                     )
                 }
             }
@@ -306,6 +310,7 @@ class SettingsViewModel(
     fun setThemeAccent(accent: ThemeAccent) = appearanceController.setThemeAccent(accent)
     fun setChatBubbleAlpha(alpha: Float) = appearanceController.setChatBubbleAlpha(alpha)
     fun setChatFontSizeSp(size: Int) = appearanceController.setChatFontSizeSp(size)
+    fun setLanguage(tag: String) = appearanceController.setLanguage(tag)
 
     // ── Backup Actions ──
 

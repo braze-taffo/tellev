@@ -9,7 +9,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 
 @Composable
 fun PlaceholderScreen(title: String, modifier: Modifier = Modifier) {
@@ -22,7 +24,7 @@ fun PlaceholderScreen(title: String, modifier: Modifier = Modifier) {
     ) {
         Text(text = title, style = MaterialTheme.typography.headlineMedium)
         Text(
-            text = "架构入口已就绪，具体功能实现放在当前模块。",
+            text = stringResource(R.string.ui_placeholder_message),
             style = MaterialTheme.typography.bodyMedium,
         )
     }

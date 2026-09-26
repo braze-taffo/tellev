@@ -19,9 +19,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import app.tellev.R
 
 /** Mount the existing script runtime so card UI and event handlers keep the same JS state. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -35,7 +37,7 @@ internal fun CharacterCardInterfaceDialog(webView: WebView, onDismiss: () -> Uni
         Surface(modifier = Modifier.fillMaxSize(), color = background) {
             Column(Modifier.fillMaxSize()) {
                 TopAppBar(
-                    title = { Text("角色卡界面") },
+                    title = { Text(stringResource(R.string.chat_character_card_interface)) },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = background,
                         titleContentColor = Color.White,
@@ -43,7 +45,7 @@ internal fun CharacterCardInterfaceDialog(webView: WebView, onDismiss: () -> Uni
                     ),
                     navigationIcon = {
                         IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, contentDescription = "关闭角色卡界面")
+                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.chat_close_character_card_interface))
                         }
                     },
                 )

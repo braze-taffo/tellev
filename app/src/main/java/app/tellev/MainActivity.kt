@@ -1,5 +1,6 @@
 package app.tellev
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -11,6 +12,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.lifecycleScope
+import app.tellev.R
+import app.tellev.core.i18n.AppLocale
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.CharacterSummary
 import app.tellev.core.storage.CharacterImporter
 import app.tellev.util.UriUtils
@@ -25,6 +29,12 @@ import java.util.UUID
 class MainActivity : ComponentActivity() {
     private val graph: TellevGraph by lazy { TellevGraph.create(this) }
     private val characterImporter = CharacterImporter()
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocale.wrap(newBase))
+        // 重建后即刻以新语言解析非 Composable 侧的文案（ViewModel 消息等）。
+        UiStrings.init(resources)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,14 +68,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
             result
-                .onSuccess { name -> Toast.makeText(this@MainActivity, "角色“$name”已导入", Toast.LENGTH_SHORT).show() }
-                .onFailure { error -> Toast.makeText(this@MainActivity, "导入失败：${error.message}", Toast.LENGTH_LONG).show() }
+                .onSuccess { name -> Toast.makeText(this@MainActivity, getString(R.string.main_import_success, name), Toast.LENGTH_SHORT).show() }
+                .onFailure { error -> Toast.makeText(this@MainActivity, getString(R.string.main_import_failed, error.message ?: getString(R.string.main_error_read_file)), Toast.LENGTH_LONG).show() }
         }
     }
 
     private suspend fun importCharacterFromUri(uri: Uri): String {
         val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: error("无法读取文件")
+            ?: error(getString(R.string.main_error_read_file))
         val fileName = UriUtils.resolveDisplayName(this, uri)
             ?: uri.lastPathSegment?.substringAfterLast('/')
             ?: "imported_character"

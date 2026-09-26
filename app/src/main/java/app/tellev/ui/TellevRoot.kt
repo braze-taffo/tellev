@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -207,6 +208,13 @@ fun TellevRoot() {
             if (showBottomBar) {
                 NavigationBar {
                     TellevTab.entries.forEach { tab ->
+                        val tabLabelRes = when (tab) {
+                            TellevTab.Chat -> R.string.nav_tab_chat
+                            TellevTab.Characters -> R.string.nav_tab_characters
+                            TellevTab.World -> R.string.nav_tab_world
+                            TellevTab.Extensions -> R.string.nav_tab_extensions
+                            TellevTab.Settings -> R.string.nav_tab_settings
+                        }
                         NavigationBarItem(
                             selected = currentTab == tab,
                             onClick = {
@@ -222,10 +230,10 @@ fun TellevRoot() {
                                     restoreState = true
                                 }
                             },
-                            icon = { Icon(tab.icon, contentDescription = tab.contentDescription) },
+                            icon = { Icon(tab.icon, contentDescription = stringResource(tabLabelRes)) },
                             label = {
                                 Text(
-                                    text = tab.label,
+                                    text = stringResource(tabLabelRes),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     fontSize = 11.sp,
@@ -489,16 +497,14 @@ fun TellevRoot() {
         }
         AlertDialog(
             onDismissRequest = ::closeNotice,
-            title = { Text("请检查当前生成预设") },
+            title = { Text(stringResource(R.string.nav_preset_limit_title)) },
             text = {
                 Text(
-                    "旧版默认预设的上下文上限仅 4096、输出上限仅 300，可能造成世界书和回复被严重截断。" +
-                        "新版内置默认值已调整为 1,000,000 / 131,072；导入或自行修改过的预设不会被强制覆盖，" +
-                        "请前往“设置 → 生成预设”切换或检查当前预设。",
+                    stringResource(R.string.nav_preset_limit_message),
                 )
             },
             dismissButton = {
-                TextButton(onClick = ::closeNotice) { Text("稍后") }
+                TextButton(onClick = ::closeNotice) { Text(stringResource(R.string.nav_later)) }
             },
             confirmButton = {
                 TextButton(
@@ -511,7 +517,7 @@ fun TellevRoot() {
                             restoreState = true
                         }
                     },
-                ) { Text("去设置预设") }
+                ) { Text(stringResource(R.string.nav_go_to_preset_settings)) }
             },
         )
     }
@@ -526,44 +532,44 @@ fun TellevRoot() {
         }
         AlertDialog(
             onDismissRequest = ::closeNotice,
-            title = { Text("加入 QQ 交流群") },
+            title = { Text(stringResource(R.string.nav_qq_group_title)) },
             text = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Image(
                         painter = painterResource(R.drawable.qq_group_qrcode),
-                        contentDescription = "QQ 群二维码",
+                        contentDescription = stringResource(R.string.nav_qq_qrcode_desc),
                         modifier = Modifier
                             .size(216.dp)
                             .clip(RoundedCornerShape(12.dp)),
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "tellev酒馆交流群",
+                        text = stringResource(R.string.nav_qq_group_name),
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        text = "群号：754350480",
+                        text = stringResource(R.string.nav_qq_group_number),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        text = "扫码或搜索群号加入，反馈问题、交流玩法。",
+                        text = stringResource(R.string.nav_qq_group_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             },
             dismissButton = {
-                TextButton(onClick = ::closeNotice) { Text("我知道了") }
+                TextButton(onClick = ::closeNotice) { Text(stringResource(R.string.nav_got_it)) }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
                         clipboard.setText(AnnotatedString("754350480"))
-                        Toast.makeText(activityContext, "已复制群号", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(activityContext, activityContext.getString(R.string.nav_group_number_copied), Toast.LENGTH_SHORT).show()
                         closeNotice()
                     },
-                ) { Text("复制群号") }
+                ) { Text(stringResource(R.string.nav_copy_group_number)) }
             },
         )
     }
@@ -581,16 +587,17 @@ fun TellevRoot() {
     ) {
         AlertDialog(
             onDismissRequest = { dismissedUpdateVersion = pendingUpdate.version },
-            title = { Text("发现新版本") },
+            title = { Text(stringResource(R.string.nav_update_title)) },
             text = {
                 Column {
                     Text(
-                        text = "新版本 ${pendingUpdate.tagName} 已发布，当前版本 v$currentVersion。",
+                        text = stringResource(R.string.nav_update_message, pendingUpdate.tagName, currentVersion),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     if (pendingUpdate.apkSize > 0) {
+                        val apkSizeText = "%.1f".format(pendingUpdate.apkSize / 1024f / 1024f)
                         Text(
-                            text = "安装包约 ${"%.1f".format(pendingUpdate.apkSize / 1024f / 1024f)} MB",
+                            text = stringResource(R.string.nav_update_apk_size, apkSizeText),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -609,7 +616,7 @@ fun TellevRoot() {
             },
             dismissButton = {
                 TextButton(onClick = { dismissedUpdateVersion = pendingUpdate.version }) {
-                    Text("稍后")
+                    Text(stringResource(R.string.nav_later))
                 }
             },
             confirmButton = {
@@ -617,9 +624,9 @@ fun TellevRoot() {
                     onClick = {
                         dismissedUpdateVersion = pendingUpdate.version
                         updateViewModel.downloadAndInstall()
-                        Toast.makeText(activityContext, "开始下载新版本…", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(activityContext, activityContext.getString(R.string.nav_update_download_started), Toast.LENGTH_SHORT).show()
                     },
-                ) { Text("立即更新") }
+                ) { Text(stringResource(R.string.nav_update_now)) }
             },
         )
     }

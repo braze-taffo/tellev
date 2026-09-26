@@ -1,5 +1,7 @@
 package app.tellev.feature.chat
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.Attachment
 import app.tellev.core.model.AttachmentSource
 import app.tellev.core.model.CharacterCard
@@ -104,28 +106,28 @@ internal class ChatImageGenerationCoordinator(
         onDiagnosticRecorded: (String) -> Unit,
     ) {
         if (!state.imageGenAvailable) {
-            onStatusUpdated(false, null, null, "生图模型未配置：请先在设置中配置 ComfyUI 工作流或填写 NovelAI 令牌")
+            onStatusUpdated(false, null, null, UiStrings.get(S.chatimgco_engine_not_configured))
             return
         }
         if (state.isGenerating || isTextGenerating) {
-            onStatusUpdated(false, null, null, "正在生成回复，请等回复结束后再生图")
+            onStatusUpdated(false, null, null, UiStrings.get(S.chatimgco_busy_generating_text))
             return
         }
         if (state.isGeneratingImage || isJobActive) return
 
         val character = state.selectedCharacter
         if (character == null) {
-            onStatusUpdated(false, null, null, "请先选择角色")
+            onStatusUpdated(false, null, null, UiStrings.get(S.chatimgco_select_character_first))
             return
         }
         val session = state.currentSession
         if (session == null) {
-            onStatusUpdated(false, null, null, "当前没有可用会话")
+            onStatusUpdated(false, null, null, UiStrings.get(S.chatimgco_no_session))
             return
         }
         val userPrompt = prompt.trim()
         if (!summarizeScene && userPrompt.isBlank()) {
-            onStatusUpdated(false, null, null, "请输入图片提示词")
+            onStatusUpdated(false, null, null, UiStrings.get(S.chatimgco_prompt_required))
             return
         }
 
@@ -136,20 +138,20 @@ internal class ChatImageGenerationCoordinator(
         activeImageSessionId = jobSessionId
         imageGenerationJob = scope.launch {
             try {
-                onStatusUpdated(true, "准备生成图片…", null, null)
+                onStatusUpdated(true, UiStrings.get(S.chatimgco_status_preparing), null, null)
 
                 val engine = (selectedEngine ?: state.imageEngine)?.let(ChatImageEngine::fromProviderId)
-                    ?: error("请选择生图引擎")
+                    ?: error(UiStrings.get(S.chatimgco_select_engine))
                 val engineId = engine.providerId
                 val configured = ProviderConfigPersistence.configuredImageEngines(secretStore)
-                check(engine.providerId in configured) { "${engine.label} 未配置，请先在设置中完成配置" }
+                check(engine.providerId in configured) { UiStrings.get(S.chatimgco_engine_unconfigured_detail, engine.label) }
                 ProviderConfigPersistence.saveImageEngine(secretStore, engine.providerId)
                 onEngineUpdated(engine.providerId, configured)
 
                 val useNovelAiEngine = engine == ChatImageEngine.NovelAi
 
                 val finalPrompt = if (summarizeScene) {
-                    onStatusUpdated(true, "正在用对话模型总结画面…", null, null)
+                    onStatusUpdated(true, UiStrings.get(S.chatimgco_status_summarizing), null, null)
                     summarizeScenePrompt(
                         character = character,
                         session = session,
@@ -164,7 +166,7 @@ internal class ChatImageGenerationCoordinator(
 
                 onStatusUpdated(
                     true,
-                    if (useNovelAiEngine) "正在调用 NovelAI 生成图片…" else "正在生成图片…",
+                    if (useNovelAiEngine) UiStrings.get(S.chatimgco_status_novelai_generating) else UiStrings.get(S.chatimgco_status_generating),
                     null,
                     null,
                 )
@@ -222,12 +224,12 @@ internal class ChatImageGenerationCoordinator(
 
                 val error = failure
                 if (error != null) {
-                    onStatusUpdated(false, null, null, "生成图片失败：${error.message}（${error.code}）")
+                    onStatusUpdated(false, null, null, UiStrings.get(S.chatimgco_generate_failed_code, error.message, error.code))
                     return@launch
                 }
                 val base64 = imageBase64
                 if (base64.isNullOrBlank()) {
-                    onStatusUpdated(false, null, null, "生成图片失败：未返回图片数据")
+                    onStatusUpdated(false, null, null, UiStrings.get(S.chatimgco_generate_failed_no_data))
                     return@launch
                 }
 
@@ -270,7 +272,7 @@ internal class ChatImageGenerationCoordinator(
             } catch (e: CancellationException) {
                 onStatusUpdated(false, null, null, null)
             } catch (e: Exception) {
-                onStatusUpdated(false, null, null, "生成图片失败：${e.message}")
+                onStatusUpdated(false, null, null, UiStrings.get(S.chatimgco_generate_failed, e.message))
             } finally {
                 // 令牌匹配才清理，避免抹掉后继 job 的归属。
                 if (imageGenToken.get() == jobToken) activeImageSessionId = null

@@ -1,5 +1,7 @@
 package app.tellev.core.regex
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.GenerationPreset
@@ -70,7 +72,7 @@ object CharacterRegexApplier {
             val script = element as? JsonObject ?: return@mapIndexedNotNull null
             val name = (script.stringValue("scriptName") ?: script.stringValue("name"))?.takeIf { it.isNotBlank() }
                 ?: script.stringValue("findRegex")?.takeIf { it.isNotBlank() }
-                ?: "未命名脚本"
+                ?: UiStrings.get(S.cregex_unnamed_script)
             RegexScriptSummary(scriptIdentifier(script, index), name, script.booleanValue("disabled") != true)
         }
 
@@ -219,7 +221,7 @@ object CharacterRegexApplier {
         val regex = parseJavascriptRegex(source, separateFlags) ?: run {
             onDiagnostic?.invoke(RegexDiagnostic(
                 scriptName = script.stringValue("scriptName").orEmpty().ifBlank { rawSource },
-                message = "无效或不兼容的正则表达式/flag，已跳过该规则",
+                message = UiStrings.get(S.cregex_diag_invalid_regex),
             ))
             return input
         }
@@ -257,7 +259,7 @@ object CharacterRegexApplier {
         }.getOrElse { error ->
             onDiagnostic?.invoke(RegexDiagnostic(
                 scriptName = script.stringValue("scriptName").orEmpty().ifBlank { rawSource },
-                message = error.message ?: "正则替换失败，已跳过该规则",
+                message = error.message ?: UiStrings.get(S.cregex_diag_replace_failed),
             ))
             input
         }

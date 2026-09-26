@@ -1,5 +1,7 @@
 package app.tellev.core.storage.repository
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GroupChat
@@ -80,7 +82,7 @@ internal class ChatRepository(
 
     suspend fun readChatSession(id: String): ChatSession = withContext(Dispatchers.IO) {
         val path = StorageFileOps.findByFileName(listOf(layout.chats, layout.groupChats), "$id.jsonl")
-            ?: error("Chat session not found: $id")
+            ?: error(UiStrings.get(S.chatrepo_error_session_not_found, id))
         readJsonlChat(path)
     }
 
@@ -96,7 +98,7 @@ internal class ChatRepository(
     ): ChatSession = withContext(Dispatchers.IO) {
         chatWrites.withLock {
             val path = StorageFileOps.findByFileName(listOf(layout.chats, layout.groupChats), "${base.id}.jsonl")
-                ?: error("Chat session not found: ${base.id}")
+                ?: error(UiStrings.get(S.chatrepo_error_session_not_found, base.id))
             var merged = applyChatSessionMutation(base, desired, readJsonlChat(path))
             // Read the revision after parsing: a read-time migration may have just bumped it.
             var receipt = try {
@@ -135,7 +137,7 @@ internal class ChatRepository(
             }
         }.getOrNull() else null
         val incomingMode = MemoryMode.of(session)
-        require(lockedMode == null || incomingMode == null || lockedMode == incomingMode) { "对话记忆模式已锁定" }
+        require(lockedMode == null || incomingMode == null || lockedMode == incomingMode) { UiStrings.get(S.chatrepo_error_memory_mode_locked) }
         val effective = if (lockedMode != null && incomingMode == null) session.copy(
             metadata = JsonObject(session.metadata + (MemoryMode.METADATA_KEY to JsonPrimitive(lockedMode.name))),
         ) else session
@@ -148,7 +150,7 @@ internal class ChatRepository(
     suspend fun appendMessage(sessionId: String, message: ChatMessage): Unit = withContext(Dispatchers.IO) {
         chatWrites.withLock {
             val path = StorageFileOps.findByFileName(listOf(layout.chats, layout.groupChats), "$sessionId.jsonl")
-                ?: error("Chat session not found: $sessionId")
+                ?: error(UiStrings.get(S.chatrepo_error_session_not_found, sessionId))
             val session = readJsonlChat(path)
             // Read the revision after parsing: a read-time migration may have just bumped it.
             val revision = durableFiles.revision(path)

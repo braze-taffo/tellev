@@ -1,6 +1,9 @@
 package app.tellev
 
 import android.app.Application
+import android.content.Context
+import app.tellev.core.i18n.AppLocale
+import app.tellev.core.i18n.UiStrings
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
@@ -11,6 +14,12 @@ import coil.disk.DiskCache
  * 系统设置里显示的应用数据体积，也是长期用户数据膨胀感的一部分。
  */
 class TellevApplication : Application(), ImageLoaderFactory {
+
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(AppLocale.wrap(base))
+        UiStrings.init(resources)
+    }
+
     override fun newImageLoader(): ImageLoader =
         ImageLoader.Builder(this)
             .diskCache {

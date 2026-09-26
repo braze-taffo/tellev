@@ -23,7 +23,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 import app.tellev.ui.CharacterAvatar
 
 @Composable
@@ -42,7 +44,7 @@ internal fun CharacterPickerScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            text = "选择角色",
+            text = stringResource(R.string.chat_select_character),
             style = MaterialTheme.typography.headlineMedium,
             modifier = Modifier.padding(bottom = 16.dp),
         )
@@ -61,12 +63,12 @@ internal fun CharacterPickerScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "暂无角色",
+                        text = stringResource(R.string.chat_no_characters),
                         style = MaterialTheme.typography.bodyLarge,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "请先在“角色”页导入角色卡。",
+                        text = stringResource(R.string.chat_import_hint),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

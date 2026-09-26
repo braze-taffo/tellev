@@ -36,7 +36,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.Persona
 import app.tellev.core.model.PresetCategory
@@ -61,8 +63,9 @@ fun SettingsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
     val context = LocalContext.current
-    val versionName = remember(context) {
-        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "未知"
+    val versionUnknown = stringResource(R.string.setscreen_version_unknown)
+    val versionName = remember(context, versionUnknown) {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: versionUnknown
     }
     var editingPreset by remember { mutableStateOf<GenerationPreset?>(null) }
     var selectedPresetCategory by remember { mutableStateOf(PresetCategory.OpenAi) }
@@ -149,16 +152,19 @@ fun SettingsScreen(
                 title = {
                     Text(
                         when {
-                            providerDetailsOnly -> "模型服务配置"
-                            imageGenDetailsOnly -> "生图设置"
-                            else -> "设置"
+                            providerDetailsOnly -> stringResource(R.string.setscreen_title_provider)
+                            imageGenDetailsOnly -> stringResource(R.string.setscreen_title_imagegen)
+                            else -> stringResource(R.string.setscreen_title_settings)
                         },
                     )
                 },
                 navigationIcon = {
                     if (providerDetailsOnly || imageGenDetailsOnly) {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = stringResource(R.string.setscreen_back_cd),
+                            )
                         }
                     }
                 },
@@ -270,6 +276,14 @@ fun SettingsScreen(
                         onSetThemeAccent = viewModel::setThemeAccent,
                         onSetChatBubbleAlpha = viewModel::setChatBubbleAlpha,
                         onSetChatFontSizeSp = viewModel::setChatFontSizeSp,
+                    )
+
+                    languageSectionItems(
+                        state = state,
+                        onSetLanguage = { tag ->
+                            viewModel.setLanguage(tag)
+                            (context as? android.app.Activity)?.recreate()
+                        },
                     )
 
                     backupSectionItems(
@@ -421,11 +435,12 @@ fun SettingsScreen(
     }
 
     pendingDeleteConfigId?.let { configId ->
-        val configName = state.customConfigs.firstOrNull { it.id == configId }?.name ?: "该配置"
+        val configName = state.customConfigs.firstOrNull { it.id == configId }?.name
+            ?: stringResource(R.string.setscreen_this_config)
         AlertDialog(
             onDismissRequest = { pendingDeleteConfigId = null },
-            title = { Text("删除自定义配置") },
-            text = { Text("确定删除“$configName”吗？该配置的接口地址与密钥将被清除，且无法撤销。") },
+            title = { Text(stringResource(R.string.setscreen_delete_config_title)) },
+            text = { Text(stringResource(R.string.setscreen_delete_config_message, configName)) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -433,12 +448,12 @@ fun SettingsScreen(
                         pendingDeleteConfigId = null
                     },
                 ) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.setscreen_delete), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDeleteConfigId = null }) {
-                    Text("取消")
+                    Text(stringResource(R.string.setscreen_cancel))
                 }
             },
         )

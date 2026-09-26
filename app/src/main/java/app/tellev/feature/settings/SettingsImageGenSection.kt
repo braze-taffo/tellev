@@ -50,11 +50,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import app.tellev.R
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.provider.ComfyWorkflowTemplate
 import app.tellev.core.provider.NovelAiImageSettings
 import app.tellev.core.provider.ProviderCatalog
@@ -65,11 +69,13 @@ internal fun imageGenSummary(state: SettingsUiState): String {
         ProviderCatalog.NOVELAI_IMAGE -> "NovelAI"
         else -> "ComfyUI"
     }
+    val configured = UiStrings.get(S.setimg_state_configured)
+    val unconfigured = UiStrings.get(S.setimg_state_unconfigured)
     val parts = listOf(
-        "ComfyUI " + if (state.comfySettings.workflowJson.isNotBlank()) "已配置" else "未配置",
-        "NovelAI " + if (state.novelAiToken.isNotBlank()) "已配置" else "未配置",
+        "ComfyUI " + if (state.comfySettings.workflowJson.isNotBlank()) configured else unconfigured,
+        "NovelAI " + if (state.novelAiToken.isNotBlank()) configured else unconfigured,
     )
-    return "当前引擎：$engineName（${parts.joinToString(" · ")}）"
+    return UiStrings.get(S.setimg_entry_summary, engineName, parts.joinToString(" · "))
 }
 
 @Composable
@@ -98,7 +104,7 @@ internal fun ImageGenEntryCard(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Text("生图（引擎与模型）", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.setimg_entry_title), style = MaterialTheme.typography.titleMedium)
                 Text(
                     imageGenSummary(state),
                     style = MaterialTheme.typography.bodySmall,
@@ -128,14 +134,13 @@ internal fun LazyListScope.imageGenDetailsItems(
     item(key = "image_engine_header") {
         SectionHeader(
             icon = Icons.Default.Tune,
-            title = "生图引擎",
+            title = stringResource(R.string.setimg_engine_header),
         )
     }
     item(key = "image_engine") {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                "聊天输入栏「生成图片」按钮使用的引擎（立即生效，无需保存）；" +
-                    "各引擎的连接与参数在下方对应区块配置。",
+                stringResource(R.string.setimg_engine_desc),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -143,12 +148,12 @@ internal fun LazyListScope.imageGenDetailsItems(
                 FilterChip(
                     selected = state.imageEngine == ProviderCatalog.COMFYUI,
                     onClick = { viewModel.selectImageEngine(ProviderCatalog.COMFYUI) },
-                    label = { Text("ComfyUI（远程）") },
+                    label = { Text(stringResource(R.string.setimg_engine_comfy)) },
                 )
                 FilterChip(
                     selected = state.imageEngine == ProviderCatalog.NOVELAI_IMAGE,
                     onClick = { viewModel.selectImageEngine(ProviderCatalog.NOVELAI_IMAGE) },
-                    label = { Text("NovelAI（远程）") },
+                    label = { Text(stringResource(R.string.setimg_engine_novelai)) },
                 )
             }
         }
@@ -161,19 +166,19 @@ internal fun LazyListScope.imageGenDetailsItems(
     item(key = "comfy_header") {
         SectionHeader(
             icon = Icons.Default.Palette,
-            title = "生图模型（ComfyUI）",
+            title = stringResource(R.string.setimg_comfy_header),
         )
     }
     item(key = "comfy_url") {
         OutlinedTextField(
             value = state.comfyBaseUrl,
             onValueChange = viewModel::updateComfyBaseUrl,
-            label = { Text("ComfyUI 服务地址") },
+            label = { Text(stringResource(R.string.setimg_comfy_url_label)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             placeholder = { Text("http://192.168.1.100:8188") },
             supportingText = {
-                Text("电脑上运行的 ComfyUI 地址；配置工作流并保存后，对话输入栏会出现“生成图片”入口")
+                Text(stringResource(R.string.setimg_comfy_url_help))
             },
         )
     }
@@ -191,12 +196,12 @@ internal fun LazyListScope.imageGenDetailsItems(
                     viewModel.updateComfyModel(it)
                     comfyModelMenu = state.comfyModels.isNotEmpty()
                 },
-                label = { Text("模型（Checkpoint）") },
+                label = { Text(stringResource(R.string.setimg_comfy_model_label)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .menuAnchor(MenuAnchorType.PrimaryEditable),
                 singleLine = true,
-                placeholder = { Text("填入工作流 %model% 占位符对应的模型名，可留空") },
+                placeholder = { Text(stringResource(R.string.setimg_comfy_model_placeholder)) },
                 trailingIcon = {
                     if (state.comfyModels.isNotEmpty()) {
                         ExposedDropdownMenuDefaults.TrailingIcon(expanded = comfyModelMenu)
@@ -205,9 +210,9 @@ internal fun LazyListScope.imageGenDetailsItems(
                 supportingText = {
                     Text(
                         if (state.comfyModels.isEmpty()) {
-                            "测试连接后可从 ComfyUI 获取模型列表"
+                            stringResource(R.string.setimg_comfy_model_help_empty)
                         } else {
-                            "已获取 ${state.comfyModels.size} 个模型，可输入筛选"
+                            stringResource(R.string.setimg_comfy_model_help_count, state.comfyModels.size)
                         },
                     )
                 },
@@ -239,9 +244,9 @@ internal fun LazyListScope.imageGenDetailsItems(
         ) {
             Text(
                 if (state.comfySettings.workflowJson.isBlank()) {
-                    "工作流 JSON（未配置）"
+                    stringResource(R.string.setimg_workflow_unconfigured)
                 } else {
-                    "工作流 JSON（已配置，点击编辑）"
+                    stringResource(R.string.setimg_workflow_configured)
                 },
             )
         }
@@ -251,7 +256,7 @@ internal fun LazyListScope.imageGenDetailsItems(
             onClick = onOpenComfyParamsDialog,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("生成参数与默认负面提示词")
+            Text(stringResource(R.string.setimg_comfy_params_button))
         }
     }
     item(key = "comfy_actions") {
@@ -271,7 +276,7 @@ internal fun LazyListScope.imageGenDetailsItems(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                 }
-                Text(if (state.isTestingComfy) "测试中..." else "测试连接")
+                Text(if (state.isTestingComfy) stringResource(R.string.setimg_testing) else stringResource(R.string.setimg_test_connection))
             }
             FilledTonalButton(
                 onClick = viewModel::saveComfyConfig,
@@ -279,7 +284,7 @@ internal fun LazyListScope.imageGenDetailsItems(
             ) {
                 Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("保存")
+                Text(stringResource(R.string.setimg_save))
             }
         }
     }
@@ -295,7 +300,7 @@ internal fun LazyListScope.imageGenDetailsItems(
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text(
-                        text = if (status.available) "已连接" else "连接失败",
+                        text = if (status.available) stringResource(R.string.setimg_status_connected) else stringResource(R.string.setimg_status_failed),
                         style = MaterialTheme.typography.titleSmall,
                         color = if (status.available) MaterialTheme.colorScheme.onPrimaryContainer
                         else MaterialTheme.colorScheme.onErrorContainer,
@@ -319,14 +324,14 @@ internal fun LazyListScope.imageGenDetailsItems(
     item(key = "novelai_header") {
         SectionHeader(
             icon = Icons.Default.Cloud,
-            title = "NovelAI 生图（远程）",
+            title = stringResource(R.string.setimg_novelai_header),
         )
     }
     item(key = "novelai_token") {
         OutlinedTextField(
             value = state.novelAiToken,
             onValueChange = viewModel::updateNovelAiToken,
-            label = { Text("NovelAI 令牌（Persistent Token）") },
+            label = { Text(stringResource(R.string.setimg_novelai_token_label)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             visualTransformation = if (novelAiTokenVisible) VisualTransformation.None
@@ -341,7 +346,7 @@ internal fun LazyListScope.imageGenDetailsItems(
                 }
             },
             supportingText = {
-                Text("novelai.net → 账户设置 → Persistent Token；需要有效订阅（如 Opus）")
+                Text(stringResource(R.string.setimg_novelai_token_help))
             },
         )
     }
@@ -358,7 +363,7 @@ internal fun LazyListScope.imageGenDetailsItems(
                 value = modelDisplay,
                 onValueChange = {},
                 readOnly = true,
-                label = { Text("模型") },
+                label = { Text(stringResource(R.string.setimg_model_label)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .menuAnchor(MenuAnchorType.PrimaryNotEditable),
@@ -387,7 +392,7 @@ internal fun LazyListScope.imageGenDetailsItems(
             onClick = onOpenNovelAiParamsDialog,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("生成参数、采样器与提示词前缀")
+            Text(stringResource(R.string.setimg_novelai_params_button))
         }
     }
     item(key = "novelai_actions") {
@@ -407,7 +412,7 @@ internal fun LazyListScope.imageGenDetailsItems(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                 }
-                Text(if (state.isTestingNovelAi) "测试中..." else "测试令牌")
+                Text(if (state.isTestingNovelAi) stringResource(R.string.setimg_testing) else stringResource(R.string.setimg_test_token))
             }
             FilledTonalButton(
                 onClick = viewModel::saveNovelAiImageConfig,
@@ -415,7 +420,7 @@ internal fun LazyListScope.imageGenDetailsItems(
             ) {
                 Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("保存")
+                Text(stringResource(R.string.setimg_save))
             }
         }
     }
@@ -431,7 +436,7 @@ internal fun LazyListScope.imageGenDetailsItems(
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text(
-                        text = if (status.available) "令牌可用" else "不可用",
+                        text = if (status.available) stringResource(R.string.setimg_token_ok) else stringResource(R.string.setimg_token_unavailable),
                         style = MaterialTheme.typography.titleSmall,
                         color = if (status.available) MaterialTheme.colorScheme.onPrimaryContainer
                         else MaterialTheme.colorScheme.onErrorContainer,
@@ -465,18 +470,14 @@ internal fun ComfyWorkflowDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("ComfyUI 工作流 JSON") },
+        title = { Text(stringResource(R.string.setimg_workflow_dialog_title)) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    "在 ComfyUI 网页开启开发者模式，用「保存（API 格式）」导出工作流并粘贴到此处，" +
-                        "再把正向/负向提示词节点的文本改为占位符 \"%prompt%\" 与 \"%negative_prompt%\"。" +
-                        "可选占位符：\"%model%\"、\"%seed%\"、\"%steps%\"、\"%scale%\"、\"%width%\"、" +
-                        "\"%height%\"、\"%sampler%\"、\"%scheduler%\"、\"%denoise%\"、\"%clip_skip%\"" +
-                        "（工作流中不含对应占位符时参数不生效）。修改后请回到设置页点击「保存」。",
+                    stringResource(R.string.setimg_workflow_dialog_body),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -486,14 +487,14 @@ internal fun ComfyWorkflowDialog(
                         text = it
                         jsonError = false
                     },
-                    label = { Text("API 格式工作流") },
+                    label = { Text(stringResource(R.string.setimg_workflow_field_label)) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 240.dp),
                     textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                     isError = jsonError,
                     supportingText = if (jsonError) {
-                        { Text("JSON 无法解析，请检查后再确定") }
+                        { Text(stringResource(R.string.setimg_workflow_json_error)) }
                     } else {
                         null
                     },
@@ -511,12 +512,12 @@ internal fun ComfyWorkflowDialog(
                     }
                 },
             ) {
-                Text("确定")
+                Text(stringResource(R.string.setimg_ok))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.setimg_cancel))
             }
         },
     )
@@ -540,15 +541,14 @@ internal fun ComfyParamsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("生图参数") },
+        title = { Text(stringResource(R.string.setimg_params_dialog_title)) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    "参数会替换工作流中对应的占位符；采样器与调度器留空表示沿用工作流自身的值。" +
-                        "修改后请回到设置页点击「保存」。",
+                    stringResource(R.string.setimg_params_dialog_body),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -556,7 +556,7 @@ internal fun ComfyParamsDialog(
                     OutlinedTextField(
                         value = steps,
                         onValueChange = { steps = it },
-                        label = { Text("步数") },
+                        label = { Text(stringResource(R.string.setimg_steps_label)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -574,7 +574,7 @@ internal fun ComfyParamsDialog(
                     OutlinedTextField(
                         value = width,
                         onValueChange = { width = it },
-                        label = { Text("宽度") },
+                        label = { Text(stringResource(R.string.setimg_width_label)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -582,7 +582,7 @@ internal fun ComfyParamsDialog(
                     OutlinedTextField(
                         value = height,
                         onValueChange = { height = it },
-                        label = { Text("高度") },
+                        label = { Text(stringResource(R.string.setimg_height_label)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -592,33 +592,33 @@ internal fun ComfyParamsDialog(
                     OutlinedTextField(
                         value = sampler,
                         onValueChange = { sampler = it },
-                        label = { Text("采样器（可留空）") },
+                        label = { Text(stringResource(R.string.setimg_sampler_label)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
-                        placeholder = { Text("euler, dpmpp_2m 等") },
+                        placeholder = { Text(stringResource(R.string.setimg_sampler_placeholder)) },
                     )
                     OutlinedTextField(
                         value = scheduler,
                         onValueChange = { scheduler = it },
-                        label = { Text("调度器（可留空）") },
+                        label = { Text(stringResource(R.string.setimg_scheduler_label)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
-                        placeholder = { Text("normal, karras 等") },
+                        placeholder = { Text(stringResource(R.string.setimg_scheduler_placeholder)) },
                     )
                 }
                 OutlinedTextField(
                     value = seed,
                     onValueChange = { seed = it },
-                    label = { Text("种子") },
+                    label = { Text(stringResource(R.string.setimg_seed_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    supportingText = { Text("-1 为每次随机") },
+                    supportingText = { Text(stringResource(R.string.setimg_seed_help)) },
                 )
                 OutlinedTextField(
                     value = negative,
                     onValueChange = { negative = it },
-                    label = { Text("默认负面提示词") },
+                    label = { Text(stringResource(R.string.setimg_negative_label)) },
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = { Text("lowres, bad anatomy, bad hands, blurry") },
                 )
@@ -642,12 +642,12 @@ internal fun ComfyParamsDialog(
                     onDismiss()
                 },
             ) {
-                Text("确定")
+                Text(stringResource(R.string.setimg_ok))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.setimg_cancel))
             }
         },
     )
@@ -681,15 +681,14 @@ internal fun NovelAiImageParamsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("NovelAI 生图参数") },
+        title = { Text(stringResource(R.string.setimg_novelai_params_dialog_title)) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    "与酒馆（SillyTavern）NovelAI 源一致：前缀与负面会自动拼进每次请求。" +
-                        "修改后请回到设置页点击「保存」。",
+                    stringResource(R.string.setimg_novelai_params_dialog_body),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -697,11 +696,11 @@ internal fun NovelAiImageParamsDialog(
                     OutlinedTextField(
                         value = steps,
                         onValueChange = { steps = it },
-                        label = { Text("步数") },
+                        label = { Text(stringResource(R.string.setimg_steps_label)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        supportingText = { Text("上限 50；开 Anlas 防护时限 28") },
+                        supportingText = { Text(stringResource(R.string.setimg_novelai_steps_help)) },
                     )
                     OutlinedTextField(
                         value = cfg,
@@ -716,7 +715,7 @@ internal fun NovelAiImageParamsDialog(
                     OutlinedTextField(
                         value = width,
                         onValueChange = { width = it },
-                        label = { Text("宽度") },
+                        label = { Text(stringResource(R.string.setimg_width_label)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -724,7 +723,7 @@ internal fun NovelAiImageParamsDialog(
                     OutlinedTextField(
                         value = height,
                         onValueChange = { height = it },
-                        label = { Text("高度") },
+                        label = { Text(stringResource(R.string.setimg_height_label)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -740,7 +739,7 @@ internal fun NovelAiImageParamsDialog(
                             value = sampler,
                             onValueChange = {},
                             readOnly = true,
-                            label = { Text("采样器") },
+                            label = { Text(stringResource(R.string.setimg_novelai_sampler_label)) },
                             modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable),
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = samplerMenu) },
                         )
@@ -768,7 +767,7 @@ internal fun NovelAiImageParamsDialog(
                             value = scheduler,
                             onValueChange = {},
                             readOnly = true,
-                            label = { Text("调度器") },
+                            label = { Text(stringResource(R.string.setimg_novelai_scheduler_label)) },
                             modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable),
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = schedulerMenu) },
                         )
@@ -792,20 +791,20 @@ internal fun NovelAiImageParamsDialog(
                     OutlinedTextField(
                         value = seed,
                         onValueChange = { seed = it },
-                        label = { Text("种子") },
+                        label = { Text(stringResource(R.string.setimg_seed_label)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        supportingText = { Text("-1 为每次随机") },
+                        supportingText = { Text(stringResource(R.string.setimg_seed_help)) },
                     )
                     OutlinedTextField(
                         value = upscale,
                         onValueChange = { upscale = it },
-                        label = { Text("放大倍数") },
+                        label = { Text(stringResource(R.string.setimg_upscale_label)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        supportingText = { Text("1 为不放大") },
+                        supportingText = { Text(stringResource(R.string.setimg_upscale_help)) },
                     )
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -814,7 +813,7 @@ internal fun NovelAiImageParamsDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("SMEA（高分辨率增强）", modifier = Modifier.weight(1f))
+                        Text(stringResource(R.string.setimg_smea_label), modifier = Modifier.weight(1f))
                         Switch(checked = sm, onCheckedChange = { sm = it })
                     }
                     Row(
@@ -822,7 +821,7 @@ internal fun NovelAiImageParamsDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("DYN（更多样的 SMEA）", modifier = Modifier.weight(1f))
+                        Text(stringResource(R.string.setimg_smea_dyn_label), modifier = Modifier.weight(1f))
                         Switch(checked = smDyn, onCheckedChange = { smDyn = it })
                     }
                     Row(
@@ -830,7 +829,7 @@ internal fun NovelAiImageParamsDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Decrisper（高 CFG 去伪影）", modifier = Modifier.weight(1f))
+                        Text(stringResource(R.string.setimg_decrisper_label), modifier = Modifier.weight(1f))
                         Switch(checked = decrisper, onCheckedChange = { decrisper = it })
                     }
                     Row(
@@ -838,7 +837,7 @@ internal fun NovelAiImageParamsDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Variety+（多样性增强）", modifier = Modifier.weight(1f))
+                        Text(stringResource(R.string.setimg_variety_label), modifier = Modifier.weight(1f))
                         Switch(checked = varietyBoost, onCheckedChange = { varietyBoost = it })
                     }
                     Row(
@@ -846,23 +845,23 @@ internal fun NovelAiImageParamsDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Anlas 防护（免费额度内生成）", modifier = Modifier.weight(1f))
+                        Text(stringResource(R.string.setimg_anlas_guard_label), modifier = Modifier.weight(1f))
                         Switch(checked = anlasGuard, onCheckedChange = { anlasGuard = it })
                     }
                 }
                 OutlinedTextField(
                     value = prefix,
                     onValueChange = { prefix = it },
-                    label = { Text("提示词前缀") },
+                    label = { Text(stringResource(R.string.setimg_prefix_label)) },
                     modifier = Modifier.fillMaxWidth(),
-                    supportingText = { Text("酒馆默认：best quality, absurdres, aesthetic；支持 {prompt} 占位") },
+                    supportingText = { Text(stringResource(R.string.setimg_prefix_help)) },
                 )
                 OutlinedTextField(
                     value = negative,
                     onValueChange = { negative = it },
-                    label = { Text("默认负面提示词") },
+                    label = { Text(stringResource(R.string.setimg_negative_label)) },
                     modifier = Modifier.fillMaxWidth(),
-                    supportingText = { Text("酒馆默认负面会拼接在每次请求的负面之后") },
+                    supportingText = { Text(stringResource(R.string.setimg_novelai_negative_help)) },
                 )
             }
         },
@@ -891,12 +890,12 @@ internal fun NovelAiImageParamsDialog(
                     onDismiss()
                 },
             ) {
-                Text("确定")
+                Text(stringResource(R.string.setimg_ok))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.setimg_cancel))
             }
         },
     )

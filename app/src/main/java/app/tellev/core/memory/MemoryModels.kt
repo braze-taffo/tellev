@@ -1,5 +1,7 @@
 package app.tellev.core.memory
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.ChatSession
 import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.ProviderConfig
@@ -25,7 +27,7 @@ enum class MemoryMode(val label: String) {
 }
 
 fun ChatSession.withMemoryMode(mode: MemoryMode): ChatSession {
-    require(MemoryMode.of(this) == null) { "记忆模式已锁定" }
+    require(MemoryMode.of(this) == null) { UiStrings.get(S.memmod_error_mode_locked) }
     return copy(metadata = JsonObject(metadata + (MemoryMode.METADATA_KEY to JsonPrimitive(mode.name))))
 }
 

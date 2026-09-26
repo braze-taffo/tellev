@@ -1,5 +1,7 @@
 package app.tellev.feature.creation
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
@@ -308,12 +310,12 @@ fun CreationSession.toWorldBook(): WorldBook = WorldBook(
 fun portableFrontendIssues(html: String): List<String> = buildList {
     if (html.isBlank()) return@buildList
     val forbidden = listOf(
-        Regex("<\\s*script\\b", RegexOption.IGNORE_CASE) to "包含脚本",
-        Regex("\\bon[a-z]+\\s*=", RegexOption.IGNORE_CASE) to "包含内联事件",
-        Regex("<\\s*(iframe|object|embed|link|form|img|video|audio|canvas|svg|math|meta|base|input|button|textarea|select|template)\\b", RegexOption.IGNORE_CASE) to "包含当前双端范围外的标签",
-        Regex("\\b(src|href|srcset|action)\\s*=", RegexOption.IGNORE_CASE) to "依赖链接或资源",
-        Regex("@import\\b|url\\s*\\(|expression\\s*\\(|behavior\\s*:", RegexOption.IGNORE_CASE) to "包含外部或动态样式",
-        Regex("\\{\\{", RegexOption.IGNORE_CASE) to "包含可能依赖运行扩展的模板变量",
+        Regex("<\\s*script\\b", RegexOption.IGNORE_CASE) to UiStrings.get(S.crmodels_frontend_script),
+        Regex("\\bon[a-z]+\\s*=", RegexOption.IGNORE_CASE) to UiStrings.get(S.crmodels_frontend_inline_event),
+        Regex("<\\s*(iframe|object|embed|link|form|img|video|audio|canvas|svg|math|meta|base|input|button|textarea|select|template)\\b", RegexOption.IGNORE_CASE) to UiStrings.get(S.crmodels_frontend_forbidden_tag),
+        Regex("\\b(src|href|srcset|action)\\s*=", RegexOption.IGNORE_CASE) to UiStrings.get(S.crmodels_frontend_external_ref),
+        Regex("@import\\b|url\\s*\\(|expression\\s*\\(|behavior\\s*:", RegexOption.IGNORE_CASE) to UiStrings.get(S.crmodels_frontend_dynamic_style),
+        Regex("\\{\\{", RegexOption.IGNORE_CASE) to UiStrings.get(S.crmodels_frontend_template_var),
     )
     forbidden.forEach { (pattern, reason) -> if (pattern.containsMatchIn(html)) add(reason) }
 }

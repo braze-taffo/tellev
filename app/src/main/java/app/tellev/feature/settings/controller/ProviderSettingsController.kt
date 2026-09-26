@@ -1,5 +1,7 @@
 package app.tellev.feature.settings.controller
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.provider.CustomProviderConfig
 import app.tellev.core.provider.OpenAiCompatibilitySettings
 import app.tellev.core.provider.ProviderConfig
@@ -87,14 +89,18 @@ internal class ProviderSettingsController(
                         extraBodyJson = json.encodeToString(JsonObject.serializer(), fields.compatibility.extraBody),
                         isLoading = false,
                         availableModels = emptyList(),
-                        info = if (activate) "已切换到“${providerDisplayName(id, customConfigs)}”。" else it.info,
+                        info = if (activate) {
+                            UiStrings.get(S.provctl_switched_to, providerDisplayName(id, customConfigs))
+                        } else {
+                            it.info
+                        },
                     )
                 }
             } catch (e: Exception) {
                 stateFlow.update {
                     it.copy(
                         isLoading = false,
-                        error = "加载服务商配置失败：${e.message}",
+                        error = UiStrings.get(S.provctl_load_failed, e.message),
                     )
                 }
             }
@@ -104,7 +110,7 @@ internal class ProviderSettingsController(
     private fun providerDisplayName(id: String, customConfigs: List<CustomProviderConfig>): String =
         if (ProviderConfigPersistence.isCustomConfigId(id)) {
             customConfigs.firstOrNull { it.id == ProviderConfigPersistence.customIdFrom(id) }?.name
-                ?: "自定义配置"
+                ?: UiStrings.get(S.provctl_custom_config_display_name)
         } else {
             providerRegistry.find(id)?.displayName ?: id
         }
@@ -175,11 +181,13 @@ internal class ProviderSettingsController(
                         extraBodyJson = "{}",
                         availableModels = emptyList(),
                         isLoading = false,
-                        info = "已创建自定义配置“$name”。",
+                        info = UiStrings.get(S.provctl_created, name),
                     )
                 }
             } catch (e: Exception) {
-                stateFlow.update { it.copy(isLoading = false, error = "创建自定义配置失败：${e.message}") }
+                stateFlow.update {
+                    it.copy(isLoading = false, error = UiStrings.get(S.provctl_create_failed, e.message))
+                }
             }
         }
     }
@@ -213,7 +221,7 @@ internal class ProviderSettingsController(
                             extraBodyJson = json.encodeToString(JsonObject.serializer(), fields.compatibility.extraBody),
                             availableModels = emptyList(),
                             isLoading = false,
-                            info = "自定义配置已删除。",
+                            info = UiStrings.get(S.provctl_deleted),
                         )
                     }
                 } else {
@@ -221,12 +229,14 @@ internal class ProviderSettingsController(
                         it.copy(
                             customConfigs = updated,
                             isLoading = false,
-                            info = "自定义配置已删除。",
+                            info = UiStrings.get(S.provctl_deleted),
                         )
                     }
                 }
             } catch (e: Exception) {
-                stateFlow.update { it.copy(isLoading = false, error = "删除自定义配置失败：${e.message}") }
+                stateFlow.update {
+                    it.copy(isLoading = false, error = UiStrings.get(S.provctl_delete_failed, e.message))
+                }
             }
         }
     }
@@ -234,7 +244,7 @@ internal class ProviderSettingsController(
     fun testConnection() {
         val state = stateFlow.value
         val config = runCatching { providerConfigFromState(state) }.getOrElse { error ->
-            stateFlow.update { it.copy(error = error.message ?: "高级配置格式错误") }
+            stateFlow.update { it.copy(error = error.message ?: UiStrings.get(S.provctl_advanced_config_invalid)) }
             return
         }
 
@@ -269,7 +279,7 @@ internal class ProviderSettingsController(
                 stateFlow.update {
                     it.copy(
                         isTesting = false,
-                        error = "连接测试失败：${e.message}",
+                        error = UiStrings.get(S.provctl_test_failed, e.message),
                     )
                 }
             }
@@ -305,7 +315,7 @@ internal class ProviderSettingsController(
                             customConfigs = updated,
                             customConfigName = savedName,
                             isLoading = false,
-                            info = "模型服务配置已保存。",
+                            info = UiStrings.get(S.provctl_saved),
                         )
                     }
                 } else {
@@ -332,7 +342,7 @@ internal class ProviderSettingsController(
                     stateFlow.update {
                         it.copy(
                             isLoading = false,
-                            info = "模型服务配置已保存。",
+                            info = UiStrings.get(S.provctl_saved),
                         )
                     }
                 }
@@ -340,7 +350,7 @@ internal class ProviderSettingsController(
                 stateFlow.update {
                     it.copy(
                         isLoading = false,
-                        error = "保存服务商配置失败：${e.message}",
+                        error = UiStrings.get(S.provctl_save_failed, e.message),
                     )
                 }
             }
@@ -362,19 +372,22 @@ internal class ProviderSettingsController(
 
     private fun compatibilitySettingsFromState(state: SettingsUiState): OpenAiCompatibilitySettings {
         if (!ProviderConfigPersistence.hasAdvancedSettings(state.selectedProviderId)) return state.compatibility
-        val headerObject = parseJsonObject(state.extraHeadersJson, "附加 Headers")
+        val headerObject = parseJsonObject(
+            state.extraHeadersJson,
+            UiStrings.get(S.provctl_label_extra_headers),
+        )
         val headers = headerObject.mapValues { (name, value) ->
             (value as? JsonPrimitive)?.contentOrNull
-                ?: throw IllegalArgumentException("附加 Header“$name”必须是字符串")
+                ?: throw IllegalArgumentException(UiStrings.get(S.provctl_header_must_be_string, name))
         }
-        val extraBody = parseJsonObject(state.extraBodyJson, "附加请求体")
+        val extraBody = parseJsonObject(state.extraBodyJson, UiStrings.get(S.provctl_label_extra_body))
         return state.compatibility.copy(
             modelsPath = state.compatibility.modelsPath.trim().ifBlank { "/v1/models" },
             chatCompletionsPath = state.compatibility.chatCompletionsPath.trim().ifBlank { "/v1/chat/completions" },
             authHeader = state.compatibility.authHeader.trim().ifBlank { "Authorization" },
             maxTokensField = state.compatibility.maxTokensField.trim().also {
                 require(it in setOf("max_tokens", "max_completion_tokens")) {
-                    "输出长度字段只能是 max_tokens 或 max_completion_tokens"
+                    UiStrings.get(S.provctl_max_tokens_field_invalid)
                 }
             },
             headers = headers,
@@ -384,5 +397,5 @@ internal class ProviderSettingsController(
 
     private fun parseJsonObject(source: String, label: String): JsonObject = runCatching {
         json.parseToJsonElement(source.ifBlank { "{}" }).jsonObject
-    }.getOrElse { throw IllegalArgumentException("$label 必须是合法的 JSON 对象") }
+    }.getOrElse { throw IllegalArgumentException(UiStrings.get(S.provctl_must_be_json_object, label)) }
 }

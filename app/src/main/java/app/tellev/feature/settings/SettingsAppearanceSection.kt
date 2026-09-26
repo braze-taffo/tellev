@@ -30,7 +30,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 import app.tellev.ui.theme.ThemeAccent
 import app.tellev.ui.theme.ThemeMode
 import app.tellev.ui.theme.lightColors
@@ -142,7 +144,7 @@ internal fun LazyListScope.appearanceSectionItems(
     item(key = "theme_header") {
         SectionHeader(
             icon = Icons.Default.DarkMode,
-            title = "主题",
+            title = stringResource(R.string.setapp_title),
         )
     }
 
@@ -150,19 +152,19 @@ internal fun LazyListScope.appearanceSectionItems(
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             ThemeOption(
                 icon = Icons.Default.LightMode,
-                label = "浅色",
+                label = stringResource(R.string.setapp_theme_light),
                 selected = state.themeMode == ThemeMode.Light,
                 onClick = { onSetThemeMode(ThemeMode.Light) },
             )
             ThemeOption(
                 icon = Icons.Default.DarkMode,
-                label = "深色",
+                label = stringResource(R.string.setapp_theme_dark),
                 selected = state.themeMode == ThemeMode.Dark,
                 onClick = { onSetThemeMode(ThemeMode.Dark) },
             )
             ThemeOption(
                 icon = Icons.Default.PhoneAndroid,
-                label = "跟随系统",
+                label = stringResource(R.string.setapp_theme_system),
                 selected = state.themeMode == ThemeMode.System,
                 onClick = { onSetThemeMode(ThemeMode.System) },
             )
@@ -171,7 +173,7 @@ internal fun LazyListScope.appearanceSectionItems(
 
     item(key = "accent_label") {
         Text(
-            text = "主题色",
+            text = stringResource(R.string.setapp_accent_label),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 16.dp, top = 8.dp),
@@ -182,13 +184,13 @@ internal fun LazyListScope.appearanceSectionItems(
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             AccentOption(
                 accent = ThemeAccent.Warm,
-                label = "暖橘",
+                label = stringResource(R.string.setapp_accent_warm),
                 selected = state.themeAccent == ThemeAccent.Warm,
                 onClick = { onSetThemeAccent(ThemeAccent.Warm) },
             )
             AccentOption(
                 accent = ThemeAccent.Classic,
-                label = "经典蓝紫",
+                label = stringResource(R.string.setapp_accent_classic),
                 selected = state.themeAccent == ThemeAccent.Classic,
                 onClick = { onSetThemeAccent(ThemeAccent.Classic) },
             )
@@ -198,7 +200,7 @@ internal fun LazyListScope.appearanceSectionItems(
     item(key = "bubble_alpha") {
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
             Text(
-                text = "气泡不透明度：${(state.chatBubbleAlpha * 100).toInt()}%",
+                text = stringResource(R.string.setapp_bubble_alpha, (state.chatBubbleAlpha * 100).toInt()),
                 style = MaterialTheme.typography.bodyMedium,
             )
             Slider(
@@ -211,7 +213,7 @@ internal fun LazyListScope.appearanceSectionItems(
 
     item(key = "chat_font_size") {
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-            Text("对话字号：${state.chatFontSizeSp} sp", style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.setapp_font_size, state.chatFontSizeSp), style = MaterialTheme.typography.bodyMedium)
             Slider(
                 value = state.chatFontSizeSp.toFloat(),
                 onValueChange = { onSetChatFontSizeSp((it / 2).roundToInt() * 2) },
@@ -222,7 +224,7 @@ internal fun LazyListScope.appearanceSectionItems(
                 listOf(14, 16, 18, 20).forEach { Text("$it", style = MaterialTheme.typography.labelSmall) }
             }
             Text(
-                "预览：这是一段对话文字",
+                stringResource(R.string.setapp_preview_text),
                 style = MaterialTheme.typography.bodyLarge.copy(
                     fontSize = MaterialTheme.typography.bodyLarge.fontSize * (state.chatFontSizeSp / 16f),
                     lineHeight = MaterialTheme.typography.bodyLarge.lineHeight * (state.chatFontSizeSp / 16f),

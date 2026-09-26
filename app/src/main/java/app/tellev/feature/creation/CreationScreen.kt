@@ -56,8 +56,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import app.tellev.R
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -83,29 +87,32 @@ fun CreationHomeScreen(
     pendingDelete?.let { draft ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("删除创作草稿？") },
-            text = { Text("将删除“${draft.card.name.ifBlank { draft.worldName.ifBlank { "未命名草稿" } }}”的对话、原文和封面。已保存到角色列表或世界书的成品会保留。") },
+            title = { Text(stringResource(R.string.crs_delete_draft_title)) },
+            text = {
+                val draftName = draft.card.name.ifBlank { draft.worldName.ifBlank { stringResource(R.string.crs_unnamed_draft) } }
+                Text(stringResource(R.string.crs_delete_draft_body, draftName))
+            },
             confirmButton = {
                 TextButton(onClick = { viewModel.deleteDraft(draft.id); pendingDelete = null }, enabled = !state.busy) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.crs_delete), color = MaterialTheme.colorScheme.error)
                 }
             },
-            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.crs_cancel)) } },
         )
     }
-    Scaffold(topBar = { TopAppBar(title = { Text("AI 协作创作") }, navigationIcon = {
-        TextButton(onClick = onBack) { Text("返回") }
+    Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.crs_home_title)) }, navigationIcon = {
+        TextButton(onClick = onBack) { Text(stringResource(R.string.crs_back)) }
     }) }) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("与独立创作 agent 对话，制作角色卡、前端或世界书。", style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.crs_home_intro), style = MaterialTheme.typography.bodyMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { viewModel.start(CreationKind.Character); onOpenEditor() }, enabled = !state.busy) { Text("新建角色卡") }
-                OutlinedButton(onClick = { viewModel.start(CreationKind.WorldBook); onOpenEditor() }, enabled = !state.busy) { Text("新建世界书") }
+                Button(onClick = { viewModel.start(CreationKind.Character); onOpenEditor() }, enabled = !state.busy) { Text(stringResource(R.string.crs_new_character)) }
+                OutlinedButton(onClick = { viewModel.start(CreationKind.WorldBook); onOpenEditor() }, enabled = !state.busy) { Text(stringResource(R.string.crs_new_worldbook)) }
             }
-            Text("创作草稿", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.crs_drafts_title), style = MaterialTheme.typography.titleMedium)
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.sessions, key = CreationSession::id) { session ->
                     Card(modifier = Modifier.fillMaxWidth()) {
@@ -114,18 +121,20 @@ fun CreationHomeScreen(
                                 viewModel.open(session.id)
                                 onOpenEditor()
                             }.padding(14.dp)) {
-                                Text(session.card.name.ifBlank { session.worldName.ifBlank {
-                                    if (session.kind == CreationKind.Character) "未命名角色" else "未命名世界书"
-                                } })
+                                val sessionName = session.card.name.ifBlank { session.worldName.ifBlank {
+                                    stringResource(if (session.kind == CreationKind.Character) R.string.crs_unnamed_character else R.string.crs_unnamed_worldbook)
+                                } }
+                                Text(sessionName)
+                                val kindLabel = stringResource(if (session.kind == CreationKind.Character) R.string.crs_kind_character else R.string.crs_kind_worldbook)
                                 Text(
-                                    "${if (session.kind == CreationKind.Character) "角色卡" else "世界书"} · ${session.turns.size} 轮 · ${session.lore.size} 条世界书内容",
+                                    stringResource(R.string.crs_session_meta, kindLabel, session.turns.size, session.lore.size),
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                                 if (session.sourceLength > 0) {
-                                    Text("原文已提炼 ${session.sourceCursor}/${session.sourceLength} 字符", style = MaterialTheme.typography.bodySmall)
+                                    Text(stringResource(R.string.crs_source_extracted_short, session.sourceCursor, session.sourceLength), style = MaterialTheme.typography.bodySmall)
                                 }
                             }
-                            TextButton(onClick = { pendingDelete = session }, enabled = !state.busy) { Text("删除") }
+                            TextButton(onClick = { pendingDelete = session }, enabled = !state.busy) { Text(stringResource(R.string.crs_delete)) }
                         }
                     }
                 }
@@ -157,17 +166,17 @@ fun CreationEditorScreen(
             try {
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
-                        ?: error("无法写入所选文件")
+                        ?: error(context.getString(R.string.crs_error_write_file))
                 }
                 viewModel.showInfo(
                     when (kind) {
-                        ExportKind.CharacterPng -> "PNG 角色卡已导出。"
-                        ExportKind.WorldBookJson -> "世界书 JSON 已导出，可直接导入 SillyTavern。"
-                        else -> "JSON 角色卡已导出。"
+                        ExportKind.CharacterPng -> context.getString(R.string.crs_export_png_done)
+                        ExportKind.WorldBookJson -> context.getString(R.string.crs_export_worldbook_done)
+                        else -> context.getString(R.string.crs_export_json_done)
                     },
                 )
             } catch (e: Exception) {
-                viewModel.showError("导出失败：${e.message}")
+                viewModel.showError(context.getString(R.string.crs_export_failed, e.message))
             }
         }
     }
@@ -185,14 +194,14 @@ fun CreationEditorScreen(
             try {
                 val source = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.use { it.readNBytes(12_000_001) }
-                } ?: error("无法读取所选图片")
-                require(source.size <= 12_000_000) { "图片超过 12 MB，请选择较小的文件。" }
+                } ?: error(context.getString(R.string.crs_error_read_image))
+                require(source.size <= 12_000_000) { context.getString(R.string.crs_error_image_too_large) }
                 val png = withContext(Dispatchers.IO) {
                     app.tellev.util.decodeImageAsPng(source, maxEdge = 1024)
-                } ?: error("无法解析所选图片")
+                } ?: error(context.getString(R.string.crs_error_parse_image))
                 viewModel.setCoverPng(png)
             } catch (e: Exception) {
-                viewModel.showError("设置封面失败：${e.message}")
+                viewModel.showError(context.getString(R.string.crs_cover_failed, e.message))
             }
         }
     }
@@ -209,7 +218,7 @@ fun CreationEditorScreen(
                 if (format == CharacterExportFormat.Png) pngExport.launch("$name.png")
                 else jsonExport.launch("$name.json")
             } catch (e: Exception) {
-                viewModel.showError("导出失败：${e.message}")
+                viewModel.showError(context.getString(R.string.crs_export_failed, e.message))
             }
         }
     }
@@ -219,18 +228,18 @@ fun CreationEditorScreen(
                 pendingExport = ExportKind.WorldBookJson to viewModel.exportWorldBook()
                 worldBookJsonExport.launch("${safeWorldBookName()}.json")
             } catch (e: Exception) {
-                viewModel.showError("导出失败：${e.message}")
+                viewModel.showError(context.getString(R.string.crs_export_failed, e.message))
             }
         }
     }
     var tab by remember { mutableIntStateOf(0) }
     LaunchedEffect(session?.id) { tab = 0 }
     Scaffold(topBar = {
-        TopAppBar(title = { Text(if (session?.kind == CreationKind.WorldBook) "创作世界书" else "创作角色卡") },
-            navigationIcon = { TextButton(onClick = { viewModel.close(); onBack() }) { Text("返回") } },
+        TopAppBar(title = { Text(stringResource(if (session?.kind == CreationKind.WorldBook) R.string.crs_editor_title_worldbook else R.string.crs_editor_title_character)) },
+            navigationIcon = { TextButton(onClick = { viewModel.close(); onBack() }) { Text(stringResource(R.string.crs_back)) } },
             actions = {
                 TextButton(onClick = { viewModel.saveArtifact(onSaved) }, enabled = session != null && !state.busy) {
-                    Text(if (session?.kind == CreationKind.WorldBook) "保存到世界书" else "保存到角色列表")
+                    Text(stringResource(if (session?.kind == CreationKind.WorldBook) R.string.crs_save_to_worldbook else R.string.crs_save_to_character_list))
                 }
             })
     }) { padding ->
@@ -239,7 +248,7 @@ fun CreationEditorScreen(
             // editor would sit on "正在读取草稿…" forever.
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text(
-                    state.error ?: "正在读取草稿…",
+                    state.error ?: stringResource(R.string.crs_loading_draft),
                     color = if (state.error != null) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(16.dp),
@@ -254,10 +263,10 @@ fun CreationEditorScreen(
             if (session.turns.lastOrNull()?.role == "user" && !state.busy) {
                 if (session.partialTurnSaved) {
                     TextButton(onClick = { viewModel.send("请从已保存的草稿继续完成上一轮未完成的工作；不要重复创建已经写入的条目。") }) {
-                        Text("继续未完成的创作")
+                        Text(stringResource(R.string.crs_continue_incomplete))
                     }
                 } else {
-                    TextButton(onClick = viewModel::retry) { Text("重试上一轮") }
+                    TextButton(onClick = viewModel::retry) { Text(stringResource(R.string.crs_retry_last)) }
                 }
             }
             state.info?.let { Text(it, modifier = Modifier.padding(horizontal = 12.dp)) }
@@ -267,19 +276,19 @@ fun CreationEditorScreen(
                 val savedFraction = session.sourceCursor.toFloat() / session.sourceLength
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
                     LinearProgressIndicator(progress = { savedFraction }, modifier = Modifier.fillMaxWidth())
-                    Text("原文已提炼 ${session.sourceCursor}/${session.sourceLength} 字符；可从已保存位置继续。",
+                    Text(stringResource(R.string.crs_source_extracted_continue, session.sourceCursor, session.sourceLength),
                         style = MaterialTheme.typography.bodySmall)
                 }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("对话") })
+                FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text(stringResource(R.string.crs_tab_chat)) })
                 if (session.kind == CreationKind.Character) {
-                    FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("角色卡") })
+                    FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text(stringResource(R.string.crs_kind_character)) })
                 }
-                FilterChip(selected = tab == 2, onClick = { tab = 2 }, label = { Text("世界书") })
+                FilterChip(selected = tab == 2, onClick = { tab = 2 }, label = { Text(stringResource(R.string.crs_kind_worldbook)) })
                 if (session.kind == CreationKind.Character) {
-                    FilterChip(selected = tab == 3, onClick = { tab = 3 }, label = { Text("前端预览") })
-                    FilterChip(selected = tab == 4, onClick = { tab = 4 }, label = { Text("高级资源") })
+                    FilterChip(selected = tab == 3, onClick = { tab = 3 }, label = { Text(stringResource(R.string.crs_tab_frontend)) })
+                    FilterChip(selected = tab == 4, onClick = { tab = 4 }, label = { Text(stringResource(R.string.crs_tab_advanced)) })
                 }
             }
             when (tab) {
@@ -305,7 +314,7 @@ private fun CreationCompactStatus(state: CreationUiState, viewModel: CreationVie
         if (state.busy) CircularProgressIndicator(modifier = Modifier.height(18.dp))
         Text(state.extractionProgress.ifBlank { state.modelPhase },
             modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-        if (state.busy) TextButton(onClick = viewModel::cancelGeneration) { Text("停止") }
+        if (state.busy) TextButton(onClick = viewModel::cancelGeneration) { Text(stringResource(R.string.crs_stop)) }
     }
 }
 
@@ -325,56 +334,61 @@ private fun CreationActivityPanel(state: CreationUiState, session: CreationSessi
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (state.busy) CircularProgressIndicator(modifier = Modifier.height(20.dp))
-                    Text(state.operationLabel.ifBlank { "创作进度" }, style = MaterialTheme.typography.titleSmall)
+                    val progressTitle = stringResource(R.string.crs_progress_title)
+                    Text(state.operationLabel.ifBlank { progressTitle }, style = MaterialTheme.typography.titleSmall)
                 }
-                if (state.busy) TextButton(onClick = viewModel::cancelGeneration) { Text("停止") }
+                if (state.busy) TextButton(onClick = viewModel::cancelGeneration) { Text(stringResource(R.string.crs_stop)) }
             }
             Text(state.modelPhase, style = MaterialTheme.typography.bodySmall)
             if (state.providerLabel.isNotBlank()) {
-                Text("当前连接：${state.providerLabel}", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.crs_provider_connected, state.providerLabel), style = MaterialTheme.typography.bodySmall)
             }
             if (state.busy && state.operationStartedAtMillis > 0) {
                 val elapsedSeconds = ((clockMillis - state.operationStartedAtMillis).coerceAtLeast(0) / 1_000)
-                Text("任务已运行 ${elapsedSeconds} 秒", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.crs_task_elapsed, elapsedSeconds), style = MaterialTheme.typography.bodySmall)
             }
             if (state.deltaCount > 0) {
                 val spanSeconds = ((state.lastDeltaMillis ?: 0L) - (state.firstDeltaMillis ?: 0L))
                     .coerceAtLeast(0) / 1_000
-                Text("首片在 ${state.firstDeltaMillis.orZeroSeconds()} 秒、末片在 ${state.lastDeltaMillis.orZeroSeconds()} 秒到达；片段持续 $spanSeconds 秒，共 ${state.deltaCount} 个。",
+                Text(stringResource(R.string.crs_delta_stats,
+                    state.firstDeltaMillis.orZeroSeconds(), state.lastDeltaMillis.orZeroSeconds(), spanSeconds, state.deltaCount),
                     style = MaterialTheme.typography.bodySmall)
-            } else if (state.busy && state.modelPhase.contains("等待模型响应")) {
-                Text("仍在等待首个流式片段。", style = MaterialTheme.typography.bodySmall)
+            } else if (state.busy && state.modelPhase.contains(UiStrings.get(S.creng_phase_waiting_model))) {
+                // modelPhase carries the engine's UiStrings-resolved text; compare against the same
+                // creng_phase_waiting_model resource instead of a hardcoded display string.
+                Text(stringResource(R.string.crs_waiting_first_chunk), style = MaterialTheme.typography.bodySmall)
             } else if (!state.busy && state.modelElapsedMillis > 0 && state.liveOutput.isNotBlank()) {
-                Text("当前请求没有收到增量片段；结果在 ${state.modelElapsedMillis / 1_000} 秒后整段到达。",
+                Text(stringResource(R.string.crs_no_stream_fallback, state.modelElapsedMillis / 1_000),
                     style = MaterialTheme.typography.bodySmall)
             }
             if (session.sourceLength > 0) {
                 val fraction = session.sourceCursor.toFloat() / session.sourceLength
                 LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
-                Text("已保存 ${session.sourceCursor}/${session.sourceLength} 字符（${(fraction * 100).toInt()}%）",
+                Text(stringResource(R.string.crs_source_saved_pct, session.sourceCursor, session.sourceLength, (fraction * 100).toInt()),
                     style = MaterialTheme.typography.bodySmall)
             }
             if (state.extractionProgress.isNotBlank()) {
                 Text(state.extractionProgress, style = MaterialTheme.typography.bodySmall)
             }
             if (state.busy && state.liveAssistantMessage.isNotBlank()) {
-                Text("agent 正在回复", style = MaterialTheme.typography.labelMedium)
+                Text(stringResource(R.string.crs_agent_replying), style = MaterialTheme.typography.labelMedium)
                 Column(Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState())) {
                     Text(state.liveAssistantMessage.takeLast(1_000))
                 }
             }
             if (state.liveReasoning.isNotBlank()) {
-                Text("模型返回的思考文本", style = MaterialTheme.typography.labelMedium)
+                Text(stringResource(R.string.crs_reasoning_title), style = MaterialTheme.typography.labelMedium)
                 Column(Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState())) {
                     SelectionContainer { Text(state.liveReasoning) }
                 }
             } else if (!state.busy && state.liveOutput.isNotBlank()) {
-                Text("本轮未收到可显示的思考文本；等待时间不能说明模型内部如何处理。",
+                Text(stringResource(R.string.crs_no_reasoning),
                     style = MaterialTheme.typography.bodySmall)
             }
             if (state.liveOutput.isNotBlank()) {
                 TextButton(onClick = { showRawStream = !showRawStream }) {
-                    Text(if (showRawStream) "收起结构化草稿" else "查看结构化草稿流（${state.liveOutput.length} 字）")
+                    Text(if (showRawStream) stringResource(R.string.crs_collapse_draft_stream)
+                        else stringResource(R.string.crs_view_draft_stream, state.liveOutput.length))
                 }
             }
             if (showRawStream && state.liveOutput.isNotBlank()) {
@@ -382,19 +396,19 @@ private fun CreationActivityPanel(state: CreationUiState, session: CreationSessi
                 val shortened = !showFullStream && state.liveOutput.length > limit
                 if (shortened || showFullStream) {
                     TextButton(onClick = { showFullStream = !showFullStream }) {
-                        Text(if (showFullStream) "只看最新片段" else "查看完整流式内容")
+                        Text(if (showFullStream) stringResource(R.string.crs_show_latest_only) else stringResource(R.string.crs_view_full_stream))
                     }
                 }
                 Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("结构化草稿原文（校验前）", style = MaterialTheme.typography.labelMedium)
+                    Text(stringResource(R.string.crs_draft_raw_title), style = MaterialTheme.typography.labelMedium)
                     SelectionContainer {
                         Text(if (showFullStream) state.liveOutput else state.liveOutput.takeLast(limit))
                     }
-                    if (shortened) Text("当前显示最近 $limit 字；可展开查看全部。", style = MaterialTheme.typography.bodySmall)
+                    if (shortened) Text(stringResource(R.string.crs_stream_truncated, limit), style = MaterialTheme.typography.bodySmall)
                 }
             } else if (state.busy && state.liveReasoning.isBlank() && state.liveAssistantMessage.isBlank()) {
-                Text("等待供应商返回可显示的文字…", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.crs_waiting_provider_text), style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -417,7 +431,7 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
                 Text(
-                    "可以从一句设想开始。也可以指定叙事视角、人物关系、风格、开场、世界规则或前端形式；agent 会给出草稿供你修改。",
+                    stringResource(R.string.crs_conversation_intro),
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
@@ -429,7 +443,7 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
             items(session.turns) { turn ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp)) {
-                        Text(if (turn.role == "user") "你" else "创作 agent", style = MaterialTheme.typography.labelMedium)
+                        Text(if (turn.role == "user") stringResource(R.string.crs_role_you) else stringResource(R.string.crs_role_agent), style = MaterialTheme.typography.labelMedium)
                         Text(turn.text)
                     }
                 }
@@ -440,49 +454,49 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                         CreationActivityPanel(state, session, viewModel)
                     } else {
                         TextButton(onClick = { showCompletedDetails = true }) {
-                            Text("查看本轮进度 · ${state.modelPhase}")
+                            Text(stringResource(R.string.crs_view_progress, state.modelPhase))
                         }
                     }
                 }
             } else if (session.sourceLength > 0) {
                 item(key = "source-progress") {
-                    Text("原文已提炼 ${session.sourceCursor}/${session.sourceLength} 字符；可从已保存位置继续。",
+                    Text(stringResource(R.string.crs_source_extracted_continue, session.sourceCursor, session.sourceLength),
                         style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
         OutlinedTextField(
             value = input, onValueChange = { input = it }, modifier = Modifier.fillMaxWidth(),
-            label = { Text("告诉 agent 想创作什么") }, minLines = 2, maxLines = 6,
+            label = { Text(stringResource(R.string.crs_input_label)) }, minLines = 2, maxLines = 6,
         )
         if (session.turns.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 TextButton(onClick = { viewModel.send("请继续引导，只问我当前最关键的 1 至 2 个问题，并先整理已有设定。") }, enabled = !busy) {
-                    Text("继续引导")
+                    Text(stringResource(R.string.crs_btn_continue_guide))
                 }
                 TextButton(onClick = { viewModel.send("这一部分交给你决定。请结合已确定设定写入草稿，并说明你的选择。") }, enabled = !busy) {
-                    Text("交给 AI 决定")
+                    Text(stringResource(R.string.crs_btn_ai_decide))
                 }
                 TextButton(onClick = { viewModel.send(if (session.kind == CreationKind.Character)
                     "请根据目前已有信息立即完成可编辑的角色卡初稿和适用的世界书条目，缺口用合理设定补齐并标明待核对处。"
                     else "请根据目前已有信息立即完成可编辑的世界书条目初稿，区分已确定事实与待核对设定。") }, enabled = !busy) {
-                    Text("生成初稿")
+                    Text(stringResource(R.string.crs_btn_generate_draft))
                 }
                 if (session.kind == CreationKind.WorldBook) {
                     TextButton(onClick = { viewModel.send("请从现在起逐条与我讨论世界书条目。先提议一条，等我确认或修改后再写入草稿，然后讨论下一条。") }, enabled = !busy) {
-                        Text("逐条讨论")
+                        Text(stringResource(R.string.crs_btn_discuss_one_by_one))
                     }
                 }
                 if (session.kind == CreationKind.Character) {
                     TextButton(onClick = { viewModel.send("请根据这张卡的设定，实际创建可运行的变量结构和动态状态栏。先检查已有脚本、变量与正则，再分模块写入草稿；不要只输出让玩家复制的提示词。每个模块写完说明作用和待验证点。") }, enabled = !busy) {
-                        Text("制作动态状态栏")
+                        Text(stringResource(R.string.crs_btn_status_bar))
                     }
                 }
             }
         }
         Button(onClick = { viewModel.send(input); input = "" }, enabled = !busy && input.isNotBlank(),
-            modifier = Modifier.fillMaxWidth()) { Text("发送") }
+            modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.crs_send)) }
     }
 }
 
@@ -499,50 +513,58 @@ private fun CreationBriefForm(kind: CreationKind, busy: Boolean, onStart: (Strin
     var loreOneByOne by remember(kind) { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("创作起点", style = MaterialTheme.typography.titleMedium)
-            Text("填写已想好的部分即可；也可以跳过表单，直接在下方对话。", style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.crs_brief_title), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.crs_brief_hint), style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FilterChip(selected = guided, onClick = { guided = true }, label = { Text("边聊边写") })
-                FilterChip(selected = !guided, onClick = { guided = false }, label = { Text("直接出初稿") })
+                FilterChip(selected = guided, onClick = { guided = true }, label = { Text(stringResource(R.string.crs_mode_chat)) })
+                FilterChip(selected = !guided, onClick = { guided = false }, label = { Text(stringResource(R.string.crs_mode_direct_draft)) })
             }
             OutlinedTextField(value = title, onValueChange = { title = it }, modifier = Modifier.fillMaxWidth(),
-                label = { Text(if (kind == CreationKind.Character) "角色或故事名（可选）" else "世界书名（可选）") })
+                label = { Text(stringResource(if (kind == CreationKind.Character) R.string.crs_field_title_character else R.string.crs_field_title_worldbook)) })
             OutlinedTextField(value = premise, onValueChange = { premise = it }, modifier = Modifier.fillMaxWidth(),
-                label = { Text(if (kind == CreationKind.Character) "角色与故事的核心设定（可选）" else "世界观、地点、势力和规则（可选）") },
+                label = { Text(stringResource(if (kind == CreationKind.Character) R.string.crs_field_premise_character else R.string.crs_field_premise_worldbook)) },
                 minLines = 2, maxLines = 5)
             if (kind == CreationKind.Character) {
                 OutlinedTextField(value = relationship, onValueChange = { relationship = it }, modifier = Modifier.fillMaxWidth(),
-                    label = { Text("角色与用户的关系（可选）") })
+                    label = { Text(stringResource(R.string.crs_field_relationship)) })
                 OutlinedTextField(value = userPersona, onValueChange = { userPersona = it }, modifier = Modifier.fillMaxWidth(),
-                    label = { Text("用户扮演的身份（可选）") })
+                    label = { Text(stringResource(R.string.crs_field_persona)) })
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(checked = multipleCharacters, onCheckedChange = { multipleCharacters = it })
-                    Text("群像或多角色卡", modifier = Modifier.padding(start = 8.dp))
+                    Text(stringResource(R.string.crs_multi_characters), modifier = Modifier.padding(start = 8.dp))
                 }
                 if (multipleCharacters) {
                     OutlinedTextField(value = characters, onValueChange = { characters = it }, modifier = Modifier.fillMaxWidth(),
-                        label = { Text("每行一人：姓名、与用户的关系、简介") }, minLines = 3, maxLines = 6)
+                        label = { Text(stringResource(R.string.crs_field_characters)) }, minLines = 3, maxLines = 6)
                     if (characters.lineSequence().count { it.isNotBlank() } < 2) {
-                        Text("请至少写两位角色，每人占一行。", style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.crs_min_characters_hint), style = MaterialTheme.typography.bodySmall)
                     }
                 }
-                Text("内容篇幅", style = MaterialTheme.typography.labelMedium)
+                Text(stringResource(R.string.crs_length_title), style = MaterialTheme.typography.labelMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     CreationDetail.entries.forEach { option ->
-                        FilterChip(selected = detail == option, onClick = { detail = option }, label = { Text(option.label) })
+                        // CreationDetail.label is also part of the LLM prompt; localize display here only.
+                        val optionLabel = when (option) {
+                            CreationDetail.Concise -> stringResource(R.string.crs_length_concise)
+                            CreationDetail.Normal -> stringResource(R.string.crs_length_normal)
+                            CreationDetail.Rich -> stringResource(R.string.crs_length_rich)
+                        }
+                        FilterChip(selected = detail == option, onClick = { detail = option }, label = { Text(optionLabel) })
                     }
                 }
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(checked = loreOneByOne, onCheckedChange = { loreOneByOne = it })
-                    Text("逐条讨论，确认后写入", modifier = Modifier.padding(start = 8.dp))
+                    Text(stringResource(R.string.crs_lore_one_by_one), modifier = Modifier.padding(start = 8.dp))
                 }
             }
             Button(onClick = { onStart(CreationBrief(kind, guided, title, premise, relationship,
                 userPersona, if (multipleCharacters) characters else "", detail, loreOneByOne).toPrompt()) },
                 enabled = !busy && (!multipleCharacters || characters.lineSequence().count { it.isNotBlank() } >= 2),
                 modifier = Modifier.fillMaxWidth()) {
-                Text(if (guided) "开始引导创作" else if (kind == CreationKind.WorldBook && loreOneByOne) "开始逐条讨论" else "生成第一版草稿")
+                Text(if (guided) stringResource(R.string.crs_start_guided)
+                    else if (kind == CreationKind.WorldBook && loreOneByOne) stringResource(R.string.crs_start_one_by_one)
+                    else stringResource(R.string.crs_start_first_draft))
             }
         }
     }
@@ -563,29 +585,31 @@ private fun CharacterDraftEditor(
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("角色封面", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.crs_cover_title), style = MaterialTheme.typography.titleMedium)
         if (coverBitmap != null) {
-            Image(coverBitmap, contentDescription = "角色封面预览",
+            Image(coverBitmap, contentDescription = stringResource(R.string.crs_cover_cd),
                 modifier = Modifier.fillMaxWidth().height(180.dp), contentScale = ContentScale.Fit)
-        } else Text("尚未设置封面；JSON 可直接导出，PNG 需先选择封面。", style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(onClick = onPickCover, enabled = !busy) { Text(if (coverPng == null) "选择封面图片" else "更换封面图片") }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onExportJson, enabled = !busy) { Text("导出 JSON") }
-            Button(onClick = onExportPng, enabled = !busy && coverPng != null) { Text("导出 PNG 角色卡") }
+        } else Text(stringResource(R.string.crs_cover_missing_hint), style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = onPickCover, enabled = !busy) {
+            Text(if (coverPng == null) stringResource(R.string.crs_cover_pick) else stringResource(R.string.crs_cover_change))
         }
-        DraftField("名称", card.name, busy) { viewModel.editCard { c -> c.copy(name = it) } }
-        DraftField("描述与背景", card.description, busy, 5) { viewModel.editCard { c -> c.copy(description = it) } }
-        DraftField("性格与行为", card.personality, busy, 4) { viewModel.editCard { c -> c.copy(personality = it) } }
-        DraftField("场景", card.scenario, busy, 4) { viewModel.editCard { c -> c.copy(scenario = it) } }
-        DraftField("开场消息", card.firstMessage, busy, 6) { viewModel.editCard { c -> c.copy(firstMessage = it) } }
-        DraftField("示例对话", card.exampleMessages, busy, 5) { viewModel.editCard { c -> c.copy(exampleMessages = it) } }
-        DraftField("系统提示", card.systemPrompt, busy, 4) { viewModel.editCard { c -> c.copy(systemPrompt = it) } }
-        DraftField("历史后提示", card.postHistoryInstructions, busy, 3) { viewModel.editCard { c -> c.copy(postHistoryInstructions = it) } }
-        DraftField("作者说明", card.creatorNotes, busy, 3) { viewModel.editCard { c -> c.copy(creatorNotes = it) } }
-        DraftField("标签（逗号分隔）", card.tags.joinToString(", "), busy) { value ->
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onExportJson, enabled = !busy) { Text(stringResource(R.string.crs_export_json)) }
+            Button(onClick = onExportPng, enabled = !busy && coverPng != null) { Text(stringResource(R.string.crs_export_png)) }
+        }
+        DraftField(stringResource(R.string.crs_field_name), card.name, busy) { viewModel.editCard { c -> c.copy(name = it) } }
+        DraftField(stringResource(R.string.crs_field_description), card.description, busy, 5) { viewModel.editCard { c -> c.copy(description = it) } }
+        DraftField(stringResource(R.string.crs_field_personality), card.personality, busy, 4) { viewModel.editCard { c -> c.copy(personality = it) } }
+        DraftField(stringResource(R.string.crs_field_scenario), card.scenario, busy, 4) { viewModel.editCard { c -> c.copy(scenario = it) } }
+        DraftField(stringResource(R.string.crs_field_first_message), card.firstMessage, busy, 6) { viewModel.editCard { c -> c.copy(firstMessage = it) } }
+        DraftField(stringResource(R.string.crs_field_example_messages), card.exampleMessages, busy, 5) { viewModel.editCard { c -> c.copy(exampleMessages = it) } }
+        DraftField(stringResource(R.string.crs_field_system_prompt), card.systemPrompt, busy, 4) { viewModel.editCard { c -> c.copy(systemPrompt = it) } }
+        DraftField(stringResource(R.string.crs_field_post_history), card.postHistoryInstructions, busy, 3) { viewModel.editCard { c -> c.copy(postHistoryInstructions = it) } }
+        DraftField(stringResource(R.string.crs_field_creator_notes), card.creatorNotes, busy, 3) { viewModel.editCard { c -> c.copy(creatorNotes = it) } }
+        DraftField(stringResource(R.string.crs_field_tags), card.tags.joinToString(", "), busy) { value ->
             viewModel.editCard { c -> c.copy(tags = value.split(',', '，').map(String::trim).filter(String::isNotBlank)) }
         }
-        DraftField("备选开场（以空行分隔）", card.alternateGreetings.joinToString("\n\n"), busy, 5) { value ->
+        DraftField(stringResource(R.string.crs_field_alternate_greetings), card.alternateGreetings.joinToString("\n\n"), busy, 5) { value ->
             viewModel.editCard { c -> c.copy(alternateGreetings = value.split(Regex("\\n\\s*\\n")).map(String::trim).filter(String::isNotBlank)) }
         }
     }
@@ -603,21 +627,23 @@ private fun AdvancedAssetsPanel(session: CreationSession, viewModel: CreationVie
     fun JsonObject.label(key: String): String = (this[key] as? JsonPrimitive)?.contentOrNull.orEmpty()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("TavernHelper 脚本 ${scripts.size} · 正则 ${regexes.size} · 变量 ${variables.size}",
+        Text(stringResource(R.string.crs_assets_summary, scripts.size, regexes.size, variables.size),
             style = MaterialTheme.typography.titleMedium)
-        Text("在对话里让 AI 创建或修改这些资源。脚本会随角色卡 JSON/PNG 导出；运行效果需在聊天中验证。",
+        Text(stringResource(R.string.crs_assets_hint),
             style = MaterialTheme.typography.bodySmall)
         OutlinedButton(onClick = { viewModel.send("请检查并概述当前脚本、正则和变量，列出缺少的运行模块及下一步。") },
-            enabled = !busy) { Text("让 AI 检查资源") }
+            enabled = !busy) { Text(stringResource(R.string.crs_btn_check_assets)) }
         scripts.forEach { item ->
             val script = item as? JsonObject ?: return@forEach
-            Text("${script.label("name")} · ${if (script.label("enabled") == "true") "启用" else "未启用"} · ${script.label("content").length} 字符")
+            Text(stringResource(R.string.crs_script_line, script.label("name"),
+                if (script.label("enabled") == "true") stringResource(R.string.crs_enabled) else stringResource(R.string.crs_disabled),
+                script.label("content").length))
         }
         regexes.forEach { item ->
             val regex = item as? JsonObject ?: return@forEach
-            Text("正则：${regex.label("scriptName")}")
+            Text(stringResource(R.string.crs_regex_line, regex.label("scriptName")))
         }
-        if (variables.isNotEmpty()) Text("变量：${variables.keys.joinToString("、")}")
+        if (variables.isNotEmpty()) Text(stringResource(R.string.crs_variables_line, variables.keys.joinToString("、")))
     }
 }
 
@@ -636,83 +662,83 @@ private fun WorldDraftEditor(
             try {
                 val bytes = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.use { it.readNBytes(12_000_001) }
-                } ?: error("无法读取原文")
-                require(bytes.size <= 12_000_000) { "文件超过 12 MB，请拆分；没有截断导入。" }
+                } ?: error(context.getString(R.string.crs_error_read_source))
+                require(bytes.size <= 12_000_000) { context.getString(R.string.crs_error_file_too_large) }
                 val decoded = runCatching {
                     Charsets.UTF_8.newDecoder()
                         .onMalformedInput(CodingErrorAction.REPORT)
                         .onUnmappableCharacter(CodingErrorAction.REPORT)
                         .decode(ByteBuffer.wrap(bytes)).toString().removePrefix("\uFEFF")
-                }.getOrElse { error("仅支持 UTF-8 文本；文件编码无法解码，原文未处理。") }
+                }.getOrElse { error(context.getString(R.string.crs_error_not_utf8)) }
                 viewModel.setSource(
                     UriUtils.resolveDisplayName(context, uri) ?: uri.lastPathSegment ?: "导入原文",
                     decoded,
                 )
             } catch (e: Exception) {
-                viewModel.showError(e.message ?: "导入失败")
+                viewModel.showError(e.message ?: context.getString(R.string.crs_import_failed))
             }
         }
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        DraftField("世界书名称", session.worldName, busy) { viewModel.editWorldName(it) }
+        DraftField(stringResource(R.string.crs_field_worldbook_name), session.worldName, busy) { viewModel.editWorldName(it) }
         OutlinedButton(onClick = onExportJson, enabled = !busy) {
-            Text("导出世界书 JSON 文件")
+            Text(stringResource(R.string.crs_export_worldbook_json))
         }
         OutlinedTextField(
             value = pastedSource, onValueChange = { pastedSource = it }, modifier = Modifier.fillMaxWidth(),
-            label = { Text("粘贴原文（可选）") }, minLines = 3, maxLines = 6, enabled = !busy,
+            label = { Text(stringResource(R.string.crs_field_paste_source)) }, minLines = 3, maxLines = 6, enabled = !busy,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { viewModel.setSource("粘贴原文", pastedSource); pastedSource = "" },
-                enabled = !busy && pastedSource.isNotBlank()) { Text("保存原文") }
-            OutlinedButton(onClick = { filePicker.launch(arrayOf("text/plain", "*/*")) }, enabled = !busy) { Text("导入文本文件") }
+                enabled = !busy && pastedSource.isNotBlank()) { Text(stringResource(R.string.crs_save_source)) }
+            OutlinedButton(onClick = { filePicker.launch(arrayOf("text/plain", "*/*")) }, enabled = !busy) { Text(stringResource(R.string.crs_import_text_file)) }
         }
         if (session.sourceLength > 0) {
-            Text("${session.sourceName} · ${session.sourceCursor}/${session.sourceLength} 字符已提炼")
+            Text(stringResource(R.string.crs_source_status, session.sourceName, session.sourceCursor, session.sourceLength))
             Button(onClick = viewModel::extractSource,
                 enabled = !busy && session.sourceCursor < session.sourceLength) {
-                Text(if (session.sourceCursor == 0) "开始逐段提炼" else "继续提炼")
+                Text(if (session.sourceCursor == 0) stringResource(R.string.crs_start_extract) else stringResource(R.string.crs_continue_extract))
             }
         }
-        Text("条目 ${session.lore.size}", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.crs_lore_count, session.lore.size), style = MaterialTheme.typography.titleMedium)
         val repeatedTitles = session.lore.groupBy { it.title.trim().lowercase() }
             .filter { (title, entries) -> title.isNotBlank() && entries.size > 1 }
         if (repeatedTitles.isNotEmpty()) {
-            Text("有 ${repeatedTitles.size} 组同名条目，请核对重复或冲突。", color = MaterialTheme.colorScheme.error)
+            Text(stringResource(R.string.crs_duplicate_titles, repeatedTitles.size), color = MaterialTheme.colorScheme.error)
         }
         session.lore.forEachIndexed { index, item ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    DraftField("标题", item.title, busy) { viewModel.editLore(index, item.copy(title = it)) }
-                    DraftField("关键词（逗号分隔）", item.keys.joinToString(", "), busy) { text ->
+                    DraftField(stringResource(R.string.crs_field_lore_title), item.title, busy) { viewModel.editLore(index, item.copy(title = it)) }
+                    DraftField(stringResource(R.string.crs_field_keys), item.keys.joinToString(", "), busy) { text ->
                         viewModel.editLore(index, item.copy(keys = text.split(',', '，').map(String::trim).filter(String::isNotBlank)))
                     }
-                    DraftField("条目内容", item.content, busy, 4) { viewModel.editLore(index, item.copy(content = it)) }
-                    DraftField("次级关键词（逗号分隔）", item.secondaryKeys.joinToString(", "), busy) { text ->
+                    DraftField(stringResource(R.string.crs_field_lore_content), item.content, busy, 4) { viewModel.editLore(index, item.copy(content = it)) }
+                    DraftField(stringResource(R.string.crs_field_secondary_keys), item.secondaryKeys.joinToString(", "), busy) { text ->
                         viewModel.editLore(index, item.copy(
                             secondaryKeys = text.split(',', '，').map(String::trim).filter(String::isNotBlank),
                         ))
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("常驻条目")
+                        Text(stringResource(R.string.crs_constant_entry))
                         Switch(checked = item.constant, onCheckedChange = { viewModel.editLore(index, item.copy(constant = it)) }, enabled = !busy)
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("要求次级关键词")
+                        Text(stringResource(R.string.crs_selective_entry))
                         Switch(checked = item.selective, onCheckedChange = { viewModel.editLore(index, item.copy(selective = it)) },
                             enabled = !busy && item.secondaryKeys.isNotEmpty())
                     }
-                    DraftField("说明 / 事实或传闻", item.note, busy, 2) { viewModel.editLore(index, item.copy(note = it)) }
+                    DraftField(stringResource(R.string.crs_field_note), item.note, busy, 2) { viewModel.editLore(index, item.copy(note = it)) }
                     if (item.sourceQuote.isNotBlank()) {
-                        Text("${item.sourceName} [${item.sourceOffset}]：${item.sourceQuote}", style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.crs_source_quote, item.sourceName, item.sourceOffset, item.sourceQuote), style = MaterialTheme.typography.bodySmall)
                     }
-                    TextButton(onClick = { viewModel.editLore(index, null) }, enabled = !busy) { Text("删除条目") }
+                    TextButton(onClick = { viewModel.editLore(index, null) }, enabled = !busy) { Text(stringResource(R.string.crs_delete_entry)) }
                 }
             }
         }
         OutlinedButton(onClick = { viewModel.editLore(session.lore.size, LoreDraft("新条目", emptyList(), "")) },
-            enabled = !busy) { Text("添加条目") }
+            enabled = !busy) { Text(stringResource(R.string.crs_add_entry)) }
     }
 }
 
@@ -728,13 +754,13 @@ private fun DraftField(label: String, value: String, busy: Boolean, minLines: In
 private fun FrontendPreview(card: CharacterDraft, viewModel: CreationViewModel, busy: Boolean) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("前端源代码会随开场消息保存。此处为隔离预览，最终仍需在 SillyTavern 和 Tellev 的真实聊天中验证。")
-        DraftField("HTML/CSS 片段", card.frontendHtml, busy, 8) { value ->
+        Text(stringResource(R.string.crs_frontend_hint))
+        DraftField(stringResource(R.string.crs_field_frontend_html), card.frontendHtml, busy, 8) { value ->
             viewModel.editCard { it.copy(frontendHtml = value) }
         }
         val issues = portableFrontendIssues(card.frontendHtml)
-        if (issues.isNotEmpty()) Text("可移植性检查：${issues.joinToString()}", color = MaterialTheme.colorScheme.error)
-        Text("开场正文：${card.firstMessage}")
+        if (issues.isNotEmpty()) Text(stringResource(R.string.crs_portability_issues, issues.joinToString()), color = MaterialTheme.colorScheme.error)
+        Text(stringResource(R.string.crs_first_message_preview, card.firstMessage))
         if (card.frontendHtml.isNotBlank()) {
             val webView = remember { mutableStateOf<WebView?>(null) }
             DisposableEffect(Unit) { onDispose { webView.value?.destroy(); webView.value = null } }

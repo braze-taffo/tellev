@@ -21,7 +21,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 
 internal fun LazyListScope.backupSectionItems(
     onExportClick: () -> Unit,
@@ -30,7 +32,7 @@ internal fun LazyListScope.backupSectionItems(
     item(key = "backup_header") {
         SectionHeader(
             icon = Icons.Default.Download,
-            title = "备份",
+            title = stringResource(R.string.setbkp_title),
         )
     }
 
@@ -42,7 +44,7 @@ internal fun LazyListScope.backupSectionItems(
             ) {
                 Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("导出备份")
+                Text(stringResource(R.string.setbkp_export))
             }
             OutlinedButton(
                 onClick = onImportClick,
@@ -50,7 +52,7 @@ internal fun LazyListScope.backupSectionItems(
             ) {
                 Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("导入备份")
+                Text(stringResource(R.string.setbkp_import))
             }
         }
     }
@@ -67,16 +69,16 @@ internal fun BackupExportDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("导出备份") },
-        text = { Text("将创建一个 ZIP 备份。除非后续明确支持，已保存的密钥不会写入备份。请选择保存位置。") },
+        title = { Text(stringResource(R.string.setbkp_export)) },
+        text = { Text(stringResource(R.string.setbkp_export_message)) },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text("导出")
+                Text(stringResource(R.string.setbkp_export_confirm))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.setbkp_cancel))
             }
         },
     )
@@ -89,16 +91,16 @@ internal fun BackupImportDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("导入备份") },
-        text = { Text("警告：导入备份会覆盖当前所有数据，且无法撤销。是否继续？") },
+        title = { Text(stringResource(R.string.setbkp_import)) },
+        text = { Text(stringResource(R.string.setbkp_import_message)) },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text("导入", color = MaterialTheme.colorScheme.error)
+                Text(stringResource(R.string.setbkp_import_confirm), color = MaterialTheme.colorScheme.error)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.setbkp_cancel))
             }
         },
     )

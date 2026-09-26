@@ -2,6 +2,8 @@ package app.tellev.feature.chat
 
 import app.tellev.core.extension.ExtensionHost
 import app.tellev.core.extension.StEventCatalog
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.Attachment
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
@@ -88,12 +90,12 @@ internal class ChatGenerationCoordinator(
         if (state.isGenerating || isGenerating) return false
         val character = state.selectedCharacter
         if (character == null) {
-            uiState.update { it.copy(error = "请先选择角色") }
+            uiState.update { it.copy(error = UiStrings.get(S.chatgenco_select_character_first)) }
             return false
         }
         val session = state.currentSession
         if (session == null) {
-            uiState.update { it.copy(error = "当前没有可用会话") }
+            uiState.update { it.copy(error = UiStrings.get(S.chatgenco_no_session)) }
             return false
         }
         val regenerationIndex = regenerationMessageId?.let { messageId ->
@@ -102,7 +104,7 @@ internal class ChatGenerationCoordinator(
         if (regenerationMessageId != null &&
             (regenerationIndex == null || !canRegenerateResponse(state.messages, regenerationIndex))
         ) {
-            uiState.update { it.copy(error = "只能重新生成当前最后一条角色回复") }
+            uiState.update { it.copy(error = UiStrings.get(S.chatgenco_regen_last_only)) }
             return false
         }
 
@@ -113,7 +115,7 @@ internal class ChatGenerationCoordinator(
             ?.takeIf { it >= 0 }
             ?.let(state.messages::get)
         if (regenerationMessageId != null && regenerationInput == null) {
-            uiState.update { it.copy(error = "找不到这条回复对应的用户消息") }
+            uiState.update { it.copy(error = UiStrings.get(S.chatgenco_regen_input_missing)) }
             return false
         }
 
@@ -354,7 +356,7 @@ internal class ChatGenerationCoordinator(
                                         isGenerating = false,
                                         streamingText = "",
                                         streamingReasoning = "",
-                                        error = "生成失败：服务商未返回有效回复内容（可能是网关/中转站错误或内容拦截）",
+                                        error = UiStrings.get(S.chatgenco_empty_reply),
                                     )
                                 }
                                 ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.GENERATION_STOPPED)
@@ -433,7 +435,7 @@ internal class ChatGenerationCoordinator(
                                 } catch (cancelled: CancellationException) {
                                     throw cancelled
                                 } catch (error: Exception) {
-                                    uiState.update { if (it.currentSession?.id == finalSession.id) it.copy(memoryStatus = "记忆整理失败：${error.message}") else it }
+                                    uiState.update { if (it.currentSession?.id == finalSession.id) it.copy(memoryStatus = UiStrings.get(S.chatgenco_memory_process_failed, error.message)) else it }
                                 }
                             }
                             scope.launch {
@@ -450,7 +452,7 @@ internal class ChatGenerationCoordinator(
                                 } catch (cancelled: CancellationException) {
                                     throw cancelled
                                 } catch (error: Exception) {
-                                    uiState.update { if (it.currentSession?.id == finalSession.id) it.copy(memoryStatus = "记忆整理失败：${error.message}") else it }
+                                    uiState.update { if (it.currentSession?.id == finalSession.id) it.copy(memoryStatus = UiStrings.get(S.chatgenco_memory_process_failed, error.message)) else it }
                                 }
                             }
                             uiState.update { it.copy(isGenerating = false) }
@@ -464,7 +466,7 @@ internal class ChatGenerationCoordinator(
                                     isGenerating = false,
                                     streamingText = "",
                                     streamingReasoning = "",
-                                    error = "生成失败：${chunk.error.message}",
+                                    error = UiStrings.get(S.chatgenco_generate_failed, chunk.error.message),
                                 )
                             }
                             ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.GENERATION_STOPPED)
@@ -480,7 +482,7 @@ internal class ChatGenerationCoordinator(
                         isGenerating = false,
                         streamingText = "",
                         streamingReasoning = "",
-                        error = "出错了：${e.message}",
+                        error = UiStrings.get(S.chatgenco_error_generic, e.message),
                     )
                 }
                 ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.GENERATION_STOPPED)
@@ -508,7 +510,7 @@ internal class ChatGenerationCoordinator(
         val state = uiState.value
         val targetIndex = state.messages.indexOfFirst { it.id == messageId }
         if (!canRegenerateResponse(state.messages, targetIndex)) {
-            uiState.update { it.copy(error = "只能重新生成当前最后一条角色回复") }
+            uiState.update { it.copy(error = UiStrings.get(S.chatgenco_regen_last_only)) }
             return false
         }
         return sendMessageWithRole(

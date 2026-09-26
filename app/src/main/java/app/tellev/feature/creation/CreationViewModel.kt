@@ -3,6 +3,8 @@ package app.tellev.feature.creation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.WorldBook
 import app.tellev.core.provider.ProviderRegistry
@@ -55,7 +57,7 @@ enum class CharacterExportFormat { Json, Png }
 internal fun worldBookExportBytes(book: WorldBook): ByteArray {
     val serialized = WorldBookCodec.serializeWorldBook(book)
     require(WorldBookCodec.parseWorldBookEntries(serialized).size == book.entries.size) {
-        "世界书导出回读失败。"
+        UiStrings.get(S.crvm_worldbook_export_roundtrip_failed)
     }
     return FileStDataStore.defaultJson
         .encodeToString(JsonObject.serializer(), serialized)
@@ -92,7 +94,7 @@ class CreationViewModel(
                     sessions = state.sessions.filterNot { it.id == id },
                     current = state.current?.takeUnless { it.id == id },
                     coverPreviewPng = if (state.current?.id == id) null else state.coverPreviewPng,
-                    info = "创作草稿已删除。",
+                    info = UiStrings.get(S.crvm_draft_deleted),
                 ) }
                 refresh()
             } catch (e: CancellationException) {
@@ -132,10 +134,10 @@ class CreationViewModel(
     /** Load a stored character card into a new creation session for AI editing. */
     fun startFromCharacter(cardId: String) = viewModelScope.launch {
         if (_state.value.busy || cardId.isBlank()) return@launch
-        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = "读取角色卡", modelPhase = "正在读取角色卡", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
+        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_read_card), modelPhase = UiStrings.get(S.crvm_phase_reading_card), liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
         try {
             val session = CreationSession.fromCharacter(store.readCharacter(cardId))
-            _state.update { it.copy(current = session, modelPhase = "已载入角色卡") }
+            _state.update { it.copy(current = session, modelPhase = UiStrings.get(S.crvm_phase_card_loaded)) }
             persist(session)
         } catch (e: CancellationException) {
             throw e
@@ -149,10 +151,10 @@ class CreationViewModel(
     /** Make a separate world book from a stored card and its embedded entries. */
     fun startWorldBookFromCharacter(cardId: String) = viewModelScope.launch {
         if (_state.value.busy || cardId.isBlank()) return@launch
-        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = "读取角色卡", modelPhase = "正在读取角色卡", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
+        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_read_card), modelPhase = UiStrings.get(S.crvm_phase_reading_card), liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
         try {
             val session = CreationSession.worldBookFromCharacter(store.readCharacter(cardId))
-            _state.update { it.copy(current = session, modelPhase = "已载入来源角色卡") }
+            _state.update { it.copy(current = session, modelPhase = UiStrings.get(S.crvm_phase_source_card_loaded)) }
             persist(session)
         } catch (e: CancellationException) {
             throw e
@@ -166,10 +168,10 @@ class CreationViewModel(
     /** Load a stored world book into a new creation session for AI editing. */
     fun startFromWorldBook(bookId: String) = viewModelScope.launch {
         if (_state.value.busy || bookId.isBlank()) return@launch
-        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = "读取世界书", modelPhase = "正在读取世界书", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
+        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_read_worldbook), modelPhase = UiStrings.get(S.crvm_phase_reading_worldbook), liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
         try {
             val session = CreationSession.fromWorldBook(store.readWorldBook(bookId))
-            _state.update { it.copy(current = session, modelPhase = "已载入世界书") }
+            _state.update { it.copy(current = session, modelPhase = UiStrings.get(S.crvm_phase_worldbook_loaded)) }
             persist(session)
         } catch (e: CancellationException) {
             throw e
@@ -192,7 +194,7 @@ class CreationViewModel(
             )
             _state.update { it.copy(
                 current = withUser, busy = true, error = null,
-                extractionProgress = "", operationLabel = "创作对话", modelPhase = "准备请求", liveReasoning = "", liveOutput = "",
+                extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_converse), modelPhase = UiStrings.get(S.crvm_phase_preparing), liveReasoning = "", liveOutput = "",
                 liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(),
                 modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "",
             ) }
@@ -208,7 +210,7 @@ class CreationViewModel(
                     withContext(NonCancellable) { write(checkpoint) }
                     _state.update { it.copy(current = checkpoint) }
                 }
-                _state.update { it.copy(modelPhase = "校验并保存草稿") }
+                _state.update { it.copy(modelPhase = UiStrings.get(S.crvm_phase_verify_save)) }
                 val next = reply.session.copy(
                     turns = withUser.turns + CreationTurn(
                         "agent", reply.message.ifBlank { "草稿已更新，请检查右侧内容。" },
@@ -217,16 +219,16 @@ class CreationViewModel(
                     updatedAt = System.currentTimeMillis(),
                 )
                 write(next)
-                _state.update { it.copy(current = next, info = null, modelPhase = "本轮完成") }
+                _state.update { it.copy(current = next, info = null, modelPhase = UiStrings.get(S.crvm_phase_turn_done)) }
                 refresh()
             } catch (e: CancellationException) {
                 _state.update { it.copy(modelPhase = if (it.current?.partialTurnSaved == true)
-                    "已停止；已完成的草稿修改已保存，可继续处理" else "已停止；本轮草稿未应用") }
+                    UiStrings.get(S.crvm_phase_stopped_saved) else UiStrings.get(S.crvm_phase_stopped_not_applied)) }
                 throw e
             } catch (e: Exception) {
                 fail(e)
                 _state.update { it.copy(modelPhase = if (it.current?.partialTurnSaved == true)
-                    "请求中断；已完成的草稿修改已保存，可继续处理" else "本轮失败，草稿未应用") }
+                    UiStrings.get(S.crvm_phase_interrupted_saved) else UiStrings.get(S.crvm_phase_turn_failed)) }
             } finally {
                 _state.update { it.copy(busy = false) }
             }
@@ -246,11 +248,11 @@ class CreationViewModel(
         val session = _state.value.current ?: return
         if (_state.value.busy || text.isBlank()) return
         if (text.length > 4_000_000) {
-            _state.update { it.copy(error = "原文超过 400 万字符，请先拆为多个文件；没有截断或处理任何内容。") }
+            _state.update { it.copy(error = UiStrings.get(S.crvm_error_source_too_large)) }
             return
         }
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, error = null, extractionProgress = "", operationLabel = "保存原文", modelPhase = "正在保存原文", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
+            _state.update { it.copy(busy = true, error = null, extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_save_source), modelPhase = UiStrings.get(S.crvm_phase_saving_source), liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "") }
             try {
                 val (hash, length) = repository.saveSource(session.id, text)
                 val next = session.copy(
@@ -261,10 +263,10 @@ class CreationViewModel(
                     updatedAt = System.currentTimeMillis(),
                 )
                 write(next)
-                _state.update { it.copy(current = next, info = "原文已保存，可开始逐段提炼。", modelPhase = "原文已保存") }
+                _state.update { it.copy(current = next, info = UiStrings.get(S.crvm_source_saved), modelPhase = UiStrings.get(S.crvm_phase_source_saved)) }
                 refresh()
             } catch (e: CancellationException) {
-                _state.update { it.copy(modelPhase = "保存原文已停止") }
+                _state.update { it.copy(modelPhase = UiStrings.get(S.crvm_phase_save_source_stopped)) }
                 throw e
             } catch (e: Exception) {
                 fail(e)
@@ -279,14 +281,14 @@ class CreationViewModel(
         if (_state.value.busy || starting.sourceLength == 0) return
         generationJob = viewModelScope.launch {
             _state.update { it.copy(
-                busy = true, error = null, operationLabel = "世界书长文提炼",
-                modelPhase = "读取已保存原文", liveReasoning = "", liveOutput = "", liveAssistantMessage = "",
+                busy = true, error = null, operationLabel = UiStrings.get(S.crvm_op_extract),
+                modelPhase = UiStrings.get(S.crvm_phase_reading_source), liveReasoning = "", liveOutput = "", liveAssistantMessage = "",
                 operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0,
                 firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "",
             ) }
             try {
                 val source = repository.readSource(starting.id, starting.sourceSha256)
-                require(source.length == starting.sourceLength) { "原文长度与草稿记录不一致，请重新导入。" }
+                require(source.length == starting.sourceLength) { UiStrings.get(S.crvm_error_source_length_mismatch) }
                 var current = starting
                 val chunkCount = countSourceChunks(source, starting.sourceCursor)
                 var chunkNumber = chunkCount.completed
@@ -294,12 +296,14 @@ class CreationViewModel(
                     val chunk = nextSourceChunk(source, current.sourceCursor) ?: break
                     chunkNumber++
                     _state.update { it.copy(
-                        extractionProgress = "第 $chunkNumber/${chunkCount.total} 段：正在处理 ${chunk.start}–${chunk.end} / ${source.length} 字符；已保存至 ${current.sourceCursor}",
-                        modelPhase = "提炼第 $chunkNumber 段", liveReasoning = "", liveOutput = "", liveAssistantMessage = "",
+                        extractionProgress = UiStrings.get(S.crvm_extract_progress_chunk,
+                            chunkNumber, chunkCount.total, chunk.start, chunk.end, source.length, current.sourceCursor),
+                        modelPhase = UiStrings.get(S.crvm_phase_extract_chunk, chunkNumber),
+                        liveReasoning = "", liveOutput = "", liveAssistantMessage = "",
                         modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0,
                     ) }
                     val reply = engine.extractChunk(chunk, starting.sourceName, ::showModelProgress)
-                    _state.update { it.copy(modelPhase = "核对第 $chunkNumber 段的原文证据") }
+                    _state.update { it.copy(modelPhase = UiStrings.get(S.crvm_phase_verify_chunk, chunkNumber)) }
                     val proposed = reply.lore.orEmpty()
                     val verified = verifiedLoreFromChunk(chunk, proposed, starting.sourceName, starting.sourceSha256)
                     val rejected = proposed.size - verified.size
@@ -316,18 +320,19 @@ class CreationViewModel(
                     write(current)
                     _state.update { it.copy(
                         current = current,
-                        extractionProgress = "已保存 ${current.sourceCursor}/${source.length} 字符，共 ${current.lore.size} 条世界书内容",
-                        modelPhase = "第 $chunkNumber 段已保存",
+                        extractionProgress = UiStrings.get(S.crvm_extract_progress_saved,
+                            current.sourceCursor, source.length, current.lore.size),
+                        modelPhase = UiStrings.get(S.crvm_phase_chunk_saved, chunkNumber),
                     ) }
                 }
-                _state.update { it.copy(info = "原文提炼完成，请逐条核对后保存世界书。", modelPhase = "提炼完成") }
+                _state.update { it.copy(info = UiStrings.get(S.crvm_extract_done), modelPhase = UiStrings.get(S.crvm_phase_extract_done)) }
                 refresh()
             } catch (e: CancellationException) {
-                _state.update { it.copy(modelPhase = "已停止，可从已保存位置继续提炼") }
+                _state.update { it.copy(modelPhase = UiStrings.get(S.crvm_phase_extract_stopped)) }
                 throw e
             } catch (e: Exception) {
                 fail(e)
-                _state.update { it.copy(modelPhase = "提炼中断，可从已保存位置继续") }
+                _state.update { it.copy(modelPhase = UiStrings.get(S.crvm_phase_extract_interrupted)) }
             } finally {
                 _state.update { it.copy(busy = false) }
             }
@@ -355,7 +360,7 @@ class CreationViewModel(
                 val next = session.copy(coverSha256 = hash, updatedAt = System.currentTimeMillis())
                 write(next)
                 repository.pruneCovers(session.id, hash)
-                _state.update { it.copy(current = next, coverPreviewPng = pngBytes, info = "封面已保存到创作草稿。") }
+                _state.update { it.copy(current = next, coverPreviewPng = pngBytes, info = UiStrings.get(S.crvm_cover_saved)) }
                 refresh()
             } catch (e: CancellationException) {
                 throw e
@@ -368,19 +373,19 @@ class CreationViewModel(
     }
 
     suspend fun exportCharacter(format: CharacterExportFormat): ByteArray = withContext(Dispatchers.IO) {
-        val session = _state.value.current ?: error("请先打开角色卡草稿。")
-        require(session.kind == CreationKind.Character && !_state.value.busy) { "当前无法导出角色卡。" }
+        val session = _state.value.current ?: error(UiStrings.get(S.crvm_error_open_card_draft_first))
+        require(session.kind == CreationKind.Character && !_state.value.busy) { UiStrings.get(S.crvm_error_cannot_export_card) }
         val card = checkedCharacterCard(session)
         val exporter = CharacterExporter()
         when (format) {
             CharacterExportFormat.Json -> exporter.exportToJson(card).toByteArray(Charsets.UTF_8)
             CharacterExportFormat.Png -> {
-                require(session.coverSha256.isNotBlank()) { "请先在角色卡页设置封面，再导出 PNG。" }
+                require(session.coverSha256.isNotBlank()) { UiStrings.get(S.crvm_error_cover_required_for_png) }
                 val cover = repository.readCover(session.id, session.coverSha256)
                 exporter.exportToPng(card, cover).also { bytes ->
                     val imported = CharacterImporter().importFromBytes(bytes, "character.png")
                     require(imported.name == card.name && imported.firstMessage == card.firstMessage) {
-                        "PNG 角色卡导出回读失败。"
+                        UiStrings.get(S.crvm_error_png_export_roundtrip)
                     }
                 }
             }
@@ -389,8 +394,8 @@ class CreationViewModel(
 
     /** Export the draft as a standalone SillyTavern world book JSON file. */
     suspend fun exportWorldBook(): ByteArray = withContext(Dispatchers.IO) {
-        val session = _state.value.current ?: error("请先打开世界书草稿。")
-        require(session.kind == CreationKind.WorldBook && !_state.value.busy) { "当前无法导出世界书。" }
+        val session = _state.value.current ?: error(UiStrings.get(S.crvm_error_open_worldbook_draft_first))
+        require(session.kind == CreationKind.WorldBook && !_state.value.busy) { UiStrings.get(S.crvm_error_cannot_export_worldbook) }
         worldBookExportBytes(checkedWorldBook(session))
     }
 
@@ -430,14 +435,14 @@ class CreationViewModel(
                     val json = CharacterExporter().exportToJson(card)
                     val imported = CharacterImporter().importFromJson(json)
                     require(imported.name == card.name && imported.firstMessage == card.firstMessage) {
-                        "角色卡导出回读失败。"
+                        UiStrings.get(S.crvm_error_card_export_roundtrip)
                     }
                     if (prepared.coverSha256.isNotBlank()) {
                         val cover = repository.readCover(prepared.id, prepared.coverSha256)
                         val png = CharacterExporter().exportToPng(card, cover)
                         val pngCard = CharacterImporter().importFromBytes(png, "character.png")
                         require(pngCard.name == card.name && pngCard.firstMessage == card.firstMessage) {
-                            "封面角色卡回读失败。"
+                            UiStrings.get(S.crvm_error_cover_card_roundtrip)
                         }
                         store.importCharacter(card, cover, "character.png")
                     } else store.saveCharacter(card)
@@ -449,7 +454,7 @@ class CreationViewModel(
                 }
                 val next = prepared.copy(savedArtifactId = id, updatedAt = System.currentTimeMillis())
                 write(next)
-                _state.update { it.copy(current = next, info = "已保存到本机。双端运行仍需实际验证。") }
+                _state.update { it.copy(current = next, info = UiStrings.get(S.crvm_saved_to_device)) }
                 refresh()
                 onSaved(session.kind, id)
             } catch (e: CancellationException) {
@@ -469,21 +474,21 @@ class CreationViewModel(
     fun showInfo(message: String) { _state.update { it.copy(info = message, error = null) } }
 
     private fun checkedCharacterCard(session: CreationSession): CharacterCard {
-        require(session.card.name.isNotBlank()) { "请至少填写角色名称。" }
+        require(session.card.name.isNotBlank()) { UiStrings.get(S.crvm_error_name_required) }
         require(session.lore.all { it.content.isNotBlank() && (it.constant || it.keys.any(String::isNotBlank)) }) {
-            "世界书有空条目或缺少触发词。"
+            UiStrings.get(S.crvm_error_lore_empty)
         }
         val issues = portableFrontendIssues(session.card.frontendHtml)
-        require(issues.isEmpty()) { "前端不符合当前可移植约束：${issues.joinToString()}" }
+        require(issues.isEmpty()) { UiStrings.get(S.crvm_error_frontend_portable, issues.joinToString()) }
         return session.toCharacterCard()
     }
 
     private fun checkedWorldBook(session: CreationSession): WorldBook {
         require(session.worldName.isNotBlank() && session.lore.isNotEmpty()) {
-            "请填写世界书名称并至少保留一个条目。"
+            UiStrings.get(S.crvm_error_worldbook_required)
         }
         require(session.lore.all { it.content.isNotBlank() && (it.constant || it.keys.any(String::isNotBlank)) }) {
-            "世界书有空条目或缺少触发词。"
+            UiStrings.get(S.crvm_error_lore_empty)
         }
         return session.toWorldBook()
     }
@@ -519,7 +524,7 @@ class CreationViewModel(
     }
 
     private fun fail(e: Throwable) {
-        _state.update { it.copy(error = e.message ?: "创作失败") }
+        _state.update { it.copy(error = e.message ?: UiStrings.get(S.crvm_failed_default)) }
     }
 }
 

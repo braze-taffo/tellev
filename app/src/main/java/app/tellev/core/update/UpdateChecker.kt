@@ -1,5 +1,7 @@
 package app.tellev.core.update
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -91,6 +93,15 @@ enum class UpdateChannel(val tagSuffix: String, val displayName: String) {
 }
 
 /**
+ * [UpdateChannel.displayName] stays a plain enum field (it is data, not UI text);
+ * user-facing strings resolve through resources so both channels localize.
+ */
+private fun UpdateChannel.localizedDisplayName(): String = when (this) {
+    UpdateChannel.Official -> UiStrings.get(S.updchk_channel_official)
+    UpdateChannel.Mnn -> UiStrings.get(S.updchk_channel_mnn)
+}
+
+/**
  * Checks GitHub for a newer tellev release and downloads its APK.
  *
  * Works behind the GFW by trying a direct request first and falling back
@@ -132,7 +143,7 @@ class UpdateChecker(
                     val body = response.body?.string().orEmpty()
                     val parsed = runCatching { parseLatestChannelRelease(body) }.getOrNull()
                     if (parsed != null) return@withContext parsed
-                    lastError = IllegalStateException("未找到 ${channel.displayName} 渠道的发行")
+                    lastError = IllegalStateException(UiStrings.get(S.updchk_channel_release_missing, channel.localizedDisplayName()))
                 }
             } catch (e: java.io.IOException) {
                 // Network/timeout/protocol error: try the next mirror.
@@ -154,7 +165,7 @@ class UpdateChecker(
     fun parseLatestChannelRelease(body: String): UpdateInfo {
         val root = json.parseToJsonElement(body).jsonArray
         val release = root.firstOrNull { isChannelRelease(it as? JsonObject) }
-            ?: error("未找到 ${channel.displayName} 渠道的发行")
+            ?: error(UiStrings.get(S.updchk_channel_release_missing, channel.localizedDisplayName()))
         return parseReleaseObject(release.jsonObject)
     }
 
@@ -189,7 +200,7 @@ class UpdateChecker(
         val apk = assets.firstOrNull { entry ->
             val name = entry.jsonObject["name"]?.jsonPrimitive?.contentOrNull
             name != null && channel.matchesApkAsset(name)
-        } ?: error("未找到 ${channel.displayName} 渠道的 APK 资产")
+        } ?: error(UiStrings.get(S.updchk_channel_apk_missing, channel.localizedDisplayName()))
         val apkObj = apk.jsonObject
         return UpdateInfo(
             tagName = tag,
@@ -263,7 +274,7 @@ class UpdateChecker(
                         lastError = IllegalStateException("HTTP ${response.code}")
                         return@use
                     }
-                    val body = response.body ?: error("空响应体")
+                    val body = response.body ?: error(UiStrings.get(S.updchk_empty_response_body))
                     val total = body.contentLength().takeIf { it > 0 } ?: info.apkSize
                     target.outputStream().use { out ->
                         val input = body.byteStream()
@@ -285,7 +296,7 @@ class UpdateChecker(
                     val actual = sha256(target)
                     if (!actual.equals(info.sha256, ignoreCase = true)) {
                         target.delete()
-                        throw IllegalStateException("APK 校验失败")
+                        throw IllegalStateException(UiStrings.get(S.updchk_apk_checksum_failed))
                     }
                 }
                 onProgress(1f)
@@ -295,7 +306,7 @@ class UpdateChecker(
                 target.delete()
             }
         }
-        throw lastError ?: IllegalStateException("下载失败")
+        throw lastError ?: IllegalStateException(UiStrings.get(S.updchk_download_failed))
     }
 
     private fun sha256(file: File): String {

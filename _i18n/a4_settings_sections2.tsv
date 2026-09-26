@@ -1,0 +1,89 @@
+setabout_author	作者
+setabout_author_bilibili	B站：迷迭香のねこ
+setabout_auto_check	启动时自动检查更新
+setabout_auto_check_desc	关闭后启动不再联网检查，仍可在此手动检查
+setabout_based_on_st	基于 SillyTavern 的原生 Android 客户端。
+setabout_copy_qq_group	复制 QQ 群号：754350480
+setabout_license	发布许可
+setabout_license_line1	tellev 继续以 GNU Affero General Public License v3.0（AGPL-3.0）发布。
+setabout_license_line2	你可以自由使用、复制、修改和分发本程序；分发修改版或提供网络服务时，应按 AGPL-3.0 提供相应源代码。
+setabout_license_line3	tellev 名称、图标和作者信息仅用于官方版本展示，未经授权不得用于冒充官方版本或误导性商业分发。
+setabout_open_bilibili	打开作者 B 站主页
+setabout_qq_copied	已复制群号 754350480
+setabout_qq_group	QQ 交流群：tellev酒馆交流群
+setabout_title	关于
+setabout_version	tellev v%1$s
+setapp_accent_classic	经典蓝紫
+setapp_accent_label	主题色
+setapp_accent_warm	暖橘
+setapp_bubble_alpha	气泡不透明度：%1$d%%
+setapp_font_size	对话字号：%1$d sp
+setapp_preview_text	预览：这是一段对话文字
+setapp_theme_dark	深色
+setapp_theme_light	浅色
+setapp_theme_system	跟随系统
+setapp_title	主题
+setappctl_accent_classic	经典蓝紫
+setappctl_accent_switched	主题色已切换为%1$s。
+setappctl_accent_warm	暖橘
+setappctl_theme_dark	深色
+setappctl_theme_light	浅色
+setappctl_theme_switched	主题已切换为%1$s。
+setappctl_theme_system	跟随系统
+setbkp_cancel	取消
+setbkp_export	导出备份
+setbkp_export_confirm	导出
+setbkp_export_message	将创建一个 ZIP 备份。除非后续明确支持，已保存的密钥不会写入备份。请选择保存位置。
+setbkp_import	导入备份
+setbkp_import_confirm	导入
+setbkp_import_message	警告：导入备份会覆盖当前所有数据，且无法撤销。是否继续？
+setbkp_title	备份
+setcomp_add_cd	添加
+setcompat_auth_header_label	鉴权 Header
+setcompat_auth_scheme_label	鉴权前缀
+setcompat_auth_scheme_placeholder	Bearer；可留空
+setcompat_chat_completions_path_label	Chat Completions 路径
+setcompat_done	完成
+setcompat_extra_body_hint	messages/model/stream 等核心字段不会被覆盖
+setcompat_extra_body_label	附加请求体（JSON）
+setcompat_extra_headers_label	附加 Headers（JSON）
+setcompat_include_usage	发送 stream_options.include_usage
+setcompat_intro	Base URL 与路径分开配置；默认只发送兼容性较高的字段。
+setcompat_legacy_model_warning	该旧模型将于 2026-07-24 停用，请迁移到 deepseek-v4-flash 或 deepseek-v4-pro。
+setcompat_max_tokens_field_hint	max_tokens 或 max_completion_tokens
+setcompat_max_tokens_field_label	输出长度字段
+setcompat_models_path_label	模型列表路径
+setcompat_supports_model_listing	启用模型列表接口
+setcompat_supports_reasoning	启用 reasoning 字段
+setcompat_supports_tools	启用 tools 字段
+setcompat_supports_vision	启用图片消息
+setcompat_title	高级设置
+setcompat_top_k	发送 top_k
+setpers_cancel	取消
+setpers_delete_cd	删除
+setpers_desc_label	描述
+setpers_edit_cd	编辑
+setpers_edit_title	编辑人设
+setpers_empty	暂无人设。新建一个来设定你的身份（用于 {{user}} 名字与描述）。
+setpers_name_label	名称
+setpers_new_title	新建人设
+setpers_save	保存
+setpers_title	人设
+setsec_add_title	添加密钥
+setsec_cancel	取消
+setsec_delete_cd	删除
+setsec_empty	暂无保存的密钥。
+setsec_key_label	键
+setsec_save	保存
+setsec_title	密钥
+setsec_value_label	值
+setupd_check_failed	更新检查失败
+setupd_check_now	检查更新
+setupd_checking	正在检查更新…
+setupd_download	下载更新
+setupd_downloading	正在下载… %1$d%%
+setupd_new_version	发现新版本 v%1$s
+setupd_redownload	重新下载更新
+setupd_retry	重试
+setupd_up_to_date	已是最新版本
+setcomp_import	导入

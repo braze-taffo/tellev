@@ -14,8 +14,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 import app.tellev.feature.update.UpdateUiState
 import kotlin.math.roundToInt
 
@@ -34,7 +36,7 @@ internal fun UpdateStatus(
         when {
             info != null -> {
                 Text(
-                    text = "发现新版本 v${info.version}",
+                    text = stringResource(R.string.setupd_new_version, info.version),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -53,7 +55,7 @@ internal fun UpdateStatus(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        text = "正在下载… ${(state.progress * 100).roundToInt()}%",
+                        text = stringResource(R.string.setupd_downloading, (state.progress * 100).roundToInt()),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 } else {
@@ -61,7 +63,10 @@ internal fun UpdateStatus(
                         onClick = onUpdate,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(if (state.installStarted) "重新下载更新" else "下载更新")
+                        Text(
+                            if (state.installStarted) stringResource(R.string.setupd_redownload)
+                            else stringResource(R.string.setupd_download)
+                        )
                     }
                 }
                 state.error?.let {
@@ -82,28 +87,28 @@ internal fun UpdateStatus(
                         strokeWidth = 2.dp,
                     )
                     Text(
-                        text = "正在检查更新…",
+                        text = stringResource(R.string.setupd_checking),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
             }
             state.error != null -> {
                 Text(
-                    text = "更新检查失败",
+                    text = stringResource(R.string.setupd_check_failed),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
-                TextButton(onClick = onCheck) { Text("重试") }
+                TextButton(onClick = onCheck) { Text(stringResource(R.string.setupd_retry)) }
             }
             state.upToDate -> {
                 Text(
-                    text = "已是最新版本",
+                    text = stringResource(R.string.setupd_up_to_date),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             else -> {
-                TextButton(onClick = onCheck) { Text("检查更新") }
+                TextButton(onClick = onCheck) { Text(stringResource(R.string.setupd_check_now)) }
             }
         }
     }

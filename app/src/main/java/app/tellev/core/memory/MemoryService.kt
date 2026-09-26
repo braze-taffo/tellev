@@ -1,5 +1,7 @@
 package app.tellev.core.memory
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
@@ -230,13 +232,13 @@ class MemoryService(
 
     suspend fun rebuildVectors(sessionId: String, progress: (String) -> Unit = {}) = processing.withLock {
         val settings = settings.read()
-        require(settings.enabled && settings.vectorEnabled) { "请先开启记忆与向量检索" }
-        val config = settings.vectorConfig(secrets) ?: error("未配置向量模型")
+        require(settings.enabled && settings.vectorEnabled) { UiStrings.get(S.memsvc_error_vector_need_enable) }
+        val config = settings.vectorConfig(secrets) ?: error(UiStrings.get(S.memsvc_error_vector_model_missing))
         var document = store.read(sessionId) ?: return@withLock
         val active = document.records.filter { it.active && it.text.isNotBlank() }
         for ((index, record) in active.withIndex()) {
             progress("建立向量 ${index + 1}/${active.size}")
-            val vector = embed(config, record.text, settings.vectorPath) ?: error("向量接口未返回有效结果")
+            val vector = embed(config, record.text, settings.vectorPath) ?: error(UiStrings.get(S.memsvc_error_vector_invalid_result))
             document = document.copy(records = document.records.map {
                 if (it.id == record.id) it.copy(vector = vector) else it
             })

@@ -70,10 +70,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight.Companion.Bold
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.tellev.LocalTellevGraph
+import app.tellev.R
 import app.tellev.core.extension.WebViewJsExtensionHost
 import app.tellev.core.model.Attachment
 import app.tellev.core.memory.MemoryMode
@@ -206,7 +208,7 @@ private fun ChatContentScreen(
                     // 磁盘满/写入失败不再让异常逃逸到协程作用域导致崩溃。
                     android.widget.Toast.makeText(
                         context,
-                        "保存图片失败：${e.message}",
+                        context.getString(R.string.chat_error_save_image, e.message),
                         android.widget.Toast.LENGTH_SHORT,
                     ).show()
                 }
@@ -229,7 +231,7 @@ private fun ChatContentScreen(
                 } catch (e: Exception) {
                     android.widget.Toast.makeText(
                         context,
-                        "读取图片失败：${e.message}",
+                        context.getString(R.string.chat_error_read_image, e.message),
                         android.widget.Toast.LENGTH_SHORT,
                     ).show()
                 }
@@ -274,27 +276,27 @@ private fun ChatContentScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         MemoryMode.of(state.currentSession)?.let { mode ->
-                            val status = if (state.memoryPluginEnabled) state.memoryStatus else "已暂停"
-                            Text("记忆：${mode.label}${status?.let { " · $it" } ?: ""}", style = MaterialTheme.typography.labelSmall)
+                            val status = if (state.memoryPluginEnabled) state.memoryStatus else stringResource(R.string.chat_memory_paused)
+                            Text(stringResource(R.string.chat_memory_label, memoryModeLabel(mode)) + (status?.let { " · $it" } ?: ""), style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
             },
             navigationIcon = {
                 IconButton(onClick = { viewModel.deselectCharacter() }) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.chat_back))
                 }
             },
             actions = {
                 if (state.characterUiExtensionId != null) {
                     TextButton(onClick = { showCharacterInterface = true }) {
-                        Text("卡片界面")
+                        Text(stringResource(R.string.chat_card_interface))
                     }
                 }
                 if (state.sessions.isNotEmpty()) {
                     Box {
                         TextButton(onClick = { showSessionMenu = true }) {
-                            Text("会话")
+                            Text(stringResource(R.string.chat_sessions))
                         }
                         DropdownMenu(
                             expanded = showSessionMenu,
@@ -319,7 +321,7 @@ private fun ChatContentScreen(
                                         ) {
                                             Icon(
                                                 Icons.Default.Delete,
-                                                contentDescription = "删除会话",
+                                                contentDescription = stringResource(R.string.chat_delete_session),
                                                 modifier = Modifier.size(18.dp),
                                                 tint = MaterialTheme.colorScheme.error,
                                             )
@@ -332,23 +334,23 @@ private fun ChatContentScreen(
                 }
 
                 IconButton(onClick = { viewModel.createNewSession() }) {
-                    Icon(Icons.Default.Add, contentDescription = "新建会话")
+                    Icon(Icons.Default.Add, contentDescription = stringResource(R.string.chat_new_session))
                 }
 
                 Box {
                     IconButton(onClick = { showMoreMenu = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "更多选项")
+                        Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.chat_more_options))
                     }
                     DropdownMenu(
                         expanded = showMoreMenu,
                         onDismissRequest = { showMoreMenu = false },
                     ) {
                         DropdownMenuItem(
-                            text = { Text("长期记忆…") },
+                            text = { Text(stringResource(R.string.chat_long_term_memory)) },
                             onClick = { viewModel.refreshMemory(); showMemoryDialog = true; showMoreMenu = false },
                         )
                         DropdownMenuItem(
-                            text = { Text("聊天背景…") },
+                            text = { Text(stringResource(R.string.chat_chat_background)) },
                             onClick = {
                                 backgroundPickerLauncher.launch("image/*")
                                 showMoreMenu = false
@@ -356,7 +358,7 @@ private fun ChatContentScreen(
                         )
                         if (state.chatBackgroundFile != null) {
                             DropdownMenuItem(
-                                text = { Text("清除背景") },
+                                text = { Text(stringResource(R.string.chat_clear_background)) },
                                 onClick = {
                                     viewModel.clearChatBackground()
                                     showMoreMenu = false
@@ -383,7 +385,7 @@ private fun ChatContentScreen(
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        "切换人设",
+                                        stringResource(R.string.chat_switch_persona),
                                         style = MaterialTheme.typography.labelMedium,
                                     )
                                 },
@@ -517,7 +519,7 @@ private fun ChatContentScreen(
                         StreamingBubble(
                             text = state.streamingText,
                             reasoning = state.streamingReasoning,
-                            characterName = state.selectedCharacter?.name ?: "助手",
+                            characterName = state.selectedCharacter?.name ?: stringResource(R.string.chat_default_character_name),
                             character = state.selectedCharacter,
                             preset = state.selectedPreset,
                             bubbleAlpha = bubbleAlpha,
@@ -558,14 +560,14 @@ private fun ChatContentScreen(
 
         if (state.generatedImages.isNotEmpty()) {
             TextButton(onClick = { showImageGallery = true }) {
-                Text("查看生成图片（${state.generatedImages.size}）")
+                Text(stringResource(R.string.chat_view_generated_images, state.generatedImages.size))
             }
         }
         if (showImageGallery && state.generatedImages.isNotEmpty()) {
             var imagePendingDelete by remember { mutableStateOf<GeneratedImage?>(null) }
             AlertDialog(
                 onDismissRequest = { showImageGallery = false },
-                title = { Text("生成图片") },
+                title = { Text(stringResource(R.string.chat_generated_images_title)) },
                 text = {
                     LazyColumn(modifier = Modifier.heightIn(max = 520.dp)) {
                         items(state.generatedImages.asReversed(), key = { it.id }) { image ->
@@ -577,10 +579,10 @@ private fun ChatContentScreen(
                                 var showPrompt by remember(image.id) { mutableStateOf(false) }
                                 Row {
                                     TextButton(onClick = { showPrompt = !showPrompt }) {
-                                        Text(if (showPrompt) "收起提示词" else "查看图片提示词")
+                                        Text(if (showPrompt) stringResource(R.string.chat_hide_prompt) else stringResource(R.string.chat_view_image_prompt))
                                     }
                                     TextButton(onClick = { imagePendingDelete = image }) {
-                                        Text("删除", color = MaterialTheme.colorScheme.error)
+                                        Text(stringResource(R.string.chat_delete), color = MaterialTheme.colorScheme.error)
                                     }
                                 }
                                 if (showPrompt) SelectionContainer {
@@ -590,21 +592,21 @@ private fun ChatContentScreen(
                         }
                     }
                 },
-                confirmButton = { TextButton(onClick = { showImageGallery = false }) { Text("关闭") } },
+                confirmButton = { TextButton(onClick = { showImageGallery = false }) { Text(stringResource(R.string.chat_close)) } },
             )
             imagePendingDelete?.let { image ->
                 AlertDialog(
                     onDismissRequest = { imagePendingDelete = null },
-                    title = { Text("删除图片") },
-                    text = { Text("将永久删除这张图片文件，无法恢复。") },
+                    title = { Text(stringResource(R.string.chat_delete_image_title)) },
+                    text = { Text(stringResource(R.string.chat_delete_image_message)) },
                     confirmButton = {
                         TextButton(onClick = {
                             viewModel.deleteGeneratedImage(image.id)
                             imagePendingDelete = null
-                        }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                        }) { Text(stringResource(R.string.chat_delete), color = MaterialTheme.colorScheme.error) }
                     },
                     dismissButton = {
-                        TextButton(onClick = { imagePendingDelete = null }) { Text("取消") }
+                        TextButton(onClick = { imagePendingDelete = null }) { Text(stringResource(R.string.chat_cancel)) }
                     },
                 )
             }
@@ -612,25 +614,25 @@ private fun ChatContentScreen(
         sessionPendingDelete?.let { session ->
             AlertDialog(
                 onDismissRequest = { sessionPendingDelete = null },
-                title = { Text("删除会话") },
-                text = { Text("将永久删除「${session.title}」的全部消息、图片与聊天背景，无法恢复。") },
+                title = { Text(stringResource(R.string.chat_delete_session)) },
+                text = { Text(stringResource(R.string.chat_delete_session_message, session.title)) },
                 confirmButton = {
                     TextButton(onClick = {
                         viewModel.deleteSession(session.id)
                         sessionPendingDelete = null
-                    }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                    }) { Text(stringResource(R.string.chat_delete), color = MaterialTheme.colorScheme.error) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { sessionPendingDelete = null }) { Text("取消") }
+                    TextButton(onClick = { sessionPendingDelete = null }) { Text(stringResource(R.string.chat_cancel)) }
                 },
             )
         }
         if (state.imageGenError != null && state.imageGenDiagnostic == null) {
             AlertDialog(
                 onDismissRequest = viewModel::clearImageError,
-                title = { Text("生图失败") },
+                title = { Text(stringResource(R.string.chat_image_gen_failed)) },
                 text = { Text(state.imageGenError) },
-                confirmButton = { TextButton(onClick = viewModel::clearImageError) { Text("关闭") } },
+                confirmButton = { TextButton(onClick = viewModel::clearImageError) { Text(stringResource(R.string.chat_close)) } },
             )
         }
 
@@ -695,9 +697,10 @@ private fun ChatContentScreen(
             )
         }
         if (showImageDiagnostic && state.imageGenDiagnostic != null) {
+            val sceneDiagnosticTitle = stringResource(R.string.chat_scene_diagnostic_title)
             AlertDialog(
                 onDismissRequest = { showImageDiagnostic = false },
-                title = { Text("场景总结诊断") },
+                title = { Text(sceneDiagnosticTitle) },
                 text = {
                     SelectionContainer {
                         Text(state.imageGenDiagnostic,
@@ -707,10 +710,10 @@ private fun ChatContentScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("场景总结诊断", state.imageGenDiagnostic))
-                    }) { Text("复制诊断") }
+                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText(sceneDiagnosticTitle, state.imageGenDiagnostic))
+                    }) { Text(stringResource(R.string.chat_copy_diagnostic)) }
                 },
-                dismissButton = { TextButton(onClick = { showImageDiagnostic = false }) { Text("关闭") } },
+                dismissButton = { TextButton(onClick = { showImageDiagnostic = false }) { Text(stringResource(R.string.chat_close)) } },
             )
         }
         if (showCharacterInterface) {

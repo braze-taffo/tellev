@@ -60,6 +60,15 @@ class AppPreferences(
         get() = prefs.getInt(KEY_CHAT_FONT_SIZE, DEFAULT_CHAT_FONT_SIZE).coerceIn(14, 20)
         set(value) = prefs.edit().putInt(KEY_CHAT_FONT_SIZE, value.coerceIn(14, 20)).apply()
 
+    /**
+     * UI language as a BCP-47 tag (e.g. "en", "ja", "ko", "zh-CN"). An empty
+     * string means "follow the system locale", which is the default so
+     * existing installs see no change. Consumed by [app.tellev.core.i18n.AppLocale].
+     */
+    var languageTag: String
+        get() = prefs.getString(KEY_LANGUAGE_TAG, DEFAULT_LANGUAGE_TAG) ?: DEFAULT_LANGUAGE_TAG
+        set(value) = prefs.edit().putString(KEY_LANGUAGE_TAG, value).apply()
+
     fun shouldShowPresetLimitUpgradeNotice(
         firstInstallTime: Long,
         lastUpdateTime: Long,
@@ -101,6 +110,7 @@ class AppPreferences(
         const val KEY_THEME_ACCENT = "theme_accent"
         const val KEY_CHAT_BUBBLE_ALPHA = "chat_bubble_alpha"
         const val KEY_CHAT_FONT_SIZE = "chat_font_size_sp"
+        const val KEY_LANGUAGE_TAG = "language_tag"
 
         /** Defaults to on so an upgrade keeps the previous launch-check behaviour. */
         const val DEFAULT_AUTO_UPDATE_CHECK = true
@@ -117,6 +127,9 @@ class AppPreferences(
          *  existing installs see no visual change. */
         const val DEFAULT_CHAT_BUBBLE_ALPHA = 0.6f
         const val DEFAULT_CHAT_FONT_SIZE = 16
+
+        /** Empty = follow the system locale. */
+        const val DEFAULT_LANGUAGE_TAG = ""
     }
 }
 

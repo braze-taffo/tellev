@@ -38,7 +38,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -119,10 +121,10 @@ fun WorldBookEntryEditScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (entry?.content?.isBlank() == true || entry?.keys?.isEmpty() == true) "新建条目" else "编辑条目") },
+                title = { Text(if (entry?.content?.isBlank() == true || entry?.keys?.isEmpty() == true) stringResource(R.string.wbedit_new_entry) else stringResource(R.string.wbedit_edit_entry)) },
                 navigationIcon = {
                     IconButton(onClick = { leaveEditor() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.wbedit_back_cd))
                     }
                 },
                 actions = {
@@ -134,7 +136,7 @@ fun WorldBookEntryEditScreen(
                             }
                         },
                     ) {
-                        Icon(Icons.Default.Save, contentDescription = "保存条目")
+                        Icon(Icons.Default.Save, contentDescription = stringResource(R.string.wbedit_save_entry_cd))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -156,7 +158,7 @@ fun WorldBookEntryEditScreen(
                 } else {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(state.selectionError.orEmpty(), color = MaterialTheme.colorScheme.error)
-                        TextButton(onClick = { leaveEditor() }) { Text("返回世界书") }
+                        TextButton(onClick = { leaveEditor() }) { Text(stringResource(R.string.wbedit_back_to_book)) }
                     }
                 }
             }
@@ -175,7 +177,7 @@ fun WorldBookEntryEditScreen(
                 OutlinedTextField(
                     value = keys,
                     onValueChange = { keys = it },
-                    label = { Text("关键词（逗号分隔）") },
+                    label = { Text(stringResource(R.string.wbedit_field_keys)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
                     maxLines = 4,
@@ -185,7 +187,7 @@ fun WorldBookEntryEditScreen(
                 OutlinedTextField(
                     value = secondaryKeys,
                     onValueChange = { secondaryKeys = it },
-                    label = { Text("次级关键词（逗号分隔）") },
+                    label = { Text(stringResource(R.string.wbedit_field_secondary_keys)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
                     maxLines = 4,
@@ -195,7 +197,7 @@ fun WorldBookEntryEditScreen(
                 OutlinedTextField(
                     value = content,
                     onValueChange = { content = it },
-                    label = { Text("内容") },
+                    label = { Text(stringResource(R.string.wbedit_field_content)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 5,
                     maxLines = 20,
@@ -207,7 +209,7 @@ fun WorldBookEntryEditScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("启用", style = MaterialTheme.typography.bodyLarge)
+                    Text(stringResource(R.string.wbedit_enabled), style = MaterialTheme.typography.bodyLarge)
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
 
@@ -216,7 +218,7 @@ fun WorldBookEntryEditScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("选择性触发", style = MaterialTheme.typography.bodyLarge)
+                    Text(stringResource(R.string.wbedit_selective), style = MaterialTheme.typography.bodyLarge)
                     Switch(checked = selective, onCheckedChange = { selective = it })
                 }
 
@@ -225,7 +227,7 @@ fun WorldBookEntryEditScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("常驻注入", style = MaterialTheme.typography.bodyLarge)
+                    Text(stringResource(R.string.wbedit_constant), style = MaterialTheme.typography.bodyLarge)
                     Switch(checked = constant, onCheckedChange = { constant = it })
                 }
 
@@ -237,21 +239,21 @@ fun WorldBookEntryEditScreen(
                     OutlinedTextField(
                         value = priority,
                         onValueChange = { priority = it },
-                        label = { Text("优先级") },
+                        label = { Text(stringResource(R.string.wbedit_priority)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                     )
                     OutlinedTextField(
                         value = insertionOrder,
                         onValueChange = { insertionOrder = it },
-                        label = { Text("插入顺序") },
+                        label = { Text(stringResource(R.string.wbedit_insertion_order)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                     )
                     OutlinedTextField(
                         value = depth,
                         onValueChange = { depth = it },
-                        label = { Text("深度") },
+                        label = { Text(stringResource(R.string.wbedit_depth)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                     )
@@ -259,44 +261,44 @@ fun WorldBookEntryEditScreen(
 
                 // 注入位置（ST 8 种 position）
                 DropdownSelector(
-                    label = "注入位置",
+                    label = stringResource(R.string.wbedit_position),
                     selected = position,
                     options = listOf(
-                        0 to "角色前",
-                        1 to "角色后",
-                        2 to "作者注前",
-                        3 to "作者注后",
-                        4 to "@深度",
-                        5 to "示例对话前",
-                        6 to "示例对话后",
-                        7 to "插槽",
+                        0 to stringResource(R.string.wbedit_position_before_char),
+                        1 to stringResource(R.string.wbedit_position_after_char),
+                        2 to stringResource(R.string.wbedit_position_before_an),
+                        3 to stringResource(R.string.wbedit_position_after_an),
+                        4 to stringResource(R.string.wbedit_position_at_depth),
+                        5 to stringResource(R.string.wbedit_position_before_example),
+                        6 to stringResource(R.string.wbedit_position_after_example),
+                        7 to stringResource(R.string.wbedit_position_slot),
                     ),
                     onSelected = { position = it },
                 )
 
                 // 选择性逻辑（仅 selective 时有意义）
                 DropdownSelector(
-                    label = "选择性逻辑",
+                    label = stringResource(R.string.wbedit_selective_logic),
                     selected = selectiveLogic,
                     enabled = selective,
                     options = listOf(
-                        0 to "AND 任一匹配",
-                        1 to "NOT 任一不匹配",
-                        2 to "NOT 全不匹配",
-                        3 to "AND 全部匹配",
+                        0 to stringResource(R.string.wbedit_logic_and_any),
+                        1 to stringResource(R.string.wbedit_logic_not_any),
+                        2 to stringResource(R.string.wbedit_logic_not_all),
+                        3 to stringResource(R.string.wbedit_logic_and_all),
                     ),
                     onSelected = { selectiveLogic = it },
                 )
 
                 // 角色（仅 @深度 时有意义）
                 DropdownSelector(
-                    label = "角色",
+                    label = stringResource(R.string.wbedit_role),
                     selected = role,
                     enabled = position == 4,
                     options = listOf(
-                        0 to "System",
-                        1 to "User",
-                        2 to "Assistant",
+                        0 to stringResource(R.string.wbedit_role_system),
+                        1 to stringResource(R.string.wbedit_role_user),
+                        2 to stringResource(R.string.wbedit_role_assistant),
                     ),
                     onSelected = { role = it },
                 )
@@ -307,33 +309,33 @@ fun WorldBookEntryEditScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("概率触发", style = MaterialTheme.typography.bodyLarge)
+                    Text(stringResource(R.string.wbedit_use_probability), style = MaterialTheme.typography.bodyLarge)
                     Switch(checked = useProbability, onCheckedChange = { useProbability = it })
                 }
                 if (useProbability) {
                     OutlinedTextField(
                         value = probability,
                         onValueChange = { probability = it.filter { c -> c.isDigit() } },
-                        label = { Text("概率 (0-100)") },
+                        label = { Text(stringResource(R.string.wbedit_probability)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                     )
                 }
 
                 // 匹配选项
-                ToggleRow("全词匹配", matchWholeWords) { matchWholeWords = it }
-                ToggleRow("正则匹配", useRegex) { useRegex = it }
-                ToggleRow("区分大小写", caseSensitive) { caseSensitive = it }
+                ToggleRow(stringResource(R.string.wbedit_match_whole_words), matchWholeWords) { matchWholeWords = it }
+                ToggleRow(stringResource(R.string.wbedit_use_regex), useRegex) { useRegex = it }
+                ToggleRow(stringResource(R.string.wbedit_case_sensitive), caseSensitive) { caseSensitive = it }
 
                 // 递归选项
-                ToggleRow("排除递归（不喂入递归文本）", excludeRecursion) { excludeRecursion = it }
-                ToggleRow("阻止递归（不触发后续激活）", preventRecursion) { preventRecursion = it }
-                ToggleRow("延迟到递归轮", delayUntilRecursion) { delayUntilRecursion = it }
+                ToggleRow(stringResource(R.string.wbedit_exclude_recursion), excludeRecursion) { excludeRecursion = it }
+                ToggleRow(stringResource(R.string.wbedit_prevent_recursion), preventRecursion) { preventRecursion = it }
+                ToggleRow(stringResource(R.string.wbedit_delay_recursion), delayUntilRecursion) { delayUntilRecursion = it }
                 if (delayUntilRecursion) {
                     OutlinedTextField(
                         value = delayUntilRecursionLevel,
                         onValueChange = { delayUntilRecursionLevel = it.filter(Char::isDigit) },
-                        label = { Text("递归层级（第几轮递归开始可激活，需开启递归扫描）") },
+                        label = { Text(stringResource(R.string.wbedit_delay_recursion_level)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -343,7 +345,7 @@ fun WorldBookEntryEditScreen(
                 OutlinedTextField(
                     value = comment,
                     onValueChange = { comment = it },
-                    label = { Text("备注") },
+                    label = { Text(stringResource(R.string.wbedit_comment)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
@@ -357,7 +359,7 @@ fun WorldBookEntryEditScreen(
                         onClick = { leaveEditor() },
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("取消")
+                        Text(stringResource(R.string.wbedit_cancel))
                     }
                     FilledTonalButton(
                         enabled = !state.isSaving,
@@ -368,7 +370,7 @@ fun WorldBookEntryEditScreen(
                         },
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("保存条目")
+                        Text(stringResource(R.string.wbedit_save_entry))
                     }
                 }
 

@@ -12,6 +12,8 @@ import app.tellev.core.extension.MessageVariableBackend
 import app.tellev.core.extension.RuntimeToken
 import app.tellev.core.extension.StEventCatalog
 import app.tellev.core.extension.applyTavernChatMessages
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.Attachment
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.ChatMessage
@@ -238,7 +240,7 @@ internal object ChatTavernAdapter {
             emitStEvent(extensionHost, StEventCatalog.APP_INITIALIZED)
             emitStEvent(extensionHost, StEventCatalog.APP_READY)
         }.onFailure { e ->
-            onError("加载角色卡脚本失败：${e.message}")
+            onError(UiStrings.get(S.chtav_script_load_failed, e.message))
         }
     }
 

@@ -83,8 +83,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterWorldBinding
 import app.tellev.core.model.WorldBook
@@ -128,11 +130,11 @@ fun CharactersListScreen(
                     withContext(Dispatchers.IO) {
                         context.contentResolver.openOutputStream(uri)?.use { output ->
                             output.write(json.toByteArray(Charsets.UTF_8))
-                        } ?: error("无法写入所选位置")
+                        } ?: error(context.getString(R.string.chars_export_write_failed))
                     }
-                    snackbarHostState.showSnackbar("已保存 ${requested.second}.json")
+                    snackbarHostState.showSnackbar(context.getString(R.string.chars_export_saved, requested.second))
                 } catch (e: Exception) {
-                    snackbarHostState.showSnackbar("导出失败：${e.message}")
+                    snackbarHostState.showSnackbar(context.getString(R.string.chars_export_failed, e.message))
                 }
             }
         }
@@ -154,7 +156,7 @@ fun CharactersListScreen(
                         viewModel.importCharacter(bytes, fileName)
                     }
                 } catch (e: Exception) {
-                    snackbarHostState.showSnackbar("导入失败：${e.message}")
+                    snackbarHostState.showSnackbar(context.getString(R.string.chars_import_failed, e.message))
                 }
             }
         }
@@ -178,16 +180,20 @@ fun CharactersListScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("角色") },
+                title = { Text(stringResource(R.string.chars_title)) },
                 actions = {
-                    TextButton(onClick = onCreateWithAi) { Text("AI 创建") }
+                    TextButton(onClick = onCreateWithAi) { Text(stringResource(R.string.chars_ai_create)) }
                     IconButton(onClick = { importLauncher.launch("*/*") }) {
-                        Icon(Icons.Default.FileUpload, contentDescription = "导入角色卡")
+                        Icon(Icons.Default.FileUpload, contentDescription = stringResource(R.string.chars_import_cd))
                     }
                     IconButton(onClick = { searchActive = !searchActive }) {
                         Icon(
                             if (searchActive) Icons.Default.Close else Icons.Default.Search,
-                            contentDescription = if (searchActive) "关闭搜索" else "搜索",
+                            contentDescription = if (searchActive) {
+                                stringResource(R.string.chars_search_close_cd)
+                            } else {
+                                stringResource(R.string.chars_search_cd)
+                            },
                         )
                     }
                 },
@@ -200,7 +206,7 @@ fun CharactersListScreen(
             ExtendedFloatingActionButton(
                 onClick = onCreateClick,
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("新建角色") },
+                text = { Text(stringResource(R.string.chars_new_character)) },
             )
         },
         modifier = modifier,
@@ -222,7 +228,7 @@ fun CharactersListScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 8.dp),
-                        placeholder = { Text("按名称或标签搜索...") },
+                        placeholder = { Text(stringResource(R.string.chars_search_placeholder)) },
                         singleLine = true,
                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                         trailingIcon = {
@@ -231,7 +237,7 @@ fun CharactersListScreen(
                                     searchQuery = ""
                                     viewModel.search("")
                                 }) {
-                                    Icon(Icons.Default.Close, contentDescription = "清除")
+                                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.chars_clear_cd))
                                 }
                             }
                         },
@@ -264,14 +270,18 @@ fun CharactersListScreen(
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = if (searchQuery.isNotEmpty()) "没有匹配的角色" else "暂无角色",
+                                text = if (searchQuery.isNotEmpty()) {
+                                    stringResource(R.string.chars_no_match)
+                                } else {
+                                    stringResource(R.string.chars_empty_list)
+                                },
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             if (searchQuery.isEmpty()) {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "点击“新建角色”开始创建，或从右上角导入角色卡",
+                                    text = stringResource(R.string.chars_empty_hint),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                 )
@@ -392,14 +402,14 @@ private fun CharacterListItem(
 
             Box {
                 IconButton(onClick = { showContextMenu = true }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "更多选项")
+                    Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.chars_more_options_cd))
                 }
                 DropdownMenu(
                     expanded = showContextMenu,
                     onDismissRequest = { showContextMenu = false },
                 ) {
                     DropdownMenuItem(
-                        text = { Text("AI 编辑") },
+                        text = { Text(stringResource(R.string.chars_ai_edit)) },
                         leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
                         onClick = {
                             onEditWithAi()
@@ -407,14 +417,14 @@ private fun CharacterListItem(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("基于此卡写世界书") },
+                        text = { Text(stringResource(R.string.chars_write_worldbook)) },
                         onClick = {
                             onCreateWorldBookWithAi()
                             showContextMenu = false
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("复制") },
+                        text = { Text(stringResource(R.string.chars_duplicate)) },
                         leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
                         onClick = {
                             onDuplicate()
@@ -422,7 +432,7 @@ private fun CharacterListItem(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("导出 JSON") },
+                        text = { Text(stringResource(R.string.chars_export_json)) },
                         leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null) },
                         onClick = {
                             onExport()
@@ -430,7 +440,7 @@ private fun CharacterListItem(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("删除") },
+                        text = { Text(stringResource(R.string.chars_delete)) },
                         leadingIcon = {
                             Icon(
                                 Icons.Default.Delete,
@@ -451,8 +461,8 @@ private fun CharacterListItem(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            title = { Text("删除角色") },
-            text = { Text("确定要删除“${character.name}”吗？此操作无法撤销。") },
+            title = { Text(stringResource(R.string.chars_delete_title)) },
+            text = { Text(stringResource(R.string.chars_delete_confirm, character.name)) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -460,12 +470,12 @@ private fun CharacterListItem(
                         showDeleteDialog = false
                     },
                 ) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.chars_delete), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("取消")
+                    Text(stringResource(R.string.chars_cancel))
                 }
             },
         )
@@ -509,13 +519,13 @@ fun CharacterDetailScreen(
                         if (isCreating) {
                             pendingAvatarPng = withContext(Dispatchers.IO) {
                                 app.tellev.util.decodeImageAsPng(bytes, maxEdge = 1024)
-                            } ?: error("无法解析所选图片")
+                            } ?: error(context.getString(R.string.chars_image_parse_failed))
                         } else {
                             viewModel.setCharacterAvatar(bytes)
                         }
                     }
                 } catch (e: Exception) {
-                    snackbarHostState.showSnackbar("读取图片失败：${e.message}")
+                    snackbarHostState.showSnackbar(context.getString(R.string.chars_read_image_failed, e.message))
                 }
             }
         }
@@ -602,10 +612,18 @@ fun CharacterDetailScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(if (isCreating) "新建角色" else character?.name ?: "角色详情") },
+                title = {
+                    Text(
+                        if (isCreating) {
+                            stringResource(R.string.chars_new_character)
+                        } else {
+                            character?.name ?: stringResource(R.string.chars_detail_title)
+                        },
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.chars_back_cd))
                     }
                 },
                 actions = {
@@ -613,7 +631,14 @@ fun CharacterDetailScreen(
                         onClick = ::saveCard,
                         enabled = !state.isLoading,
                     ) {
-                        Icon(Icons.Default.FileDownload, contentDescription = if (isCreating) "创建角色" else "保存")
+                        Icon(
+                            Icons.Default.FileDownload,
+                            contentDescription = if (isCreating) {
+                                stringResource(R.string.chars_create_character)
+                            } else {
+                                stringResource(R.string.chars_save_cd)
+                            },
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -635,7 +660,7 @@ fun CharacterDetailScreen(
                 } else {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(state.selectionError.orEmpty(), color = MaterialTheme.colorScheme.error)
-                        TextButton(onClick = onBack) { Text("返回角色列表") }
+                        TextButton(onClick = onBack) { Text(stringResource(R.string.chars_back_to_list)) }
                     }
                 }
             }
@@ -659,7 +684,7 @@ fun CharacterDetailScreen(
                     if (pendingAvatar != null && isCreating) {
                         Image(
                             bitmap = pendingAvatar,
-                            contentDescription = "角色头像预览",
+                            contentDescription = stringResource(R.string.chars_avatar_preview_cd),
                             modifier = Modifier.size(72.dp).clip(CircleShape).clickable { avatarPicker.launch("image/*") },
                         )
                     } else {
@@ -675,17 +700,27 @@ fun CharacterDetailScreen(
                     Spacer(modifier = Modifier.width(16.dp))
                     Column {
                         Text(
-                            text = "角色卡",
+                            text = stringResource(R.string.chars_card_section),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            text = if (isCreating) "仅名称必填，其余内容可稍后补充" else "ID: ${character.id}",
+                            text = if (isCreating) {
+                                stringResource(R.string.chars_name_only_hint)
+                            } else {
+                                stringResource(R.string.chars_character_id, character.id)
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         )
                         TextButton(onClick = { avatarPicker.launch("image/*") }) {
-                            Text(if (isCreating) "选择头像（可选）" else "更换头像")
+                            Text(
+                                if (isCreating) {
+                                    stringResource(R.string.chars_pick_avatar_optional)
+                                } else {
+                                    stringResource(R.string.chars_change_avatar)
+                                },
+                            )
                         }
                     }
                 }
@@ -694,18 +729,18 @@ fun CharacterDetailScreen(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("名称") },
+                    label = { Text(stringResource(R.string.chars_field_name)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     isError = saveAttempted && name.isBlank(),
-                    supportingText = if (saveAttempted && name.isBlank()) {{ Text("请输入角色名称") }} else null,
+                    supportingText = if (saveAttempted && name.isBlank()) {{ Text(stringResource(R.string.chars_name_required)) }} else null,
                 )
 
                 // Description
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
-                    label = { Text("描述") },
+                    label = { Text(stringResource(R.string.chars_field_description)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3,
                     maxLines = 8,
@@ -715,7 +750,7 @@ fun CharacterDetailScreen(
                 OutlinedTextField(
                     value = personality,
                     onValueChange = { personality = it },
-                    label = { Text("性格") },
+                    label = { Text(stringResource(R.string.chars_field_personality)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3,
                     maxLines = 8,
@@ -725,7 +760,7 @@ fun CharacterDetailScreen(
                 OutlinedTextField(
                     value = scenario,
                     onValueChange = { scenario = it },
-                    label = { Text("场景") },
+                    label = { Text(stringResource(R.string.chars_field_scenario)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3,
                     maxLines = 8,
@@ -735,14 +770,14 @@ fun CharacterDetailScreen(
                 OutlinedTextField(
                     value = firstMessage,
                     onValueChange = { firstMessage = it },
-                    label = { Text("开场白") },
+                    label = { Text(stringResource(R.string.chars_field_first_message)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3,
                     maxLines = 12,
                 )
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("替代开场白", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.chars_alternate_greetings), style = MaterialTheme.typography.titleSmall)
                     alternateGreetings.forEachIndexed { index, greeting ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             OutlinedTextField(
@@ -750,7 +785,7 @@ fun CharacterDetailScreen(
                                 onValueChange = { value ->
                                     alternateGreetings = alternateGreetings.toMutableList().also { it[index] = value }
                                 },
-                                label = { Text("开场白 ${index + 2}") },
+                                label = { Text(stringResource(R.string.chars_greeting_n, index + 2)) },
                                 modifier = Modifier.weight(1f),
                                 minLines = 2,
                                 maxLines = 8,
@@ -758,12 +793,12 @@ fun CharacterDetailScreen(
                             IconButton(onClick = {
                                 alternateGreetings = alternateGreetings.toMutableList().also { it.removeAt(index) }
                             }) {
-                                Icon(Icons.Default.Close, contentDescription = "移除替代开场白")
+                                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.chars_remove_greeting_cd))
                             }
                         }
                     }
                     OutlinedButton(onClick = { alternateGreetings = alternateGreetings + "" }) {
-                        Text("添加替代开场白")
+                        Text(stringResource(R.string.chars_add_greeting))
                     }
                 }
 
@@ -771,7 +806,7 @@ fun CharacterDetailScreen(
                 OutlinedTextField(
                     value = exampleMessages,
                     onValueChange = { exampleMessages = it },
-                    label = { Text("示例对话") },
+                    label = { Text(stringResource(R.string.chars_field_example_messages)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3,
                     maxLines = 12,
@@ -781,7 +816,7 @@ fun CharacterDetailScreen(
                 OutlinedTextField(
                     value = creatorNotes,
                     onValueChange = { creatorNotes = it },
-                    label = { Text("创建者备注") },
+                    label = { Text(stringResource(R.string.chars_field_creator_notes)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
                     maxLines = 6,
@@ -790,7 +825,7 @@ fun CharacterDetailScreen(
                 OutlinedTextField(
                     value = systemPrompt,
                     onValueChange = { systemPrompt = it },
-                    label = { Text("系统提示词（可选）") },
+                    label = { Text(stringResource(R.string.chars_field_system_prompt)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
                     maxLines = 8,
@@ -799,7 +834,7 @@ fun CharacterDetailScreen(
                 OutlinedTextField(
                     value = postHistoryInstructions,
                     onValueChange = { postHistoryInstructions = it },
-                    label = { Text("历史后指令（可选）") },
+                    label = { Text(stringResource(R.string.chars_field_post_history)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
                     maxLines = 8,
@@ -808,7 +843,7 @@ fun CharacterDetailScreen(
                 OutlinedTextField(
                     value = creator,
                     onValueChange = { creator = it },
-                    label = { Text("创作者") },
+                    label = { Text(stringResource(R.string.chars_field_creator)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
@@ -816,7 +851,7 @@ fun CharacterDetailScreen(
                 OutlinedTextField(
                     value = characterVersion,
                     onValueChange = { characterVersion = it },
-                    label = { Text("角色版本") },
+                    label = { Text(stringResource(R.string.chars_field_version)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
@@ -824,7 +859,7 @@ fun CharacterDetailScreen(
                 // Tags
                 Column {
                     Text(
-                        text = "标签",
+                        text = stringResource(R.string.chars_field_tags),
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
@@ -840,7 +875,7 @@ fun CharacterDetailScreen(
                                 trailingIcon = {
                                     Icon(
                                         Icons.Default.Close,
-                                        contentDescription = "移除标签",
+                                        contentDescription = stringResource(R.string.chars_remove_tag_cd),
                                         modifier = Modifier.size(16.dp),
                                     )
                                 },
@@ -855,7 +890,7 @@ fun CharacterDetailScreen(
                         OutlinedTextField(
                             value = newTag,
                             onValueChange = { newTag = it },
-                            label = { Text("添加标签") },
+                            label = { Text(stringResource(R.string.chars_add_tag)) },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                         )
@@ -867,7 +902,7 @@ fun CharacterDetailScreen(
                                 }
                             },
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = "添加")
+                            Icon(Icons.Default.Add, contentDescription = stringResource(R.string.chars_add_cd))
                         }
                     }
                 }
@@ -882,12 +917,16 @@ fun CharacterDetailScreen(
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                text = "角色书",
+                                text = stringResource(R.string.chars_character_book),
                                 style = MaterialTheme.typography.titleMedium,
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "“${character.characterBook.name}” · ${character.characterBook.entries.size} 条条目",
+                                text = stringResource(
+                                    R.string.chars_book_entries,
+                                    character.characterBook.name,
+                                    character.characterBook.entries.size,
+                                ),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
                             )
@@ -906,24 +945,24 @@ fun CharacterDetailScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            text = "世界书绑定",
+                            text = stringResource(R.string.chars_world_binding),
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = if (linkedWorldName.isBlank()) {
-                                "未绑定（仅使用上方角色书）"
+                                stringResource(R.string.chars_world_unbound)
                             } else if (boundBook != null) {
-                                "“${boundBook.name}” · ${boundBook.entries.size} 条条目"
+                                stringResource(R.string.chars_book_entries, boundBook.name, boundBook.entries.size)
                             } else {
-                                "“$linkedWorldName”（该世界书未导入或已删除）"
+                                stringResource(R.string.chars_world_missing, linkedWorldName)
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         FilledTonalButton(onClick = { showWorldPicker = true }) {
-                            Text("选择世界书")
+                            Text(stringResource(R.string.chars_pick_worldbook))
                         }
                     }
                 }
@@ -934,7 +973,13 @@ fun CharacterDetailScreen(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !state.isLoading,
                 ) {
-                    Text(if (isCreating) "创建角色" else "保存修改")
+                    Text(
+                        if (isCreating) {
+                            stringResource(R.string.chars_create_character)
+                        } else {
+                            stringResource(R.string.chars_save_changes)
+                        },
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -943,11 +988,11 @@ fun CharacterDetailScreen(
             if (showWorldPicker) {
                 AlertDialog(
                     onDismissRequest = { showWorldPicker = false },
-                    title = { Text("选择世界书") },
+                    title = { Text(stringResource(R.string.chars_pick_worldbook)) },
                     text = {
                         Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                             WorldPickerOption(
-                                label = "不绑定",
+                                label = stringResource(R.string.chars_world_none),
                                 selected = linkedWorldName.isBlank(),
                                 onClick = {
                                     linkedWorldName = ""
@@ -956,7 +1001,7 @@ fun CharacterDetailScreen(
                             )
                             if (worldBooks.isEmpty()) {
                                 Text(
-                                    text = "暂无世界书。请先在“世界书”页导入或创建。",
+                                    text = stringResource(R.string.chars_world_empty_hint),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
@@ -966,7 +1011,7 @@ fun CharacterDetailScreen(
                                 worldBooks.forEach { book ->
                                     WorldPickerOption(
                                         label = book.name.ifBlank { book.id },
-                                        sublabel = "${book.entries.size} 条条目",
+                                        sublabel = stringResource(R.string.chars_entries_count, book.entries.size),
                                         selected = book.name.equals(linkedWorldName, ignoreCase = true) ||
                                             book.id == linkedWorldName,
                                         onClick = {
@@ -980,7 +1025,7 @@ fun CharacterDetailScreen(
                     },
                     confirmButton = {},
                     dismissButton = {
-                        TextButton(onClick = { showWorldPicker = false }) { Text("取消") }
+                        TextButton(onClick = { showWorldPicker = false }) { Text(stringResource(R.string.chars_cancel)) }
                     },
                 )
             }

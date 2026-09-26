@@ -60,11 +60,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import app.tellev.R
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.PresetCategory
 import app.tellev.core.model.PresetPrompt
@@ -159,7 +161,7 @@ internal fun PresetListItem(
             if (selected) {
                 Icon(
                     Icons.Default.CheckCircle,
-                    contentDescription = "当前使用",
+                    contentDescription = stringResource(R.string.setpre_cd_in_use),
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp),
                 )
@@ -171,7 +173,7 @@ internal fun PresetListItem(
                 ) {
                     Icon(
                         Icons.Default.MoreVert,
-                        contentDescription = "更多操作",
+                        contentDescription = stringResource(R.string.setpre_cd_more),
                         modifier = Modifier.size(20.dp),
                     )
                 }
@@ -180,7 +182,7 @@ internal fun PresetListItem(
                     onDismissRequest = { menuOpen = false },
                 ) {
                     DropdownMenuItem(
-                        text = { Text(if (selected) "设为当前（已是当前）" else "设为当前") },
+                        text = { Text(if (selected) stringResource(R.string.setpre_set_current_active) else stringResource(R.string.setpre_set_current)) },
                         enabled = !selected,
                         onClick = {
                             menuOpen = false
@@ -188,7 +190,7 @@ internal fun PresetListItem(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("导出") },
+                        text = { Text(stringResource(R.string.setpre_export)) },
                         leadingIcon = {
                             Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                         },
@@ -198,7 +200,7 @@ internal fun PresetListItem(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                        text = { Text(stringResource(R.string.setpre_delete), color = MaterialTheme.colorScheme.error) },
                         leadingIcon = {
                             Icon(
                                 Icons.Default.Delete,
@@ -241,6 +243,7 @@ internal fun PresetEditDialog(
     var expandedPromptIds by remember(preset) { mutableStateOf(emptySet<String>()) }
     var generationExpanded by remember(preset) { mutableStateOf(false) }
     var rawJsonExpanded by remember(preset) { mutableStateOf(false) }
+    val rawJsonInvalidText = stringResource(R.string.setpre_raw_json_invalid)
 
     val regexCount = (preset.extensions["regex_scripts"] as? JsonArray)?.size ?: 0
     val preservedRoutingFields = preset.raw.keys.intersect(setOf(
@@ -252,7 +255,7 @@ internal fun PresetEditDialog(
     fun editedPreset(): GenerationPreset? {
         val raw = runCatching { Json.parseToJsonElement(rawText) as? JsonObject }.getOrNull()
         if (raw == null) {
-            validationError = "原始字段必须是有效的 JSON 对象"
+            validationError = rawJsonInvalidText
             rawJsonExpanded = true
             return null
         }
@@ -310,12 +313,12 @@ internal fun PresetEditDialog(
                     },
                     navigationIcon = {
                         IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, contentDescription = "关闭预设编辑器")
+                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.setpre_cd_close_editor))
                         }
                     },
                     actions = {
                         IconButton(onClick = { editedPreset()?.let(onSave) }) {
-                            Icon(Icons.Default.Save, contentDescription = "保存预设")
+                            Icon(Icons.Default.Save, contentDescription = stringResource(R.string.setpre_cd_save_preset))
                         }
                     },
                 )
@@ -329,7 +332,11 @@ internal fun PresetEditDialog(
                 ) {
                     item(key = "preset_summary") {
                         Text(
-                            text = "启用 ${promptEntries.count { !it.isUnused && it.prompt.enabled }} 条提示词 · 正则 $regexCount 条",
+                            text = stringResource(
+                                R.string.setpre_summary_active,
+                                promptEntries.count { !it.isUnused && it.prompt.enabled },
+                                regexCount,
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -337,8 +344,8 @@ internal fun PresetEditDialog(
 
                     item(key = "generation_header") {
                         PresetEditorSectionHeader(
-                            title = "生成参数",
-                            subtitle = "Temperature、Top-P、Token 上限及文件操作",
+                            title = stringResource(R.string.setpre_section_generation),
+                            subtitle = stringResource(R.string.setpre_section_generation_sub),
                             expanded = generationExpanded,
                             onClick = { generationExpanded = !generationExpanded },
                         )
@@ -349,7 +356,7 @@ internal fun PresetEditDialog(
                                 OutlinedTextField(
                                     value = targetName,
                                     onValueChange = { targetName = it },
-                                    label = { Text("另存为 / 重命名后的名称") },
+                                    label = { Text(stringResource(R.string.setpre_target_name_label)) },
                                     modifier = Modifier.fillMaxWidth(),
                                     singleLine = true,
                                 )
@@ -379,14 +386,14 @@ internal fun PresetEditDialog(
                                 OutlinedTextField(
                                     value = maxContext,
                                     onValueChange = { maxContext = it.filter(Char::isDigit) },
-                                    label = { Text("最大上下文 Token") },
+                                    label = { Text(stringResource(R.string.setpre_max_context_label)) },
                                     modifier = Modifier.fillMaxWidth(),
                                     singleLine = true,
                                 )
                                 OutlinedTextField(
                                     value = maxCompletion,
                                     onValueChange = { maxCompletion = it.filter(Char::isDigit) },
-                                    label = { Text("最大回复 Token") },
+                                    label = { Text(stringResource(R.string.setpre_max_completion_label)) },
                                     modifier = Modifier.fillMaxWidth(),
                                     singleLine = true,
                                 )
@@ -396,8 +403,8 @@ internal fun PresetEditDialog(
 
                     item(key = "raw_header") {
                         PresetEditorSectionHeader(
-                            title = "高级原始 JSON",
-                            subtitle = "未知字段保持原样并随预设导出",
+                            title = stringResource(R.string.setpre_section_raw),
+                            subtitle = stringResource(R.string.setpre_section_raw_sub),
                             expanded = rawJsonExpanded,
                             onClick = { rawJsonExpanded = !rawJsonExpanded },
                         )
@@ -407,14 +414,17 @@ internal fun PresetEditDialog(
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 if (preservedRoutingFields.isNotEmpty()) {
                                     Text(
-                                        text = "已保留、未应用：${preservedRoutingFields.sorted().joinToString()}",
+                                        text = stringResource(R.string.setpre_preserved_fields, preservedRoutingFields.sorted().joinToString()),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.tertiary,
                                     )
                                 }
                                 if (unsupportedFields.isNotEmpty()) {
                                     Text(
-                                        text = "尚未进入运行链路：${unsupportedFields.sorted().joinToString(limit = 16, truncated = "…")}。",
+                                        text = stringResource(
+                                            R.string.setpre_unsupported_fields,
+                                            unsupportedFields.sorted().joinToString(limit = 16, truncated = "…"),
+                                        ),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -425,12 +435,12 @@ internal fun PresetEditDialog(
                                         rawText = it
                                         validationError = null
                                     },
-                                    label = { Text("原始 JSON") },
+                                    label = { Text(stringResource(R.string.setpre_raw_json_label)) },
                                     modifier = Modifier.fillMaxWidth(),
                                     minLines = 8,
                                     maxLines = 18,
                                     supportingText = {
-                                        Text(validationError ?: "保存前会校验 JSON 对象。")
+                                        Text(validationError ?: stringResource(R.string.setpre_raw_json_hint))
                                     },
                                     isError = validationError != null,
                                 )
@@ -440,9 +450,9 @@ internal fun PresetEditDialog(
 
                     item(key = "prompts_title") {
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("提示词顺序", style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.setpre_prompts_order_title), style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "点击展开；长按拖动手柄排序。未使用项可直接启用。",
+                                stringResource(R.string.setpre_prompts_order_help),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -484,7 +494,7 @@ internal fun PresetEditDialog(
                                 ) {
                                     Icon(
                                         Icons.Default.DragHandle,
-                                        contentDescription = "长按拖动排序",
+                                        contentDescription = stringResource(R.string.setpre_cd_drag_sort),
                                         modifier = Modifier
                                             .size(36.dp)
                                             .padding(6.dp)
@@ -527,7 +537,7 @@ internal fun PresetEditDialog(
                                             text = buildString {
                                                 append(prompt.role.ifBlank { "system" })
                                                 if (prompt.relative) append(" · In-chat D:${prompt.depth}")
-                                                if (entry.isUnused) append(" · 未加入顺序")
+                                                if (entry.isUnused) append(" · ${stringResource(R.string.setpre_not_in_order)}")
                                             },
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -548,7 +558,7 @@ internal fun PresetEditDialog(
                                     )
                                     Icon(
                                         if (expanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                        contentDescription = if (expanded) "收起" else "展开",
+                                        contentDescription = if (expanded) stringResource(R.string.setpre_cd_collapse) else stringResource(R.string.setpre_cd_expand),
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
@@ -615,11 +625,11 @@ internal fun PresetEditDialog(
                                             TextButton(
                                                 onClick = { movePrompt(index, index - 1) },
                                                 enabled = index > 0,
-                                            ) { Text("上移") }
+                                            ) { Text(stringResource(R.string.setpre_move_up)) }
                                             TextButton(
                                                 onClick = { movePrompt(index, index + 1) },
                                                 enabled = index < promptEntries.lastIndex,
-                                            ) { Text("下移") }
+                                            ) { Text(stringResource(R.string.setpre_move_down)) }
                                         }
                                     }
                                 }
@@ -637,16 +647,16 @@ internal fun PresetEditDialog(
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        TextButton(onClick = onDismiss) { Text("取消") }
+                        TextButton(onClick = onDismiss) { Text(stringResource(R.string.setpre_cancel)) }
                         TextButton(
                             onClick = { editedPreset()?.let { onSaveAs(it, targetName) } },
                             enabled = targetName.isNotBlank(),
-                        ) { Text("另存为") }
+                        ) { Text(stringResource(R.string.setpre_save_as)) }
                         TextButton(
                             onClick = { editedPreset()?.let { onRename(it, targetName) } },
                             enabled = targetName.isNotBlank(),
-                        ) { Text("重命名") }
-                        TextButton(onClick = { editedPreset()?.let(onSave) }) { Text("保存") }
+                        ) { Text(stringResource(R.string.setpre_rename)) }
+                        TextButton(onClick = { editedPreset()?.let(onSave) }) { Text(stringResource(R.string.setpre_save)) }
                     }
                 }
             }
@@ -681,7 +691,7 @@ internal fun PresetEditorSectionHeader(
             }
             Icon(
                 if (expanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = if (expanded) "收起" else "展开",
+                contentDescription = if (expanded) stringResource(R.string.setpre_cd_collapse) else stringResource(R.string.setpre_cd_expand),
             )
         }
     }
@@ -703,7 +713,7 @@ internal fun PresetCreationDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("新建预设") },
+        title = { Text(stringResource(R.string.setpre_create_title)) },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -711,7 +721,7 @@ internal fun PresetCreationDialog(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("预设名称") },
+                    label = { Text(stringResource(R.string.setpre_name_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -724,7 +734,7 @@ internal fun PresetCreationDialog(
                         value = providers.find { it.first == selectedProvider }?.second ?: "",
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("服务商") },
+                        label = { Text(stringResource(R.string.setpre_provider_label)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = providerExpanded) },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -748,7 +758,7 @@ internal fun PresetCreationDialog(
 
                 Column {
                     Text(
-                        text = "温度：${"%.2f".format(temperature)}",
+                        text = stringResource(R.string.setpre_temperature_value, "%.2f".format(temperature)),
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Slider(
@@ -775,8 +785,8 @@ internal fun PresetCreationDialog(
                 OutlinedTextField(
                     value = maxTokensText,
                     onValueChange = { value -> maxTokensText = value.filter(Char::isDigit) },
-                    label = { Text("最大 Token 数") },
-                    supportingText = { Text("留空则不由 tellev 限制输出长度") },
+                    label = { Text(stringResource(R.string.setpre_max_tokens_label)) },
+                    supportingText = { Text(stringResource(R.string.setpre_max_tokens_help)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -808,12 +818,12 @@ internal fun PresetCreationDialog(
                     }
                 },
             ) {
-                Text("创建")
+                Text(stringResource(R.string.setpre_create))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.setpre_cancel))
             }
         },
     )
@@ -829,9 +839,10 @@ internal fun PresetImportCategoryDialog(
 ) {
     // The four SillyTavern preset directories. Keys match FileStDataStore's
     // resolvePresetDirectory() mapping; values are user-facing labels.
-    val categories = remember {
+    val openAiCompatible = stringResource(R.string.setpre_cat_openai_compatible)
+    val categories = remember(openAiCompatible) {
         listOf(
-            "openai" to "OpenAI 兼容",
+            "openai" to openAiCompatible,
             "textgen" to "TextGen WebUI",
             "kobold" to "KoboldAI",
             "novelai" to "NovelAI",
@@ -844,16 +855,16 @@ internal fun PresetImportCategoryDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("导入预设") },
+        title = { Text(stringResource(R.string.setpre_import_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "文件：$fileName",
+                    text = stringResource(R.string.setpre_import_file, fileName),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    text = "选择该预设归属的服务商分类，决定它写入的目录与在聊天中可被选用的范围。",
+                    text = stringResource(R.string.setpre_import_help),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -865,7 +876,7 @@ internal fun PresetImportCategoryDialog(
                         value = categories.first { it.first == selectedCategory }.second,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("服务商分类") },
+                        label = { Text(stringResource(R.string.setpre_provider_category_label)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -892,12 +903,12 @@ internal fun PresetImportCategoryDialog(
             TextButton(
                 onClick = { onConfirm(selectedCategory) },
             ) {
-                Text("导入")
+                Text(stringResource(R.string.setpre_import))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.setpre_cancel))
             }
         },
     )
@@ -921,7 +932,7 @@ internal fun LazyListScope.presetSectionItems(
     item(key = "preset_header") {
         SectionHeader(
             icon = Icons.Default.Settings,
-            title = "生成预设",
+            title = stringResource(R.string.setpre_section_header),
             secondaryAction = onImportClick,
             action = onCreateClick,
         )
@@ -960,7 +971,7 @@ internal fun LazyListScope.presetSectionItems(
     if (visiblePresets.isEmpty()) {
         item(key = "preset_empty") {
             Text(
-                text = "暂无预设。新建一个预设来配置生成参数。",
+                text = stringResource(R.string.setpre_empty),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

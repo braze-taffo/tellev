@@ -1,5 +1,7 @@
 package app.tellev.feature.settings.controller
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.provider.ComfyUiSettings
 import app.tellev.core.provider.ComfyWorkflowTemplate
 import app.tellev.core.provider.NovelAiImageSettings
@@ -60,7 +62,7 @@ internal class ImageGenSettingsController(
                 }
             } catch (e: Exception) {
                 stateFlow.update {
-                    it.copy(isTestingComfy = false, error = "ComfyUI 连接测试失败：${e.message}")
+                    it.copy(isTestingComfy = false, error = UiStrings.get(S.imgctl_comfy_test_failed, e.message))
                 }
             }
         }
@@ -71,7 +73,7 @@ internal class ImageGenSettingsController(
         val workflow = state.comfySettings.workflowJson.trim()
         if (workflow.isNotBlank() && ComfyWorkflowTemplate.parse(workflow) == null) {
             stateFlow.update {
-                it.copy(error = "工作流 JSON 无法解析，未保存。请粘贴 ComfyUI「保存（API 格式）」导出的 JSON。")
+                it.copy(error = UiStrings.get(S.imgctl_workflow_parse_failed))
             }
             return
         }
@@ -94,12 +96,12 @@ internal class ImageGenSettingsController(
                     it.copy(
                         isLoading = false,
                         comfySettings = saved,
-                        info = "生图模型配置已保存。",
+                        info = UiStrings.get(S.imgctl_comfy_saved),
                     )
                 }
             } catch (e: Exception) {
                 stateFlow.update {
-                    it.copy(isLoading = false, error = "保存生图模型配置失败：${e.message}")
+                    it.copy(isLoading = false, error = UiStrings.get(S.imgctl_comfy_save_failed, e.message))
                 }
             }
         }
@@ -135,7 +137,7 @@ internal class ImageGenSettingsController(
                 stateFlow.update { it.copy(isTestingNovelAi = false, novelAiStatus = status) }
             } catch (e: Exception) {
                 stateFlow.update {
-                    it.copy(isTestingNovelAi = false, error = "NovelAI 测试失败：${e.message}")
+                    it.copy(isTestingNovelAi = false, error = UiStrings.get(S.imgctl_novelai_test_failed, e.message))
                 }
             }
         }
@@ -154,11 +156,11 @@ internal class ImageGenSettingsController(
                 }
                 ProviderConfigPersistence.saveNovelAiImageSettings(secretStore, state.novelAiSettings)
                 stateFlow.update {
-                    it.copy(isLoading = false, info = "NovelAI 生图配置已保存。")
+                    it.copy(isLoading = false, info = UiStrings.get(S.imgctl_novelai_saved))
                 }
             } catch (e: Exception) {
                 stateFlow.update {
-                    it.copy(isLoading = false, error = "保存 NovelAI 生图配置失败：${e.message}")
+                    it.copy(isLoading = false, error = UiStrings.get(S.imgctl_novelai_save_failed, e.message))
                 }
             }
         }

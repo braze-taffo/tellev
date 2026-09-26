@@ -33,9 +33,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import app.tellev.R
 
 internal data class TavernMessageRuntime(
     val token: app.tellev.core.extension.RuntimeToken?,
@@ -521,7 +523,7 @@ internal fun HtmlSwipeControls(
         IconButton(onClick = onPrevious, modifier = Modifier.size(36.dp)) {
             Icon(
                 Icons.Default.KeyboardArrowLeft,
-                contentDescription = "上一页",
+                contentDescription = stringResource(R.string.chat_previous_page),
             )
         }
         Text(
@@ -533,7 +535,7 @@ internal fun HtmlSwipeControls(
         IconButton(onClick = onNext, modifier = Modifier.size(36.dp)) {
             Icon(
                 Icons.Default.KeyboardArrowRight,
-                contentDescription = "下一页",
+                contentDescription = stringResource(R.string.chat_next_page),
             )
         }
     }

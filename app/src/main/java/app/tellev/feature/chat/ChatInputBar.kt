@@ -31,7 +31,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.tellev.R
 import app.tellev.core.model.Attachment
 import app.tellev.core.model.AttachmentSource
 import app.tellev.util.UriUtils
@@ -82,11 +84,11 @@ internal fun ChatInputBar(
                 )
                 Text(
                     modifier = Modifier.weight(1f),
-                    text = imageGenStatus ?: "正在生成图片…",
+                    text = imageGenStatus ?: stringResource(R.string.chat_generating_image),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                TextButton(onClick = onStopImage) { Text("取消生图") }
+                TextButton(onClick = onStopImage) { Text(stringResource(R.string.chat_cancel_image_gen)) }
             }
         }
         if (attachments.isNotEmpty()) {
@@ -126,7 +128,7 @@ internal fun ChatInputBar(
                         ) {
                             Icon(
                                 Icons.Default.Close,
-                                contentDescription = "移除附件",
+                                contentDescription = stringResource(R.string.chat_remove_attachment),
                                 modifier = Modifier.size(16.dp),
                             )
                         }
@@ -150,7 +152,7 @@ internal fun ChatInputBar(
             ) {
                 Icon(
                     Icons.Default.AddPhotoAlternate,
-                    contentDescription = "添加图片",
+                    contentDescription = stringResource(R.string.chat_add_image),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -167,7 +169,7 @@ internal fun ChatInputBar(
                 ) {
                     Icon(
                         Icons.Default.Palette,
-                        contentDescription = "生成图片",
+                        contentDescription = stringResource(R.string.chat_generate_image),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -179,7 +181,7 @@ internal fun ChatInputBar(
                 modifier = Modifier.weight(1f),
                 minLines = 1,
                 maxLines = 6,
-                placeholder = { Text("输入消息") },
+                placeholder = { Text(stringResource(R.string.chat_input_hint)) },
                 shape = RoundedCornerShape(24.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha),
@@ -199,7 +201,7 @@ internal fun ChatInputBar(
                 ) {
                     Icon(
                         Icons.Default.Stop,
-                        contentDescription = "停止生成",
+                        contentDescription = stringResource(R.string.chat_stop_generation),
                         tint = MaterialTheme.colorScheme.onErrorContainer,
                     )
                 }
@@ -217,7 +219,7 @@ internal fun ChatInputBar(
                 ) {
                     Icon(
                         Icons.Default.Send,
-                        contentDescription = "发送消息",
+                        contentDescription = stringResource(R.string.chat_send_message),
                         tint = if (canSend) MaterialTheme.colorScheme.onPrimary
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                     )

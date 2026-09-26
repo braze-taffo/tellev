@@ -1,0 +1,172 @@
+extcompat_ejs_title	EJS 提示词模板设置
+extcompat_ejs_subtitle	控制 EJS 模板（<%= ... %>）在提示词生成和消息渲染中的行为。
+extcompat_section_basic	基础
+extcompat_ejs_enable_title	启用 EJS 模板处理
+extcompat_ejs_enable_subtitle	主开关，关闭后跳过所有模板处理
+extcompat_ejs_debug_title	调试模式
+extcompat_ejs_debug_subtitle	输出调试日志
+extcompat_section_generate_stage	生成阶段
+extcompat_ejs_generate_title	生成前处理
+extcompat_ejs_generate_subtitle	在发送给 LLM 之前处理提示词中的 EJS
+extcompat_ejs_generate_loader_title	世界书 [GENERATE:BEFORE]
+extcompat_ejs_generate_loader_subtitle	处理世界书条目中的 GENERATE 指令
+extcompat_ejs_inject_loader_title	@INJECT 注入加载器
+extcompat_ejs_inject_loader_subtitle	处理 @INJECT 提示词注入指令
+extcompat_ejs_preload_title	预加载世界书
+extcompat_ejs_preload_subtitle	在生成前预加载世界书条目
+extcompat_section_render_stage	渲染阶段
+extcompat_ejs_render_title	渲染后处理
+extcompat_ejs_render_subtitle	在收到 LLM 响应后处理 EJS 模板
+extcompat_ejs_render_loader_title	渲染加载器
+extcompat_ejs_render_loader_subtitle	渲染时执行加载器逻辑
+extcompat_ejs_code_blocks_title	代码块处理
+extcompat_ejs_code_blocks_subtitle	处理代码块中的 EJS
+extcompat_ejs_raw_eval_title	永久评估
+extcompat_ejs_raw_eval_subtitle	对每条消息永久评估变量
+extcompat_ejs_filter_title	消息过滤
+extcompat_ejs_filter_subtitle	过滤消息内容
+extcompat_section_advanced	高级
+extcompat_ejs_sandbox_title	沙盒模式
+extcompat_ejs_sandbox_subtitle	在沙盒中执行 EJS 代码
+extcompat_ejs_autosave_title	自动保存变量
+extcompat_ejs_autosave_subtitle	自动保存 EJS 变量更改
+extcompat_ejs_no_context_title	禁用上下文
+extcompat_ejs_no_context_subtitle	禁用上下文变量注入
+extcompat_ejs_invert_title	反转逻辑
+extcompat_ejs_invert_subtitle	反转世界书激活逻辑
+extcompat_ejs_compile_workers_title	编译 Worker
+extcompat_ejs_compile_workers_subtitle	使用 Web Worker 编译模板
+extcompat_ejs_code_editor_title	代码编辑器
+extcompat_ejs_code_editor_subtitle	启用代码编辑器 UI
+extcompat_depth_limit	深度限制: %1$s
+extcompat_depth_unlimited	无限制
+extcompat_reset_default	重置默认
+extcompat_done	完成
+extcompat_th_title	酒馆助手设置
+extcompat_th_subtitle	控制酒馆助手兼容层的行为，包括音频、优化和渲染选项。
+extcompat_section_audio	音频
+extcompat_th_audio_enable_title	启用音频
+extcompat_th_audio_enable_subtitle	启用 BGM 和环境音播放
+extcompat_th_bgm_title	BGM 播放
+extcompat_th_bgm_subtitle	背景音乐播放
+extcompat_th_bgm_muted_title	BGM 静音
+extcompat_th_bgm_muted_subtitle	静音背景音乐
+extcompat_th_ambient_title	环境音播放
+extcompat_th_ambient_subtitle	环境音效播放
+extcompat_th_ambient_muted_title	环境音静音
+extcompat_th_ambient_muted_subtitle	静音环境音
+extcompat_th_volumes	BGM 音量: %1$d  环境音量: %2$d
+extcompat_section_optimize	优化
+extcompat_th_opt_incompatible_title	禁用不兼容选项
+extcompat_th_opt_incompatible_subtitle	自动禁用与 tellev 不兼容的选项
+extcompat_th_opt_better_load_title	更好的消息加载
+extcompat_th_opt_better_load_subtitle	优化消息加载性能
+extcompat_th_opt_better_update_title	更好的角色更新
+extcompat_th_opt_better_update_subtitle	优化角色更新流程
+extcompat_th_opt_better_export_title	更好的角色导出
+extcompat_th_opt_better_export_subtitle	优化角色导出流程
+extcompat_th_opt_better_delete_title	更好的角色删除
+extcompat_th_opt_better_delete_subtitle	优化角色删除流程
+extcompat_th_opt_worldbook_title	推荐世界书设置
+extcompat_th_opt_worldbook_subtitle	强制应用推荐的世界书全局设置
+extcompat_th_opt_max_context_title	最大化预设上下文长度
+extcompat_th_opt_max_context_subtitle	自动最大化预设的上下文长度
+extcompat_section_render	渲染
+extcompat_th_render_enable_title	启用渲染
+extcompat_th_render_enable_subtitle	启用消息渲染增强
+extcompat_th_render_streaming_title	允许流式渲染
+extcompat_th_render_streaming_subtitle	在流式生成时实时渲染
+extcompat_th_render_blob_title	使用 Blob URL
+extcompat_th_render_blob_subtitle	使用 Blob URL 加载资源
+extcompat_th_render_hljs_title	优化 highlight.js
+extcompat_th_render_hljs_subtitle	优化代码高亮性能
+extcompat_th_render_depth_hidden_title	深度忽略隐藏
+extcompat_th_render_depth_hidden_subtitle	渲染深度计算时忽略隐藏消息
+extcompat_th_render_stats	代码块折叠: %1$s  渲染深度: %2$d
+extcompat_section_macro	宏
+extcompat_th_macro_enable_title	启用宏增强
+extcompat_th_macro_enable_subtitle	启用扩展宏功能
+extcompat_debug_title	%1$s · 调试
+extcompat_status_loaded	运行状态：已加载
+extcompat_status_not_loaded	运行状态：未加载
+extcompat_last_event	最近事件：%1$s
+extcompat_last_error	最近错误：%1$s
+extcompat_final_prompt	最终提示词
+extcompat_clear	清除
+extcompat_prompt_empty_hint	尚未收到生成链路上报。完成一次实际生成后，这里才会显示发送给模型的消息与诊断；当前界面不会自行重建或猜测提示词。
+extcompat_prompt_stats	消息 %1$d · 估算 Token %2$s · 激活世界书 %3$d
+extcompat_unknown	未知
+extcompat_diag_warnings	诊断警告
+extcompat_activated_entries	激活条目：%1$s
+extcompat_runtime_logs	运行日志
+extcompat_logs_empty_hint	暂无日志。这里只显示 extension_log 与真实加载/卸载事件。
+ext_title	扩展
+ext_refresh_cd	刷新
+ext_builtin_header_title	内置兼容模块
+ext_builtin_header_subtitle	这些模块随 APK 提供，不需要用户进入目录安装。
+ext_asset_header_title	角色卡附带资源
+ext_asset_header_subtitle	导入角色卡后，世界书、正则和酒馆助手数据会自动登记在这里。
+ext_permission_dialog_title	扩展权限请求
+ext_permission_dialog_body	扩展 %1$s 请求 %2$s 权限。仅在你信任该脚本时允许。
+ext_permission_allow	允许
+ext_permission_deny	拒绝
+ext_settings_cd	设置
+ext_debug_button	调试
+ext_last_error	最近错误：%1$s
+ext_auto_enable_chip	自动启用
+ext_asset_id	ID: %1$s
+ext_worldbook_none	世界书 0
+ext_worldbook_imported	世界书 已导入
+ext_regex_count	正则 %1$d
+ext_th_scripts_count	酒馆助手脚本 %1$d
+ext_data_count	变量数据 %1$d
+ext_regex_scripts_header	正则脚本（%1$d）
+ext_collapse	收起
+ext_expand	展开
+ext_asset_empty_title	还没有角色卡附带资源
+ext_asset_empty_hint	导入包含世界书、正则或酒馆助手脚本的角色卡后，会自动显示在这里。
+extvm_load_failed	加载扩展资源失败：%1$s
+extvm_manifest_not_found	未找到扩展清单：%1$s
+extvm_client_version_too_low	扩展 %1$s 要求客户端版本 ≥ %2$s，当前 tellev 版本更低
+extvm_toggle_failed	扩展切换失败：%1$s
+extvm_regex_script_not_found	未找到正则脚本：%1$s
+extvm_regex_toggle_failed	更新正则开关失败：%1$s
+extvm_permission_request_failed	权限请求处理失败：%1$s
+extvm_builtin_th_name	酒馆助手兼容
+extvm_builtin_th_desc	SillyTavern 事件总线、getContext、TavernHelper、fetch /api/* 桥与角色卡脚本运行
+extvm_builtin_regex_name	角色卡正则
+extvm_builtin_regex_desc	自动读取并应用角色卡内嵌 regex_scripts
+extvm_builtin_worldbook_name	角色卡世界书
+extvm_builtin_worldbook_desc	自动导入 character_book 并随角色注入提示词
+extvm_builtin_ejs_name	EJS 提示词模板
+extvm_builtin_ejs_desc	在提示词和角色卡中使用 EJS 模板语法（<%= ... %>），支持动态生成与注入
+extvm_perm_webview	WebView
+extvm_perm_character_assets	角色资源
+extvm_perm_virtual_api	虚拟 API
+extvm_perm_chat_display	聊天显示
+extvm_perm_prompt	提示词
+extvm_perm_worldbook	世界书
+extvm_perm_variables	变量
+extmem_title	长期记忆
+extmem_subtitle	内置可开关模块；关闭时暂停所有对话的提取与注入，已有记忆保留。
+extmem_open_settings	模型与检索设置
+extmem_model_section_title	记忆整理模型
+extmem_model_section_subtitle	与聊天模型、生成预设分开配置。未配置时不自动使用聊天模型。
+extmem_existing_connection	已有连接
+extmem_model_name_label	记忆模型名（留空沿用连接设置）
+extmem_custom_base_url_label	独立 API 地址
+extmem_custom_api_key_label	独立 API Key
+extmem_custom_model_label	独立模型名
+extmem_vector_toggle_title	向量检索（可选）
+extmem_vector_hint	向量接口使用 OpenAI 兼容的 /embeddings。失败时继续用本地检索；启用后查询可能产生额外费用。
+extmem_existing_vector_connection	已有向量连接
+extmem_vector_base_url_label	向量 API 地址
+extmem_vector_api_key_label	向量 API Key
+extmem_vector_model_label	向量模型名（已有连接可覆盖）
+extmem_vector_path_label	向量接口路径
+extmem_save_button	保存设置
+extmem_selector_label	%1$s：%2$s
+extmem_custom_entry	单独填写
+extdbg_loaded	扩展已加载
+extdbg_unloaded	扩展已卸载
+extdbg_load_failed	扩展加载失败

@@ -1,5 +1,7 @@
 package app.tellev.feature.settings.controller
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.Persona
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.StDataStore
@@ -31,12 +33,12 @@ internal class PersonaSecretSettingsController(
                     it.copy(
                         personas = personas,
                         isLoading = false,
-                        info = "人设“${persona.name}”已创建。",
+                        info = UiStrings.get(S.persctl_created, persona.name),
                     )
                 }
             } catch (e: Exception) {
                 stateFlow.update {
-                    it.copy(isLoading = false, error = "创建人设失败：${e.message}")
+                    it.copy(isLoading = false, error = UiStrings.get(S.persctl_create_failed, e.message))
                 }
             }
         }
@@ -47,7 +49,7 @@ internal class PersonaSecretSettingsController(
             stateFlow.update { it.copy(isLoading = true, error = null) }
             try {
                 val existing = dataStore.listPersonas().firstOrNull { it.id == id }
-                    ?: error("人设不存在：$id")
+                    ?: error(UiStrings.get(S.persctl_not_found, id))
                 dataStore.savePersona(
                     existing.copy(
                         name = name.trim().ifBlank { existing.name },
@@ -56,11 +58,11 @@ internal class PersonaSecretSettingsController(
                 )
                 val personas = dataStore.listPersonas()
                 stateFlow.update {
-                    it.copy(personas = personas, isLoading = false, info = "人设已更新。")
+                    it.copy(personas = personas, isLoading = false, info = UiStrings.get(S.persctl_updated))
                 }
             } catch (e: Exception) {
                 stateFlow.update {
-                    it.copy(isLoading = false, error = "更新人设失败：${e.message}")
+                    it.copy(isLoading = false, error = UiStrings.get(S.persctl_update_failed, e.message))
                 }
             }
         }
@@ -76,12 +78,12 @@ internal class PersonaSecretSettingsController(
                     it.copy(
                         personas = personas,
                         isLoading = false,
-                        info = "人设已删除。",
+                        info = UiStrings.get(S.persctl_deleted),
                     )
                 }
             } catch (e: Exception) {
                 stateFlow.update {
-                    it.copy(isLoading = false, error = "删除人设失败：${e.message}")
+                    it.copy(isLoading = false, error = UiStrings.get(S.persctl_delete_failed, e.message))
                 }
             }
         }
@@ -97,14 +99,14 @@ internal class PersonaSecretSettingsController(
                     it.copy(
                         secretIds = secretIds,
                         isLoading = false,
-                        info = "密钥“$key”已保存。",
+                        info = UiStrings.get(S.persctl_secret_saved, key),
                     )
                 }
             } catch (e: Exception) {
                 stateFlow.update {
                     it.copy(
                         isLoading = false,
-                        error = "保存密钥失败：${e.message}",
+                        error = UiStrings.get(S.persctl_secret_save_failed, e.message),
                     )
                 }
             }
@@ -121,14 +123,14 @@ internal class PersonaSecretSettingsController(
                     it.copy(
                         secretIds = secretIds,
                         isLoading = false,
-                        info = "密钥“$key”已删除。",
+                        info = UiStrings.get(S.persctl_secret_deleted, key),
                     )
                 }
             } catch (e: Exception) {
                 stateFlow.update {
                     it.copy(
                         isLoading = false,
-                        error = "删除密钥失败：${e.message}",
+                        error = UiStrings.get(S.persctl_secret_delete_failed, e.message),
                     )
                 }
             }

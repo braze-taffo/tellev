@@ -1,0 +1,122 @@
+wblist_title	世界书
+wblist_ai_create	AI 创建
+wblist_settings_cd	世界书设置
+wblist_import_cd	导入世界书
+wblist_new	新建
+wblist_empty	暂无世界书
+wblist_empty_hint	新建世界书来管理背景设定条目
+wblist_create_title	新建世界书
+wblist_name_label	世界书名称
+wblist_create	创建
+wblist_cancel	取消
+wblist_settings_title	世界书与提示词设置
+wblist_recursive_scan	递归扫描
+wblist_recursive_desc	激活的条目内容会再次参与关键词匹配（ST 的 world_info_recursive），延迟递归（delayUntilRecursion）的条目需要开启此项才会触发。
+wblist_max_recursion_steps	最大递归步数（0 = 不限）
+wblist_scan_depth	扫描深度（最近 N 条消息参与匹配）
+wblist_char_prompt_section	角色卡提示词
+wblist_prefer_char_prompt	使用角色卡系统提示词
+wblist_prefer_char_prompt_desc	开启后使用角色卡的 data.system_prompt 替代默认系统提示词（ST 的 prefer_character_prompt）。
+wblist_prefer_char_jailbreak	使用角色卡越狱提示
+wblist_prefer_char_jailbreak_desc	开启后注入角色卡的 data.post_history_instructions 到聊天末尾（ST 的 prefer_character_jailbreak）。
+wblist_instruct_section	Instruct 模式
+wblist_instruct_enabled	启用 Instruct 格式化
+wblist_instruct_enabled_desc	为补全式 API（textgen/kobold 等）格式化消息序列。聊天补全 API 无需开启。
+wblist_instruct_preset	Instruct 预设
+wblist_instruct_preset_default	当前：内置 ChatML
+wblist_instruct_preset_current	当前：%1$s
+wblist_instruct_preset_builtin	内置 ChatML
+wblist_save	保存
+wblist_read_file_failed	无法读取所选文件
+wblist_import_failed	导入世界书失败：%1$s
+wblist_entry_count	%1$d 条条目
+wblist_ai_edit_cd	AI 编辑世界书
+wblist_delete_cd	删除世界书
+wblist_delete_title	删除世界书
+wblist_delete_confirm	确定要删除世界书「%1$s」吗？其中的所有条目都将被删除。
+wblist_delete	删除
+wbedit_new_entry	新建条目
+wbedit_edit_entry	编辑条目
+wbedit_back_cd	返回
+wbedit_save_entry_cd	保存条目
+wbedit_back_to_book	返回世界书
+wbedit_field_keys	关键词（逗号分隔）
+wbedit_field_secondary_keys	次级关键词（逗号分隔）
+wbedit_field_content	内容
+wbedit_enabled	启用
+wbedit_selective	选择性触发
+wbedit_constant	常驻注入
+wbedit_priority	优先级
+wbedit_insertion_order	插入顺序
+wbedit_depth	深度
+wbedit_position	注入位置
+wbedit_position_before_char	角色前
+wbedit_position_after_char	角色后
+wbedit_position_before_an	作者注前
+wbedit_position_after_an	作者注后
+wbedit_position_at_depth	@深度
+wbedit_position_before_example	示例对话前
+wbedit_position_after_example	示例对话后
+wbedit_position_slot	插槽
+wbedit_selective_logic	选择性逻辑
+wbedit_logic_and_any	AND 任一匹配
+wbedit_logic_not_any	NOT 任一不匹配
+wbedit_logic_not_all	NOT 全不匹配
+wbedit_logic_and_all	AND 全部匹配
+wbedit_role	角色
+wbedit_role_system	System
+wbedit_role_user	User
+wbedit_role_assistant	Assistant
+wbedit_use_probability	概率触发
+wbedit_probability	概率 (0-100)
+wbedit_match_whole_words	全词匹配
+wbedit_use_regex	正则匹配
+wbedit_case_sensitive	区分大小写
+wbedit_exclude_recursion	排除递归（不喂入递归文本）
+wbedit_prevent_recursion	阻止递归（不触发后续激活）
+wbedit_delay_recursion	延迟到递归轮
+wbedit_delay_recursion_level	递归层级（第几轮递归开始可激活，需开启递归扫描）
+wbedit_comment	备注
+wbedit_cancel	取消
+wbedit_save_entry	保存条目
+wbdetail_title	世界书
+wbdetail_back_cd	返回
+wbdetail_search_close_cd	关闭搜索
+wbdetail_search_cd	搜索条目
+wbdetail_save_book_cd	保存世界书
+wbdetail_new_entry	新建条目
+wbdetail_search_placeholder	按关键词或内容搜索条目...
+wbdetail_clear_cd	清除
+wbdetail_back_to_list	返回世界书列表
+wbdetail_no_match	没有匹配的条目
+wbdetail_empty	此世界书暂无条目
+wbdetail_empty_hint	点击“新建条目”添加第一条设定
+wbdetail_unnamed_entry	未命名条目
+wbdetail_more_keys	+%1$d
+wbdetail_priority_badge	P:%1$d
+wbdetail_depth_badge	D:%1$d
+wbdetail_badge_constant	常驻
+wbdetail_badge_selective	选择
+wbdetail_delete_entry_cd	删除条目
+wbdetail_delete_entry_title	删除条目
+wbdetail_delete_entry_confirm	确定要删除这个条目吗？
+wbdetail_delete	删除
+wbdetail_cancel	取消
+wbvm_load_failed	加载世界书失败：%1$s
+wbvm_save_settings_failed	保存世界书设置失败：%1$s
+wbvm_save_prompt_settings_failed	保存提示词设置失败：%1$s
+wbvm_toggle_failed	更新世界书开关失败：%1$s
+wbvm_book_not_found	找不到世界书“%1$s”或文件无法读取。
+wbvm_book_saved	世界书已保存。
+wbvm_save_failed	保存世界书失败：%1$s
+wbvm_book_created	世界书“%1$s”已创建。
+wbvm_create_failed	创建世界书失败：%1$s
+wbvm_book_imported	世界书“%1$s”已导入。
+wbvm_import_failed	导入世界书失败：%1$s
+wbvm_book_deleted	世界书已删除。
+wbvm_delete_failed	删除世界书失败：%1$s
+wbvm_entry_not_found	Entry not found: %1$s
+wbvm_entry_missing	找不到世界书条目“%1$s”，它可能已被删除。
+wbvm_load_entry_failed	加载世界书条目失败：%1$s
+wbvm_save_context_changed	保存失败：世界书上下文已变化，请返回后重新打开条目。
+wbvm_delete_context_changed	删除失败：世界书上下文已变化，请重新打开条目。

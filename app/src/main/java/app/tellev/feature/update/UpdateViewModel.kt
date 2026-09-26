@@ -6,6 +6,8 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.storage.AppPreferences
 import app.tellev.core.update.UpdateChecker
 import app.tellev.core.update.UpdateInfo
@@ -87,7 +89,7 @@ class UpdateViewModel(
                     _uiState.update { it.copy(checking = false, pendingUpdate = null, upToDate = true) }
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(checking = false, error = e.message ?: "检查更新失败") }
+                _uiState.update { it.copy(checking = false, error = e.message ?: UiStrings.get(S.updvm_check_failed)) }
             }
         }
     }
@@ -120,7 +122,7 @@ class UpdateViewModel(
                 appContext.startActivity(intent)
                 _uiState.update { it.copy(downloading = false, installStarted = true) }
             } catch (e: Exception) {
-                _uiState.update { it.copy(downloading = false, error = "下载失败：${e.message}") }
+                _uiState.update { it.copy(downloading = false, error = UiStrings.get(S.updvm_download_failed, e.message)) }
             }
         }
     }
