@@ -373,6 +373,30 @@ class CreationFeatureTest {
     }
 
     @Test
+    fun relaySwallowingEveryClosingTagStillCompletesAMultiCallRound() = runBlocking {
+        // 真机再现（2026-09-26）：一轮里两个调用都没有闭合标签。旧实现只认单个尾块，
+        // 判不出任何调用，连判三轮后整回合报「最后一个工具块没有闭合」。
+        val requests = mutableListOf<GenerateRequest>()
+        val provider = fakeProvider(
+            listOf(
+                "<tool_call>{\"name\":\"read_card\",\"arguments\":{}}\n" +
+                    "<tool_call>{\"name\":\"set_card_fields\",\"arguments\":{\"name\":\"林月\"}}",
+                "已读取草稿并命名。",
+            ),
+            requests = requests,
+        )
+        val reply = engine(provider)
+            .converse(CreationSession(kind = CreationKind.Character), "写一个人物")
+        assertEquals("林月", reply.session.card.name)
+        assertEquals("已读取草稿并命名。", reply.message)
+        assertEquals(2, requests.size)
+        val feedback = requests[1].prompt.messages.filter { it.content.contains("<tool_result") }
+        val joined = feedback.joinToString("\n") { it.content }
+        assertTrue(joined.contains("read_card"))
+        assertTrue(joined.contains("闭合标签没有传回"))
+    }
+
+    @Test
     fun completedToolWriteIsCheckpointedBeforeLaterStreamFailure() = runBlocking {
         val checkpoints = mutableListOf<CreationSession>()
         val provider = object : ProviderAdapter {

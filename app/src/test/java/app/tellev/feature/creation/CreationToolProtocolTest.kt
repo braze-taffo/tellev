@@ -130,12 +130,89 @@ class CreationToolProtocolTest {
         assertTrue(fenced.recoveredUnclosedBlock)
     }
 
+    // 完整 JSON 之后跟着正文也照常执行：花括号已配平，不存在「写半截」的风险，
+    // 而「后面还有正文就不执行」正是多调用轮次整轮失败的成因。
     @Test
-    fun trailingBlockWithLeftoverTextStaysUnclosedInsteadOfRunning() {
+    fun completeJsonFollowedByProseStillRuns() {
         val result = parseToolCallBlocks("<tool_call>{\"name\":\"read_card\",\"arguments\":{}} 随后继续写正文")
-        assertEquals(0, result.blocks.size)
+        assertEquals("read_card", (result.blocks.single() as ToolCallBlock.Valid).call.name)
+        assertFalse(result.hasUnclosedBlock)
+        assertTrue(result.recoveredUnclosedBlock)
+    }
+
+    // 真机再现（2026-09-26）：一轮发出多个调用时上游把每个 </tool_call> 都吞掉。
+    // 只认「单个尾块」的旧实现在这里判不出任何调用，连判三轮后整回合硬失败。
+    @Test
+    fun multipleBlocksWithoutClosingTagsAllRun() {
+        val text = """
+            1. 先读取草稿状态
+            2. 然后写入字段
+            <tool_call>{"name":"read_card","arguments":{}}
+            <tool_call>{"name":"list_lore","arguments":{"offset":0,"limit":20,"keyword":""}}
+        """.trimIndent()
+        val result = parseToolCallBlocks(text)
+        assertEquals(
+            listOf("read_card", "list_lore"),
+            result.blocks.map { (it as ToolCallBlock.Valid).call.name },
+        )
+        val second = result.blocks[1] as ToolCallBlock.Valid
+        assertEquals(20, second.call.arguments["limit"]!!.jsonPrimitive.int)
+        assertFalse(result.hasUnclosedBlock)
+        assertTrue(result.recoveredUnclosedBlock)
+        assertEquals("1. 先读取草稿状态\n2. 然后写入字段", result.prose)
+    }
+
+    @Test
+    fun unclosedBlocksTolerateProseBetweenThem() {
+        val text = "<tool_call>{\"name\":\"read_card\"}\n先读一下。\n<tool_call>{\"name\":\"list_lore\"}"
+        val result = parseToolCallBlocks(text)
+        assertEquals(listOf("read_card", "list_lore"), result.blocks.map { (it as ToolCallBlock.Valid).call.name })
+        assertFalse(result.hasUnclosedBlock)
+        assertTrue(result.recoveredUnclosedBlock)
+    }
+
+    /** 括号出现在 JSON 字符串里时不能提前收块，否则写进去的内容会被截断。 */
+    @Test
+    fun bracesInsideJsonStringsDoNotEndTheBlockEarly() {
+        val result = parseToolCallBlocks(
+            "<tool_call>{\"name\":\"set_card_fields\",\"arguments\":{\"description\":\"含 {花括号} 与 } 收尾\"}}",
+        )
+        val call = (result.blocks.single() as ToolCallBlock.Valid).call
+        assertEquals("含 {花括号} 与 } 收尾", call.arguments["description"]!!.jsonPrimitive.content)
+        assertFalse(result.hasUnclosedBlock)
+    }
+
+    /** 真被截断的块不许执行，避免把写了一半的参数落进草稿。 */
+    @Test
+    fun truncatedSecondBlockKeepsFirstUsableAndFlagsUnclosed() {
+        val text = "<tool_call>{\"name\":\"read_card\",\"arguments\":{}}\n" +
+            "<tool_call>{\"name\":\"upsert_lore\",\"arg"
+        val result = parseToolCallBlocks(text)
+        assertEquals(listOf("read_card"), result.blocks.map { (it as ToolCallBlock.Valid).call.name })
         assertTrue(result.hasUnclosedBlock)
-        assertFalse(result.recoveredUnclosedBlock)
+        assertTrue(result.recoveredUnclosedBlock)
+    }
+
+    /** 同一个上游也会吞掉 DSML 包装的闭合标签：包装没闭合、里面 invoke 完整时照跑。 */
+    @Test
+    fun unclosedDsmlWrapperWithCompleteInvokesStillRuns() {
+        val raw = """
+            准备更新。
+            <｜DSML｜tool_calls>
+            <｜DSML｜invoke name="read_card"></｜DSML｜invoke>
+            <｜DSML｜invoke name="list_lore">
+            <｜DSML｜parameter name="limit" string="false">5</｜DSML｜parameter>
+            </｜DSML｜invoke>
+        """.trimIndent()
+        val parsed = parseToolCallBlocks(raw)
+        assertEquals(
+            listOf("read_card", "list_lore"),
+            parsed.blocks.map { (it as ToolCallBlock.Valid).call.name },
+        )
+        assertEquals(5, (parsed.blocks[1] as ToolCallBlock.Valid).call.arguments["limit"]!!.jsonPrimitive.int)
+        assertFalse(parsed.hasUnclosedBlock)
+        assertTrue(parsed.recoveredUnclosedBlock)
+        assertEquals("准备更新。", parsed.prose)
     }
 
     @Test

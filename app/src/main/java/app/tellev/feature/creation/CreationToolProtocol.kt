@@ -38,6 +38,8 @@ private val completeBlockRegex = Regex("""$TOOL_CALL_OPEN([\s\S]*?)$TOOL_CALL_CL
 // the doubled-pipe, spaced form observed on device.
 private val dsmlTagRegex = Regex("""<(/?)[｜|]{1,2}DSML[｜|]{1,2}\s*(tool_calls|calls|invoke|parameter)([^>]*)>""")
 private val dsmlWrapperRegex = Regex("""<DSML:(?:tool_calls|calls)>([\s\S]*?)</DSML:(?:tool_calls|calls)>""")
+private val dsmlWrapperOpenRegex = Regex("""<DSML:(?:tool_calls|calls)>""")
+private val dsmlWrapperCloseRegex = Regex("""</DSML:(?:tool_calls|calls)>""")
 private val dsmlInvokeRegex = Regex("""<DSML:invoke([^>]*)>([\s\S]*?)</DSML:invoke>""")
 private val dsmlParameterRegex = Regex("""<DSML:parameter([^>]*)>([\s\S]*?)</DSML:parameter>""")
 private val dsmlAttributeRegex = Regex("""([A-Za-z_]+)\s*=\s*"([^"]*)"""")
@@ -137,37 +139,153 @@ private fun parseBlockBody(raw: String, json: Json, reported: String = raw): Too
     return ToolCallBlock.Valid(ToolCallRequest(name, arguments ?: JsonObject(emptyMap())))
 }
 
+private const val FENCE = "```"
+
+/** First index of block content after an opening tag, skipping whitespace and a ```json fence. */
+private fun skipBlockPreamble(body: String, from: Int): Int {
+    var i = from
+    while (i < body.length && body[i].isWhitespace()) i++
+    if (body.startsWith("${FENCE}json", i, ignoreCase = true)) i += FENCE.length + "json".length
+    else if (body.startsWith(FENCE, i)) i += FENCE.length
+    while (i < body.length && body[i].isWhitespace()) i++
+    return i
+}
+
+/** First index after a block body, skipping whitespace and a closing ``` fence. */
+private fun skipBlockEpilogue(body: String, from: Int): Int {
+    var i = from
+    while (i < body.length && body[i].isWhitespace()) i++
+    if (body.startsWith(FENCE, i)) {
+        i += FENCE.length
+        while (i < body.length && body[i].isWhitespace()) i++
+    }
+    return i
+}
+
 /**
- * Some relays end generation at the closing tag and drop it from the content
- * (the tag doubles as their stop token), so a perfectly usable call can arrive
- * as `<tool_call>{...}` with no close. Recovering it beats burning a bad round.
+ * End index (exclusive) of the JSON object starting at [from], or -1 when the text does not
+ * hold a complete object. Braces inside strings count as text, so a body such as
+ * `{"content":"}"}` still ends where the model meant it to.
  */
-private fun recoverUnclosedTrailingBlock(tail: String, json: Json): ToolCallBlock.Valid? {
-    if (!tail.startsWith(TOOL_CALL_OPEN)) return null
-    val body = tail.removePrefix(TOOL_CALL_OPEN).substringBefore("</tool_call")
-    return parseBlockBody(body, json, tail) as? ToolCallBlock.Valid
+private fun scanJsonObjectEnd(body: String, from: Int): Int {
+    if (from >= body.length || body[from] != '{') return -1
+    var depth = 0
+    var inString = false
+    var escaped = false
+    var i = from
+    while (i < body.length) {
+        val ch = body[i]
+        when {
+            inString -> when {
+                escaped -> escaped = false
+                ch == '\\' -> escaped = true
+                ch == '"' -> inString = false
+            }
+            ch == '"' -> inString = true
+            ch == '{' || ch == '[' -> depth++
+            ch == '}' || ch == ']' -> {
+                depth--
+                if (depth == 0) return i + 1
+                if (depth < 0) return -1
+            }
+        }
+        i++
+    }
+    return -1
+}
+
+private class ToolCallScan {
+    val blocks = mutableListOf<Pair<Int, ToolCallBlock>>()
+    var hasUnclosedBlock = false
+    var recoveredMissingCloseTag = false
+}
+
+/**
+ * Relays that use `</tool_call>` as a stop token drop it from the content, so a round
+ * emitting several calls arrives as `<tool_call>{...}` repeated with no closing tag at all.
+ * Braces decide where a block ends; the closing tag is consumed when present, and its
+ * absence only marks the block as recovered instead of sinking the whole round. A body
+ * that never balances (truncated output) is reported unclosed and never executed, so a
+ * half-written call can't reach the draft.
+ */
+private fun scanToolCallBlocks(body: String, json: Json): ToolCallScan {
+    val scan = ToolCallScan()
+    var cursor = 0
+    while (true) {
+        val start = body.indexOf(TOOL_CALL_OPEN, cursor)
+        if (start < 0) return scan
+        val bodyStart = skipBlockPreamble(body, start + TOOL_CALL_OPEN.length)
+        val jsonEnd = scanJsonObjectEnd(body, bodyStart)
+        val closeStart = body.indexOf(TOOL_CALL_CLOSE, bodyStart)
+        if (jsonEnd < 0) {
+            if (closeStart < 0) {
+                scan.hasUnclosedBlock = true
+                return scan
+            }
+            // Both tags are present but the body is not a usable JSON object.
+            val raw = body.substring(start, closeStart + TOOL_CALL_CLOSE.length)
+            scan.blocks += start to parseBlockBody(
+                body.substring(start + TOOL_CALL_OPEN.length, closeStart), json, raw,
+            )
+            cursor = closeStart + TOOL_CALL_CLOSE.length
+            continue
+        }
+        val afterBody = skipBlockEpilogue(body, jsonEnd)
+        val closed = body.startsWith(TOOL_CALL_CLOSE, afterBody)
+        val end = if (closed) afterBody + TOOL_CALL_CLOSE.length else jsonEnd
+        scan.blocks += start to parseBlockBody(body.substring(bodyStart, jsonEnd), json, body.substring(start, end))
+        if (!closed) scan.recoveredMissingCloseTag = true
+        cursor = end
+    }
+}
+
+/**
+ * Tail of a `<DSML:tool_calls>` that never got its closing tag, or null when every wrapper
+ * closed. The relays that drop `</tool_call>` can drop this tag too.
+ */
+private fun unclosedDsmlWrapper(body: String): Pair<Int, String>? {
+    var cursor = 0
+    while (true) {
+        val open = dsmlWrapperOpenRegex.find(body, cursor) ?: return null
+        val afterOpen = open.range.last + 1
+        val close = dsmlWrapperCloseRegex.find(body, afterOpen)
+        val nextOpen = dsmlWrapperOpenRegex.find(body, afterOpen)
+        if (close == null || (nextOpen != null && nextOpen.range.first < close.range.first)) {
+            return open.range.first to body.substring(open.range.first)
+        }
+        cursor = close.range.last + 1
+    }
 }
 
 internal fun parseToolCallBlocks(body: String): ToolBlocksParseResult {
     val normalized = normalizeDsmlTags(body)
     val indexedBlocks = mutableListOf<Pair<Int, ToolCallBlock>>()
     val json = Json { ignoreUnknownKeys = true }
-    for (match in completeBlockRegex.findAll(normalized)) {
-        indexedBlocks += match.range.first to parseBlockBody(match.groupValues[1], json, match.value)
-    }
+    val scan = scanToolCallBlocks(normalized, json)
+    indexedBlocks += scan.blocks
     for (match in dsmlWrapperRegex.findAll(normalized)) {
         indexedBlocks += parseDsmlWrapper(match, json).map { match.range.first to it }
     }
-    val remainder = removeCompleteToolBlocks(normalized)
-    val tailStart = firstToolStart(remainder)
-    val unclosedTail = if (tailStart < remainder.length) remainder.substring(tailStart) else null
-    val recovered = unclosedTail?.let { recoverUnclosedTrailingBlock(it, json) }
-    if (recovered != null) indexedBlocks += remainder.length to recovered
+    var hasUnclosedBlock = scan.hasUnclosedBlock
+    var recoveredUnclosedBlock = scan.recoveredMissingCloseTag
+    val dsmlTail = unclosedDsmlWrapper(normalized)
+    if (dsmlTail != null) {
+        val (start, tail) = dsmlTail
+        val invokes = dsmlInvokeRegex.findAll(tail).map { parseDsmlInvoke(it, json) }.toList()
+        val valid = invokes.filterIsInstance<ToolCallBlock.Valid>()
+        if (valid.isEmpty()) {
+            hasUnclosedBlock = true
+        } else {
+            // Only the wrapper lost its closing tag; the invokes inside are whole.
+            valid.forEach { indexedBlocks += start to it }
+            recoveredUnclosedBlock = true
+        }
+    }
     return ToolBlocksParseResult(
         blocks = indexedBlocks.sortedBy { it.first }.map { it.second },
         prose = proseWithoutToolBlocks(body),
-        hasUnclosedBlock = unclosedTail != null && recovered == null,
-        recoveredUnclosedBlock = recovered != null,
+        hasUnclosedBlock = hasUnclosedBlock,
+        recoveredUnclosedBlock = recoveredUnclosedBlock,
     )
 }
 
