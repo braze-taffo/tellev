@@ -41,7 +41,11 @@ test('actual MVU bundle initializes and applies DaoYuan Zod updates', {timeout:2
       emitFromEventSource:()=>{}, emit:()=>{}, stReplaceVariables:s=>s,
       getSettings:()=> '{}', saveSettings:()=>{}, registerCommand:()=>{}, registerRoute:()=>{},
       extensionReady:()=>{}, extensionFailed:e=>errors.push(e),
-      apiCall:(id)=>queueMicrotask(()=>w.Tellev.onApiResult?.(id,200,'{}')),
+      apiCall:(id, method, path)=>queueMicrotask(()=>w.Tellev.onApiResponse(id,
+        method === 'GET' && path === '/api/worlds' ? 200 : 404,
+        JSON.stringify(method === 'GET' && path === '/api/worlds'
+          ? { worlds: [{ id: 'dao', name: 'dao', entries: card.character_book.entries, raw: {} }] }
+          : { error: `Unexpected fixture request: ${method} ${path}` }))),
     };
     w.eval(await asset('globals.js'));
     const html = await read('../../../app/build/compat-host.html');
@@ -96,7 +100,7 @@ test('real EJS supports async JavaScript, worldbook includes and variable writes
     const result=await w.__tellevTemplate({template:'<% const xs=[1,2,3].map(x=>x*2); setvar("n", xs.reduce((a,b)=>a+b,0)); %><%= await include("nested") %>',
       local:{},global:{},worldCatalog:[{comment:'nested',content:'<%= getvar("n") %><b>原样输出</b>'}]});
     assert.equal(result.content,'12<b>原样输出</b>');
-    assert.equal(result.local.n,12);
+    assert.equal(result.message.n,12);
     const wi=await w.__tellevTemplate({template:'<%= await getwi(null,"section") %>',
       currentWorldBookId:'book',worldCatalog:[{bookId:'book',id:'1',comment:'section',content:'<%= 6*7 %>'}]});
     assert.equal(wi.content,'42');

@@ -17,12 +17,16 @@ class PromptTemplateBridgeHookTest {
 
     private class RecordingBridge : PromptTemplateJsBridge {
         val evaluated = mutableListOf<String>()
+        val requests = mutableListOf<JsonObject>()
         var deactivates = 0
         val outletCalls = mutableListOf<String>()
+        var lastRequest: JsonObject? = null
 
         override fun evaluate(request: JsonObject): JsonObject {
             val template = request["template"].toString()
             evaluated += template
+            lastRequest = request
+            requests += request
             // Minimal echo of the JS contract: report empty scopes and content.
             return buildJsonObject {
                 put("content", kotlinx.serialization.json.JsonPrimitive(""))
@@ -106,5 +110,97 @@ class PromptTemplateBridgeHookTest {
 
         assertEquals(0, bridge.deactivates)
         assertTrue(bridge.evaluated.isEmpty())
+    }
+
+    @Test
+    fun `render request carries the active character for the getchr family`() {
+        val bridge = RecordingBridge()
+        val processor = DefaultPromptTemplateProcessor(javascriptEvaluator = bridge)
+
+        processor.process(
+            PromptTemplateRequest(
+                messages = listOf(PromptMessage(role = MessageRole.System, content = "A<%= 1 %>B")),
+                context = MacroContext(
+                    characterName = "玄泽",
+                    characterDescription = "描述",
+                    characterPersonality = "性格",
+                    characterScenario = "场景",
+                    firstMessage = "开场",
+                    exampleMessages = "示例",
+                    alternateGreetings = listOf("g1"),
+                ),
+                metadata = buildJsonObject { },
+            ),
+        )
+
+        val character = bridge.lastRequest?.get("character") as? JsonObject
+        assertEquals("玄泽", character?.get("name")?.toString()?.trim('"'))
+        assertEquals("描述", character?.get("description")?.toString()?.trim('"'))
+        assertEquals("性格", character?.get("personality")?.toString()?.trim('"'))
+        assertEquals("场景", character?.get("scenario")?.toString()?.trim('"'))
+        assertEquals("开场", character?.get("first_mes")?.toString()?.trim('"'))
+        assertEquals("示例", character?.get("mes_example")?.toString()?.trim('"'))
+        val data = character?.get("data") as? JsonObject
+        assertEquals("[\"g1\"]", data?.get("alternate_greetings").toString())
+    }
+
+    @Test
+    fun `render request carries per-floor context for chat floors only`() {
+        val bridge = RecordingBridge()
+        val processor = DefaultPromptTemplateProcessor(javascriptEvaluator = bridge)
+
+        processor.process(
+            PromptTemplateRequest(
+                messages = listOf(
+                    PromptMessage(role = MessageRole.System, content = "sys<%= 1 %>", channel = CHANNEL_MAIN),
+                    PromptMessage(role = MessageRole.User, content = "u<%= 1 %>", name = "旅人", channel = CHANNEL_CHAT),
+                    PromptMessage(role = MessageRole.Assistant, content = "a<%= 1 %>", name = "玄泽", channel = CHANNEL_CHAT),
+                ),
+                context = MacroContext(),
+                metadata = buildJsonObject { },
+            ),
+        )
+
+        // System layer renders without floor fields (ST generate-before env).
+        assertEquals(null, bridge.requests[0]["messageContext"])
+        fun contextOf(i: Int) = bridge.requests[i]["messageContext"] as? JsonObject
+        assertEquals("0", contextOf(1)?.get("message_id").toString())
+        assertEquals("true", contextOf(1)?.get("is_user").toString())
+        assertEquals("false", contextOf(1)?.get("is_system").toString())
+        assertEquals("旅人", contextOf(1)?.get("name")?.toString()?.trim('"'))
+        assertEquals("false", contextOf(1)?.get("is_last").toString())
+        assertEquals("1", contextOf(2)?.get("message_id").toString())
+        assertEquals("false", contextOf(2)?.get("is_user").toString())
+        assertEquals("true", contextOf(2)?.get("is_last").toString())
+    }
+
+    @Test
+    fun `render request worldCatalog carries raw entry fields`() {
+        val bridge = RecordingBridge()
+        val processor = DefaultPromptTemplateProcessor(javascriptEvaluator = bridge)
+
+        processor.process(
+            PromptTemplateRequest(
+                messages = listOf(PromptMessage(role = MessageRole.System, content = "A<%= 1 %>B")),
+                context = MacroContext(),
+                metadata = buildJsonObject { },
+                worldCatalog = listOf(
+                    PromptTemplateWorldEntry(
+                        id = "e1",
+                        content = "正文",
+                        raw = buildJsonObject { put("key", kotlinx.serialization.json.JsonArray(listOf(kotlinx.serialization.json.JsonPrimitive("玄泽")))) },
+                        bookId = "char-book",
+                        bookName = "玄泽书",
+                        comment = "自我介绍",
+                    ),
+                ),
+            ),
+        )
+
+        val catalog = bridge.lastRequest?.get("worldCatalog") as? kotlinx.serialization.json.JsonArray
+        val entry = catalog?.single() as? JsonObject
+        assertEquals("玄泽书", entry?.get("bookName")?.toString()?.trim('"'))
+        val raw = entry?.get("raw") as? JsonObject
+        assertEquals("[\"玄泽\"]", raw?.get("key").toString())
     }
 }

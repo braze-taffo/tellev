@@ -154,6 +154,12 @@ class VirtualApiRouter(
             method == "POST" && segments.size == 3 && segments[0] == "chats" && segments[2] == "messages" ->
                 chatHandler.handleAppendMessage(segments[1], request)
 
+            method == "POST" && segments.size == 4 && segments[0] == "chats" && segments[2] == "messages" && segments[3] == "delete" ->
+                chatHandler.handleDeleteMessages(segments[1], request)
+
+            method == "POST" && segments.size == 4 && segments[0] == "chats" && segments[2] == "messages" && segments[3] == "insert" ->
+                chatHandler.handleInsertMessage(segments[1], request)
+
             method == "POST" && segments.size == 3 && segments[0] == "chats" && segments[2] == "message-field" ->
                 errorResponse(501, "Chat message field mutation is handled by the UI layer", json)
 
@@ -163,6 +169,9 @@ class VirtualApiRouter(
 
             method == "GET" && segments.size == 2 && segments[0] == "worlds" ->
                 worldBookHandler.handleReadWorld(segments[1])
+
+            method == "DELETE" && segments.size == 2 && segments[0] == "worlds" ->
+                worldBookHandler.handleDeleteWorld(segments[1])
 
             method == "POST" && segments.size == 1 && segments[0] == "worlds" ->
                 worldBookHandler.handleSaveWorld(request)
@@ -178,6 +187,10 @@ class VirtualApiRouter(
             // ST-style: POST /api/worldinfo/edit { name, data }
             method == "POST" && segments.size == 2 && segments[0] == "worldinfo" && segments[1] == "edit" ->
                 worldBookHandler.handleStEditWorldInfo(request)
+
+            // POST /api/worldinfo/disabled { ids } — activation set write-back
+            method == "POST" && segments.size == 2 && segments[0] == "worldinfo" && segments[1] == "disabled" ->
+                worldBookHandler.handleSaveDisabledWorlds(request)
 
             // ── settings / presets ─────────────────────────────────
             method == "GET" && segments.size == 1 && segments[0] == "settings" ->

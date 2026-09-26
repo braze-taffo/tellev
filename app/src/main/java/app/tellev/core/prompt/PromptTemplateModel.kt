@@ -33,6 +33,22 @@ data class PromptTemplateChatMessage(
     val content: String,
 )
 
+/**
+ * Per-floor render fields (ST-Prompt-Template handler.ts:43): ST exposes
+ * `message_id`/`is_user`/`is_system`/`name`/`is_last` to the environment of
+ * each chat floor it renders, and leaves them unset in the generate-before
+ * environment that renders the system prompt. `swipe_id` stays unset —
+ * Tellev's render pipeline carries no per-floor swipe index.
+ */
+data class PromptTemplateMessageContext(
+    val messageId: Int? = null,
+    val swipeId: Int? = null,
+    val isLast: Boolean? = null,
+    val isUser: Boolean? = null,
+    val isSystem: Boolean? = null,
+    val name: String? = null,
+)
+
 data class PromptTemplateWorldEntry(
     val id: String,
     val content: String,

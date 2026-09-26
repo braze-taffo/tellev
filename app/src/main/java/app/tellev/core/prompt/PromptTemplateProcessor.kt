@@ -1,6 +1,7 @@
 package app.tellev.core.prompt
 
 import app.tellev.core.extension.EjsTemplateSettings
+import app.tellev.core.model.MessageRole
 import kotlinx.serialization.json.JsonObject
 
 interface PromptTemplateProcessor {
@@ -107,15 +108,32 @@ class DefaultPromptTemplateProcessor(
             // current turn's message has not been rendered yet) and the last
             // chat message (the current turn) persist writes.
             val lastChatIndex = injectedMessages.indexOfLast { it.channel != CHANNEL_MARKER }
+            // ST renders each chat floor with per-floor fields in scope
+            // (message_id/is_user/is_system/name/is_last, handler.ts:43) and
+            // leaves them unset for the system prompt's generate-before pass.
+            var chatFloor = -1
             injectedMessages.mapIndexed { index, message ->
                 val persistent = index == 0 || index == lastChatIndex
+                val messageContext = if (message.channel == CHANNEL_CHAT && message.role != MessageRole.System) {
+                    chatFloor++
+                    PromptTemplateMessageContext(
+                        messageId = chatFloor,
+                        isLast = index == lastChatIndex,
+                        isUser = message.role == MessageRole.User,
+                        isSystem = false,
+                        name = message.name,
+                    )
+                } else {
+                    null
+                }
                 val content = if (persistent) {
-                    PromptTemplateExpressionEvaluator.renderTemplate(message.content, state, javascriptEvaluator)
+                    PromptTemplateExpressionEvaluator.renderTemplate(message.content, state, javascriptEvaluator, messageContext = messageContext)
                 } else {
                     val isolatedState = state.isolatedSnapshot()
                     val isolatedContent = PromptInjectedRegistry.withIsolatedSnapshot {
                         val rendered = PromptTemplateExpressionEvaluator.renderTemplate(
                             message.content, isolatedState, javascriptEvaluator, isolated = true,
+                            messageContext = messageContext,
                         )
                         // A floor that injects AND collects within itself must
                         // still see its own content: resolve its placeholders

@@ -2,6 +2,7 @@ package app.tellev.core.extension
 
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.CharacterCard
+import app.tellev.core.model.WorldBook
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.PresetCategory
@@ -540,6 +541,115 @@ class VirtualApiRouterTest {
         assertEquals("hello", body[1].jsonObject["mes"]?.jsonPrimitive?.content)
         assertEquals(true, body[1].jsonObject["is_user"]?.jsonPrimitive?.content?.toBooleanStrictOrNull())
         assertEquals(false, body[2].jsonObject["is_user"]?.jsonPrimitive?.content?.toBooleanStrictOrNull())
+    }
+
+    // ── Part B1/B2: worldbook delete/rebind + chat insert/delete routes ──
+
+    @Test
+    fun `DELETE _api_worlds removes the book`() = runBlocking {
+        store.saveWorldBook(WorldBook(id = "w1", name = "w1", entries = emptyList()))
+        val response = router.route(VirtualApiRequest("DELETE", "/api/worlds/w1"))
+        assertEquals(200, response.status)
+        assertTrue(store.listWorldBooks().none { it.id == "w1" })
+    }
+
+    @Test
+    fun `POST _api_worldinfo_disabled saves the activation set`() = runBlocking {
+        val response = router.route(VirtualApiRequest(
+            "POST",
+            "/api/worldinfo/disabled",
+            body = """{"ids":["w1","w2"]}""",
+        ))
+        assertEquals(200, response.status)
+        assertEquals(setOf("w1", "w2"), store.readDisabledWorldIds())
+    }
+
+    @Test
+    fun `POST _api_chats id_messages_insert inserts at index`() = runBlocking {
+        saveSessionFor("Char")
+        val response = router.route(VirtualApiRequest(
+            "POST",
+            "/api/chats/chat-Char/messages/insert",
+            body = """{"message":{"id":"m2","role":"system","name":"system","content":"插入","createdAtMillis":5},"before":0}""",
+        ))
+        assertEquals(200, response.status)
+        val session = store.readChatSession("chat-Char")
+        assertEquals(2, session.messages.size)
+        assertEquals("插入", session.messages[0].content)
+    }
+
+    @Test
+    fun `POST _api_chats id_messages_delete removes listed ids`() = runBlocking {
+        saveSessionFor("Char")
+        val response = router.route(VirtualApiRequest(
+            "POST",
+            "/api/chats/chat-Char/messages/delete",
+            body = """{"message_ids":["m1"]}""",
+        ))
+        assertEquals(200, response.status)
+        assertTrue(store.readChatSession("chat-Char").messages.isEmpty())
+    }
+
+    @Test
+    fun `message batch persists hidden variables and extra in one write`() = runBlocking {
+        saveSessionFor("Char")
+        val response = router.route(VirtualApiRequest(
+            "POST", "/api/chats/chat-Char/messages/insert",
+            body = """{"messages":[
+                {"id":"a","role":"system","name":"system","content":"narration","createdAtMillis":5,
+                 "variables":[{"hp":5}],"metadata":{"type":"narrator"}},
+                {"id":"b","role":"assistant","name":"Char","content":"hidden","createdAtMillis":6,
+                 "isHidden":true,"metadata":{"custom":3}}
+            ],"before":0}""",
+        ))
+        assertEquals(200, response.status)
+        val messages = store.readChatSession("chat-Char").messages
+        assertEquals(listOf("a", "b", "m1"), messages.map { it.id })
+        assertEquals("5", messages[0].variables[0].jsonObject["hp"]?.jsonPrimitive?.content)
+        assertEquals("narrator", messages[0].raw["extra"]?.jsonObject?.get("type")?.jsonPrimitive?.content)
+        assertTrue(messages[1].isHidden)
+        assertEquals("3", messages[1].raw["extra"]?.jsonObject?.get("custom")?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `invalid message batch never inserts a partial prefix`() = runBlocking {
+        saveSessionFor("Char")
+        val response = router.route(VirtualApiRequest(
+            "POST", "/api/chats/chat-Char/messages/insert",
+            body = """{"messages":[
+                {"id":"a","role":"assistant","name":"Char","content":"valid","createdAtMillis":5},
+                {"id":"b","role":"invalid"}
+            ],"before":0}""",
+        ))
+        assertEquals(400, response.status)
+        assertEquals(listOf("m1"), store.readChatSession("chat-Char").messages.map { it.id })
+    }
+
+    @Test
+    fun `message mutations return not found for missing sessions`() = runBlocking {
+        val insert = router.route(VirtualApiRequest("POST", "/api/chats/missing/messages/insert",
+            body = """{"messages":[],"before":0}"""))
+        assertEquals(404, insert.status)
+        val delete = router.route(VirtualApiRequest("POST", "/api/chats/missing/messages/delete",
+            body = """{"message_ids":["m1"]}"""))
+        assertEquals(404, delete.status)
+    }
+
+    @Test
+    fun `tavern helper regex patch survives native reread without losing card fields`() = runBlocking {
+        store.saveCharacter(CharacterCard(id = "regex-char", name = "Regex", description = "keep description",
+            raw = json.parseToJsonElement("""{"data":{"extensions":{"custom":{"keep":true}}}}""").jsonObject))
+        val response = router.route(VirtualApiRequest(
+            "POST", "/api/characters/regex-char/tavern-helper",
+            body = """{"regex_scripts":[{"id":"r","scriptName":"rule","findRegex":"a","replaceString":"b","placement":[2]}]}""",
+        ))
+        assertEquals(200, response.status)
+        val reread = router.route(VirtualApiRequest("GET", "/api/characters/regex-char/regex"))
+        val regex = json.parseToJsonElement(reread.body).jsonObject["regex_scripts"]!!.jsonArray[0].jsonObject
+        assertEquals("a", regex["findRegex"]?.jsonPrimitive?.content)
+        val card = store.readCharacter("regex-char")
+        assertEquals("keep description", card.description)
+        assertEquals("true", card.raw["data"]!!.jsonObject["extensions"]!!.jsonObject["custom"]!!.jsonObject["keep"]!!.jsonPrimitive.content)
     }
 
     private class InMemorySecretStore : SecretStore {

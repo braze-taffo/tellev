@@ -72,8 +72,34 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
+
+/**
+ * [InputStream.readNBytes] 的限量读取等价实现：该函数要求 API 33（minSdk 31），
+ * lint 报 NewApi 错误。读满 [limit] 字节或流结束即停，不超过调用者给出的上限。
+ */
+private fun InputStream.readBounded(limit: Int): ByteArray {
+    val out = ByteArrayOutputStream(minOf(limit, 1 shl 20))
+    val buffer = ByteArray(1 shl 16)
+    var total = 0
+    while (total < limit) {
+        val count = read(buffer, 0, minOf(buffer.size, limit - total))
+        if (count < 0) break
+        if (count == 0) {
+            val byte = read()
+            if (byte < 0) break
+            out.write(byte)
+            total++
+            continue
+        }
+        out.write(buffer, 0, count)
+        total += count
+    }
+    return out.toByteArray()
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -194,7 +220,7 @@ fun CreationEditorScreen(
         if (uri != null) scope.launch {
             try {
                 val source = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { it.readNBytes(12_000_001) }
+                    context.contentResolver.openInputStream(uri)?.use { it.readBounded(12_000_001) }
                 } ?: error(context.getString(R.string.crs_error_read_image))
                 require(source.size <= 12_000_000) { context.getString(R.string.crs_error_image_too_large) }
                 val png = withContext(Dispatchers.IO) {
@@ -662,7 +688,7 @@ private fun WorldDraftEditor(
         if (uri != null) scope.launch {
             try {
                 val bytes = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { it.readNBytes(12_000_001) }
+                    context.contentResolver.openInputStream(uri)?.use { it.readBounded(12_000_001) }
                 } ?: error(context.getString(R.string.crs_error_read_source))
                 require(bytes.size <= 12_000_000) { context.getString(R.string.crs_error_file_too_large) }
                 val decoded = runCatching {
