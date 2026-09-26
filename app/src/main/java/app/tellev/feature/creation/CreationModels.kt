@@ -17,6 +17,25 @@ import java.util.UUID
 @Serializable
 enum class CreationKind { Character, WorldBook }
 
+/**
+ * Draft row for the creation home screen. A full CreationSession graph keeps
+ * lore bodies, merge bases, and raw JSON trees resident; with several ~7MB
+ * drafts on disk that list alone was tens of MB of permanent heap, so the list
+ * decodes only these small fields and [app.tellev.feature.creation.CreationRepository.load]
+ * reads the full session when one draft is opened.
+ */
+data class CreationSessionSummary(
+    val id: String,
+    val kind: CreationKind,
+    val cardName: String,
+    val worldName: String,
+    val turnsCount: Int,
+    val loreCount: Int,
+    val sourceCursor: Int,
+    val sourceLength: Int,
+    val updatedAt: Long,
+)
+
 @Serializable
 data class CreationTurn(val role: String, val text: String)
 

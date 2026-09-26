@@ -953,7 +953,7 @@ fun CharacterDetailScreen(
                             text = if (linkedWorldName.isBlank()) {
                                 stringResource(R.string.chars_world_unbound)
                             } else if (boundBook != null) {
-                                stringResource(R.string.chars_book_entries, boundBook.name, boundBook.entries.size)
+                                stringResource(R.string.chars_book_entries, boundBook.name, boundBook.entryCount)
                             } else {
                                 stringResource(R.string.chars_world_missing, linkedWorldName)
                             },
@@ -1011,7 +1011,7 @@ fun CharacterDetailScreen(
                                 worldBooks.forEach { book ->
                                     WorldPickerOption(
                                         label = book.name.ifBlank { book.id },
-                                        sublabel = stringResource(R.string.chars_entries_count, book.entries.size),
+                                        sublabel = stringResource(R.string.chars_entries_count, book.entryCount),
                                         selected = book.name.equals(linkedWorldName, ignoreCase = true) ||
                                             book.id == linkedWorldName,
                                         onClick = {

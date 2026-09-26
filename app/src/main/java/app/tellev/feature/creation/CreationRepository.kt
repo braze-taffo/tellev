@@ -4,6 +4,7 @@ import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -15,10 +16,47 @@ import java.security.MessageDigest
 class CreationRepository(private val root: File) {
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
-    suspend fun list(): List<CreationSession> = withContext(Dispatchers.IO) {
+    /** Streaming decode target: turns/lore elements count only, bodies are skipped. */
+    @Serializable
+    private data class SessionSummaryDto(
+        val id: String = "",
+        val kind: CreationKind = CreationKind.Character,
+        val card: CardNameDto = CardNameDto(),
+        val worldName: String = "",
+        val lore: List<CountOnlyDto> = emptyList(),
+        val turns: List<CountOnlyDto> = emptyList(),
+        val sourceCursor: Int = 0,
+        val sourceLength: Int = 0,
+        val updatedAt: Long = 0,
+    )
+
+    @Serializable
+    private data class CardNameDto(val name: String = "")
+
+    @Serializable
+    private class CountOnlyDto
+
+    suspend fun list(): List<CreationSessionSummary> = withContext(Dispatchers.IO) {
         root.listFiles { file -> file.isFile && file.name.endsWith(".json") }
-            ?.mapNotNull { runCatching { json.decodeFromString<CreationSession>(it.readText()) }.getOrNull() }
-            ?.sortedByDescending(CreationSession::updatedAt).orEmpty()
+            ?.mapNotNull { file ->
+                // ignoreUnknownKeys makes unknown fields (including whole lore
+                // bodies and merge bases) stream past without being retained.
+                runCatching {
+                    val dto = json.decodeFromString<SessionSummaryDto>(file.readText())
+                    CreationSessionSummary(
+                        id = dto.id.ifBlank { file.nameWithoutExtension },
+                        kind = dto.kind,
+                        cardName = dto.card.name,
+                        worldName = dto.worldName,
+                        turnsCount = dto.turns.size,
+                        loreCount = dto.lore.size,
+                        sourceCursor = dto.sourceCursor,
+                        sourceLength = dto.sourceLength,
+                        updatedAt = dto.updatedAt,
+                    )
+                }.getOrNull()
+            }
+            ?.sortedByDescending(CreationSessionSummary::updatedAt).orEmpty()
     }
 
     suspend fun load(id: String): CreationSession = withContext(Dispatchers.IO) {

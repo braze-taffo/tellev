@@ -31,7 +31,7 @@ import java.io.File
 import java.util.UUID
 
 data class CreationUiState(
-    val sessions: List<CreationSession> = emptyList(),
+    val sessions: List<CreationSessionSummary> = emptyList(),
     val current: CreationSession? = null,
     val coverPreviewPng: ByteArray? = null,
     val busy: Boolean = false,

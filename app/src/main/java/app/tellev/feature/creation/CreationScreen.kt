@@ -82,14 +82,14 @@ fun CreationHomeScreen(
     onOpenEditor: () -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
-    var pendingDelete by remember { mutableStateOf<CreationSession?>(null) }
+    var pendingDelete by remember { mutableStateOf<CreationSessionSummary?>(null) }
     LaunchedEffect(Unit) { viewModel.refresh() }
     pendingDelete?.let { draft ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text(stringResource(R.string.crs_delete_draft_title)) },
             text = {
-                val draftName = draft.card.name.ifBlank { draft.worldName.ifBlank { stringResource(R.string.crs_unnamed_draft) } }
+                val draftName = draft.cardName.ifBlank { draft.worldName.ifBlank { stringResource(R.string.crs_unnamed_draft) } }
                 Text(stringResource(R.string.crs_delete_draft_body, draftName))
             },
             confirmButton = {
@@ -114,20 +114,20 @@ fun CreationHomeScreen(
             }
             Text(stringResource(R.string.crs_drafts_title), style = MaterialTheme.typography.titleMedium)
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(state.sessions, key = CreationSession::id) { session ->
+                items(state.sessions, key = CreationSessionSummary::id) { session ->
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f).clickable(enabled = !state.busy) {
                                 viewModel.open(session.id)
                                 onOpenEditor()
                             }.padding(14.dp)) {
-                                val sessionName = session.card.name.ifBlank { session.worldName.ifBlank {
+                                val sessionName = session.cardName.ifBlank { session.worldName.ifBlank {
                                     stringResource(if (session.kind == CreationKind.Character) R.string.crs_unnamed_character else R.string.crs_unnamed_worldbook)
                                 } }
                                 Text(sessionName)
                                 val kindLabel = stringResource(if (session.kind == CreationKind.Character) R.string.crs_kind_character else R.string.crs_kind_worldbook)
                                 Text(
-                                    stringResource(R.string.crs_session_meta, kindLabel, session.turns.size, session.lore.size),
+                                    stringResource(R.string.crs_session_meta, kindLabel, session.turnsCount, session.loreCount),
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                                 if (session.sourceLength > 0) {

@@ -172,7 +172,10 @@ class CreationFeatureTest {
             val saved = session.copy(sourceSha256 = hash, sourceLength = length, sourceCursor = 3)
             repo.save(saved)
             assertEquals(3, repo.load(session.id).sourceCursor)
-            assertEquals(hash, repo.list().single().sourceSha256)
+            // list() now returns summaries; the source binding still round-trips via load().
+            val listed = repo.list().single()
+            assertEquals(session.id, listed.id)
+            assertEquals(hash, repo.load(listed.id).sourceSha256)
         } finally {
             root.deleteRecursively()
         }

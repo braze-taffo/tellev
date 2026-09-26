@@ -5,7 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterSummary
-import app.tellev.core.model.WorldBook
+import app.tellev.core.model.WorldBookSummary
 import app.tellev.core.storage.CharacterExporter
 import app.tellev.core.storage.CharacterImporter
 import app.tellev.core.storage.StDataStore
@@ -28,7 +28,8 @@ data class CharactersUiState(
     val selectedCharacter: CharacterCard? = null,
     // World books available to bind to the selected character (loaded lazily
     // when a character is opened, for the binding picker in the detail screen).
-    val worldBooks: List<WorldBook> = emptyList(),
+    // Summaries only: the picker needs names and counts, not entry bodies.
+    val worldBooks: List<WorldBookSummary> = emptyList(),
     // Card file per character id: the card PNG itself is the avatar. JSON
     // cards (no embedded image) make the UI fall back to the initials badge.
     val avatarFiles: Map<String, java.io.File> = emptyMap(),
@@ -102,7 +103,7 @@ class CharactersViewModel(
                 val character = dataStore.readCharacter(id)
                 // Load the world-book list alongside the card so the detail
                 // screen can offer a binding picker without a second round-trip.
-                val worldBooks = runCatching { dataStore.listWorldBooks() }.getOrDefault(emptyList())
+                val worldBooks = runCatching { dataStore.listWorldBookSummaries() }.getOrDefault(emptyList())
                 _uiState.update {
                     it.copy(
                         selectedCharacter = character,
@@ -130,7 +131,7 @@ class CharactersViewModel(
 
     fun loadWorldBooks() {
         viewModelScope.launch {
-            val books = runCatching { dataStore.listWorldBooks() }.getOrDefault(emptyList())
+            val books = runCatching { dataStore.listWorldBookSummaries() }.getOrDefault(emptyList())
             _uiState.update { it.copy(worldBooks = books) }
         }
     }
