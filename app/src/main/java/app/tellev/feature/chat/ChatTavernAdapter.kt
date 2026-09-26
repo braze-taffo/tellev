@@ -608,6 +608,13 @@ internal object ChatTavernAdapter {
                             }
                         }
                     }
+                    // Message frontends fill the composer through the
+                    // `#send_textarea` shim (the ST contract); the shim reads the
+                    // draft back synchronously and writes the whole new value here.
+                    "setInput" -> {
+                        onSetInput(payload["text"]?.jsonPrimitive?.content.orEmpty())
+                        buildJsonObject { put("ok", true) }
+                    }
                     "setChatMessage" -> {
                         val index = payload["messageId"]?.jsonPrimitive?.content?.toIntOrNull()
                             ?: error("消息索引无效")

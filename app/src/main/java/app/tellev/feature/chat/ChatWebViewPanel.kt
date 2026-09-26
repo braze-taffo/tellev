@@ -45,10 +45,14 @@ internal data class TavernMessageRuntime(
     val variablesJson: () -> String,
     val contextJson: () -> String,
     val request: (String, String, (Boolean, String) -> Unit) -> Unit,
+    val currentInput: () -> String = { "" },
     val onScrollStart: () -> Unit = {},
     val onBoundaryFling: (Float) -> Unit = {},
     val allowContentUpdates: Boolean = true,
 )
+
+/** How long the message WebView's JS thread waits for a main-thread draft read. */
+private const val INPUT_READ_TIMEOUT_MILLIS = 500L
 
 internal class TavernMessageBridge(
     private val onHeightChanged: (Int) -> Unit,
@@ -150,6 +154,32 @@ internal class TavernMessageBridge(
 
     @JavascriptInterface
     fun getCurrentMessageId(): Int = runtime.messageIndex
+
+    /**
+     * Composer draft, read synchronously by the message document's
+     * `#send_textarea` shim: frontends that fill the input read `value` back to
+     * append to it (思客大调查 answers pile up in one draft).
+     *
+     * The draft is Compose state owned by the chat screen, so the read has to
+     * happen on the main thread. The WebView's JS thread waits for that hop —
+     * nothing on the main thread ever waits for JS on this WebView, so the two
+     * cannot deadlock — and falls back to an empty draft if the main thread is
+     * wedged past the timeout (the shim then keeps appending its own shadow).
+     */
+    @JavascriptInterface
+    fun getInput(): String {
+        if (Looper.myLooper() == Looper.getMainLooper()) return runtime.currentInput()
+        var draft = ""
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val posted = mainHandler.post {
+            draft = runtime.currentInput()
+            latch.countDown()
+        }
+        if (posted) {
+            runCatching { latch.await(INPUT_READ_TIMEOUT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS) }
+        }
+        return draft
+    }
 
     @JavascriptInterface
     fun getContext(): String = runtime.contextJson()
@@ -392,7 +422,7 @@ internal fun wrapTavernHtml(
     val hostHead = """
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
         <script src="https://extensions.tellev.local/compat/globals.js"></script>
-        ${tavernMessageCompatScript()}
+        <script src="https://extensions.tellev.local/compat/message-host.js"></script>
         <script src="https://extensions.tellev.local/compat/chat.js"></script>
         <script src="https://extensions.tellev.local/compat/message.js"></script>
         <style id="tellev-host-style">

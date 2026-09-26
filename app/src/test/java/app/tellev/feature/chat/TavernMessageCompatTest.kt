@@ -87,6 +87,26 @@ class TavernMessageCompatTest {
     }
 
     @Test
+    fun `keeps a named trigger argument out of the sent text`() {
+        // Option buttons of 梦鲸思客-style cards call
+        // `triggerSlash('/send <选项> | /trigger await=true')`.
+        // Only a bare `/trigger` used to be consumed, so the lazy text capture
+        // swallowed the whole pipe and the chat showed the option followed by
+        // "| /trigger await=true".
+        val send = parseTavernMessageSlashCommand(
+            "/send 看着她通红的眼眶和憔悴的面容，心中终究还是一软。\n| /trigger await=true",
+        )
+        assertEquals("看着她通红的眼眶和憔悴的面容，心中终究还是一软。", send.sendText)
+
+        val system = parseTavernMessageSlashCommand("/sys 场景提示 | /cut 2 | /trigger await=true")
+        assertEquals("场景提示", system.systemText)
+        assertEquals(2, system.deleteMessageIndex)
+
+        val piped = parseTavernMessageSlashCommand("原始提示文本 | /trigger await=true quiet=true")
+        assertEquals("原始提示文本", piped.systemText)
+    }
+
+    @Test
     fun `decodes stringified MVU stat data into an object`() {
         val raw = Json.parseToJsonElement(
             """{"stat_data":"{\"主角\":{\"神识\":42}}"}""",
@@ -125,23 +145,18 @@ class TavernMessageCompatTest {
     }
 
     @Test
-    fun `compat script exposes APIs used by Dao Yuan frontend`() {
-        val script = tavernMessageCompatScript()
+    fun `message host compat script loads before the hosts that refine it`() {
+        val wrapped = wrapTavernHtml("<p>hello</p>", "#111111")
 
-        listOf(
-            "window.getAllVariables",
-            "window.triggerSlash",
-            "window.getLorebooks",
-            "window.createLorebook",
-            "window.createLorebookEntry",
-            "window.getChatMessages",
-            "window.setChatMessage",
-            "window.TavernHelper.getChatMessages",
-            "window.TavernHelper.setChatMessage",
-            "window.errorCatched",
-            "window.$",
-            "window._",
-        ).forEach { symbol -> assertTrue("missing $symbol", script.contains(symbol)) }
+        // The message-side compat layer now ships as an asset (app/src/main/assets/
+        // compat/message-host.js) so tools/message-host-eval can execute it; what
+        // matters here is that the panel still injects it, in head, ahead of
+        // chat.js/message.js, which build on the shims it installs.
+        val hostIndex = wrapped.indexOf("compat/message-host.js")
+        assertTrue("message-host.js missing from panel head", hostIndex > 0)
+        assertTrue(hostIndex < wrapped.indexOf("compat/chat.js"))
+        assertTrue(hostIndex < wrapped.indexOf("compat/message.js"))
+        assertTrue(wrapped.indexOf("compat/globals.js") < hostIndex)
     }
 
     @Test

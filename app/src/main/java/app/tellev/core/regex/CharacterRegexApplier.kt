@@ -218,14 +218,15 @@ object CharacterRegexApplier {
             ?.removePrefix("([\\s\\S]*)")?.replace("\\/", "/")
             ?.takeIf { it.isNotEmpty() && it.none { c -> c in "\\.[](){}*+?^$|" } }
         if (literalSuffix != null && !input.contains(literalSuffix)) return input
-        val regex = parseJavascriptRegex(source, separateFlags) ?: run {
+        val regexSource = javascriptRegexSource(source, separateFlags)
+        val regex = compileJavascriptRegex(regexSource) ?: run {
             onDiagnostic?.invoke(RegexDiagnostic(
                 scriptName = script.stringValue("scriptName").orEmpty().ifBlank { rawSource },
                 message = UiStrings.get(S.cregex_diag_invalid_regex),
             ))
             return input
         }
-        val flags = separateFlags ?: javascriptFlags(source)
+        val flags = regexSource.flags
         val replacement = substituteMacros(
             (script.stringValue("replaceString") ?: script.stringValue("replacement")).orEmpty(),
             characterName,
@@ -265,12 +266,6 @@ object CharacterRegexApplier {
         }
     }
 
-    private fun javascriptFlags(source: String): String {
-        val trimmed = source.trim()
-        if (!trimmed.startsWith("/")) return ""
-        val closing = findClosingSlash(trimmed)
-        return if (closing < 0) "" else trimmed.substring(closing + 1)
-    }
     private fun expandReplacement(
         replacement: String,
         match: MatchResult,
@@ -307,22 +302,55 @@ object CharacterRegexApplier {
     }
 
 
-    private fun parseJavascriptRegex(source: String, separateFlags: String? = null): Regex? {
-        val trimmed = source.trim()
-        if (trimmed.isEmpty()) return null
+    /** Literal-pattern text plus its JavaScript flags, split like SillyTavern does. */
+    private data class JavascriptRegexSource(val pattern: String, val flags: String)
 
-        val (pattern, flags) = if (separateFlags != null) {
-            source to separateFlags
-        } else if (trimmed.startsWith("/")) {
-            val slashIndex = findClosingSlash(trimmed)
-            if (slashIndex <= 0) {
-                trimmed to ""
-            } else {
-                trimmed.substring(1, slashIndex) to trimmed.substring(slashIndex + 1)
-            }
-        } else {
-            trimmed to ""
+    private fun javascriptRegexSource(source: String, separateFlags: String? = null): JavascriptRegexSource =
+        // RP Hub style entries keep the pattern and its flags in separate fields.
+        if (separateFlags != null) JavascriptRegexSource(source, separateFlags) else splitJavascriptRegex(source)
+
+    /**
+     * Mirrors `regexFromString` from SillyTavern (`public/scripts/utils.js`):
+     * `input.match(/(\/?)(.+)\1([a-z]*)/i)`.
+     *
+     * The backreference splits the literal at the **last** slash, so a pattern
+     * is allowed to contain unescaped slashes — presets ship rules such as
+     * `/<dream_big_discuss>\s*([\s\S]*?)\s*</dream_big_discuss>/gm` and
+     * `/(</dream_plot>|</paragraph>)/g`. Splitting at the first slash instead
+     * turns the rest of the pattern into a bogus flag string, which drops the
+     * whole rule: the raw tags then leak into the chat (思客大调查 rendered as
+     * plain text, `</dream_after_format> </dream_plot>` left at the tail).
+     *
+     * When the trailing letters are not a legal SillyTavern flag set, SillyTavern
+     * compiles the entire input as a pattern (`RegExp(input)`, slashes included)
+     * and drops the flags; we keep the same shape so such rules stay no-ops
+     * rather than silently becoming a different match.
+     */
+    private fun splitJavascriptRegex(source: String): JavascriptRegexSource {
+        val trimmed = source.trim()
+        if (!trimmed.startsWith("/")) return JavascriptRegexSource(trimmed, "")
+
+        val slashIndex = trimmed.lastIndexOf('/')
+        // `(.+)` needs at least one character between the opening slash and the
+        // delimiter; without one SillyTavern compiles the whole input as pattern.
+        if (slashIndex <= 1) return JavascriptRegexSource(trimmed, "")
+
+        // The outer parser regex is case-insensitive, so `[a-z]*` also accepts
+        // uppercase letters before the validity check rejects them.
+        val flags = trimmed.substring(slashIndex + 1).takeWhile { it in 'a'..'z' || it in 'A'..'Z' }
+        if (flags.isNotEmpty() && !isSillyTavernFlagSet(flags)) {
+            return JavascriptRegexSource(trimmed, "")
         }
+        return JavascriptRegexSource(trimmed.substring(1, slashIndex), flags)
+    }
+
+    private fun isSillyTavernFlagSet(flags: String): Boolean =
+        flags.all { it in "gmixXsuUAJ" } && flags.toSet().size == flags.length
+
+    private fun compileJavascriptRegex(source: JavascriptRegexSource): Regex? {
+        val pattern = source.pattern
+        if (pattern.isEmpty()) return null
+        val flags = source.flags
 
         // A malformed/unknown JavaScript flag invalidates only this script.
         // Kotlin cannot emulate every new JS regex feature, but accepting the
@@ -336,26 +364,6 @@ object CharacterRegexApplier {
         }
 
         return runCatching { Regex(pattern, options) }.getOrNull()
-    }
-
-    private fun findClosingSlash(value: String): Int {
-        var escaped = false
-        var inCharacterClass = false
-        for (index in 1 until value.length) {
-            val char = value[index]
-            if (escaped) {
-                escaped = false
-                continue
-            }
-            if (char == '\\') {
-                escaped = true
-                continue
-            }
-            if (char == '[') inCharacterClass = true
-            if (char == ']') inCharacterClass = false
-            if (char == '/' && !inCharacterClass) return index
-        }
-        return -1
     }
 
     private fun JsonObject.cardDataObject(): JsonObject =

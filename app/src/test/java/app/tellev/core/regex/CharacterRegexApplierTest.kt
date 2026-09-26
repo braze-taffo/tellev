@@ -266,5 +266,75 @@ class CharacterRegexApplierTest {
         assertEquals("beta and GAMMA", CharacterRegexApplier.applyWorldInfoForPrompt("ALPHA and GAMMA", card))
     }
 
+    @Test
+    fun `unescaped slashes inside a pattern are not treated as the delimiter`() {
+        // 梦鲸思客V4 ships `[🦋美化]思客大调查` with an unescaped closing slash:
+        //   /^<dream_big_discuss>\s*([\s\S]*?)\s*</dream_big_discuss>/gm
+        // SillyTavern's regexFromString splits at the LAST slash, so the pattern
+        // keeps `</dream_big_discuss>`. Splitting at the first slash produced the
+        // flags "dream_big_discuss>/gm", dropped the rule, and left the raw
+        // <dream_big_discuss>/<q>/<a> text visible in the chat.
+        val card = CharacterImporter().importFromJson(
+            """{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"C","extensions":{"regex_scripts":[
+              {"findRegex":"/^<dream_big_discuss>\\s*([\\s\\S]*?)\\s*</dream_big_discuss>/gm","replaceString":"<body>panel:$1</body>","placement":[2],"markdownOnly":true}
+            ]}}}""",
+        )
 
+        val message = "<dream_big_discuss>\n<q content=\"问\">\n<a>答</a>\n</q>\n</dream_big_discuss>"
+
+        assertEquals(
+            "<body>panel:<q content=\"问\">\n<a>答</a>\n</q></body>",
+            CharacterRegexApplier.applyForDisplay(message, MessageRole.Character, card),
+        )
+
+        // The escaped spelling (`<\/dream_big_discuss>`) is the conservative way
+        // for a preset to write the same rule: JavaScript treats `\/` as `/`, and
+        // both SillyTavern's splitter and this one produce the same pattern.
+        val escapedCard = CharacterImporter().importFromJson(
+            """{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"C","extensions":{"regex_scripts":[
+              {"findRegex":"/^<dream_big_discuss>\\s*([\\s\\S]*?)\\s*<\\/dream_big_discuss>/gm","replaceString":"<body>panel:$1</body>","placement":[2],"markdownOnly":true}
+            ]}}}""",
+        )
+
+        assertEquals(
+            "<body>panel:<q content=\"问\">\n<a>答</a>\n</q></body>",
+            CharacterRegexApplier.applyForDisplay(message, MessageRole.Character, escapedCard),
+        )
+    }
+
+    @Test
+    fun `rules that strip trailing wrapper tags still run`() {
+        // `[🥷隐藏]隐藏多余格式内容` and `[🥷隐藏]删除额外标签` also carry unescaped
+        // closing slashes. When they were dropped, every message kept its tail:
+        // `</dream_after_format> </dream_plot>`.
+        val card = CharacterImporter().importFromJson(
+            """{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"C","extensions":{"regex_scripts":[
+              {"findRegex":"/(<dream_body>|</dream_body>|<dream_after_format>|</dream_after_format>)(?:\\r?\\n)?/g","replaceString":"","placement":[2],"markdownOnly":true,"promptOnly":true},
+              {"findRegex":"/(</think>|</dream_delete>|<dream_done/>|<dream_plot>|</dream_plot>|<paragraph>|</paragraph>|<dream_check_done/>)/g","replaceString":"","placement":[2],"markdownOnly":true,"promptOnly":true},
+              {"findRegex":"/<UpdateVariable>[\\s\\S]*?</UpdateVariable>/gi","replaceString":"","placement":[2],"markdownOnly":true}
+            ]}}}""",
+        )
+
+        val message = "<dream_body>正文</dream_body> </dream_after_format> </dream_plot>" +
+            "<UpdateVariable>{\"a\":1}</UpdateVariable>"
+
+        assertEquals(
+            "正文  ",
+            CharacterRegexApplier.applyForDisplay(message, MessageRole.Character, card),
+        )
+    }
+
+    @Test
+    fun `illegal trailing letters fall back to the whole literal as pattern`() {
+        // SillyTavern: when m[3] is not a legal flag set it compiles the entire
+        // input as a pattern, so `/a/b` matches the literal text "/a/b" instead of
+        // becoming the pattern `a` with the (illegal) flag `b`.
+        val card = CharacterImporter().importFromJson(
+            """{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"C","extensions":{"regex_scripts":[
+              {"findRegex":"/a/b","replaceString":"HIT","placement":[2]}
+            ]}}}""",
+        )
+
+        assertEquals("xHIT", CharacterRegexApplier.applyNormal("x/a/b", MessageRole.Character, card))
+    }
 }

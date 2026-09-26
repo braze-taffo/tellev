@@ -488,6 +488,7 @@ private fun ChatContentScreen(
                                 messageIndex = index,
                                 variablesJson = { viewModel.tavernMessageVariablesJson(runtimeToken) },
                                 contextJson = { viewModel.tavernMessageContextJson(runtimeToken) },
+                                currentInput = { inputText },
                                 request = { operation, payload, callback ->
                                     viewModel.handleTavernMessageRequest(
                                         operation = operation,
@@ -534,6 +535,7 @@ private fun ChatContentScreen(
                                 messageIndex = state.messages.size,
                                 variablesJson = { viewModel.tavernMessageVariablesJson(runtimeToken) },
                                 contextJson = { viewModel.tavernMessageContextJson(runtimeToken) },
+                                currentInput = { inputText },
                                 request = { operation, payload, callback ->
                                     viewModel.handleTavernMessageRequest(operation, payload, { inputText = it }, callback, runtimeToken)
                                 },

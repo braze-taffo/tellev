@@ -62,12 +62,12 @@ internal fun parseTavernMessageSlashCommand(script: String): TavernMessageSlashA
         return TavernMessageSlashAction(setInputText = setInput.groupValues[1].trim())
     }
 
-    val send = Regex("""(?s)^/send\s+(.+?)(?:\s*\|\|?\s*/trigger\s*)?$""").find(trimmed)
+    val send = Regex("""(?s)^/send\s+(.+?)(?:${TRIGGER_PIPE_TAIL})?$""").find(trimmed)
     if (send != null) {
         return TavernMessageSlashAction(sendText = send.groupValues[1].trim())
     }
 
-    val system = Regex("""(?s)^/sys\s+(.+?)(?:\s*\|\s*/cut\s+(\d+))?(?:\s*\|\s*/trigger\s*)?$""")
+    val system = Regex("""(?s)^/sys\s+(.+?)(?:\s*\|\s*/cut\s+(\d+))?(?:${TRIGGER_PIPE_TAIL})?$""")
         .find(trimmed)
     if (system != null) {
         return TavernMessageSlashAction(
@@ -78,7 +78,7 @@ internal fun parseTavernMessageSlashCommand(script: String): TavernMessageSlashA
 
     // Some cards feed raw prompt text directly into the slash-command pipe instead of
     // prefixing it with /sys: "prompt | /cut <messageId> | /trigger".
-    val pipedPrompt = Regex("""(?s)^(.+?)(?:\s*\|\s*/cut\s+(\d+))?\s*\|\s*/trigger\s*$""")
+    val pipedPrompt = Regex("""(?s)^(.+?)(?:\s*\|\s*/cut\s+(\d+))?${TRIGGER_PIPE_TAIL}$""")
         .find(trimmed)
     if (pipedPrompt != null && !pipedPrompt.groupValues[1].trimStart().startsWith("/")) {
         return TavernMessageSlashAction(
@@ -90,6 +90,18 @@ internal fun parseTavernMessageSlashCommand(script: String): TavernMessageSlashA
 
     return TavernMessageSlashAction()
 }
+
+/**
+ * The trailing `/trigger` step of a card-authored pipe, tolerating the command
+ * tail that follows it.
+ *
+ * `/trigger` accepts named arguments (`await=true`, `quiet=true`, …) and can
+ * carry a group member, so cards chain `/send <text> | /trigger await=true`.
+ * Matching only a bare `/trigger` left that tail unmatched, and since the text
+ * capture is lazy it then swallowed the whole pipe: the sent message became
+ * `<text>\n| /trigger await=true` instead of `<text>`.
+ */
+private const val TRIGGER_PIPE_TAIL = """\s*\|\|?\s*/trigger\b[\s\S]*"""
 
 internal fun decodeEmbeddedJsonValues(element: JsonElement, json: Json = Json): JsonElement = when (element) {
     is JsonObject -> JsonObject(element.mapValues { (_, value) -> decodeEmbeddedJsonValues(value, json) })
@@ -152,91 +164,6 @@ internal fun tavernWorldBookEntry(
         raw = raw,
     )
 }
-
-internal fun tavernMessageCompatScript(): String = """
-    <script id="tellev-message-compat">
-    (function(){
-      var callbacks = Object.create(null);
-      var requestCounter = 0;
-      function parseJson(value, fallback) { try { return JSON.parse(value); } catch (_) { return fallback; } }
-      function request(operation, payload) {
-        return new Promise(function(resolve, reject) {
-          var id = 'message_' + (++requestCounter) + '_' + Date.now();
-          callbacks[id] = { resolve: resolve, reject: reject };
-          try { TellevMessage.request(id, operation, JSON.stringify(payload || {})); }
-          catch (error) { delete callbacks[id]; reject(error); }
-        });
-      }
-      window.__tellevRequest = request;
-      window.__tellevMessageResolve = function(id, ok, payloadJson) {
-        var callback = callbacks[id];
-        if (!callback) return;
-        delete callbacks[id];
-        var payload = parseJson(payloadJson, payloadJson);
-        if (ok) callback.resolve(payload); else callback.reject(new Error(payload && payload.error || String(payload)));
-      };
-      function variables() { return parseJson(TellevMessage.getAllVariables(), {}); }
-      window.getVariables = variables;
-      window.getAllVariables = variables;
-      window.getCurrentMessageId = function() { return TellevMessage.getCurrentMessageId(); };
-      window.triggerSlash = function(text) { return request('triggerSlash', { script: String(text || '') }); };
-      window.getLorebooks = function() { return request('getLorebooks', {}); };
-      window.createLorebook = function(name) { return request('createLorebook', { name: String(name || '') }); };
-      window.createLorebookEntry = function(name, entry) { return request('createLorebookEntry', { name: String(name || ''), entry: entry || {} }); };
-      window.getChatMessages = function(messageId, options) {
-        return request('getChatMessages', { messageId: messageId, options: options || {} });
-      };
-      window.setChatMessage = function(message, messageId, options) {
-        return request('setChatMessage', { message: String(message == null ? '' : message), messageId: messageId, options: options || {} });
-      };
-      window.TavernHelper = window.TavernHelper || {};
-      window.TavernHelper.getVariables = variables;
-      window.TavernHelper.getAllVariables = variables;
-      window.TavernHelper.triggerSlash = window.triggerSlash;
-      window.TavernHelper.getLorebooks = window.getLorebooks;
-      window.TavernHelper.createLorebook = window.createLorebook;
-      window.TavernHelper.createLorebookEntry = window.createLorebookEntry;
-      window.TavernHelper.getChatMessages = window.getChatMessages;
-      window.TavernHelper.setChatMessage = window.setChatMessage;
-      window.SillyTavern = window.SillyTavern || { getContext: function(){ return {}; } };
-      if (!window._) {
-        function pathParts(path) { return Array.isArray(path) ? path : String(path || '').replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean); }
-        window._ = {
-          get: function(object, path, fallback) {
-            var value = object;
-            var parts = pathParts(path);
-            for (var i = 0; i < parts.length; i++) { if (value == null) return fallback; value = value[parts[i]]; }
-            return value === undefined ? fallback : value;
-          },
-          set: function(object, path, value) {
-            var parts = pathParts(path), cursor = object;
-            for (var i = 0; i < parts.length - 1; i++) { if (!cursor[parts[i]] || typeof cursor[parts[i]] !== 'object') cursor[parts[i]] = {}; cursor = cursor[parts[i]]; }
-            if (parts.length) cursor[parts[parts.length - 1]] = value;
-            return object;
-          }
-        };
-      }
-      window.errorCatched = window.errorCatched || function(fn) {
-        return function() { try { return fn.apply(this, arguments); } catch (error) { console.error(error); } };
-      };
-      if (!window.$) {
-        window.$ = function(selector) {
-          if (typeof selector === 'function') {
-            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', selector, { once: true });
-            else selector();
-            return;
-          }
-          var nodes = Array.prototype.slice.call(document.querySelectorAll(String(selector || '')));
-          return {
-            text: function(value) { nodes.forEach(function(node) { node.textContent = value == null ? '' : String(value); }); return this; },
-            html: function(value) { nodes.forEach(function(node) { node.innerHTML = value == null ? '' : String(value); }); return this; },
-            css: function(name, value) { nodes.forEach(function(node) { node.style.setProperty(name, value); }); return this; }
-          };
-        };
-      }
-    })();
-    </script>
-""".trimIndent()
 
 internal fun tavernMessageLayoutScript(nativeViewportHeight: Int = 0): String = """
     (function() {

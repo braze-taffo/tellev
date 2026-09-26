@@ -7,6 +7,7 @@ import android.webkit.WebResourceResponse
 object CompatAssets {
     private val aliases = buildMap {
         put("https://extensions.tellev.local/compat/globals.js", "globals.js")
+        put("https://extensions.tellev.local/compat/message-host.js", "message-host.js")
         put("https://extensions.tellev.local/compat/message.js", "message.js")
         put("https://extensions.tellev.local/compat/chat.js", "chat.js")
         for (host in listOf("testingcf.jsdelivr.net", "cdn.jsdelivr.net", "fastly.jsdelivr.net")) {
