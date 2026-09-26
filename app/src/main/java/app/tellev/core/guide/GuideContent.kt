@@ -18,19 +18,43 @@ internal enum class GuideKind(val assetDir: String) {
  * 读取并解析指引资产。语言按 [languageFallbackCandidates] 逐级回退；资产缺失
  * 或格式不对时返回 null，由调用方展示「指引内容加载失败」——不把异常抛到
  * 启动路径上，也不静默显示半截内容。
+ *
+ * 只按回退链逐个 `open` 试读，不用 `AssetManager.list()`：目录列举在真机上
+ * 曾经拿不到子项（1.7.0.1 装机验收时表现为「指引内容加载失败」），而按名字
+ * 直接开文件既没有这个不确定性，也顺带把「哪个语言真的读到了」变成显式路径。
  */
-internal fun loadGuide(assets: AssetManager, kind: GuideKind, languageTag: String): GuideDocument? {
-    val available = runCatching { assets.list(kind.assetDir)?.toSet() }.getOrNull().orEmpty()
-    val file = languageFallbackCandidates(languageTag).firstOrNull { "$it.md" in available } ?: return null
-    val source = runCatching {
-        assets.open("${kind.assetDir}/$file").bufferedReader().use { it.readText() }
-    }.getOrNull() ?: return null
-    return try {
-        GuideFormat.parse(source)
-    } catch (error: IllegalArgumentException) {
-        Log.e(TAG, "guide asset ${kind.assetDir}/$file is malformed", error)
-        null
+internal fun loadGuide(assets: AssetManager, kind: GuideKind, languageTag: String): GuideDocument? =
+    loadGuideFrom(kind, languageTag, reader = { path ->
+        runCatching { assets.open(path).bufferedReader().use { it.readText() } }.getOrNull()
+    })
+
+/**
+ * [loadGuide] 的测试入口：把「按路径取文本」与「报告失败」抽成参数，
+ * 读取逻辑就能在 JVM 单测里覆盖（`android.util.Log` 在单测里是 not mocked，
+ * 真机诊断与可测性只能二选一，所以走回调）。
+ */
+internal fun loadGuideFrom(
+    kind: GuideKind,
+    languageTag: String,
+    reader: (String) -> String?,
+    onFailure: (String, Throwable?) -> Unit = ::logGuideFailure,
+): GuideDocument? {
+    for (language in languageFallbackCandidates(languageTag)) {
+        val path = "${kind.assetDir}/$language.md"
+        val source = reader(path) ?: continue
+        return try {
+            GuideFormat.parse(source)
+        } catch (error: IllegalArgumentException) {
+            onFailure("guide asset $path is malformed", error)
+            return null
+        }
     }
+    onFailure("no readable guide asset under ${kind.assetDir} for '$languageTag'", null)
+    return null
+}
+
+private fun logGuideFailure(message: String, error: Throwable?) {
+    if (error == null) Log.w(TAG, message) else Log.e(TAG, message, error)
 }
 
 /**

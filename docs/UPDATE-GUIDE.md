@@ -36,7 +36,7 @@
 
 ```
 assets/guide/onboarding/{zh-CN,en,ja,ko}.md      # 4 页
-assets/guide/update/{zh-CN,en,ja,ko}.md          # 7 页
+assets/guide/update/{zh-CN,en,ja,ko}.md          # 6 页
 ```
 
 格式刻意做成语言中立，译文可以自由翻译正文，解析器不去认会被翻译的标签：
@@ -68,8 +68,16 @@ assets/guide/update/{zh-CN,en,ja,ko}.md          # 7 页
 
 ## 界面与文案
 
-- 弹窗是 `feature/guide/GuideDialog.kt`：全屏 `Dialog` + `HorizontalPager` 分页，
+- 指引是 `feature/guide/GuideOverlay.kt` 的**应用窗口内全屏覆盖层**，不是 Dialog。
+  宿主把 `Scaffold` 与它放进同一个 `Box`（见 `ui/TellevRoot.kt`），`HorizontalPager` 分页，
   底部「第 n / N 页」+「上一步 / 下一步」，最后一页换成「开始使用」（新手引导）或「知道了」（更新指引）。
+- **别改回全屏 `Dialog`**：独立窗口的几何会把底部那行切掉。1.7.0.1 装机实测：窗口
+  `mAttrs` 要的是整屏高度（`(0,0)(1281x2772)`），而系统又把它摆进让开系统栏的安全框里
+  （`frame=[0,152][1280,2720]`），于是内容整体下坠 152px、「下一步」只露出顶边；
+  声明 `decorFitsSystemWindows = false` 和给窗口 `setLayout(MATCH_PARENT, MATCH_PARENT)`
+  都没能改掉这个几何。放进应用窗口后，inset 语义与 App 自己的底栏完全一致。
+- 覆盖层只挂在 `TellevRoot` 那一层（Tab 栏之上）。「设置 → 关于」里的重看入口只发出请求
+  （`SettingsScreen(onOpenGuide = ...)`），由 `TellevRoot` 渲染——设置页自己的内容区盖不住底栏。
 - 正文用原生 Compose 渲染（标题 / 摘要 / 入口 / 步骤），**没有用 WebView**：
   分页横滑会和 WebView 的横向手势抢，而且每页一个 WebView 的内存代价不值。
 - 弹窗自身的文案走既有 i18n 流程（`_i18n/a12_guide.tsv` + `_i18n/translations.tsv`），

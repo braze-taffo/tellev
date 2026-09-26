@@ -2,9 +2,11 @@ package app.tellev.ui
 
 import android.widget.Toast
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -75,7 +77,7 @@ import app.tellev.feature.chat.ChatViewModelFactory
 import app.tellev.feature.extensions.ExtensionsScreen
 import app.tellev.feature.extensions.ExtensionsViewModel
 import app.tellev.feature.extensions.ExtensionsViewModelFactory
-import app.tellev.feature.guide.GuideDialog
+import app.tellev.feature.guide.GuideOverlay
 import app.tellev.feature.settings.SettingsScreen
 import app.tellev.feature.settings.SettingsViewModel
 import app.tellev.feature.settings.SettingsViewModelFactory
@@ -200,6 +202,7 @@ fun TellevRoot() {
     // 首次打开指引：覆盖升级看「本次更新了什么」，全新安装看新手引导。
     // 判定放在 IO 上——那条「全新安装」分支要枚举磁盘目录。
     var startupGuide by rememberSaveable { mutableStateOf<StartupGuide?>(null) }
+    var manualGuide by rememberSaveable { mutableStateOf<GuideKind?>(null) }
     LaunchedEffect(packageInfo.firstInstallTime, packageInfo.lastUpdateTime) {
         startupGuide = withContext(Dispatchers.IO) {
             decideStartupGuide(
@@ -224,6 +227,10 @@ fun TellevRoot() {
     // Hide bottom bar on detail/edit screens.
     val showBottomBar = currentDestination?.route in TellevTab.entries.map { it.route }
 
+    // 指引覆盖层的宿主：它是一个应用窗口内的全屏层，不是独立窗口——全屏 Dialog 的窗口
+    // 几何会让底部按钮被切掉（见 GuideOverlay 的注释）。Box 里唯一需要留意的是顺序：
+    // 覆盖层写在 Scaffold 之后才会盖在页面之上。
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
@@ -483,6 +490,7 @@ fun TellevRoot() {
                     viewModel = settingsViewModel,
                     updateViewModel = updateViewModel,
                     presetFocusRequest = presetFocusRequest,
+                    onOpenGuide = { manualGuide = it },
                     onOpenProviderSettings = {
                         navController.navigate("settings/providers")
                     },
@@ -516,7 +524,7 @@ fun TellevRoot() {
     // 下面几个通知与更新提示都让位，保证一次只弹一个。
     val guide = startupGuide
     if (guide != null) {
-        GuideDialog(
+        GuideOverlay(
             kind = when (guide) {
                 StartupGuide.Onboarding -> GuideKind.Onboarding
                 StartupGuide.UpdateGuide -> GuideKind.Update
@@ -530,6 +538,13 @@ fun TellevRoot() {
                 startupGuide = null
             },
         )
+    }
+
+    // 「设置 → 关于」里的重看入口。指引层只在这一层（Tab 栏之上）挂载：设置页的
+    // 内容区盖不住底栏，所以那边只发请求，不自己渲染。
+    manualGuide?.let { kind ->
+        GuideOverlay(kind = kind, onDismiss = { manualGuide = null })
+    }
     }
 
     if (showPresetLimitUpgradeNotice && startupGuide == null) {

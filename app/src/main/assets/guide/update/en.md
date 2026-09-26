@@ -31,18 +31,6 @@ The AI extracts key setting and plot points from your chats and stores them, the
 3. Just keep chatting — memories are extracted automatically. On the memory screen you can show "Active memories only" and "Correct memory" or delete single entries.
 4. Use "Backfill history" for older chats. If editing the chat invalidates old results, run "Rebuild vector index".
 
-## Option buttons fill the input draft
-
-Messages that render tappable options used to do nothing when tapped. Now tapping an option puts the answer into the input draft.
-
-<!-- where -->
-- No setup needed — option buttons inside chat messages just work
-
-<!-- steps -->
-1. When a message offers options, tap the one you want.
-2. The answer is appended to the input draft with its matching tag; tapping several options accumulates them in order.
-3. Write a few lines first and then tap, or tap first and add text afterwards — sending is always up to you.
-
 ## Card scripts are more compatible
 
 Cards that ship Tavern Helper scripts — variable frameworks, status bars, battle overlays — now get much wider support: world book reads and writes, chat message writes, regex scripts and template functions really take effect, and a failing script no longer takes the whole app down.

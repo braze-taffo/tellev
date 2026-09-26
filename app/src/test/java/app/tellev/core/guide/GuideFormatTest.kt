@@ -175,7 +175,7 @@ class GuideFormatTest {
                     counts.getValue(language),
                 )
             }
-            val minimum = if (kind == GuideKind.Update) 7 else 4
+            val minimum = if (kind == GuideKind.Update) 6 else 4
             assertTrue("${kind.assetDir} shrank to $reference pages", reference >= minimum)
         }
     }
