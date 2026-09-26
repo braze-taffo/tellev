@@ -785,7 +785,7 @@ window.__tellevTemplate = async function (request) {
         cooldown: force ? 0 : entry.cooldown,
         delay: force ? 0 : entry.delay,
         vectorized: force ? false : entry.vectorized,
-        delayUntilRecursion: force ? false : entry.vectorized,
+        delayUntilRecursion: force ? false : entry.delayUntilRecursion,
         triggers: force ? [] : entry.triggers,
         hash: force ? Math.random() + 1 : undefined,
         content: force ? String(entry.content).replace('@@dont_activate', '') : entry.content,
@@ -798,7 +798,7 @@ window.__tellevTemplate = async function (request) {
   const activateWorldInfoByKeywords = async (keywords, condition = {}) => {
     const entries = await getEnabledWorldInfoEntries();
     const activated = selectActivatedEntries(entries, keywords, condition);
-    for (const x of activated) activateWorldInfo(x.world, x.uid, condition.force);
+    await Promise.all(activated.map(x => activateWorldInfo(x.world, x.uid, condition.force)));
     return activated;
   };
   const applyActivateWorldInfo = () => {
@@ -841,13 +841,17 @@ window.__tellevTemplate = async function (request) {
   // registrations stay alive until the end-of-pass scan.
   if (request.isolated) {
     const snapshot = new Map();
+    const activationSnapshot = new Map(activatedWorldEntries);
     promptInjected.forEach((inner, key) => snapshot.set(key, new Map(inner)));
     try {
       const result = await doRender();
       result.content = applyOutletPrompts(result.content);
       return result;
     }
-    finally { promptInjected.clear(); snapshot.forEach((inner, key) => promptInjected.set(key, inner)); }
+    finally {
+      promptInjected.clear(); snapshot.forEach((inner, key) => promptInjected.set(key, inner));
+      activatedWorldEntries.clear(); activationSnapshot.forEach((entry, key) => activatedWorldEntries.set(key, entry));
+    }
   }
   return doRender();
 };

@@ -5,7 +5,7 @@ export const readAsset = name => readFile(new URL(`../../../app/src/main/assets/
 
 // Executes the exported production bridge. The native boundary is an in-memory
 // fixture; disk merge/commit behavior is covered separately by the Kotlin tests.
-export async function createHost({ chat, card = {}, failWrite = () => null }) {
+export async function createHost({ chat, card = {}, failWrite = () => null, failApi = () => null }) {
   const errors = [], scopes = { local: {}, global: {} };
   const vc = new VirtualConsole();
   vc.on('jsdomError', e => errors.push(e.message));
@@ -27,8 +27,12 @@ export async function createHost({ chat, card = {}, failWrite = () => null }) {
   let savedCharacter = null;
   const native = {
     stGetContext: () => JSON.stringify({ chat, chatId: 'fixture', name1: 'User', name2: card.name || 'Fixture',
-      characterWorldBooks: ['fixture'], globalWorldBooks: [],
-      worldBooks: [...worldsStore.values()] }),
+      characterId: 'fixture', characterWorldBooks: ['fixture'],
+      globalWorldBooks: [...worldsStore.values()].filter(b => !disabledWorlds.has(b.id)).map(b => b.name),
+      // Same projection as ChatTavernAdapter: never expose the stored model here.
+      worldBooks: [...worldsStore.values()].map(b => ({ id: b.id, name: b.name,
+        entries: b.entries.map(e => ({ ...e.raw, uid: e.id, comment: e.comment,
+          content: e.content, disable: !e.enabled })) })) }),
     stGetVariablesForScope: s => JSON.stringify(scopes[s] || {}),
     stSetVariablesForScope: (s, v) => { scopes[s] = JSON.parse(v); },
     stGetAllVariables: () => JSON.stringify({ ...scopes.global, ...scopes.local }),
@@ -59,6 +63,8 @@ export async function createHost({ chat, card = {}, failWrite = () => null }) {
         id: m.id, role: m.is_user ? 'user' : (m.is_system ? 'system' : 'assistant'),
         name: m.name ?? '', content: m.mes ?? '' })) });
       try {
+        const failure = failApi(method, path, body);
+        if (failure) return respond(failure.status ?? 500, { error: failure.error ?? 'write failed' });
         if (method === 'GET' && path === '/api/worlds') return respond(200, { worlds: [...worldsStore.values()] });
         if (method === 'GET' && segments[0] === 'worlds' && segments.length === 2) {
           const book = worldsStore.get(segments[1]);
@@ -77,11 +83,19 @@ export async function createHost({ chat, card = {}, failWrite = () => null }) {
           return respond(200, { ok: true });
         }
         if (method === 'GET' && segments[0] === 'characters' && segments.length === 3 && segments[2] === 'regex') {
-          const stored = savedCharacter?.data?.extensions?.regex_scripts ?? card.regexScripts ?? [];
+          const stored = savedCharacter?.raw?.data?.extensions?.regex_scripts ?? card.regexScripts ?? [];
           return respond(200, { regex_scripts: stored });
         }
+        if (method === 'GET' && path === '/api/characters') {
+          return respond(200, { characters: [{ id: 'fixture', name: card.name || 'Fixture' }] });
+        }
         if (method === 'GET' && segments[0] === 'characters' && segments.length === 2) {
-          return respond(200, savedCharacter ?? { name: card.name || 'Fixture', data: {} });
+          return respond(200, savedCharacter ?? { id: 'fixture', name: card.name || 'Fixture', raw: { data: {} } });
+        }
+        if (method === 'POST' && segments[0] === 'characters' && segments[2] === 'tavern-helper') {
+          savedCharacter ??= { id: 'fixture', name: card.name || 'Fixture', raw: { data: { extensions: {} } } };
+          Object.assign(savedCharacter.raw.data.extensions, body);
+          return respond(200, { ok: true });
         }
         if (method === 'POST' && segments[0] === 'characters' && segments.length === 1) {
           savedCharacter = body; return respond(200, body);
@@ -89,9 +103,10 @@ export async function createHost({ chat, card = {}, failWrite = () => null }) {
         if (method === 'GET' && segments[0] === 'chats' && segments.length === 2) return respond(200, chatToSession());
         if (method === 'POST' && segments[0] === 'chats' && segments[2] === 'messages' && segments[3] === 'insert') {
           const at = Math.max(0, Math.min(chat.length, body.before));
-          chat.splice(at, 0, { id: body.message.id, name: body.message.name,
-            mes: body.message.content, is_user: body.message.role === 'user',
-            is_system: body.message.role === 'system', swipe_id: 0, variables: [] });
+          chat.splice(at, 0, ...(body.messages ?? [body.message]).map(message => ({ id: message.id, name: message.name,
+            mes: message.content, is_user: message.role === 'user',
+            is_system: message.isHidden ?? false, extra: message.metadata || {},
+            swipe_id: 0, variables: message.variables || [] })));
           return respond(200, { ok: true });
         }
         if (method === 'POST' && segments[0] === 'chats' && segments[2] === 'messages' && segments[3] === 'delete') {

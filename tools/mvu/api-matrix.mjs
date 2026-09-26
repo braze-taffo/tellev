@@ -108,18 +108,18 @@ const scriptSurface = [
   ['variables (get/replace/insert/update/delete/getAll, message scope)', 'real', 'host.js overrides; message scope through per-floor native bridge'],
   ['events (eventOn/Once/MakeFirst/MakeLast/Emit/...) + tavern_events/iframe_events', 'real', 'eventSource bridge; per-frame registration DOM'],
   ['getChatMessages / setChatMessages / setChatMessage', 'real', 'stSetChatMessages round trip incl. MVU variable-write commit wait'],
-  ['createChatMessages', 'real', 'POST /api/chats/{id}/messages/insert; insert_before semantics incl. negative index'],
+  ['createChatMessages', 'real', 'Single durable batch; message text, hidden/data/extra mapping; insert_before incl. negative indexes; native failures reject'],
   ['deleteChatMessages', 'real', 'POST /api/chats/{id}/messages/delete by normalized floor ids'],
   ['rotateChatMessages', 'stub', 'swipe rotation needs generation; honest no-op'],
-  ['worldbook reads (getLorebookEntries/getWorldbook/getWorldbookNames/...)','real','ST lorebook entry shape + v4 WorldbookEntry shape (strategy/position objects)'],
-  ['worldbook writes (create/delete/replace/updateWorldbookWith, lorebook entry family)', 'real', 'read-modify-write of the full book via POST /api/worlds; effective next generation'],
+  ['worldbook reads (getLorebookEntries/getWorldbook/getWorldbookNames/...)','real','Public LorebookEntry and v4 WorldbookEntry; loadWorldInfo retains raw ST shape; durable reads avoid context projections'],
+  ['worldbook writes (create/delete/replace/updateWorldbookWith, lorebook entry family)', 'real', 'uid patches, async updaters and deletion predicates; preserve unknown fields; checked native writes; unsupported activation features remain limited by native scanner'],
   ['deleteWorldbook', 'real', 'DELETE /api/worlds/{id}'],
   ['rebindGlobalWorldbooks', 'real', 'POST /api/worldinfo/disabled activation-set write-back'],
   ['rebindCharWorldbooks / rebindChatWorldbook / getOrCreateChatWorldbook', 'stub', 'Tellev has no per-character additional books nor chat-bound books'],
   ['getCharLorebooks / getCharWorldbookNames / getGlobalWorldbookNames / getLorebookSettings', 'real', 'from the live context snapshot'],
   ['presets (get/load/set/create/replace/update/rename/deletePreset, getLoadedPresetName)', 'real', '/api/presets routes'],
   ['triggerSlash / triggerSlashWithResult / addSlashCommand', 'real', 'native slash engine; triggerSlash rejects on isError and returns the pipe'],
-  ['regex (getTavernRegexes/replaceTavernRegexes/updateTavernRegexesWith)', 'real', 'upstream option-object order; legacy positional (charId, regexes) still accepted'],
+  ['regex (getTavernRegexes/replaceTavernRegexes/updateTavernRegexesWith)', 'partial', 'Character scope only; updater-first order, public/stored field conversion and native extension patch; global/preset scopes reject explicitly; reads remain async'],
   ['formatAsDisplayedMessage', 'real', 'macro substitution; card regex applied upstream'],
   ['formatAsTavernRegexedString', 'stub', 'ScopedScript reshaping not implemented'],
   ['injectPrompts / uninjectPrompts', 'real', 'position/depth/role/shouldScan via stInjectPromptWithOptions; once via GENERATION_ENDED'],
@@ -133,6 +133,6 @@ const scriptSurface = [
 for(const [family,status,notes] of scriptSurface) {
   lines.push(`| \`${family}\` | ${status} | ${notes} |`);
 }
-lines.push('', 'Coverage 2026-09-26: 53 of 62 function names implemented on the production WebView path (was 38); the remaining 9 are stubs or missing: activateRegex, getpreset/getprp/getPresetPrompt, getqr/getQuickReply/getQuickReplyData, setVariableSchema, findVariables, plus the four LAST_* counters and swipe_id/prompt_template_prepare.');
+lines.push('', 'Coverage 2026-09-26: function presence is not full behavioral compatibility. Template activation remains a local registry without a world re-scan; character roster is limited to the active card; regex operations cover character scope and remain asynchronous. See tools/mvu/test/upstream-writes.test.mjs for executable write-contract regressions. Android UI, full event ordering and real-model acceptance remain separate.');
 await writeFile(new URL('docs/MVU-API-MATRIX.md',root),lines.join('\n')+'\n');
 console.log(JSON.stringify({entries:contracts.length,placeholderCandidates:contracts.filter(e=>e.placeholderCandidate).length,withSourceCandidates:contracts.filter(e=>e.sourceCandidates.length).length,accepted:0}));

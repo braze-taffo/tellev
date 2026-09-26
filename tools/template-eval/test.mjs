@@ -496,6 +496,14 @@ test('activateWorldInfoByKeywords registers keyword matches', async () => {
   assert.equal(out, '[3,1,2][1]');
 });
 
+test('historical floor activations are isolated even when the render fails', async () => {
+  window.__tellevTemplateDeactivate();
+  await render("<% await activateWorldInfo('玄泽书', 1, true) %>", { worldCatalog: BOOK_ENTRIES });
+  await assert.rejects(render("<% await activateWorldInfo('世界书', 3); throw new Error('render failed') %>",
+    { isolated: true, worldCatalog: BOOK_ENTRIES }), /render failed/);
+  assert.equal(await render("<%= getActivatedWIEntries().map(e => e.uid).join(',') %>"), '1');
+});
+
 let failed = 0;
 for (const { name, fn } of tests) {
   try {

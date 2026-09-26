@@ -590,6 +590,68 @@ class VirtualApiRouterTest {
         assertTrue(store.readChatSession("chat-Char").messages.isEmpty())
     }
 
+    @Test
+    fun `message batch persists hidden variables and extra in one write`() = runBlocking {
+        saveSessionFor("Char")
+        val response = router.route(VirtualApiRequest(
+            "POST", "/api/chats/chat-Char/messages/insert",
+            body = """{"messages":[
+                {"id":"a","role":"system","name":"system","content":"narration","createdAtMillis":5,
+                 "variables":[{"hp":5}],"metadata":{"type":"narrator"}},
+                {"id":"b","role":"assistant","name":"Char","content":"hidden","createdAtMillis":6,
+                 "isHidden":true,"metadata":{"custom":3}}
+            ],"before":0}""",
+        ))
+        assertEquals(200, response.status)
+        val messages = store.readChatSession("chat-Char").messages
+        assertEquals(listOf("a", "b", "m1"), messages.map { it.id })
+        assertEquals("5", messages[0].variables[0].jsonObject["hp"]?.jsonPrimitive?.content)
+        assertEquals("narrator", messages[0].raw["extra"]?.jsonObject?.get("type")?.jsonPrimitive?.content)
+        assertTrue(messages[1].isHidden)
+        assertEquals("3", messages[1].raw["extra"]?.jsonObject?.get("custom")?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `invalid message batch never inserts a partial prefix`() = runBlocking {
+        saveSessionFor("Char")
+        val response = router.route(VirtualApiRequest(
+            "POST", "/api/chats/chat-Char/messages/insert",
+            body = """{"messages":[
+                {"id":"a","role":"assistant","name":"Char","content":"valid","createdAtMillis":5},
+                {"id":"b","role":"invalid"}
+            ],"before":0}""",
+        ))
+        assertEquals(400, response.status)
+        assertEquals(listOf("m1"), store.readChatSession("chat-Char").messages.map { it.id })
+    }
+
+    @Test
+    fun `message mutations return not found for missing sessions`() = runBlocking {
+        val insert = router.route(VirtualApiRequest("POST", "/api/chats/missing/messages/insert",
+            body = """{"messages":[],"before":0}"""))
+        assertEquals(404, insert.status)
+        val delete = router.route(VirtualApiRequest("POST", "/api/chats/missing/messages/delete",
+            body = """{"message_ids":["m1"]}"""))
+        assertEquals(404, delete.status)
+    }
+
+    @Test
+    fun `tavern helper regex patch survives native reread without losing card fields`() = runBlocking {
+        store.saveCharacter(CharacterCard(id = "regex-char", name = "Regex", description = "keep description",
+            raw = json.parseToJsonElement("""{"data":{"extensions":{"custom":{"keep":true}}}}""").jsonObject))
+        val response = router.route(VirtualApiRequest(
+            "POST", "/api/characters/regex-char/tavern-helper",
+            body = """{"regex_scripts":[{"id":"r","scriptName":"rule","findRegex":"a","replaceString":"b","placement":[2]}]}""",
+        ))
+        assertEquals(200, response.status)
+        val reread = router.route(VirtualApiRequest("GET", "/api/characters/regex-char/regex"))
+        val regex = json.parseToJsonElement(reread.body).jsonObject["regex_scripts"]!!.jsonArray[0].jsonObject
+        assertEquals("a", regex["findRegex"]?.jsonPrimitive?.content)
+        val card = store.readCharacter("regex-char")
+        assertEquals("keep description", card.description)
+        assertEquals("true", card.raw["data"]!!.jsonObject["extensions"]!!.jsonObject["custom"]!!.jsonObject["keep"]!!.jsonPrimitive.content)
+    }
+
     private class InMemorySecretStore : SecretStore {
         private val secrets = ConcurrentHashMap<String, String>()
 

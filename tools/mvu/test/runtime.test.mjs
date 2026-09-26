@@ -41,7 +41,11 @@ test('actual MVU bundle initializes and applies DaoYuan Zod updates', {timeout:2
       emitFromEventSource:()=>{}, emit:()=>{}, stReplaceVariables:s=>s,
       getSettings:()=> '{}', saveSettings:()=>{}, registerCommand:()=>{}, registerRoute:()=>{},
       extensionReady:()=>{}, extensionFailed:e=>errors.push(e),
-      apiCall:(id)=>queueMicrotask(()=>w.Tellev.onApiResult?.(id,200,'{}')),
+      apiCall:(id, method, path)=>queueMicrotask(()=>w.Tellev.onApiResponse(id,
+        method === 'GET' && path === '/api/worlds' ? 200 : 404,
+        JSON.stringify(method === 'GET' && path === '/api/worlds'
+          ? { worlds: [{ id: 'dao', name: 'dao', entries: card.character_book.entries, raw: {} }] }
+          : { error: `Unexpected fixture request: ${method} ${path}` }))),
     };
     w.eval(await asset('globals.js'));
     const html = await read('../../../app/build/compat-host.html');

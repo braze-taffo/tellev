@@ -74,18 +74,24 @@ import java.nio.charset.CodingErrorAction
 
 /**
  * [InputStream.readNBytes] 的限量读取等价实现：该函数要求 API 33（minSdk 31），
- * lint 报 NewApi 错误。语义一致——读满 [limit] 字节或流结束即停，允许最后一次
- * 多读一个缓冲块作为「超限」证据，内存上界 limit + 64 KB。
+ * lint 报 NewApi 错误。读满 [limit] 字节或流结束即停，不超过调用者给出的上限。
  */
 private fun InputStream.readBounded(limit: Int): ByteArray {
     val out = ByteArrayOutputStream(minOf(limit, 1 shl 20))
     val buffer = ByteArray(1 shl 16)
     var total = 0
-    while (total <= limit) {
-        val read = read(buffer)
-        if (read < 0) break
-        out.write(buffer, 0, read)
-        total += read
+    while (total < limit) {
+        val count = read(buffer, 0, minOf(buffer.size, limit - total))
+        if (count < 0) break
+        if (count == 0) {
+            val byte = read()
+            if (byte < 0) break
+            out.write(byte)
+            total++
+            continue
+        }
+        out.write(buffer, 0, count)
+        total += count
     }
     return out.toByteArray()
 }

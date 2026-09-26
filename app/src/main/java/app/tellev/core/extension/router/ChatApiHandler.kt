@@ -18,12 +18,21 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import java.nio.file.NoSuchFileException
 
 internal class ChatApiHandler(
     private val dataStore: StDataStore,
     private val json: Json,
     private val externalChatWrites: ExternalChatWritePort = object : ExternalChatWritePort {},
 ) {
+    private suspend fun readExistingSession(id: String): ChatSession? = try {
+        dataStore.readChatSession(id)
+    } catch (_: NoSuchFileException) {
+        null
+    } catch (error: IllegalStateException) {
+        if (error.message == "Chat session not found: $id") null else throw error
+    }
+
     suspend fun handleListChats(request: VirtualApiRequest): VirtualApiResponse {
         val queryParams = parseSimpleQuery(request.path)
         val characterId = queryParams["characterId"]
@@ -73,20 +82,20 @@ internal class ChatApiHandler(
             ?.toSet()
             ?: return errorResponse(400, "Missing message_ids array", json)
         externalChatWrites.quiesce(sessionId)
-        val session = runCatching { dataStore.readChatSession(sessionId) }.getOrNull()
-            ?: run {
-                externalChatWrites.notifyWritten(sessionId)
-                return errorResponse(404, "Chat not found: $sessionId", json)
-            }
-        val kept = session.messages.filterNot { it.id in ids }
-        dataStore.saveChatSession(session.copy(messages = kept))
-        externalChatWrites.notifyWritten(sessionId)
-        return jsonResponse(200, buildJsonObject { put("ok", true); put("deleted", session.messages.size - kept.size) }, json)
+        try {
+            val session = readExistingSession(sessionId)
+                ?: return errorResponse(404, "Chat not found: $sessionId", json)
+            val kept = session.messages.filterNot { it.id in ids }
+            dataStore.saveChatSession(session.copy(messages = kept))
+            return jsonResponse(200, buildJsonObject { put("ok", true); put("deleted", session.messages.size - kept.size) }, json)
+        } finally {
+            externalChatWrites.notifyWritten(sessionId)
+        }
     }
 
     /**
-     * POST /api/chats/{id}/messages/insert { message: {...}, before: n } —
-     * inserts the message at index n (clamped), backing
+     * POST /api/chats/{id}/messages/insert { messages: [...], before: n } —
+     * inserts a batch in one durable write at index n (clamped), backing
      * TavernHelper.createChatMessages' insert_before option.
      */
     suspend fun handleInsertMessage(
@@ -94,22 +103,29 @@ internal class ChatApiHandler(
         request: VirtualApiRequest,
     ): VirtualApiResponse {
         val body = parseBodyAsJsonObject(request, json)
-        val messageElement = body["message"]
-            ?: return errorResponse(400, "Missing message", json)
-        val message = runCatching { json.decodeFromJsonElement(ChatMessage.serializer(), messageElement) }
-            .getOrElse { return errorResponse(400, "Invalid message: ${it.message}", json) }
+        val elements = body["messages"] as? JsonArray
+            ?: body["message"]?.let { JsonArray(listOf(it)) }
+            ?: return errorResponse(400, "Missing messages", json)
+        val messages = runCatching { elements.map { json.decodeFromJsonElement(ChatMessage.serializer(), it) } }
+            .getOrElse { return errorResponse(400, "Invalid messages: ${it.message}", json) }
+        if (messages.map { it.id }.toSet().size != messages.size) {
+            return errorResponse(400, "Duplicate message ids", json)
+        }
         val before = (body["before"] as? JsonPrimitive)?.content?.toIntOrNull()
             ?: return errorResponse(400, "Missing before index", json)
         externalChatWrites.quiesce(sessionId)
-        val session = runCatching { dataStore.readChatSession(sessionId) }.getOrNull()
-            ?: run {
-                externalChatWrites.notifyWritten(sessionId)
-                return errorResponse(404, "Chat not found: $sessionId", json)
+        try {
+            val session = readExistingSession(sessionId)
+                ?: return errorResponse(404, "Chat not found: $sessionId", json)
+            if (session.messages.any { existing -> messages.any { it.id == existing.id } }) {
+                return errorResponse(409, "Message id already exists", json)
             }
-        val at = before.coerceIn(0, session.messages.size)
-        dataStore.saveChatSession(session.copy(messages = session.messages.toMutableList().apply { add(at, message) }))
-        externalChatWrites.notifyWritten(sessionId)
-        return jsonResponse(200, buildJsonObject { put("ok", true) }, json)
+            val at = before.coerceIn(0, session.messages.size)
+            dataStore.saveChatSession(session.copy(messages = session.messages.toMutableList().apply { addAll(at, messages) }))
+            return jsonResponse(200, buildJsonObject { put("ok", true) }, json)
+        } finally {
+            externalChatWrites.notifyWritten(sessionId)
+        }
     }
 
     suspend fun handleStGetChat(request: VirtualApiRequest): VirtualApiResponse {

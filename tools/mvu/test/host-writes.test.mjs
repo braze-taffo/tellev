@@ -63,16 +63,19 @@ const cardWithBook = () => ({
   ],
 });
 
-test('getLorebookEntries returns ST-shaped entries with numeric uids', async () => {
+test('getLorebookEntries returns public helper entries while loadWorldInfo returns raw ST entries', async () => {
   const host = await createHost({ chat: messages(), card: cardWithBook() });
   try {
     const { w } = host;
     const entries = await w.getLorebookEntries('fixture');
-    assert.equal(JSON.stringify(entries.map(e => [e.uid, e.comment, e.disable, e.order])),
-      '[[0,"自我介绍",false,100],[1,"商店",true,50]]');
+    assert.equal(JSON.stringify(entries.map(e => [e.uid, e.comment, e.enabled, e.order])),
+      '[[0,"自我介绍",true,100],[1,"商店",false,50]]');
+    assert.equal(entries[1].position, 'after_character_definition');
+    assert.equal((await w.SillyTavern.loadWorldInfo('fixture')).entries[1].disable, true);
     assert.equal(JSON.stringify(entries[1].key), '["/商店|店铺/"]');
     const v4 = await w.getWorldbook('fixture');
-    assert.equal(v4[1].strategy.keys[0], '/商店|店铺/');
+    assert.equal(String(v4[1].strategy.keys[0]), '/商店|店铺/');
+    assert.equal(v4[1].strategy.keys[0].test('商店'), true);
     assert.equal(v4[1].strategy.keys_secondary.logic, 'and_any');
     assert.equal(v4[1].position.type, 'after_character_definition');
     assert.equal(v4[1].enabled, false);
@@ -102,11 +105,11 @@ test('createWorldbookEntries appends with fresh uids and reports the worldbook',
   } finally { host.close(); }
 });
 
-test('deleteWorldbookEntries removes by uid and deleteWorldbook removes the book', async () => {
+test('deleteWorldbookEntries removes by predicate and deleteWorldbook removes the book', async () => {
   const host = await createHost({ chat: messages(), card: cardWithBook() });
   try {
     const { w, worldsStore } = host;
-    const result = await w.deleteWorldbookEntries('fixture', [0]);
+    const result = await w.deleteWorldbookEntries('fixture', entry => entry.uid === 0);
     assert.equal(JSON.stringify(result.worldbook.map(e => e.uid)), '[1]');
     assert.equal(JSON.stringify(result.deleted_entries.map(e => e.uid)), '[0]');
     assert.equal(worldsStore.get('fixture').entries.length, 1);
@@ -131,7 +134,7 @@ test('updateWorldbookWith mutates the v4 worldbook and persists', async () => {
     const stored = worldsStore.get('fixture').entries[0];
     assert.equal(stored.comment, '改名');
     assert.equal(stored.constant, true);
-    assert.equal(stored.selectiveLogic, 0);
+    assert.equal(updated[0].strategy.keys_secondary.logic, 'and_any');
   } finally { host.close(); }
 });
 
@@ -151,9 +154,9 @@ test('createChatMessages inserts floors with role-derived names', async () => {
   try {
     const { w, chat } = host;
     await w.createChatMessages([
-      { role: 'system', content: '规则注入' },
-      { role: 'user', content: '用户补语' },
-      { role: 'assistant', content: '角色补语' },
+      { role: 'system', message: '规则注入' },
+      { role: 'user', message: '用户补语' },
+      { role: 'assistant', message: '角色补语' },
     ], { insert_before: 1 });
     assert.equal(chat.length, 5);
     assert.equal(chat[1].mes, '规则注入');
@@ -162,7 +165,7 @@ test('createChatMessages inserts floors with role-derived names', async () => {
     assert.equal(chat[3].mes, '角色补语');
     assert.equal(chat[3].name, 'Fixture');
     // Default is append at the end.
-    await w.createChatMessages([{ role: 'system', content: '末尾' }]);
+    await w.createChatMessages([{ role: 'system', message: '末尾' }]);
     assert.equal(chat.at(-1).mes, '末尾');
   } finally { host.close(); }
 });
@@ -193,16 +196,20 @@ test('triggerSlashWithResult aliases triggerSlash and resolves the pipe', async 
 test('regex family accepts the upstream option object and persists updates', async () => {
   const host = await createHost({ chat: messages(), card: {
     name: 'Fixture',
-    regexScripts: [{ id: 'r1', script_name: 's1', findRegex: 'a', replaceString: 'b' }],
+    regexScripts: [{ id: 'r1', scriptName: 's1', findRegex: 'a', replaceString: 'b', placement: [2] }],
   } });
   try {
     const { w } = host;
     const listed = await w.getTavernRegexes({ type: 'character', name: 'current' });
     assert.equal(listed.length, 1);
-    const updated = await w.updateTavernRegexesWith({ type: 'character', name: 'current' },
-      regexes => [...regexes, { id: 'r2', script_name: 's2', findRegex: 'c', replaceString: 'd' }]);
+    assert.equal(listed[0].source.ai_output, true);
+    assert.equal(listed[0].find_regex, 'a');
+    const updated = await w.updateTavernRegexesWith(
+      regexes => [...regexes, { ...regexes[0], id: 'r2', script_name: 's2', find_regex: 'c', replace_string: 'd' }],
+      { type: 'character', name: 'Fixture' });
     assert.equal(updated.length, 2);
-    assert.equal(host.savedCharacter?.data?.extensions?.regex_scripts?.length, 2);
+    assert.equal(host.savedCharacter?.raw?.data?.extensions?.regex_scripts?.length, 2);
+    assert.equal(host.savedCharacter.raw.data.extensions.regex_scripts[1].findRegex, 'c');
     // Legacy positional order (tellev) keeps working.
     const legacy = await w.getTavernRegexes('fixture');
     assert.equal(legacy.length, 2);
