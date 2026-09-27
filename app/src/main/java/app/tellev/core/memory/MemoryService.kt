@@ -113,7 +113,7 @@ class MemoryService(
                             return@withLock
                         }
                         if (slices.size > 1) progress("整理第 ${index + 1}/${batches.size} 段，文本 ${sliceIndex + 1}/${slices.size}")
-                        val result = generate(config, extractionPrompt(mode, slice.transcript, document.records))
+                        val result = generate(config, extractionPrompt(mode, slice.transcript, document.records), settings.maxOutputTokens)
                         records += parseRecords(result, mode, slice.sourceIds)
                         val latestAfterSlice = dataStore.readChatSession(session.id)
                         if (sourceChanged(source, latestAfterSlice) || store.read(session.id)?.needsRebuild == true) {
@@ -161,7 +161,7 @@ class MemoryService(
                     )
                     store.write(session.id, document)
                     if (mode == MemoryMode.ARCHIVE) {
-                        document = mergeArchiveLayers(session.id, document, config, progress)
+                        document = mergeArchiveLayers(session.id, document, config, settings.maxOutputTokens, progress)
                         val latestAfterMerge = dataStore.readChatSession(session.id)
                         if (sourceChanged(source, latestAfterMerge) || store.read(session.id)?.needsRebuild == true) {
                             store.write(session.id, invalidated(document, latestAfterMerge))
@@ -373,14 +373,14 @@ class MemoryService(
         }
     }
 
-    private suspend fun mergeArchiveLayers(id: String, doc: MemoryDocument, config: ProviderConfig, progress: (String) -> Unit): MemoryDocument {
+    private suspend fun mergeArchiveLayers(id: String, doc: MemoryDocument, config: ProviderConfig, maxOutputTokens: Int, progress: (String) -> Unit): MemoryDocument {
         var result = doc
         val chapterCovered = result.records.filter { it.kind == "summary_chapter" }.flatMap { it.sourceIds }.toSet()
         val turns = result.records.filter { it.kind == "summary_turn" && it.sourceIds.any { id -> id !in chapterCovered } }
         if (turns.size >= 12) {
             progress("合并章节摘要")
             val sources = turns.take(12)
-            val text = generate(config, "把以下剧情摘要合并成一段连贯、准确的章节总结。只保留事实，不补造。\n" + sources.joinToString("\n") { it.text })
+            val text = generate(config, "把以下剧情摘要合并成一段连贯、准确的章节总结。只保留事实，不补造。\n" + sources.joinToString("\n") { it.text }, maxOutputTokens)
             result = result.copy(records = result.records + MemoryRecord(UUID.randomUUID().toString(), "summary_chapter", text.take(3000), sourceIds = sources.flatMap { it.sourceIds }.distinct()))
             store.write(id, result)
         }
@@ -389,30 +389,68 @@ class MemoryService(
         if (chapters.size >= 8) {
             progress("合并长期剧情")
             val sources = chapters.take(8)
-            val text = generate(config, "把以下章节摘要合并成长期剧情总览，保留关键转折和时间顺序，不补造。\n" + sources.joinToString("\n") { it.text })
+            val text = generate(config, "把以下章节摘要合并成长期剧情总览，保留关键转折和时间顺序，不补造。\n" + sources.joinToString("\n") { it.text }, maxOutputTokens)
             result = result.copy(records = result.records + MemoryRecord(UUID.randomUUID().toString(), "summary_chronicle", text.take(4000), sourceIds = sources.flatMap { it.sourceIds }.distinct()))
         }
         return result
     }
 
-    private suspend fun generate(config: ProviderConfig, prompt: String): String {
+    private suspend fun generate(config: ProviderConfig, prompt: String, maxOutputTokens: Int): String {
+        val outputLimit = maxOutputTokens.coerceIn(1024, 65536)
         val preset = GenerationPreset("tellev-memory", "记忆整理", config.providerType,
-            category = presetCategoryForProvider(config.providerType), maxCompletionTokens = 1800)
+            category = presetCategoryForProvider(config.providerType), maxTokens = outputLimit, maxCompletionTokens = outputLimit)
         val built = PromptBuildResult(
             messages = listOf(PromptMessage(MessageRole.User, content = prompt)),
-            stop = emptyList(), maxTokens = 1800, providerType = config.providerType,
+            stop = emptyList(), maxTokens = outputLimit, providerType = config.providerType,
             diagnostics = PromptDiagnostics(emptyList(), TokenBudget.estimateTokens(prompt)),
         )
         var answer: String? = null
         var delta = ""
-        providers.require(config.providerType).streamGenerate(config, GenerateRequest(built, preset, stream = true)).collect { chunk ->
+        var completed = false
+        var finishReason: String? = null
+        var reasoningCharacters = 0
+        var usage: JsonObject? = null
+        // A reused connection may have a chat-specific token limit in extraBody.
+        // Memory owns its output budget; preserve all other connection options.
+        val extraBody = config.options["extraBody"] as? JsonObject
+        val memoryConfig = if (extraBody == null) config else config.copy(options = JsonObject(
+            config.options + ("extraBody" to JsonObject(extraBody - setOf("max_tokens", "max_completion_tokens"))),
+        ))
+        providers.require(config.providerType).streamGenerate(memoryConfig, GenerateRequest(built, preset, stream = true)).collect { chunk ->
             when (chunk) {
-                is GenerateChunk.Delta -> delta += chunk.text
-                is GenerateChunk.Completed -> answer = chunk.text.ifBlank { delta }
+                is GenerateChunk.Delta -> {
+                    delta += chunk.text
+                    reasoningCharacters += chunk.reasoning.length
+                }
+                is GenerateChunk.Completed -> {
+                    completed = true
+                    answer = chunk.text.ifBlank { delta }
+                    finishReason = chunk.finishReason
+                    reasoningCharacters = maxOf(reasoningCharacters, chunk.reasoning.length)
+                    usage = chunk.usage
+                }
                 is GenerateChunk.Failed -> error(chunk.error.message)
             }
         }
-        return answer?.takeIf { it.isNotBlank() } ?: error("记忆模型没有返回内容")
+        val truncated = finishReason?.split(',')?.any {
+            it.trim().lowercase() in setOf("length", "max_tokens", "max_output_tokens")
+        } == true
+        // Even syntactically valid JSON can be an incomplete summary after truncation.
+        if (completed && !truncated && !answer.isNullOrBlank()) return answer!!
+        error(buildString {
+            append(when {
+                !completed -> "记忆模型未返回完成事件"
+                truncated && reasoningCharacters > 0 && answer.isNullOrBlank() -> "记忆整理输出额度已耗尽，模型仍在推理，未生成正文"
+                truncated -> "记忆整理达到输出上限，正文不完整"
+                reasoningCharacters > 0 -> "记忆模型只返回推理，没有正文"
+                else -> "记忆模型没有返回正文"
+            })
+            if (truncated) append("\n请在扩展 → 长期记忆设置中提高输出上限，再点击重试待处理。")
+            append("\n提供商：${config.providerType}；模型：${config.model.orEmpty()}")
+            append("\n结束原因：${finishReason ?: "未提供"}；正文字符：${answer?.length ?: delta.length}；推理字符：$reasoningCharacters")
+            append("\n请求输出上限：${built.maxTokens}")
+            usage?.let { append("\n接口用量：$it") }
+        })
     }
 
     private suspend fun embed(config: ProviderConfig, input: String, configuredPath: String): List<Float>? = withContext(Dispatchers.IO) {

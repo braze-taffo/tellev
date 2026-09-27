@@ -950,6 +950,8 @@
     <string name="extmem_vector_model_label">ベクトルモデル名（既存接続を上書き可）</string>
     <string name="extmem_vector_path_label">ベクトルAPIパス</string>
     <string name="extmem_save_button">設定を保存</string>
+    <string name="extmem_output_limit_label">記憶整理の出力上限（トークン）</string>
+    <string name="extmem_output_limit_hint">1024～65536、初期値は16384。推論もこの枠を消費する場合があります。モデルが対応する上限を設定してください。</string>
     <string name="extmem_selector_label">%1$s：%2$s</string>
     <string name="extmem_custom_entry">個別に入力</string>
     <string name="extdbg_loaded">拡張を読み込みました</string>

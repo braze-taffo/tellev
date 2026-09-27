@@ -45,6 +45,8 @@ data class MemorySettings(
     val vectorApiKey: String = "",
     val vectorModel: String = "",
     val vectorPath: String = "/v1/embeddings",
+    // Reasoning models share this budget between thinking and the final summary.
+    val maxOutputTokens: Int = 16384,
 ) {
     suspend fun textConfig(secrets: SecretStore): ProviderConfig? =
         if (providerId.isNotBlank()) {

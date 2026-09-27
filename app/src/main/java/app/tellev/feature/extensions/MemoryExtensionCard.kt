@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -29,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import app.tellev.core.memory.MemorySettings
 import app.tellev.core.memory.MemorySettingsStore
@@ -45,6 +47,7 @@ internal fun MemoryExtensionCard() {
     val scope = rememberCoroutineScope()
     var saved by remember { mutableStateOf(MemorySettings()) }
     var draft by remember { mutableStateOf(saved) }
+    var outputLimitInput by remember { mutableStateOf(saved.maxOutputTokens.toString()) }
     var showSettings by remember { mutableStateOf(false) }
     var providerChoices by remember { mutableStateOf(emptyList<Pair<String, String>>()) }
     var vectorChoices by remember { mutableStateOf(emptyList<Pair<String, String>>()) }
@@ -72,7 +75,11 @@ internal fun MemoryExtensionCard() {
                     scope.launch { runCatching { settingsStore.write(next) }.onFailure { error = it.message } }
                 })
             }
-            OutlinedButton(onClick = { draft = saved; showSettings = true }) { Text(stringResource(R.string.extmem_open_settings)) }
+            OutlinedButton(onClick = {
+                draft = saved
+                outputLimitInput = saved.maxOutputTokens.toString()
+                showSettings = true
+            }) { Text(stringResource(R.string.extmem_open_settings)) }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
     }
@@ -93,6 +100,18 @@ internal fun MemoryExtensionCard() {
                     OutlinedTextField(draft.customApiKey, { draft = draft.copy(customApiKey = it) }, label = { Text(stringResource(R.string.extmem_custom_api_key_label)) }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(draft.customModel, { draft = draft.copy(customModel = it) }, label = { Text(stringResource(R.string.extmem_custom_model_label)) }, modifier = Modifier.fillMaxWidth())
                 }
+                val outputLimit = outputLimitInput.toIntOrNull()
+                val validOutputLimit = outputLimit != null && outputLimit in 1024..65536
+                OutlinedTextField(
+                    value = outputLimitInput,
+                    onValueChange = { outputLimitInput = it },
+                    label = { Text(stringResource(R.string.extmem_output_limit_label)) },
+                    supportingText = { Text(stringResource(R.string.extmem_output_limit_hint)) },
+                    isError = !validOutputLimit,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(stringResource(R.string.extmem_vector_toggle_title), modifier = Modifier.weight(1f))
                     Switch(draft.vectorEnabled, onCheckedChange = { draft = draft.copy(vectorEnabled = it) })
@@ -108,13 +127,13 @@ internal fun MemoryExtensionCard() {
                     OutlinedTextField(draft.vectorPath, { draft = draft.copy(vectorPath = it) }, label = { Text(stringResource(R.string.extmem_vector_path_label)) }, modifier = Modifier.fillMaxWidth())
                 }
                 Button(onClick = {
-                    val next = draft
+                    val next = draft.copy(maxOutputTokens = outputLimit ?: return@Button)
                     scope.launch {
                         runCatching { settingsStore.write(next) }
                             .onSuccess { saved = next; showSettings = false; error = null }
                             .onFailure { error = it.message }
                     }
-                }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.extmem_save_button)) }
+                }, enabled = validOutputLimit, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.extmem_save_button)) }
             }
         }
     }

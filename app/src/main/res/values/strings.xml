@@ -950,6 +950,8 @@
     <string name="extmem_vector_model_label">向量模型名（已有连接可覆盖）</string>
     <string name="extmem_vector_path_label">向量接口路径</string>
     <string name="extmem_save_button">保存设置</string>
+    <string name="extmem_output_limit_label">记忆整理输出上限（token）</string>
+    <string name="extmem_output_limit_hint">1024–65536，默认 16384。推理模型的思考也可能占用此额度；请按模型支持的上限设置。</string>
     <string name="extmem_selector_label">%1$s：%2$s</string>
     <string name="extmem_custom_entry">单独填写</string>
     <string name="extdbg_loaded">扩展已加载</string>

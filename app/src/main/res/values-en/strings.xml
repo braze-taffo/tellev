@@ -950,6 +950,8 @@
     <string name="extmem_vector_model_label">Vector model name (may override an existing connection)</string>
     <string name="extmem_vector_path_label">Vector API path</string>
     <string name="extmem_save_button">Save settings</string>
+    <string name="extmem_output_limit_label">Memory output limit (tokens)</string>
+    <string name="extmem_output_limit_hint">1024–65536, default 16384. Reasoning may share this budget. Choose a limit supported by your model.</string>
     <string name="extmem_selector_label">%1$s: %2$s</string>
     <string name="extmem_custom_entry">Enter separately</string>
     <string name="extdbg_loaded">Extension loaded</string>
