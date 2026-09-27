@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.ScrollableDefaults
 import androidx.compose.foundation.gestures.stopScroll
@@ -72,6 +73,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight.Companion.Bold
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.tellev.LocalTellevGraph
@@ -268,17 +270,17 @@ private fun ChatContentScreen(
                     Text(
                         text = state.selectedCharacter?.name ?: "",
                         style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     if (state.currentSession != null) {
                         Text(
                             text = state.currentSession?.title ?: "",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
-                        MemoryMode.of(state.currentSession)?.let { mode ->
-                            val status = if (state.memoryPluginEnabled) state.memoryStatus else stringResource(R.string.chat_memory_paused)
-                            Text(stringResource(R.string.chat_memory_label, memoryModeLabel(mode)) + (status?.let { " · $it" } ?: ""), style = MaterialTheme.typography.labelSmall)
-                        }
                     }
                 }
             },
@@ -414,6 +416,23 @@ private fun ChatContentScreen(
                 containerColor = MaterialTheme.colorScheme.surface,
             ),
         )
+
+        // A failure can be much taller than the fixed toolbar title area.
+        // Keep its summary in a separate row; the manager displays the full diagnostic.
+        MemoryMode.of(state.currentSession)?.let { mode ->
+            val status = if (state.memoryPluginEnabled) state.memoryStatus else stringResource(R.string.chat_memory_paused)
+            Text(
+                text = stringResource(R.string.chat_memory_label, memoryModeLabel(mode)) +
+                    (status?.lineSequence()?.firstOrNull()?.let { " · $it" } ?: ""),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth().clickable {
+                    viewModel.refreshMemory()
+                    showMemoryDialog = true
+                }.padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        }
 
         BoxWithConstraints(
             modifier = Modifier

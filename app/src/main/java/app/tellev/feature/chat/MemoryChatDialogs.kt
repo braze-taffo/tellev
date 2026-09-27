@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -67,7 +70,12 @@ internal fun MemoryChatDialogs(state: ChatUiState, viewModel: ChatViewModel, sho
         title = { Text(stringResource(R.string.chat_memory_manager_title, memoryModeLabel(mode))) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(state.memoryStatus ?: stringResource(R.string.chat_memory_ready))
+                SelectionContainer {
+                    Text(
+                        state.memoryStatus ?: stringResource(R.string.chat_memory_ready),
+                        modifier = Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState()),
+                    )
+                }
                 if (!state.memoryPluginEnabled && mode != MemoryMode.NONE) Text(stringResource(R.string.chat_memory_global_disabled))
                 if (mode == MemoryMode.NONE) Text(stringResource(R.string.chat_memory_locked_none))
                 if (state.memoryNeedsRebuild) Text(stringResource(R.string.chat_memory_needs_rebuild))

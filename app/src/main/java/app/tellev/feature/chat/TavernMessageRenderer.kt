@@ -28,5 +28,37 @@ internal fun renderMessageParts(
         parts.body, role, character, userName, depth, preset = preset, includeNormal = includeNormal,
     )
     // Display rules may create tags, but cannot move body text into the reasoning channel.
-    addAll(TavernRenderParser.parseBody(displayBody))
+    val assistant = role == MessageRole.Character || role == MessageRole.Assistant
+    TavernRenderParser.parseBody(displayBody).forEach { segment ->
+        // Card/preset rules get the anchor first. Only hide leftovers in visible text;
+        // the stored message and authored frontend HTML must retain their anchors.
+        if (assistant && segment is TavernRenderSegment.Text) {
+            val visible = hideStandaloneMvuPlaceholder(segment.text)
+            if (visible.isNotBlank()) add(TavernRenderSegment.Text(visible))
+        } else add(segment)
+    }
+}
+
+private val mvuPlaceholderLine = Regex("""^ {0,3}<StatusPlaceHolderImpl[ \t]*/>[ \t]*$""")
+private val markdownFenceLine = Regex("""^ {0,3}(`{3,}|~{3,})(.*)$""")
+
+private fun hideStandaloneMvuPlaceholder(text: String): String {
+    if (!text.contains("<StatusPlaceHolderImpl")) return text
+    var fenceCharacter: Char? = null
+    var fenceLength = 0
+    return text.lineSequence().filter { line ->
+        val fence = markdownFenceLine.matchEntire(line)
+        if (fenceCharacter != null) {
+            if (fence != null && fence.groupValues[1].first() == fenceCharacter &&
+                fence.groupValues[1].length >= fenceLength && fence.groupValues[2].isBlank()) {
+                fenceCharacter = null
+            }
+            true
+        } else if (fence != null &&
+            (fence.groupValues[1].first() != '`' || !fence.groupValues[2].contains('`'))) {
+            fenceCharacter = fence.groupValues[1].first()
+            fenceLength = fence.groupValues[1].length
+            true
+        } else !mvuPlaceholderLine.matches(line)
+    }.joinToString("\n").trim()
 }
