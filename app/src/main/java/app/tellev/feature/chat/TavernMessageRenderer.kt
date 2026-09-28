@@ -39,6 +39,29 @@ internal fun renderMessageParts(
     }
 }
 
+/**
+ * Regex-free degradation of [renderMessageParts]: parsing and MVU-anchor
+ * hiding only, linear in message size and safe on any thread. Used as the
+ * placeholder while the real pipeline runs on a worker and as the fallback
+ * when a preset/card regex exceeds the render budget instead of freezing
+ * the app.
+ */
+internal fun renderMessagePartsUnregulated(
+    parts: MessageReasoning.Parts,
+    role: MessageRole,
+): List<TavernRenderSegment> = buildList {
+    if (parts.reasoning.isNotBlank()) {
+        add(TavernRenderSegment.Reasoning(parts.reasoning))
+    }
+    val assistant = role == MessageRole.Character || role == MessageRole.Assistant
+    TavernRenderParser.parseBody(parts.body).forEach { segment ->
+        if (assistant && segment is TavernRenderSegment.Text) {
+            val visible = hideStandaloneMvuPlaceholder(segment.text)
+            if (visible.isNotBlank()) add(TavernRenderSegment.Text(visible))
+        } else add(segment)
+    }
+}
+
 private val mvuPlaceholderLine = Regex("""^ {0,3}<StatusPlaceHolderImpl[ \t]*/>[ \t]*$""")
 private val markdownFenceLine = Regex("""^ {0,3}(`{3,}|~{3,})(.*)$""")
 

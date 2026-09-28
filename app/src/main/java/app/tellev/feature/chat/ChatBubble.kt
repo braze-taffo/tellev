@@ -203,12 +203,21 @@ internal fun ChatBubble(
         }
 
         val parts = remember(message) { message.reasoningParts() }
-        val renderSegments = remember(message, character, preset, userName, depth) {
-            renderMessageParts(
+        // The regex pipeline (card- and preset-embedded scripts) runs off the
+        // compose thread under a budget; catastrophic rules degrade to
+        // regex-free text instead of freezing the chat.
+        val renderInputs = remember(parts, message.role, character, preset, userName, depth) {
+            RenderInputs(
                 parts, message.role, character, preset, userName, depth,
                 includeNormal = !CharacterRegexApplier.isNormalProcessed(message),
             )
         }
+        val renderSegments = rememberRenderedSegments(renderInputs, message.id) {
+            renderMessageParts(
+                parts, message.role, character, preset, userName, depth,
+                includeNormal = !CharacterRegexApplier.isNormalProcessed(message),
+            )
+        }.value
         if (!isUser && parts.body.isBlank() && parts.reasoning.isNotBlank()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.chat_no_body), modifier = Modifier.padding(8.dp))
@@ -476,12 +485,18 @@ internal fun StreamingBubble(
     tavernRuntime: TavernMessageRuntime,
     onHtmlBoundaryDrag: (Float) -> Unit,
 ) {
-    val segments = remember(text, reasoning, character, preset, userName) {
-        renderMessageParts(
+    val streamingInputs = remember(text, reasoning, character, preset, userName) {
+        RenderInputs(
             MessageReasoning.fromResponse(text, reasoning), MessageRole.Character,
             character, preset, userName, 0, includeNormal = true,
         )
     }
+    val segments = rememberRenderedSegments(streamingInputs, "streaming") {
+        renderMessageParts(
+            MessageReasoning.fromResponse(text, reasoning), MessageRole.Character,
+            character, preset, userName, 0, includeNormal = true,
+        )
+    }.value
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.Start,
