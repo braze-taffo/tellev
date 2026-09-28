@@ -11,6 +11,7 @@ import app.tellev.core.storage.CharacterImporter
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CharacterRegexApplierTest {
@@ -336,5 +337,172 @@ class CharacterRegexApplierTest {
         )
 
         assertEquals("xHIT", CharacterRegexApplier.applyNormal("x/a/b", MessageRole.Character, card))
+    }
+
+    /** A 思客-style reply: prose plus dream-scene tags and option blocks. */
+    private fun sikeStyleMessage(blocks: Int): String = buildString {
+        repeat(blocks) { i ->
+            append("第").append(i).append("段正文:他说了一句话。她回答了他。剧情继续推进,文字平淡而绵长,像一条静静流淌的河。\n\n")
+            append("<dream_scene>\n<date> 第").append(i).append("天 </date>\n<time> 上午 </time>\n<location> 学校 </location>\n</dream_scene>\n\n")
+            append("<dream_option id=o").append(i).append(">\n<strong>A.</strong> 选项内容甲\n<strong>B.</strong> 选项内容乙\n</dream_option>\n\n")
+        }
+    }
+
+    private fun presetWith(scriptJson: String): GenerationPreset = GenerationPreset(
+        id = "p", name = "p", providerType = "openai",
+        extensions = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"regex_scripts":[$scriptJson]}""",
+        ).let { it as kotlinx.serialization.json.JsonObject },
+    )
+
+    @Test
+    fun `lookahead-guarded rule skips think-less preset history without backtracking`() {
+        // Kemini's `Aether思维链转义标签`: on 思客 history without `</think>` the
+        // rule can never match, but ICU retried a full-text lookahead at every
+        // `<`…`>` pair — quadratic per message, on the compose thread.
+        val preset = presetWith(
+            """{"scriptName":"Aether思维链转义标签",
+                "findRegex":"/<([\\s\\S]*?)>(?=[\\s\\S]*?<\\/think>)/g",
+                "replaceString":"$1","placement":[2],"markdownOnly":true}""",
+        )
+        val message = sikeStyleMessage(80)
+
+        val start = System.nanoTime()
+        val result = CharacterRegexApplier.applyForDisplay(
+            message, MessageRole.Character, character = null, preset = preset,
+        )
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000
+
+        assertEquals(message, result)
+        assertTrue("display regex took ${elapsedMs}ms for ${message.length} chars", elapsedMs < 2_000)
+    }
+
+    @Test
+    fun `lookahead-guarded rule still applies when the think tag is present`() {
+        val preset = presetWith(
+            """{"scriptName":"Aether思维链转义标签",
+                "findRegex":"/<([\\s\\S]*?)>(?=[\\s\\S]*?<\\/think>)/g",
+                "replaceString":"$1","placement":[2],"markdownOnly":true}""",
+        )
+
+        assertEquals(
+            "abc</think>",
+            CharacterRegexApplier.applyForDisplay(
+                "a<b>c</think>", MessageRole.Character, character = null, preset = preset,
+            ),
+        )
+    }
+
+    @Test
+    fun `literal-headed rules are skipped when no branch literal is present`() {
+        // `润色2` from Kemini plus 思客's option rule: neither `<refine>` nor
+        // `<dream_option` appears in this text, so both must no-op.
+        val preset = presetWith(
+            """{"scriptName":"润色2","findRegex":"/<refine>([\\s\\S]*?)<\\/refine>/g",
+                "replaceString":"润色:$1","placement":[2],"markdownOnly":true},
+               {"scriptName":"梦境选项框","findRegex":"/<dream_option\\b[^>]*>\\s*([\\s\\S]*?)\\s*<\\/dream_option>/gi",
+                "replaceString":"[$1]","placement":[2],"markdownOnly":true}""",
+        )
+        val message = "一段普通的正文,没有任何标记。".repeat(200)
+
+        val start = System.nanoTime()
+        val result = CharacterRegexApplier.applyForDisplay(
+            message, MessageRole.Character, character = null, preset = preset,
+        )
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000
+
+        assertEquals(message, result)
+        assertTrue("display regex took ${elapsedMs}ms", elapsedMs < 2_000)
+    }
+
+    @Test
+    fun `literal-headed rules still apply when their literal is present`() {
+        val preset = presetWith(
+            """{"scriptName":"润色2","findRegex":"/<refine>([\\s\\S]*?)<\\/refine>/g",
+                "replaceString":"润色:$1","placement":[2],"markdownOnly":true}""",
+        )
+
+        assertEquals(
+            "开头 润色:好的 结尾",
+            CharacterRegexApplier.applyForDisplay(
+                "开头 <refine>好的</refine> 结尾",
+                MessageRole.Character, character = null, preset = preset,
+            ),
+        )
+    }
+
+    @Test
+    fun `alternation branches gate only when every branch literal is absent`() {
+        // Shape of Kemini's `aether opus正则二`: several literal-headed branches.
+        // One branch literal present → the rule must still run and match.
+        val preset = presetWith(
+            """{"scriptName":"opus","findRegex":"/<Disclaimer>[\\s\\S]*?<\\/Disclaimer>|<正文>|<done>|(.*?<\\/think(ing)?>)/gsi",
+                "replaceString":"","placement":[2],"markdownOnly":true}""",
+        )
+
+        assertEquals(
+            "废话保留下文",
+            CharacterRegexApplier.applyForDisplay(
+                "<done>废话<正文>保留下文", MessageRole.Character, character = null, preset = preset,
+            ),
+        )
+
+        val plain = "一段没有任何标记的正文。".repeat(100)
+        assertEquals(
+            plain,
+            CharacterRegexApplier.applyForDisplay(plain, MessageRole.Character, character = null, preset = preset),
+        )
+    }
+
+    @Test
+    fun `gate literals honor the case-insensitive flag`() {
+        // With /i the gate must not skip a rule whose literal appears in the
+        // other case — `contains` has to ignore case exactly like the engine.
+        val preset = presetWith(
+            """{"scriptName":"upper","findRegex":"/<summary>([\\s\\S]*?)<\\/summary>/gi",
+                "replaceString":"S","placement":[2],"markdownOnly":true}""",
+        )
+
+        assertEquals(
+            "x S y",
+            CharacterRegexApplier.applyForDisplay(
+                "x <SUMMARY>细</SUMMARY> y", MessageRole.Character, character = null, preset = preset,
+            ),
+        )
+    }
+
+    @Test
+    fun `negative lookbehind literals do not gate the rule`() {
+        // Shape of Kemini's `aether摘要一` (fixed-width lookbehind so the JVM
+        // engine compiles it too): the lookbehind's literal must NOT precede a
+        // match, so it must not become the gate — only `<summary>` may. If the
+        // lookbehind literal were wrongly gated on, the second assertion would
+        // return its input unchanged instead of applying.
+        val preset = presetWith(
+            """{"scriptName":"摘要","findRegex":"/(?<!<\\/details>)<summary>([\\s\\S]*?)<\\/summary>/gi",
+                "replaceString":"SUMMARY","placement":[2],"markdownOnly":true}""",
+        )
+
+        // Lookbehind blocks this match; nothing is replaced.
+        assertEquals(
+            "<details>x</details><summary>细</summary>",
+            CharacterRegexApplier.applyForDisplay(
+                "<details>x</details><summary>细</summary>",
+                MessageRole.Character, character = null, preset = preset,
+            ),
+        )
+
+        assertEquals(
+            "前文 SUMMARY 后文",
+            CharacterRegexApplier.applyForDisplay(
+                "前文 <summary>细</summary> 后文", MessageRole.Character, character = null, preset = preset,
+            ),
+        )
+
+        val plain = "没有摘要的正文。".repeat(100)
+        assertEquals(
+            plain,
+            CharacterRegexApplier.applyForDisplay(plain, MessageRole.Character, character = null, preset = preset),
+        )
     }
 }

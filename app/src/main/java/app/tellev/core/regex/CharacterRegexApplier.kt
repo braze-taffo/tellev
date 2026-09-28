@@ -211,14 +211,24 @@ object CharacterRegexApplier {
             2 -> substituteMacros(rawSource, characterName, userName, escaped = true)
             else -> rawSource
         }
+        val regexSource = javascriptRegexSource(source, separateFlags)
+        val ignoreCase = 'i' in regexSource.flags
         // ICU scans every possible start for a leading greedy any-character capture.
         // When its literal suffix is absent, an equivalent literal precheck avoids
         // quadratic work on large HTML messages. Do not rewrite the regex itself.
         val literalSuffix = source.takeIf { it.startsWith("([\\s\\S]*)") }
             ?.removePrefix("([\\s\\S]*)")?.replace("\\/", "/")
             ?.takeIf { it.isNotEmpty() && it.none { c -> c in "\\.[](){}*+?^$|" } }
-        if (literalSuffix != null && !input.contains(literalSuffix)) return input
-        val regexSource = javascriptRegexSource(source, separateFlags)
+        if (literalSuffix != null && !input.contains(literalSuffix, ignoreCase)) return input
+        // Same idea for the two shapes that dominate preset-shipped rules: a lazy
+        // wildcard guarded by a literal (`(?=[\s\S]*?</think>)`) and a literal branch
+        // head (`<refine>…`, `<行动选项>…`). Without this, a rule from the newly
+        // selected preset backtracks through every tag of the previous preset's
+        // message history on the compose thread (switching 思客→Kemini froze the
+        // chat for ~20s per message). When every provable required literal is
+        // absent the rule cannot match anything, so skipping it is result-neutral.
+        val gate = requiredLiterals(regexSource.pattern)
+        if (gate != null && gate.none { input.contains(it, ignoreCase) }) return input
         val regex = compileJavascriptRegex(regexSource) ?: run {
             onDiagnostic?.invoke(RegexDiagnostic(
                 scriptName = script.stringValue("scriptName").orEmpty().ifBlank { rawSource },
@@ -304,6 +314,223 @@ object CharacterRegexApplier {
 
     /** Literal-pattern text plus its JavaScript flags, split like SillyTavern does. */
     private data class JavascriptRegexSource(val pattern: String, val flags: String)
+
+    /**
+     * Literals of which any match of this pattern must contain at least one;
+     * null when none can be proven with the conservative scans below. The
+     * result is only used to skip the regex when *every* literal is absent,
+     * which is result-neutral: a rule whose required literal is missing can
+     * never match, while ICU would still backtrack through every plausible
+     * start position in the message.
+     */
+    private fun requiredLiterals(pattern: String): List<String>? {
+        val literals = mutableListOf<String>()
+        for (branch in splitTopLevelAlternation(pattern)) {
+            literals.add(branchRequiredLiteral(branch) ?: return null)
+        }
+        return literals
+    }
+
+    private val regexMetachars = ".^$*+?()[]{}|\\"
+
+    private fun isQuantifier(c: Char?): Boolean = c == '*' || c == '+' || c == '?'
+
+    /**
+     * First provably required literal run (≥2 chars) in one alternation
+     * branch: consecutive characters — or escaped punctuation — that are not
+     * under a quantifier. Preset rules of this shape include
+     * `(?=[\s\S]*?</think>)`, `<refine>[\s\S]*?</refine>`, and
+     * `.*?</think(ing)?>`; when the run is absent from the input the branch
+     * cannot match anywhere. Runs are flushed whole at each break so the
+     * longest candidate is compared (`<summary>`, not `<s`). Optional groups
+     * and negative lookarounds are skipped (their contents are not required);
+     * required, named, and positive-lookaround groups are scanned
+     * recursively; alternation inside a group abandons that group's
+     * contribution and scanning continues.
+     */
+    private fun branchRequiredLiteral(branch: String): String? {
+        var i = 0
+        val run = StringBuilder()
+        fun flushRun(): String? = run.toString().takeIf { it.length >= 2 }
+        while (i < branch.length) {
+            val c = branch[i]
+            when {
+                c == '\\' -> {
+                    val next = branch.getOrNull(i + 1) ?: return null
+                    if (next.isLetterOrDigit()) {
+                        flushRun()?.let { return it }
+                        run.setLength(0) // \d, \s, \1… — class or control, not input text
+                        i += 2
+                    } else if (isQuantifier(branch.getOrNull(i + 2))) {
+                        flushRun()?.let { return it }
+                        run.setLength(0) // (X)* — X never required as a run
+                        i += 3
+                    } else {
+                        run.append(next)
+                        i += 2
+                    }
+                }
+                c in regexMetachars -> {
+                    flushRun()?.let { return it }
+                    run.setLength(0)
+                    when (c) {
+                        '^', '$' -> i++
+                        '.' -> {
+                            // Swallow the lazy/greedy quantifier that almost always follows.
+                            var j = i + 1
+                            while (branch.getOrNull(j) == '*' || branch.getOrNull(j) == '+') j++
+                            if (branch.getOrNull(j) == '?') j++
+                            i = j
+                        }
+                        '[' -> i = skipCharacterClass(branch, i)
+                        '{' -> {
+                            // {n,m} repeats the previous element; its digits are not input text.
+                            val close = branch.indexOf('}', i)
+                            i = if (close >= 0) close + 1 else branch.length
+                        }
+                        '(' -> {
+                            val group = groupRequirement(branch, i)
+                            (group as? GroupRequirement.Contents)?.literal?.let { return it }
+                            i = group.after
+                        }
+                        else -> i++
+                    }
+                }
+                else -> {
+                    if (isQuantifier(branch.getOrNull(i + 1))) {
+                        // The quantifier binds to this (not yet appended) character,
+                        // so the run collected so far is untouched: `xyb*c` proves `xy`.
+                        flushRun()?.let { return it }
+                        run.setLength(0)
+                        i += 2
+                    } else {
+                        run.append(c)
+                        i++
+                    }
+                }
+            }
+        }
+        return flushRun()
+    }
+
+    private sealed interface GroupRequirement {
+        /** Index just past the group, including any quantifier. */
+        val after: Int
+
+        /** [literal] is the group's own required literal, when provable. */
+        data class Contents(override val after: Int, val literal: String?) : GroupRequirement
+
+        /** Optional or negative-lookaround group: nothing inside is required. */
+        data class Skipped(override val after: Int) : GroupRequirement
+    }
+
+    private fun groupRequirement(branch: String, openIndex: Int): GroupRequirement {
+        val body = balancedGroupBody(branch, openIndex)
+            ?: return GroupRequirement.Skipped(branch.length)
+        var after = openIndex + body.length + 2
+        val quantifier = branch.getOrNull(after)
+        val optional = quantifier == '*' || quantifier == '?'
+        if (quantifier != null && quantifier in "*+?") after++
+
+        // Negative lookarounds require the opposite: their literals must NOT appear.
+        if (body.startsWith("?!") || body.startsWith("?<!")) return GroupRequirement.Skipped(after)
+        val inner = when {
+            body.startsWith("?=") -> body.substring(2)
+            body.startsWith("?<=") -> body.substring(3)
+            body.startsWith("?:") -> body.substring(2)
+            body.startsWith("?<") -> body.substringAfter('>', "")
+            body.startsWith("?'") -> body.substringAfter('\'', "")
+            body.startsWith("?") -> return GroupRequirement.Skipped(after) // unknown extension
+            else -> body
+        }
+        // Alternation inside a required group means either side may match:
+        // nothing inside is provable, but the group is still pass-through.
+        val literal = if (optional || splitTopLevelAlternation(inner).size > 1) {
+            null
+        } else {
+            branchRequiredLiteral(inner)
+        }
+        return GroupRequirement.Contents(after, literal)
+    }
+
+    /** Index just past the character class starting at [open]; skips `\]` escapes. */
+    private fun skipCharacterClass(s: String, open: Int): Int {
+        var i = open
+        while (i < s.length) {
+            when (s[i]) {
+                '\\' -> i++
+                ']' -> return i + 1
+            }
+            i++
+        }
+        return i
+    }
+
+    /** Body of the balanced group starting at `openIndex`'s `(`, or null when unbalanced. */
+    private fun balancedGroupBody(pattern: String, openIndex: Int): String? {
+        var depth = 0
+        var inClass = false
+        var i = openIndex
+        while (i < pattern.length) {
+            val c = pattern[i]
+            when {
+                c == '\\' -> i++
+                inClass -> if (c == ']') inClass = false
+                c == '[' -> inClass = true
+                c == '(' -> depth++
+                c == ')' -> {
+                    depth--
+                    if (depth == 0) return pattern.substring(openIndex + 1, i)
+                }
+            }
+            i++
+        }
+        return null
+    }
+
+    /** Splits on `|` outside classes and groups; a pattern without one is a single branch. */
+    private fun splitTopLevelAlternation(pattern: String): List<String> {
+        val branches = mutableListOf<String>()
+        val current = StringBuilder()
+        var depth = 0
+        var inClass = false
+        var i = 0
+        while (i < pattern.length) {
+            val c = pattern[i]
+            when {
+                c == '\\' -> {
+                    current.append(c)
+                    if (i + 1 < pattern.length) current.append(pattern[i + 1])
+                    i += 2
+                    continue
+                }
+                inClass -> {
+                    current.append(c)
+                    if (c == ']') inClass = false
+                }
+                c == '[' -> {
+                    current.append(c)
+                    inClass = true
+                }
+                c == '(' -> {
+                    current.append(c)
+                    depth++
+                }
+                c == ')' -> {
+                    current.append(c)
+                    depth--
+                }
+                c == '|' && depth == 0 -> {
+                    branches.add(current.toString())
+                    current.setLength(0)
+                }
+                else -> current.append(c)
+            }
+            i++
+        }
+        branches.add(current.toString())
+        return branches
+    }
 
     private fun javascriptRegexSource(source: String, separateFlags: String? = null): JavascriptRegexSource =
         // RP Hub style entries keep the pattern and its flags in separate fields.
