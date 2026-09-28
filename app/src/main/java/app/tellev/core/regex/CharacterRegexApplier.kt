@@ -316,19 +316,22 @@ object CharacterRegexApplier {
     private data class JavascriptRegexSource(val pattern: String, val flags: String)
 
     /**
-     * Literals of which any match of this pattern must contain at least one;
-     * null when none can be proven with the conservative scans below. The
-     * result is only used to skip the regex when *every* literal is absent,
-     * which is result-neutral: a rule whose required literal is missing can
-     * never match, while ICU would still backtrack through every plausible
-     * start position in the message.
+     * Literals of which any match of this pattern must contain at least one
+     * (OR semantics); null when none can be proven. The regex is only skipped
+     * when *every* literal in the set is absent, which is result-neutral:
+     * a rule whose required literals are all missing can never match, while
+     * ICU would still backtrack through every plausible start position.
+     * Evidence is collected across alternation branches and required groups:
+     * `(?:</think>|<dream_plot>…)` proves one of those literals must appear —
+     * 思客's `思考正则格式化` burned 1.35s per 11KB message in quadratic
+     * backtracking exactly when both were absent.
      */
-    private fun requiredLiterals(pattern: String): List<String>? {
-        val literals = mutableListOf<String>()
+    private fun requiredLiterals(pattern: String): Set<String>? {
+        val literals = mutableSetOf<String>()
         for (branch in splitTopLevelAlternation(pattern)) {
-            literals.add(branchRequiredLiteral(branch) ?: return null)
+            literals.addAll(branchRequiredLiterals(branch))
         }
-        return literals
+        return literals.takeIf { it.isNotEmpty() }
     }
 
     private val regexMetachars = ".^$*+?()[]{}|\\"
@@ -336,34 +339,29 @@ object CharacterRegexApplier {
     private fun isQuantifier(c: Char?): Boolean = c == '*' || c == '+' || c == '?'
 
     /**
-     * First provably required literal run (≥2 chars) in one alternation
-     * branch: consecutive characters — or escaped punctuation — that are not
-     * under a quantifier. Preset rules of this shape include
-     * `(?=[\s\S]*?</think>)`, `<refine>[\s\S]*?</refine>`, and
-     * `.*?</think(ing)?>`; when the run is absent from the input the branch
-     * cannot match anywhere. Runs are flushed whole at each break so the
-     * longest candidate is compared (`<summary>`, not `<s`). Optional groups
-     * and negative lookarounds are skipped (their contents are not required);
-     * required, named, and positive-lookaround groups are scanned
-     * recursively; alternation inside a group abandons that group's
-     * contribution and scanning continues.
+     * All provable required literals in one alternation branch (OR evidence):
+     * consecutive non-quantified characters and escaped punctuation runs
+     * (≥2 chars each), plus the evidence of required and positive-lookaround
+     * groups. Optional groups and negative lookarounds contribute nothing.
      */
-    private fun branchRequiredLiteral(branch: String): String? {
+    private fun branchRequiredLiterals(branch: String): Set<String> {
+        val literals = mutableSetOf<String>()
         var i = 0
         val run = StringBuilder()
-        fun flushRun(): String? = run.toString().takeIf { it.length >= 2 }
+        fun flushRun() {
+            if (run.length >= 2) literals.add(run.toString())
+            run.setLength(0)
+        }
         while (i < branch.length) {
             val c = branch[i]
             when {
                 c == '\\' -> {
-                    val next = branch.getOrNull(i + 1) ?: return null
-                    if (next.isLetterOrDigit()) {
-                        flushRun()?.let { return it }
-                        run.setLength(0) // \d, \s, \1… — class or control, not input text
+                    val next = branch.getOrNull(i + 1)
+                    if (next == null || next.isLetterOrDigit()) {
+                        flushRun() // \d, \s, \1… — class or control, not input text
                         i += 2
                     } else if (isQuantifier(branch.getOrNull(i + 2))) {
-                        flushRun()?.let { return it }
-                        run.setLength(0) // (X)* — X never required as a run
+                        flushRun() // (X)* — X never required as a run
                         i += 3
                     } else {
                         run.append(next)
@@ -371,8 +369,7 @@ object CharacterRegexApplier {
                     }
                 }
                 c in regexMetachars -> {
-                    flushRun()?.let { return it }
-                    run.setLength(0)
+                    flushRun()
                     when (c) {
                         '^', '$' -> i++
                         '.' -> {
@@ -390,7 +387,9 @@ object CharacterRegexApplier {
                         }
                         '(' -> {
                             val group = groupRequirement(branch, i)
-                            (group as? GroupRequirement.Contents)?.literal?.let { return it }
+                            if (group is GroupRequirement.Contents) {
+                                literals.addAll(group.literals)
+                            }
                             i = group.after
                         }
                         else -> i++
@@ -400,8 +399,7 @@ object CharacterRegexApplier {
                     if (isQuantifier(branch.getOrNull(i + 1))) {
                         // The quantifier binds to this (not yet appended) character,
                         // so the run collected so far is untouched: `xyb*c` proves `xy`.
-                        flushRun()?.let { return it }
-                        run.setLength(0)
+                        flushRun()
                         i += 2
                     } else {
                         run.append(c)
@@ -410,15 +408,19 @@ object CharacterRegexApplier {
                 }
             }
         }
-        return flushRun()
+        flushRun()
+        return literals
     }
 
     private sealed interface GroupRequirement {
         /** Index just past the group, including any quantifier. */
         val after: Int
 
-        /** [literal] is the group's own required literal, when provable. */
-        data class Contents(override val after: Int, val literal: String?) : GroupRequirement
+        /**
+         * [literals] is the group's OR evidence: at least one of them must be
+         * present in any input the group (or its positive lookaround) matches.
+         */
+        data class Contents(override val after: Int, val literals: Set<String>) : GroupRequirement
 
         /** Optional or negative-lookaround group: nothing inside is required. */
         data class Skipped(override val after: Int) : GroupRequirement
@@ -443,14 +445,14 @@ object CharacterRegexApplier {
             body.startsWith("?") -> return GroupRequirement.Skipped(after) // unknown extension
             else -> body
         }
-        // Alternation inside a required group means either side may match:
-        // nothing inside is provable, but the group is still pass-through.
-        val literal = if (optional || splitTopLevelAlternation(inner).size > 1) {
-            null
+        // Optional groups never force their contents; required groups (and the
+        // positive lookarounds unwrapped above) prove at least one inner literal.
+        val literals = if (optional || inner.isEmpty()) {
+            emptySet()
         } else {
-            branchRequiredLiteral(inner)
+            requiredLiterals(inner) ?: emptySet()
         }
-        return GroupRequirement.Contents(after, literal)
+        return GroupRequirement.Contents(after, literals)
     }
 
     /** Index just past the character class starting at [open]; skips `\]` escapes. */

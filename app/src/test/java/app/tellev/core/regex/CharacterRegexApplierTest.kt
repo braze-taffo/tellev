@@ -455,6 +455,39 @@ class CharacterRegexApplierTest {
     }
 
     @Test
+    fun `alternation inside a required group gates on either branch literal`() {
+        // 思客's `思考正则格式化` (Normal phase, runs on every render):
+        // `^([\s\S]*\S[\s\S]*)(?:</think>|<dream_plot>…)` burned 1.35s per
+        // 11KB message on device ICU when both literals were absent. The gate
+        // must treat the inner alternation as OR evidence: skip only when
+        // neither literal appears.
+        val preset = presetWith(
+            """{"scriptName":"思考正则格式化",
+                "findRegex":"^(?!<think>)([\\s\\S]*\\S[\\s\\S]*)(?:</think>|(<dream_plot>)(?=\\r?\\n))",
+                "replaceString":"<think>\n$1\n</think>\n$2","placement":[2]}""",
+        )
+        val plain = "他停下了脚步。".repeat(800)
+
+        val start = System.nanoTime()
+        val skipped = CharacterRegexApplier.applyForDisplay(
+            plain, MessageRole.Character, character = null, preset = preset,
+        )
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000
+
+        assertEquals(plain, skipped)
+        assertTrue("normal regex took ${elapsedMs}ms for ${plain.length} chars", elapsedMs < 2_000)
+
+        // Either literal present → the rule still applies verbatim.
+        val withPlot = "正文段落。\n<dream_plot>\n后续"
+        assertEquals(
+            "<think>\n正文段落。\n\n</think>\n<dream_plot>\n后续",
+            CharacterRegexApplier.applyForDisplay(
+                withPlot, MessageRole.Character, character = null, preset = preset,
+            ),
+        )
+    }
+
+    @Test
     fun `gate literals honor the case-insensitive flag`() {
         // With /i the gate must not skip a rule whose literal appears in the
         // other case — `contains` has to ignore case exactly like the engine.
