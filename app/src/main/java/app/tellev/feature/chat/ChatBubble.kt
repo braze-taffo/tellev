@@ -326,9 +326,11 @@ internal fun ChatBubble(
         }
 
         if (message.swipes.size > 1 && (!hasFrontend || isUser)) {
-            SwipeIndicator(
+            HtmlSwipeControls(
                 currentIndex = message.swipeIndex,
                 totalSwipes = message.swipes.size,
+                onPrevious = onSwipeRight,
+                onNext = onSwipeLeft,
             )
         }
     }
@@ -516,24 +518,6 @@ internal fun dialogueAnnotatedString(
     if (!enabled) return@buildAnnotatedString
     DialogueQuoteHighlighter.findRanges(text).forEach { range ->
         addStyle(SpanStyle(color = color), range.first, range.last + 1)
-    }
-}
-
-@Composable
-internal fun SwipeIndicator(
-    currentIndex: Int,
-    totalSwipes: Int,
-) {
-    Row(
-        modifier = Modifier.padding(top = 4.dp, start = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "${currentIndex + 1}/$totalSwipes",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 

@@ -2,7 +2,12 @@
 
 tellev 是一个面向 Android 的 SillyTavern 兼容客户端。项目目标是在手机上提供更贴近原生应用体验的角色管理、聊天、世界书、扩展和模型服务配置能力，同时尽量保持与 SillyTavern 数据格式和使用习惯兼容。
 
-> 公开版本以 GitHub Releases 中发布的 APK 为准。当前源码版本 **v1.7.0.2**。
+> 公开版本以 GitHub Releases 中发布的 APK 为准。当前源码版本 **v1.7.0.3**。
+
+## v1.7.0.3 更新
+
+- 聊天消息有多个回复版本时，增加左右切换按钮，可直接切换版本。
+- AI 创建角色卡时，支持将草稿中的内嵌世界书单独导出为 JSON。
 
 ## v1.7.0.2 更新
 
@@ -152,7 +157,7 @@ tellev 的扩展运行环境是 SillyTavern / 酒馆助手兼容层的一个**�
 
 - 应用名：`tellev`
 - 包名：`app.tellev`
-- 当前源码版本：1.7.0.2（versionCode 39）
+- 当前源码版本：1.7.0.3（versionCode 40）
 - 最低系统：Android 12 / API 31
 - 目标/编译 SDK：API 36
 - UI：Kotlin + Jetpack Compose + Material 3

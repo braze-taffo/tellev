@@ -13,6 +13,7 @@ import app.tellev.core.provider.ProviderStatus
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.FileStDataStore
 import app.tellev.core.storage.StDirectoryLayout
+import app.tellev.core.storage.codec.WorldBookCodec
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -26,6 +27,9 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -38,6 +42,38 @@ import java.util.concurrent.Executors
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CreationViewModelCancelTest {
+
+    @Test
+    fun characterDraftExportsItsEmbeddedWorldBook() = runBlocking {
+        val root = Files.createTempDirectory("creation-character-worldbook-")
+        val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        Dispatchers.setMain(main)
+        val models = ViewModelStore()
+        try {
+            val store = FileStDataStore(StDirectoryLayout.fromRoot(root))
+            store.bootstrap()
+            val vm = CreationViewModel(
+                CreationRepository(root.toFile()), store, noSecrets(),
+                ProviderRegistry(listOf(Fixture().provider)),
+            ).also { models.put("creation", it) }
+            withContext(main) {
+                vm.start(CreationKind.Character)
+                vm.editWorldName("唐玫")
+                vm.editLore(0, LoreDraft("核心人物档案", listOf("唐玫"), "唐玫的设定。"))
+
+                val exported = Json.parseToJsonElement(vm.exportWorldBook().decodeToString()).jsonObject
+                assertEquals("唐玫", exported["name"]!!.jsonPrimitive.content)
+                val entry = WorldBookCodec.parseWorldBookEntries(exported).single()
+                assertEquals("核心人物档案", entry.comment)
+                assertEquals("唐玫的设定。", entry.content)
+            }
+        } finally {
+            withContext(main) { models.clear() }
+            Dispatchers.resetMain()
+            main.close()
+            root.toFile().deleteRecursively()
+        }
+    }
 
     private class Fixture(private val failSecondRound: Boolean = false) {
         val secondRoundStarted = CompletableDeferred<Unit>()

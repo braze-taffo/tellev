@@ -395,7 +395,9 @@ class CreationViewModel(
     /** Export the draft as a standalone SillyTavern world book JSON file. */
     suspend fun exportWorldBook(): ByteArray = withContext(Dispatchers.IO) {
         val session = _state.value.current ?: error(UiStrings.get(S.crvm_error_open_worldbook_draft_first))
-        require(session.kind == CreationKind.WorldBook && !_state.value.busy) { UiStrings.get(S.crvm_error_cannot_export_worldbook) }
+        // Character drafts expose the same world-book editor for their embedded
+        // lore. Both draft kinds can export those entries as a standalone file.
+        require(!_state.value.busy) { UiStrings.get(S.crvm_error_cannot_export_worldbook) }
         worldBookExportBytes(checkedWorldBook(session))
     }
 
