@@ -442,6 +442,20 @@ internal fun wrapTavernHtml(
             body {
                 overflow-y: auto !important;
                 overflow-x: hidden !important;
+                /* 正文里单个超长未断词（URL、base64）也只在这一层折行，
+                   否则它会撑破气泡后被根级 overflow-x:hidden 整段裁掉。 */
+                overflow-wrap: break-word;
+            }
+            /* 代码块按原样保留缩进与不换行，长行改成块内横向滚动。根级的
+               overflow-x:hidden 会裁掉逃出视口的内容，只有把 pre 自身做成
+               滚动容器，右侧那截字才划得回来。刻意不用 pre-wrap：
+               card 输出的对齐排版（状态栏、群聊记录这类）一换行就散架，
+               那类兼容问题比这次的裁切更难收场。 */
+            pre {
+                max-width: 100%;
+                overflow-x: auto;
+                overflow-wrap: normal;
+                white-space: pre;
             }
             $dialogueQuoteCss
             $fontSizeCss

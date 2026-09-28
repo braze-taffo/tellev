@@ -182,6 +182,25 @@ class TavernMessageCompatTest {
     }
 
     @Test
+    fun `code blocks keep their line breaks and scroll sideways instead of being cut off`() {
+        val markdown = wrapTavernHtml("<pre><code>long line</code></pre>", "#111111")
+        val frontend = wrapTavernHtml("<pre>card block</pre>", "#111111")
+
+        // 长行不换行：一 pre-wrap，卡里的状态栏/群聊记录排版就散架。
+        assertFalse(markdown.contains("white-space: pre-wrap"))
+        assertFalse(frontend.contains("white-space: pre-wrap"))
+        // pre 自己成为横向滚动容器，越过视口的那截字才划得回来。
+        assertTrue(markdown.contains("overflow-x: auto"))
+        assertTrue(frontend.contains("overflow-x: auto"))
+        assertTrue(markdown.contains("white-space: pre"))
+        // 根级继续裁掉逃出视口的内容，滚动职责只交给 pre。
+        assertTrue(markdown.contains("overflow-x: hidden"))
+        // 折行兜底只落在正文层，不污染 pre。
+        assertTrue(markdown.contains("overflow-wrap: break-word"))
+        assertTrue(markdown.contains("overflow-wrap: normal"))
+    }
+
+    @Test
     fun `resize script breaks viewport feedback loop and throttles posts`() {
         val script = tavernResizeScript()
 
