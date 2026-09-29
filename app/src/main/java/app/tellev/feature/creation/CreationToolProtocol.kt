@@ -315,12 +315,26 @@ internal fun parseNativeCreationCalls(calls: JsonArray?): List<ToolCallBlock> = 
 } ?: emptyList()
 
 internal data class ToolResult(val ok: Boolean, val name: String, val payload: JsonObject) {
-    fun render(): String {
+    /** [index] is the call's position among this round's tool blocks; it lets the
+     * model correlate results with its own calls even when names repeat. */
+    fun render(index: Int): String {
         val safeName = name.takeIf { Regex("[A-Za-z_][A-Za-z_0-9]{0,63}").matches(it) } ?: "unknown"
-        return "<tool_result name=\"$safeName\" ok=\"${if (ok) "true" else "false"}\">" +
+        return "<tool_result index=\"$index\" name=\"$safeName\" ok=\"${if (ok) "true" else "false"}\">" +
             payload.toString() + "</tool_result>"
     }
 }
+
+/**
+ * Native creation_tool calls arrive outside message.content, so the conversation
+ * loop replays them into the assistant message as text blocks. The next request
+ * then shows the model which calls it made and with what arguments—the same
+ * shape the text path already produces.
+ */
+internal fun renderToolCallReplay(call: ToolCallRequest): String =
+    TOOL_CALL_OPEN + buildJsonObject {
+        put("name", call.name)
+        put("arguments", call.arguments)
+    } + TOOL_CALL_CLOSE
 
 /** Provenance and merge-base fields are system-managed; writes to them are ignored. */
 private val SYSTEM_MANAGED_LORE_FIELDS = setOf(

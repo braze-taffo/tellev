@@ -328,9 +328,68 @@ class CreationFeatureTest {
         assertEquals("已写入角色名称。", reply.message)
         assertEquals(2, requests.size)
         assertTrue(requests[1].prompt.messages.last().content.contains("ok=\"true\""))
-        assertFalse(requests[1].prompt.messages.any {
-            it.role == app.tellev.core.model.MessageRole.Assistant && it.content.contains("<tool_call>")
-        })
+        // 原生调用必须重放为文本块回填：下一轮请求里模型能看到自己调了什么、传了什么参数。
+        val replayedAssistant = requests[1].prompt.messages
+            .first { it.role == app.tellev.core.model.MessageRole.Assistant }
+        assertTrue(replayedAssistant.content.contains(
+            "<tool_call>{\"name\":\"set_card_fields\",\"arguments\":{\"name\":\"林月\"}}</tool_call>"))
+        // content 里未闭合的 <tool_call> 残骸不再回填：回放块是唯一的工具块。
+        assertEquals(1, replayedAssistant.content.split("<tool_call>").size - 1)
+    }
+
+    @Test
+    fun partiallyInvalidNativeRoundKeepsIndicesAligned() = runBlocking {
+        // 对抗审查发现：一轮里原生调用部分无效时，重放必须保留占位行，
+        // 否则 assistant 里的块位置与结果的 index 错位，对应关系失效。
+        val requests = mutableListOf<GenerateRequest>()
+        val provider = object : ProviderAdapter {
+            private var calls = 0
+            override val id = "openai-compatible"
+            override val displayName = "Fake"
+            override val capabilities = setOf(ProviderCapability.Chat)
+            override suspend fun checkStatus(config: ProviderConfig) = ProviderStatus(true, "ok")
+            override suspend fun listModels(config: ProviderConfig): List<ProviderModel> = emptyList()
+            override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> {
+                requests += request
+                return if (++calls == 1) flowOf(GenerateChunk.Completed(
+                    text = "",
+                    finishReason = "tool_calls",
+                    toolCalls = JsonArray(listOf(
+                        buildJsonObject {
+                            put("id", "call_1")
+                            put("type", "function")
+                            put("function", buildJsonObject {
+                                put("name", "creation_tool")
+                                put("arguments", "{\"name\":\"set_card_fields\",\"arguments\":{\"name\":\"林月\"}}")
+                            })
+                        },
+                        buildJsonObject {
+                            put("id", "call_2")
+                            put("type", "function")
+                            put("function", buildJsonObject {
+                                put("name", "creation_tool")
+                                put("arguments", "{\"name\":\"upsert_lore\",\"arguments\":{\"entries\":[{\"title\":\"未闭合\"}")
+                            })
+                        },
+                    )),
+                )) else flowOf(GenerateChunk.Completed("草稿已命名。"))
+            }
+        }
+        val reply = engine(provider).converse(CreationSession(kind = CreationKind.Character), "创建林月")
+        assertEquals("林月", reply.session.card.name)
+        assertEquals(0, reply.session.lore.size)
+        assertEquals("草稿已命名。", reply.message)
+        assertEquals(2, requests.size)
+        val assistant = requests[1].prompt.messages
+            .first { it.role == app.tellev.core.model.MessageRole.Assistant }
+        assertTrue(assistant.content.contains(
+            "<tool_call>{\"name\":\"set_card_fields\",\"arguments\":{\"name\":\"林月\"}}</tool_call>"))
+        assertTrue(assistant.content.contains("[第 2 个原生调用的参数不完整，未执行]"))
+        val feedback = requests[1].prompt.messages.first {
+            it.role == app.tellev.core.model.MessageRole.User && it.content.contains("<tool_result")
+        }
+        assertTrue(feedback.content.contains("<tool_result index=\"1\" name=\"set_card_fields\" ok=\"true\">"))
+        assertTrue(feedback.content.contains("<tool_result index=\"2\" name=\"unknown\" ok=\"false\">"))
     }
 
     @Test
@@ -350,9 +409,12 @@ class CreationFeatureTest {
         assertEquals(2, requests.size)
         val secondMessages = requests[1].prompt.messages
         assertTrue(secondMessages.any { it.role == app.tellev.core.model.MessageRole.Assistant && it.content.contains("set_card_fields") })
-        val feedback = secondMessages.first { it.content.contains("<tool_result") }
-        assertEquals(app.tellev.core.model.MessageRole.User, feedback.role)
+        // 系统提示词也含 <tool_result 格式示例，反馈消息须按 User 角色定位。
+        val feedback = secondMessages.first {
+            it.role == app.tellev.core.model.MessageRole.User && it.content.contains("<tool_result")
+        }
         assertTrue(feedback.content.contains("ok=\"true\""))
+        assertTrue(feedback.content.contains("<tool_result index=\"1\" name=\"set_card_fields\" ok=\"true\">"))
     }
 
     @Test
@@ -371,7 +433,9 @@ class CreationFeatureTest {
         assertEquals("林月", reply.session.card.name)
         assertEquals("已把主角命名为林月。", reply.message)
         assertEquals(2, requests.size)
-        val feedback = requests[1].prompt.messages.first { it.content.contains("<tool_result") }
+        val feedback = requests[1].prompt.messages.first {
+            it.role == app.tellev.core.model.MessageRole.User && it.content.contains("<tool_result")
+        }
         assertTrue(feedback.content.contains("闭合标签没有传回"))
     }
 
@@ -393,7 +457,9 @@ class CreationFeatureTest {
         assertEquals("林月", reply.session.card.name)
         assertEquals("已读取草稿并命名。", reply.message)
         assertEquals(2, requests.size)
-        val feedback = requests[1].prompt.messages.filter { it.content.contains("<tool_result") }
+        val feedback = requests[1].prompt.messages.filter {
+            it.role == app.tellev.core.model.MessageRole.User && it.content.contains("<tool_result")
+        }
         val joined = feedback.joinToString("\n") { it.content }
         assertTrue(joined.contains("read_card"))
         assertTrue(joined.contains("闭合标签没有传回"))

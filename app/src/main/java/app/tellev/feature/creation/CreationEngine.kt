@@ -273,6 +273,24 @@ internal class CreationEngine(
                 ToolBlocksParseResult(nativeBlocks, "", false)
             } else parseToolCallBlocks(generation.text)
             val validCalls = parsed.blocks.filterIsInstance<ToolCallBlock.Valid>().map { it.call }
+            // Native calls travel outside message.content, so the loop replays
+            // them as text blocks: the next request then shows the model which
+            // calls it made and with what arguments, mirroring the text path.
+            // Invalid calls keep their slot as a placeholder line so block
+            // positions stay 1:1 with the indexed results; a content fragment
+            // that never closed its <tool_call> is dropped instead of replayed.
+            val assistantEcho = if (generation.toolCalls?.isNotEmpty() != true) generation.text else {
+                buildString {
+                    proseWithoutToolBlocks(generation.text).trim().takeIf(String::isNotEmpty)?.let(::appendLine)
+                    parsed.blocks.forEachIndexed { blockIndex, block ->
+                        when (block) {
+                            is ToolCallBlock.Valid -> appendLine(renderToolCallReplay(block.call))
+                            is ToolCallBlock.Invalid ->
+                                appendLine("[第 ${blockIndex + 1} 个原生调用的参数不完整，未执行]")
+                        }
+                    }
+                }.trim().ifEmpty { "已请求 ${generation.toolCalls?.size ?: 0} 个原生工具调用。" }
+            }
             if (validCalls.isEmpty()) {
                 if (generation.finishReason != "length" && parsed.blocks.isEmpty() &&
                     !parsed.hasUnclosedBlock && parsed.prose.isNotBlank()
@@ -303,7 +321,7 @@ internal class CreationEngine(
                     else -> "请重发完整的 <tool_call>{\"name\":\"read_card\",\"arguments\":{}}</tool_call> 块，或直接输出给用户的纯文本"
                 }
                 lastBadDetail = "$reason；finish_reason=${generation.finishReason ?: "无"}；正文 ${generation.text.length} 字；原生工具 ${generation.toolCalls?.size ?: 0} 个"
-                history += PromptMessage(MessageRole.Assistant, content = generation.text)
+                history += PromptMessage(MessageRole.Assistant, content = assistantEcho)
                 history += PromptMessage(MessageRole.User, content = buildString {
                     append("<tool_result name=\"system\" ok=\"false\">")
                     append("{\"error\":\"本轮回复${reason}；$guidance\"}")
@@ -316,9 +334,22 @@ internal class CreationEngine(
             }
             consecutiveBadRounds = 0
             val feedback = StringBuilder()
-            parsed.blocks.filterIsInstance<ToolCallBlock.Invalid>().forEach { block ->
-                feedback.appendLine("<tool_result name=\"unknown\" ok=\"false\">" +
-                    "{\"error\":\"工具块无法解析：${block.reason}；请原样重发一个完整的工具块\"}</tool_result>")
+            var wroteDraft = false
+            // Block index ties each result to the model's own call order, so a
+            // multi-call round stays correlated even when names repeat.
+            parsed.blocks.forEachIndexed { blockIndex, block ->
+                when (block) {
+                    is ToolCallBlock.Invalid -> feedback.appendLine(
+                        "<tool_result index=\"${blockIndex + 1}\" name=\"unknown\" ok=\"false\">" +
+                            "{\"error\":\"工具块无法解析：${block.reason}；请原样重发一个完整的工具块\"}</tool_result>")
+                    is ToolCallBlock.Valid -> {
+                        onProgress(CreationStreamUpdate(UiStrings.get(S.creng_phase_exec_tool, round, block.call.name)))
+                        val before = toolbox.session
+                        val result = toolbox.execute(block.call)
+                        feedback.appendLine(result.render(blockIndex + 1))
+                        if (result.ok && toolbox.session !== before) wroteDraft = true
+                    }
+                }
             }
             if (generation.finishReason == "length" && parsed.hasUnclosedBlock) {
                 feedback.appendLine("<tool_result name=\"system\" ok=\"false\">" +
@@ -329,14 +360,6 @@ internal class CreationEngine(
                 // Tell the model the call ran, so it does not keep re-sending it.
                 feedback.appendLine("<tool_result name=\"system\" ok=\"true\">" +
                     "{\"notice\":\"上一个工具块的 </tool_call> 闭合标签没有传回，JSON 完整已按原样执行；请继续按完整格式输出\"}</tool_result>")
-            }
-            var wroteDraft = false
-            for (call in validCalls) {
-                onProgress(CreationStreamUpdate(UiStrings.get(S.creng_phase_exec_tool, round, call.name)))
-                val before = toolbox.session
-                val result = toolbox.execute(call)
-                feedback.appendLine(result.render())
-                if (result.ok && toolbox.session !== before) wroteDraft = true
             }
             // A later model request may fail after these complete calls. Keep the
             // validated draft changes before starting another billable request.
@@ -354,9 +377,7 @@ internal class CreationEngine(
                 feedback.appendLine("<tool_result name=\"system\" ok=\"true\">" +
                     "{\"notice\":\"即将达到本轮工具调用轮数上限（$TOOL_ROUND_LIMIT 轮），请完成关键写入后，下一轮输出给用户的纯文本总结\"}</tool_result>")
             }
-            history += PromptMessage(MessageRole.Assistant, content =
-                if (generation.toolCalls?.isNotEmpty() == true) "已请求 ${validCalls.size} 个原生工具调用。"
-                else generation.text)
+            history += PromptMessage(MessageRole.Assistant, content = assistantEcho)
             // Tool results travel as user messages with an explicit wrapper:
             // some relays reject a tool role that has no tool_call_id.
             history += PromptMessage(MessageRole.User, content = feedback.toString().trim())
@@ -387,6 +408,7 @@ internal class CreationEngine(
         - 条目用 id（形如 "L3"）定位。修改已有条目只写要改的字段，未写的字段保持原样；新建条目不带 id。
         - 批量写入时一次打包多条（建议 5-10 条），减少轮数消耗。
         - 工具块内的 JSON 必须完整合法：字符串内换行写作 \n、双引号写作 \"。
+        - 工具结果以 <tool_result index="序号" name="工具名" ok="true/false">…</tool_result> 回传，index 对应你本轮输出的第几个工具块；原生 creation_tool 调用也会按此格式回放，序号含义相同。
         - 回复保持精炼：思考过程尽量短，正文只包含工具块与必要说明；过长的思考会耗尽单轮输出额度导致截断。
         - 不需要工具时，直接输出给用户的纯文本回复；除工具块外不要输出 JSON。
 

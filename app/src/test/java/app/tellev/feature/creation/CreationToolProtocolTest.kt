@@ -499,11 +499,11 @@ class CreationToolProtocolTest {
     @Test
     fun toolResultRendersAsWrappedFeedback() {
         val result = box().execute(ToolCallRequest("read_card", buildJsonObject { }))
-        val rendered = result.render()
-        assertTrue(rendered.startsWith("<tool_result name=\"read_card\" ok=\"true\">"))
+        val rendered = result.render(1)
+        assertTrue(rendered.startsWith("<tool_result index=\"1\" name=\"read_card\" ok=\"true\">"))
         assertTrue(rendered.endsWith("</tool_result>"))
-        assertTrue(ToolResult(false, "bad\" name", buildJsonObject { }).render()
-            .startsWith("<tool_result name=\"unknown\""))
+        assertTrue(ToolResult(false, "bad\" name", buildJsonObject { }).render(2)
+            .startsWith("<tool_result index=\"2\" name=\"unknown\""))
     }
 
     // ── 对抗复核修复回归 ──────────────────────────────────────
