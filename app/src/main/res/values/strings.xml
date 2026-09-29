@@ -240,7 +240,9 @@
     <string name="crs_mode_direct_draft">直接出初稿</string>
     <string name="crs_multi_characters">群像或多角色卡</string>
     <string name="crs_new_character">新建角色卡</string>
+    <string name="crs_new_character_desc">与 AI 协作创作完整角色卡</string>
     <string name="crs_new_worldbook">新建世界书</string>
+    <string name="crs_new_worldbook_desc">从设定或原文整理世界书</string>
     <string name="crs_no_reasoning">本轮未收到可显示的思考文本；等待时间不能说明模型内部如何处理。</string>
     <string name="crs_no_stream_fallback">当前请求没有收到增量片段；结果在 %1$d 秒后整段到达。</string>
     <string name="crs_portability_issues">可移植性检查：%1$s</string>
@@ -255,6 +257,10 @@
     <string name="crs_save_to_character_list">保存到角色列表</string>
     <string name="crs_save_to_worldbook">保存到世界书</string>
     <string name="crs_script_line">%1$s · %2$s · %3$d 字符</string>
+    <string name="crs_section_advanced">高级设定</string>
+    <string name="crs_section_basic">基本信息</string>
+    <string name="crs_section_cover">封面与导出</string>
+    <string name="crs_section_opening">开场与示例</string>
     <string name="crs_selective_entry">要求次级关键词</string>
     <string name="crs_send">发送</string>
     <string name="crs_session_meta">%1$s · %2$d 轮 · %3$d 条世界书内容</string>

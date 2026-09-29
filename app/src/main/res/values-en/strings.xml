@@ -240,7 +240,9 @@
     <string name="crs_mode_direct_draft">Direct to first draft</string>
     <string name="crs_multi_characters">Ensemble / multi-character card</string>
     <string name="crs_new_character">New character card</string>
+    <string name="crs_new_character_desc">Craft a full character card with AI</string>
     <string name="crs_new_worldbook">New world book</string>
+    <string name="crs_new_worldbook_desc">Turn lore or source text into a world book</string>
     <string name="crs_no_reasoning">No displayable reasoning text was received this turn; the wait time does not indicate what the model is doing internally.</string>
     <string name="crs_no_stream_fallback">No incremental chunks were received for this request; the full result arrived after %1$d seconds.</string>
     <string name="crs_portability_issues">Portability check: %1$s</string>
@@ -255,6 +257,10 @@
     <string name="crs_save_to_character_list">Save to character list</string>
     <string name="crs_save_to_worldbook">Save to world books</string>
     <string name="crs_script_line">%1$s · %2$s · %3$d chars</string>
+    <string name="crs_section_advanced">Advanced fields</string>
+    <string name="crs_section_basic">Basics</string>
+    <string name="crs_section_cover">Cover &amp; export</string>
+    <string name="crs_section_opening">Opening &amp; examples</string>
     <string name="crs_selective_entry">Requires secondary keys</string>
     <string name="crs_send">Send</string>
     <string name="crs_session_meta">%1$s · %2$d turns · %3$d world book entries</string>

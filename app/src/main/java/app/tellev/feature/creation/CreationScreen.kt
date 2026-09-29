@@ -7,10 +7,12 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,20 +28,40 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Preview
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -53,6 +75,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -138,23 +161,42 @@ fun CreationHomeScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(stringResource(R.string.crs_home_intro), style = MaterialTheme.typography.bodyMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { viewModel.start(CreationKind.Character); onOpenEditor() }, enabled = !state.busy) { Text(stringResource(R.string.crs_new_character)) }
-                OutlinedButton(onClick = { viewModel.start(CreationKind.WorldBook); onOpenEditor() }, enabled = !state.busy) { Text(stringResource(R.string.crs_new_worldbook)) }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                CreationStartCard(
+                    modifier = Modifier.weight(1f),
+                    icon = { Icon(Icons.Filled.Badge, contentDescription = null) },
+                    title = stringResource(R.string.crs_new_character),
+                    description = stringResource(R.string.crs_new_character_desc),
+                    enabled = !state.busy,
+                    onClick = { viewModel.start(CreationKind.Character); onOpenEditor() },
+                )
+                CreationStartCard(
+                    modifier = Modifier.weight(1f),
+                    icon = { Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null) },
+                    title = stringResource(R.string.crs_new_worldbook),
+                    description = stringResource(R.string.crs_new_worldbook_desc),
+                    enabled = !state.busy,
+                    onClick = { viewModel.start(CreationKind.WorldBook); onOpenEditor() },
+                )
             }
             Text(stringResource(R.string.crs_drafts_title), style = MaterialTheme.typography.titleMedium)
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.sessions, key = CreationSessionSummary::id) { session ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f).clickable(enabled = !state.busy) {
+                            Column(Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).clickable(enabled = !state.busy) {
                                 viewModel.open(session.id)
                                 onOpenEditor()
                             }.padding(14.dp)) {
                                 val sessionName = session.cardName.ifBlank { session.worldName.ifBlank {
                                     stringResource(if (session.kind == CreationKind.Character) R.string.crs_unnamed_character else R.string.crs_unnamed_worldbook)
                                 } }
-                                Text(sessionName)
+                                Text(sessionName, style = MaterialTheme.typography.titleSmall)
                                 val kindLabel = stringResource(if (session.kind == CreationKind.Character) R.string.crs_kind_character else R.string.crs_kind_worldbook)
                                 Text(
                                     stringResource(R.string.crs_session_meta, kindLabel, session.turnsCount, session.loreCount),
@@ -164,11 +206,43 @@ fun CreationHomeScreen(
                                     Text(stringResource(R.string.crs_source_extracted_short, session.sourceCursor, session.sourceLength), style = MaterialTheme.typography.bodySmall)
                                 }
                             }
-                            TextButton(onClick = { pendingDelete = session }, enabled = !state.busy) { Text(stringResource(R.string.crs_delete)) }
+                            IconButton(onClick = { pendingDelete = session }, enabled = !state.busy) {
+                                Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.crs_delete),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+/** Wide tinted entry card for starting a new creation session. */
+@Composable
+private fun CreationStartCard(
+    modifier: Modifier = Modifier,
+    icon: @Composable () -> Unit,
+    title: String,
+    description: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        modifier = modifier.clip(RoundedCornerShape(16.dp)).clickable(enabled = enabled, onClick = onClick),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(
+                Modifier.clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                    .padding(8.dp),
+            ) { icon() }
+            Text(title, style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer)
+            Text(description, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
         }
     }
 }
@@ -264,15 +338,22 @@ fun CreationEditorScreen(
     }
     var tab by remember { mutableIntStateOf(0) }
     LaunchedEffect(session?.id) { tab = 0 }
-    Scaffold(topBar = {
-        TopAppBar(title = { Text(stringResource(if (session?.kind == CreationKind.WorldBook) R.string.crs_editor_title_worldbook else R.string.crs_editor_title_character)) },
-            navigationIcon = { TextButton(onClick = { viewModel.close(); onBack() }) { Text(stringResource(R.string.crs_back)) } },
-            actions = {
-                TextButton(onClick = { viewModel.saveArtifact(onSaved) }, enabled = session != null && !state.busy) {
-                    Text(stringResource(if (session?.kind == CreationKind.WorldBook) R.string.crs_save_to_worldbook else R.string.crs_save_to_character_list))
-                }
-            })
-    }) { padding ->
+    Scaffold(
+        topBar = {
+            TopAppBar(title = { Text(stringResource(if (session?.kind == CreationKind.WorldBook) R.string.crs_editor_title_worldbook else R.string.crs_editor_title_character)) },
+                navigationIcon = { TextButton(onClick = { viewModel.close(); onBack() }) { Text(stringResource(R.string.crs_back)) } },
+                actions = {
+                    TextButton(onClick = { viewModel.saveArtifact(onSaved) }, enabled = session != null && !state.busy) {
+                        Text(stringResource(if (session?.kind == CreationKind.WorldBook) R.string.crs_save_to_worldbook else R.string.crs_save_to_character_list))
+                    }
+                })
+        },
+        bottomBar = {
+            if (session != null) {
+                CreationBottomNav(tab, session.kind, state.busy) { tab = it }
+            }
+        },
+    ) { padding ->
         if (session == null) {
             // Loading failures (missing/corrupt card) must surface here, or the
             // editor would sit on "正在读取草稿…" forever.
@@ -287,40 +368,8 @@ fun CreationEditorScreen(
             return@Scaffold
         }
         Column(Modifier.fillMaxSize().padding(padding)) {
-            if (state.error != null) {
-                Text(state.error.orEmpty(), color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp))
-            }
-            if (session.turns.lastOrNull()?.role == "user" && !state.busy) {
-                if (session.partialTurnSaved) {
-                    TextButton(onClick = { viewModel.send("请从已保存的草稿继续完成上一轮未完成的工作；不要重复创建已经写入的条目。") }) {
-                        Text(stringResource(R.string.crs_continue_incomplete))
-                    }
-                } else {
-                    TextButton(onClick = viewModel::retry) { Text(stringResource(R.string.crs_retry_last)) }
-                }
-            }
-            state.info?.let { Text(it, modifier = Modifier.padding(horizontal = 12.dp)) }
-            if (tab != 0 && (state.busy || state.modelPhase.isNotBlank())) {
-                CreationCompactStatus(state, viewModel)
-            } else if (tab != 0 && session.sourceLength > 0) {
-                val savedFraction = session.sourceCursor.toFloat() / session.sourceLength
-                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
-                    LinearProgressIndicator(progress = { savedFraction }, modifier = Modifier.fillMaxWidth())
-                    Text(stringResource(R.string.crs_source_extracted_continue, session.sourceCursor, session.sourceLength),
-                        style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text(stringResource(R.string.crs_tab_chat)) })
-                if (session.kind == CreationKind.Character) {
-                    FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text(stringResource(R.string.crs_kind_character)) })
-                }
-                FilterChip(selected = tab == 2, onClick = { tab = 2 }, label = { Text(stringResource(R.string.crs_kind_worldbook)) })
-                if (session.kind == CreationKind.Character) {
-                    FilterChip(selected = tab == 3, onClick = { tab = 3 }, label = { Text(stringResource(R.string.crs_tab_frontend)) })
-                    FilterChip(selected = tab == 4, onClick = { tab = 4 }, label = { Text(stringResource(R.string.crs_tab_advanced)) })
-                }
-            }
+            state.error?.let { CreationBanner(it, isError = true) }
+            state.info?.let { CreationBanner(it, isError = false) }
             when (tab) {
                 0 -> CreationConversation(session, state, viewModel)
                 1 -> CharacterDraftEditor(
@@ -337,14 +386,55 @@ fun CreationEditorScreen(
     }
 }
 
+/** Bottom navigation across the editor tabs; the chat tab carries an activity badge. */
 @Composable
-private fun CreationCompactStatus(state: CreationUiState, viewModel: CreationViewModel) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (state.busy) CircularProgressIndicator(modifier = Modifier.height(18.dp))
-        Text(state.extractionProgress.ifBlank { state.modelPhase },
-            modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-        if (state.busy) TextButton(onClick = viewModel::cancelGeneration) { Text(stringResource(R.string.crs_stop)) }
+private fun CreationBottomNav(tab: Int, kind: CreationKind, busy: Boolean, onSelect: (Int) -> Unit) {
+    NavigationBar {
+        NavigationBarItem(
+            selected = tab == 0, onClick = { onSelect(0) },
+            icon = {
+                if (busy) {
+                    BadgedBox(badge = { Badge() }) { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null) }
+                } else Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null)
+            },
+            label = { Text(stringResource(R.string.crs_tab_chat)) },
+        )
+        if (kind == CreationKind.Character) {
+            NavigationBarItem(selected = tab == 1, onClick = { onSelect(1) },
+                icon = { Icon(Icons.Filled.Badge, contentDescription = null) },
+                label = { Text(stringResource(R.string.crs_kind_character)) })
+            NavigationBarItem(selected = tab == 2, onClick = { onSelect(2) },
+                icon = { Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null) },
+                label = { Text(stringResource(R.string.crs_kind_worldbook)) })
+            NavigationBarItem(selected = tab == 3, onClick = { onSelect(3) },
+                icon = { Icon(Icons.Filled.Preview, contentDescription = null) },
+                label = { Text(stringResource(R.string.crs_tab_frontend)) })
+            NavigationBarItem(selected = tab == 4, onClick = { onSelect(4) },
+                icon = { Icon(Icons.Filled.Tune, contentDescription = null) },
+                label = { Text(stringResource(R.string.crs_tab_advanced)) })
+        } else {
+            NavigationBarItem(selected = tab == 2, onClick = { onSelect(2) },
+                icon = { Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null) },
+                label = { Text(stringResource(R.string.crs_kind_worldbook)) })
+        }
+    }
+}
+
+/** Compact inline banner for one-line error/info notices at the top of the editor. */
+@Composable
+private fun CreationBanner(text: String, isError: Boolean) {
+    Surface(
+        color = if (isError) MaterialTheme.colorScheme.errorContainer
+        else MaterialTheme.colorScheme.secondaryContainer,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+    ) {
+        Text(
+            text, style = MaterialTheme.typography.bodySmall,
+            color = if (isError) MaterialTheme.colorScheme.onErrorContainer
+            else MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+        )
     }
 }
 
@@ -537,6 +627,19 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                     }
                 }
             }
+            if (session.turns.lastOrNull()?.role == "user" && !busy) {
+                item(key = "creation-resume") {
+                    if (session.partialTurnSaved) {
+                        OutlinedButton(onClick = {
+                            viewModel.send("请从已保存的草稿继续完成上一轮未完成的工作；不要重复创建已经写入的条目。")
+                        }) { Text(stringResource(R.string.crs_continue_incomplete)) }
+                    } else {
+                        OutlinedButton(onClick = viewModel::retry) {
+                            Text(stringResource(R.string.crs_retry_last))
+                        }
+                    }
+                }
+            }
             if (busy || state.modelPhase.isNotBlank()) {
                 item(key = "creation-progress") {
                     if (busy || showCompletedDetails) {
@@ -581,38 +684,42 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                 }
             }
         }
-        OutlinedTextField(
-            value = input, onValueChange = { input = it }, modifier = Modifier.fillMaxWidth(),
-            label = { Text(stringResource(R.string.crs_input_label)) }, minLines = 2, maxLines = 6,
-        )
         if (session.turns.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = { viewModel.send("请继续引导，只问我当前最关键的 1 至 2 个问题，并先整理已有设定。") }, enabled = !busy) {
-                    Text(stringResource(R.string.crs_btn_continue_guide))
-                }
-                TextButton(onClick = { viewModel.send("这一部分交给你决定。请结合已确定设定写入草稿，并说明你的选择。") }, enabled = !busy) {
-                    Text(stringResource(R.string.crs_btn_ai_decide))
-                }
-                TextButton(onClick = { viewModel.send(if (session.kind == CreationKind.Character)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                AssistChip(onClick = { viewModel.send("请继续引导，只问我当前最关键的 1 至 2 个问题，并先整理已有设定。") },
+                    enabled = !busy, label = { Text(stringResource(R.string.crs_btn_continue_guide)) })
+                AssistChip(onClick = { viewModel.send("这一部分交给你决定。请结合已确定设定写入草稿，并说明你的选择。") },
+                    enabled = !busy, label = { Text(stringResource(R.string.crs_btn_ai_decide)) })
+                AssistChip(onClick = { viewModel.send(if (session.kind == CreationKind.Character)
                     "请根据目前已有信息立即完成可编辑的角色卡初稿和适用的世界书条目，缺口用合理设定补齐并标明待核对处。"
-                    else "请根据目前已有信息立即完成可编辑的世界书条目初稿，区分已确定事实与待核对设定。") }, enabled = !busy) {
-                    Text(stringResource(R.string.crs_btn_generate_draft))
-                }
+                    else "请根据目前已有信息立即完成可编辑的世界书条目初稿，区分已确定事实与待核对设定。") },
+                    enabled = !busy, label = { Text(stringResource(R.string.crs_btn_generate_draft)) })
                 if (session.kind == CreationKind.WorldBook) {
-                    TextButton(onClick = { viewModel.send("请从现在起逐条与我讨论世界书条目。先提议一条，等我确认或修改后再写入草稿，然后讨论下一条。") }, enabled = !busy) {
-                        Text(stringResource(R.string.crs_btn_discuss_one_by_one))
-                    }
+                    AssistChip(onClick = { viewModel.send("请从现在起逐条与我讨论世界书条目。先提议一条，等我确认或修改后再写入草稿，然后讨论下一条。") },
+                        enabled = !busy, label = { Text(stringResource(R.string.crs_btn_discuss_one_by_one)) })
                 }
                 if (session.kind == CreationKind.Character) {
-                    TextButton(onClick = { viewModel.send("请根据这张卡的设定，实际创建可运行的变量结构和动态状态栏。先检查已有脚本、变量与正则，再分模块写入草稿；不要只输出让玩家复制的提示词。每个模块写完说明作用和待验证点。") }, enabled = !busy) {
-                        Text(stringResource(R.string.crs_btn_status_bar))
-                    }
+                    AssistChip(onClick = { viewModel.send("请根据这张卡的设定，实际创建可运行的变量结构和动态状态栏。先检查已有脚本、变量与正则，再分模块写入草稿；不要只输出让玩家复制的提示词。每个模块写完说明作用和待验证点。") },
+                        enabled = !busy, label = { Text(stringResource(R.string.crs_btn_status_bar)) })
                 }
             }
         }
-        Button(onClick = { viewModel.send(input); input = "" }, enabled = !busy && input.isNotBlank(),
-            modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.crs_send)) }
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp),
+            verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f),
+                label = { Text(stringResource(R.string.crs_input_label)) }, minLines = 1, maxLines = 6,
+                shape = RoundedCornerShape(24.dp),
+            )
+            FilledIconButton(
+                onClick = { viewModel.send(input); input = "" },
+                enabled = !busy && input.isNotBlank(),
+                modifier = Modifier.padding(bottom = 2.dp),
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.crs_send))
+            }
+        }
     }
 }
 
@@ -686,6 +793,47 @@ private fun CreationBriefForm(kind: CreationKind, busy: Boolean, onStart: (Strin
     }
 }
 
+/** Rounded outlined panel giving the editor sections a consistent card look. */
+@Composable
+private fun PanelCard(content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+    }
+}
+
+/** Collapsible form section: header row always visible, fields behind the chevron. */
+@Composable
+private fun DraftSection(title: String, initiallyExpanded: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
+    var expanded by rememberSaveable(title) { mutableStateOf(initiallyExpanded) }
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column {
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (expanded) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+            }
+        }
+    }
+}
+
 @Composable
 private fun CharacterDraftEditor(
     card: CharacterDraft,
@@ -700,33 +848,40 @@ private fun CharacterDraftEditor(
         coverPng?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.crs_cover_title), style = MaterialTheme.typography.titleMedium)
-        if (coverBitmap != null) {
-            Image(coverBitmap, contentDescription = stringResource(R.string.crs_cover_cd),
-                modifier = Modifier.fillMaxWidth().height(180.dp), contentScale = ContentScale.Fit)
-        } else Text(stringResource(R.string.crs_cover_missing_hint), style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(onClick = onPickCover, enabled = !busy) {
-            Text(if (coverPng == null) stringResource(R.string.crs_cover_pick) else stringResource(R.string.crs_cover_change))
+        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        DraftSection(stringResource(R.string.crs_section_cover)) {
+            if (coverBitmap != null) {
+                Image(coverBitmap, contentDescription = stringResource(R.string.crs_cover_cd),
+                    modifier = Modifier.fillMaxWidth().height(180.dp), contentScale = ContentScale.Fit)
+            } else Text(stringResource(R.string.crs_cover_missing_hint), style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onPickCover, enabled = !busy) {
+                Text(if (coverPng == null) stringResource(R.string.crs_cover_pick) else stringResource(R.string.crs_cover_change))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onExportJson, enabled = !busy) { Text(stringResource(R.string.crs_export_json)) }
+                Button(onClick = onExportPng, enabled = !busy && coverPng != null) { Text(stringResource(R.string.crs_export_png)) }
+            }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onExportJson, enabled = !busy) { Text(stringResource(R.string.crs_export_json)) }
-            Button(onClick = onExportPng, enabled = !busy && coverPng != null) { Text(stringResource(R.string.crs_export_png)) }
+        DraftSection(stringResource(R.string.crs_section_basic), initiallyExpanded = true) {
+            DraftField(stringResource(R.string.crs_field_name), card.name, busy) { viewModel.editCard { c -> c.copy(name = it) } }
+            DraftField(stringResource(R.string.crs_field_description), card.description, busy, 5) { viewModel.editCard { c -> c.copy(description = it) } }
+            DraftField(stringResource(R.string.crs_field_personality), card.personality, busy, 4) { viewModel.editCard { c -> c.copy(personality = it) } }
+            DraftField(stringResource(R.string.crs_field_scenario), card.scenario, busy, 4) { viewModel.editCard { c -> c.copy(scenario = it) } }
         }
-        DraftField(stringResource(R.string.crs_field_name), card.name, busy) { viewModel.editCard { c -> c.copy(name = it) } }
-        DraftField(stringResource(R.string.crs_field_description), card.description, busy, 5) { viewModel.editCard { c -> c.copy(description = it) } }
-        DraftField(stringResource(R.string.crs_field_personality), card.personality, busy, 4) { viewModel.editCard { c -> c.copy(personality = it) } }
-        DraftField(stringResource(R.string.crs_field_scenario), card.scenario, busy, 4) { viewModel.editCard { c -> c.copy(scenario = it) } }
-        DraftField(stringResource(R.string.crs_field_first_message), card.firstMessage, busy, 6) { viewModel.editCard { c -> c.copy(firstMessage = it) } }
-        DraftField(stringResource(R.string.crs_field_example_messages), card.exampleMessages, busy, 5) { viewModel.editCard { c -> c.copy(exampleMessages = it) } }
-        DraftField(stringResource(R.string.crs_field_system_prompt), card.systemPrompt, busy, 4) { viewModel.editCard { c -> c.copy(systemPrompt = it) } }
-        DraftField(stringResource(R.string.crs_field_post_history), card.postHistoryInstructions, busy, 3) { viewModel.editCard { c -> c.copy(postHistoryInstructions = it) } }
-        DraftField(stringResource(R.string.crs_field_creator_notes), card.creatorNotes, busy, 3) { viewModel.editCard { c -> c.copy(creatorNotes = it) } }
-        DraftField(stringResource(R.string.crs_field_tags), card.tags.joinToString(", "), busy) { value ->
-            viewModel.editCard { c -> c.copy(tags = value.split(',', '，').map(String::trim).filter(String::isNotBlank)) }
+        DraftSection(stringResource(R.string.crs_section_opening)) {
+            DraftField(stringResource(R.string.crs_field_first_message), card.firstMessage, busy, 6) { viewModel.editCard { c -> c.copy(firstMessage = it) } }
+            DraftField(stringResource(R.string.crs_field_alternate_greetings), card.alternateGreetings.joinToString("\n\n"), busy, 5) { value ->
+                viewModel.editCard { c -> c.copy(alternateGreetings = value.split(Regex("\\n\\s*\\n")).map(String::trim).filter(String::isNotBlank)) }
+            }
+            DraftField(stringResource(R.string.crs_field_example_messages), card.exampleMessages, busy, 5) { viewModel.editCard { c -> c.copy(exampleMessages = it) } }
         }
-        DraftField(stringResource(R.string.crs_field_alternate_greetings), card.alternateGreetings.joinToString("\n\n"), busy, 5) { value ->
-            viewModel.editCard { c -> c.copy(alternateGreetings = value.split(Regex("\\n\\s*\\n")).map(String::trim).filter(String::isNotBlank)) }
+        DraftSection(stringResource(R.string.crs_section_advanced)) {
+            DraftField(stringResource(R.string.crs_field_system_prompt), card.systemPrompt, busy, 4) { viewModel.editCard { c -> c.copy(systemPrompt = it) } }
+            DraftField(stringResource(R.string.crs_field_post_history), card.postHistoryInstructions, busy, 3) { viewModel.editCard { c -> c.copy(postHistoryInstructions = it) } }
+            DraftField(stringResource(R.string.crs_field_creator_notes), card.creatorNotes, busy, 3) { viewModel.editCard { c -> c.copy(creatorNotes = it) } }
+            DraftField(stringResource(R.string.crs_field_tags), card.tags.joinToString(", "), busy) { value ->
+                viewModel.editCard { c -> c.copy(tags = value.split(',', '，').map(String::trim).filter(String::isNotBlank)) }
+            }
         }
     }
 }
@@ -802,7 +957,7 @@ private fun WorldDraftEditor(
     LazyColumn(Modifier.fillMaxSize().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item(key = "header") {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            PanelCard {
             DraftField(stringResource(R.string.crs_field_worldbook_name), session.worldName, busy) { viewModel.editWorldName(it) }
             OutlinedButton(onClick = onExportJson, enabled = !busy) {
                 Text(stringResource(R.string.crs_export_worldbook_json))

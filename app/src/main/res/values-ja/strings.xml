@@ -240,7 +240,9 @@
     <string name="crs_mode_direct_draft">直接初稿へ</string>
     <string name="crs_multi_characters">群像・マルチキャラカード</string>
     <string name="crs_new_character">新規キャラカード</string>
+    <string name="crs_new_character_desc">AIと一緒にキャラカードを作る</string>
     <string name="crs_new_worldbook">新規ワールドブック</string>
+    <string name="crs_new_worldbook_desc">設定や原文からワールドブックを作る</string>
     <string name="crs_no_reasoning">このターンでは表示可能な思考テキストを受信していませんでした。待機時間はモデルの内部処理を示すものではありません。</string>
     <string name="crs_no_stream_fallback">このリクエストでは増分チャンクを受信できませんでした。結果は%1$d秒後に一括で到着しました。</string>
     <string name="crs_portability_issues">移植性チェック：%1$s</string>
@@ -255,6 +257,10 @@
     <string name="crs_save_to_character_list">キャラクター一覧に保存</string>
     <string name="crs_save_to_worldbook">ワールドブックに保存</string>
     <string name="crs_script_line">%1$s · %2$s · %3$d文字</string>
+    <string name="crs_section_advanced">詳細設定</string>
+    <string name="crs_section_basic">基本情報</string>
+    <string name="crs_section_cover">表紙とエクスポート</string>
+    <string name="crs_section_opening">冒頭と例文</string>
     <string name="crs_selective_entry">二次キーワードを要求</string>
     <string name="crs_send">送信</string>
     <string name="crs_session_meta">%1$s · %2$dターン · ワールドブック%3$d件</string>
