@@ -143,6 +143,7 @@
     <string name="setabout_guide_onboarding">はじめかた</string>
     <string name="crs_add_entry">エントリを追加</string>
     <string name="crs_agent_replying">agentが返信中</string>
+    <string name="crs_agent_asking">あなたの選択を待っています</string>
     <string name="crs_assets_hint">チャットでAIに依頼してこれらのリソースを作成・編集できます。スクリプトはキャラカードのJSON/PNGと一緒にエクスポートされます。動作はチャット内で確認してください。</string>
     <string name="crs_assets_summary">TavernHelperスクリプト %1$d · 正規表現 %2$d · 変数 %3$d</string>
     <string name="crs_back">戻る</string>
@@ -346,6 +347,7 @@
     <string name="creng_phase_receiving_draft">ドラフトを受信中</string>
     <string name="creng_phase_model_thinking">モデルが思考中</string>
     <string name="creng_phase_waiting_model">モデルの応答を待機中</string>
+    <string name="creng_phase_waiting_user">選択肢を選ぶのを待っています…</string>
     <string name="creng_phase_prepare_request">モデルリクエストを準備中</string>
     <string name="creng_phase_connecting">モデルに接続中</string>
     <string name="creng_phase_validating">構造化ドラフトを検証中</string>

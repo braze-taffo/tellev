@@ -143,6 +143,7 @@
     <string name="setabout_guide_onboarding">新手引导</string>
     <string name="crs_add_entry">添加条目</string>
     <string name="crs_agent_replying">agent 正在回复</string>
+    <string name="crs_agent_asking">等待你的选择</string>
     <string name="crs_assets_hint">在对话里让 AI 创建或修改这些资源。脚本会随角色卡 JSON/PNG 导出；运行效果需在聊天中验证。</string>
     <string name="crs_assets_summary">TavernHelper 脚本 %1$d · 正则 %2$d · 变量 %3$d</string>
     <string name="crs_back">返回</string>
@@ -346,6 +347,7 @@
     <string name="creng_phase_receiving_draft">正在接收草稿</string>
     <string name="creng_phase_model_thinking">模型正在思考</string>
     <string name="creng_phase_waiting_model">等待模型响应</string>
+    <string name="creng_phase_waiting_user">等待你在选项中点选…</string>
     <string name="creng_phase_prepare_request">准备模型请求</string>
     <string name="creng_phase_connecting">正在连接模型</string>
     <string name="creng_phase_validating">校验结构化草稿</string>

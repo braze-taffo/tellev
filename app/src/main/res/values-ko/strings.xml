@@ -143,6 +143,7 @@
     <string name="setabout_guide_onboarding">시작 안내</string>
     <string name="crs_add_entry">항목 추가</string>
     <string name="crs_agent_replying">agent가 응답 중</string>
+    <string name="crs_agent_asking">선택을 기다리는 중</string>
     <string name="crs_assets_hint">채팅에서 AI에게 요청하여 이 리소스를 만들거나 수정할 수 있습니다. 스크립트는 캐릭터 카드 JSON/PNG와 함께 내보내집니다. 동작은 채팅에서 확인해 주세요.</string>
     <string name="crs_assets_summary">TavernHelper 스크립트 %1$d · 정규식 %2$d · 변수 %3$d</string>
     <string name="crs_back">뒤로</string>
@@ -346,6 +347,7 @@
     <string name="creng_phase_receiving_draft">초안 수신 중</string>
     <string name="creng_phase_model_thinking">모델이 사고 중</string>
     <string name="creng_phase_waiting_model">모델 응답 대기 중</string>
+    <string name="creng_phase_waiting_user">선택을 기다리는 중…</string>
     <string name="creng_phase_prepare_request">모델 요청 준비 중</string>
     <string name="creng_phase_connecting">모델 연결 중</string>
     <string name="creng_phase_validating">구조화 초안 검증 중</string>

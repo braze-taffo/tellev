@@ -143,6 +143,7 @@
     <string name="setabout_guide_onboarding">Getting started</string>
     <string name="crs_add_entry">Add entry</string>
     <string name="crs_agent_replying">agent is replying</string>
+    <string name="crs_agent_asking">Waiting for your choice</string>
     <string name="crs_assets_hint">Create or edit these assets by asking the AI in the chat. Scripts export with the character card JSON/PNG; verify their behavior in a real chat.</string>
     <string name="crs_assets_summary">TavernHelper scripts %1$d · Regex %2$d · Variables %3$d</string>
     <string name="crs_back">Back</string>
@@ -346,6 +347,7 @@
     <string name="creng_phase_receiving_draft">Receiving draft</string>
     <string name="creng_phase_model_thinking">The model is thinking</string>
     <string name="creng_phase_waiting_model">Waiting for the model</string>
+    <string name="creng_phase_waiting_user">Waiting for you to pick an option…</string>
     <string name="creng_phase_prepare_request">Preparing model request</string>
     <string name="creng_phase_connecting">Connecting to the model</string>
     <string name="creng_phase_validating">Validating the structured draft</string>

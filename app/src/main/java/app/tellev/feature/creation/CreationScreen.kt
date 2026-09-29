@@ -25,6 +25,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -54,6 +56,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -482,9 +485,11 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
     val busy = state.busy
     val listState = rememberLazyListState()
     var showCompletedDetails by remember(session.id, state.operationStartedAtMillis) { mutableStateOf(false) }
-    LaunchedEffect(session.id, session.turns.size, state.operationStartedAtMillis, busy) {
+    val questionPending = state.pendingQuestion != null
+    LaunchedEffect(session.id, session.turns.size, state.operationStartedAtMillis, busy, questionPending) {
         // Follow the in-flight message, then return focus to the saved agent reply.
-        listState.scrollToItem(session.turns.size + if (busy) 1 else 0)
+        listState.scrollToItem(session.turns.size +
+            (if (busy) 1 else 0) + (if (questionPending) 1 else 0))
     }
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         LazyColumn(Modifier.weight(1f), state = listState,
@@ -501,10 +506,34 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                 }
             }
             items(session.turns) { turn ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(if (turn.role == "user") stringResource(R.string.crs_role_you) else stringResource(R.string.crs_role_agent), style = MaterialTheme.typography.labelMedium)
-                        Text(turn.text)
+                val isUser = turn.role == "user"
+                // Chat-style bubbles: user right on primaryContainer, agent left
+                // on surfaceVariant, with selectable text for copy-paste.
+                Row(Modifier.fillMaxWidth(),
+                    horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth(0.85f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (isUser) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surfaceVariant,
+                            )
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(
+                            if (isUser) stringResource(R.string.crs_role_you) else stringResource(R.string.crs_role_agent),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                        SelectionContainer {
+                            Text(
+                                turn.text,
+                                color = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
                     }
                 }
             }
@@ -522,6 +551,33 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                 item(key = "source-progress") {
                     Text(stringResource(R.string.crs_source_extracted_continue, session.sourceCursor, session.sourceLength),
                         style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            state.pendingQuestion?.let { question ->
+                item(key = "creation-question") {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(stringResource(R.string.crs_agent_asking),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary)
+                            Text(question.question, style = MaterialTheme.typography.bodyMedium)
+                            question.options.forEach { option ->
+                                OutlinedButton(
+                                    onClick = { viewModel.answerAgentQuestion(option.label) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
+                                        Text(option.label)
+                                        if (option.description.isNotBlank()) {
+                                            Text(option.description,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

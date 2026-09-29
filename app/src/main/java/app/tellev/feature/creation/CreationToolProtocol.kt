@@ -337,6 +337,27 @@ internal fun renderToolCallReplay(call: ToolCallRequest): String =
     } + TOOL_CALL_CLOSE
 
 /**
+ * ask_user arguments: a question plus 2-6 options with a short label and an
+ * optional one-line description. Returns null when the shape is unusable, so
+ * the caller reports a normal tool error instead of prompting the user.
+ */
+internal fun parseAskUserQuestion(arguments: JsonObject): CreationAgentQuestion? {
+    val question = (arguments["question"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+    if (question.isEmpty()) return null
+    val options = (arguments["options"] as? JsonArray)?.mapNotNull { element ->
+        val obj = element as? JsonObject ?: return@mapNotNull null
+        val label = (obj["label"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        if (label.isEmpty()) return@mapNotNull null
+        CreationAgentOption(
+            label = label,
+            description = (obj["description"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+        )
+    }.orEmpty()
+    if (options.size !in 2..6) return null
+    return CreationAgentQuestion(question, options)
+}
+
+/**
  * Compact language-neutral one-liner for the activity UI: counts and field
  * names only, since the tool name itself is already an English identifier.
  */
@@ -392,6 +413,7 @@ internal fun toolEventDetail(result: ToolResult): String {
                 if (miss > 0) append(", miss $miss")
             }
         }
+        "ask_user" -> (result.payload["answer"] as? JsonPrimitive)?.contentOrNull.orEmpty().take(40)
         else -> ""
     }
 }

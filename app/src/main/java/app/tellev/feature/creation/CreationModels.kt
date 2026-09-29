@@ -48,6 +48,11 @@ data class CreationToolEvent(
     val detail: String,
 )
 
+/** Pending ask_user interaction: the agent loop suspends until the user taps an option. */
+data class CreationAgentOption(val label: String, val description: String = "")
+
+data class CreationAgentQuestion(val question: String, val options: List<CreationAgentOption>)
+
 @Serializable
 data class CharacterDraft(
     val name: String = "",

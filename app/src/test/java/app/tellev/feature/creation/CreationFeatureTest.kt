@@ -418,6 +418,61 @@ class CreationFeatureTest {
     }
 
     @Test
+    fun askUserSuspendsForChoiceAndFeedsAnswerBack() = runBlocking {
+        val requests = mutableListOf<GenerateRequest>()
+        val provider = fakeProvider(
+            listOf(
+                "<tool_call>{\"name\":\"ask_user\",\"arguments\":{\"question\":\"主角的视角？\",\"options\":[" +
+                    "{\"label\":\"女性主角\",\"description\":\"贴近都市感\"},{\"label\":\"男性主角\"}]}}</tool_call>",
+                "已按选择继续。",
+            ),
+            requests = requests,
+        )
+        var asked: CreationAgentQuestion? = null
+        val events = mutableListOf<CreationToolEvent>()
+        val reply = engine(provider).converse(
+            CreationSession(kind = CreationKind.Character), "写一个人物",
+            onToolEvent = { events += it },
+            onAskUser = { question ->
+                asked = question
+                "女性主角"
+            },
+        )
+        assertEquals("已按选择继续。", reply.message)
+        assertEquals("主角的视角？", asked?.question)
+        assertEquals(listOf("女性主角", "男性主角"), asked?.options?.map { it.label })
+        assertEquals("贴近都市感", asked?.options?.first()?.description)
+        assertEquals(1, events.size)
+        assertEquals("ask_user", events.single().name)
+        assertEquals("女性主角", events.single().detail)
+        val feedback = requests[1].prompt.messages.first {
+            it.role == app.tellev.core.model.MessageRole.User && it.content.contains("<tool_result")
+        }
+        assertTrue(feedback.content.contains("<tool_result index=\"1\" name=\"ask_user\" ok=\"true\">"))
+        assertTrue(feedback.content.contains("女性主角"))
+    }
+
+    @Test
+    fun askUserWithoutHookFallsBackToSuggestion() = runBlocking {
+        val requests = mutableListOf<GenerateRequest>()
+        val provider = fakeProvider(
+            listOf(
+                "<tool_call>{\"name\":\"ask_user\",\"arguments\":{\"question\":\"视角？\",\"options\":" +
+                    "[{\"label\":\"A\"},{\"label\":\"B\"}]}}</tool_call>",
+                "继续。",
+            ),
+            requests = requests,
+        )
+        val reply = engine(provider).converse(CreationSession(kind = CreationKind.Character), "写一个人物")
+        assertEquals("继续。", reply.message)
+        val feedback = requests[1].prompt.messages.first {
+            it.role == app.tellev.core.model.MessageRole.User && it.content.contains("<tool_result")
+        }
+        assertTrue(feedback.content.contains("<tool_result index=\"1\" name=\"ask_user\" ok=\"false\">"))
+        assertTrue(feedback.content.contains("不支持用户选择"))
+    }
+
+    @Test
     fun toolRoundAppliesWritesAndFeedsResultsBackAsUserMessages() = runBlocking {
         val requests = mutableListOf<GenerateRequest>()
         val provider = fakeProvider(

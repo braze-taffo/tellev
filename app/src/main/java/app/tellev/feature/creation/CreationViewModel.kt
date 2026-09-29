@@ -15,6 +15,7 @@ import app.tellev.core.storage.FileStDataStore
 import app.tellev.core.storage.StDataStore
 import app.tellev.core.storage.codec.WorldBookCodec
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -48,6 +49,7 @@ data class CreationUiState(
     val deltaCount: Int = 0,
     val providerLabel: String = "",
     val toolEvents: List<CreationToolEvent> = emptyList(),
+    val pendingQuestion: CreationAgentQuestion? = null,
     val error: String? = null,
     val info: String? = null,
 )
@@ -76,6 +78,8 @@ class CreationViewModel(
     private val _state = MutableStateFlow(CreationUiState())
     val state: StateFlow<CreationUiState> = _state.asStateFlow()
     private var generationJob: Job? = null
+    /** Answer channel for a pending ask_user; completed by [answerAgentQuestion]. */
+    private var askAnswer: CompletableDeferred<String>? = null
 
     init { refresh() }
 
@@ -111,13 +115,13 @@ class CreationViewModel(
     fun start(kind: CreationKind) {
         if (_state.value.busy) return
         val session = CreationSession(kind = kind)
-        _state.update { it.copy(current = session, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList()) }
+        _state.update { it.copy(current = session, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList(), pendingQuestion = null) }
         persist(session)
     }
 
     fun open(id: String) = viewModelScope.launch {
         if (_state.value.busy) return@launch
-        _state.update { it.copy(current = null, coverPreviewPng = null, error = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList()) }
+        _state.update { it.copy(current = null, coverPreviewPng = null, error = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList(), pendingQuestion = null) }
         runCatching { repository.load(id).withAssignedLoreIds() }
             .onSuccess { session ->
                 val coverResult = runCatching {
@@ -135,7 +139,7 @@ class CreationViewModel(
     /** Load a stored character card into a new creation session for AI editing. */
     fun startFromCharacter(cardId: String) = viewModelScope.launch {
         if (_state.value.busy || cardId.isBlank()) return@launch
-        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_read_card), modelPhase = UiStrings.get(S.crvm_phase_reading_card), liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList()) }
+        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_read_card), modelPhase = UiStrings.get(S.crvm_phase_reading_card), liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList(), pendingQuestion = null) }
         try {
             val session = CreationSession.fromCharacter(store.readCharacter(cardId))
             _state.update { it.copy(current = session, modelPhase = UiStrings.get(S.crvm_phase_card_loaded)) }
@@ -152,7 +156,7 @@ class CreationViewModel(
     /** Make a separate world book from a stored card and its embedded entries. */
     fun startWorldBookFromCharacter(cardId: String) = viewModelScope.launch {
         if (_state.value.busy || cardId.isBlank()) return@launch
-        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_read_card), modelPhase = UiStrings.get(S.crvm_phase_reading_card), liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList()) }
+        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_read_card), modelPhase = UiStrings.get(S.crvm_phase_reading_card), liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList(), pendingQuestion = null) }
         try {
             val session = CreationSession.worldBookFromCharacter(store.readCharacter(cardId))
             _state.update { it.copy(current = session, modelPhase = UiStrings.get(S.crvm_phase_source_card_loaded)) }
@@ -169,7 +173,7 @@ class CreationViewModel(
     /** Load a stored world book into a new creation session for AI editing. */
     fun startFromWorldBook(bookId: String) = viewModelScope.launch {
         if (_state.value.busy || bookId.isBlank()) return@launch
-        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_read_worldbook), modelPhase = UiStrings.get(S.crvm_phase_reading_worldbook), liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList()) }
+        _state.update { it.copy(busy = true, current = null, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_read_worldbook), modelPhase = UiStrings.get(S.crvm_phase_reading_worldbook), liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList(), pendingQuestion = null) }
         try {
             val session = CreationSession.fromWorldBook(store.readWorldBook(bookId))
             _state.update { it.copy(current = session, modelPhase = UiStrings.get(S.crvm_phase_worldbook_loaded)) }
@@ -183,7 +187,7 @@ class CreationViewModel(
         }
     }
 
-    fun close() { if (!_state.value.busy) _state.update { it.copy(current = null, coverPreviewPng = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList()) } }
+    fun close() { if (!_state.value.busy) _state.update { it.copy(current = null, coverPreviewPng = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList(), pendingQuestion = null) } }
 
     fun send(text: String) {
         val session = _state.value.current ?: return
@@ -215,6 +219,17 @@ class CreationViewModel(
                     },
                     onToolEvent = { event ->
                         _state.update { it.copy(toolEvents = it.toolEvents + event) }
+                    },
+                    onAskUser = { question ->
+                        val deferred = CompletableDeferred<String>()
+                        askAnswer = deferred
+                        _state.update { it.copy(pendingQuestion = question) }
+                        try {
+                            deferred.await()
+                        } finally {
+                            askAnswer = null
+                            _state.update { it.copy(pendingQuestion = null) }
+                        }
                     },
                 )
                 _state.update { it.copy(modelPhase = UiStrings.get(S.crvm_phase_verify_save)) }
@@ -259,7 +274,7 @@ class CreationViewModel(
             return
         }
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, error = null, extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_save_source), modelPhase = UiStrings.get(S.crvm_phase_saving_source), liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList()) }
+            _state.update { it.copy(busy = true, error = null, extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_save_source), modelPhase = UiStrings.get(S.crvm_phase_saving_source), liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList(), pendingQuestion = null) }
             try {
                 val (hash, length) = repository.saveSource(session.id, text)
                 val next = session.copy(
@@ -347,6 +362,11 @@ class CreationViewModel(
     }
 
     fun cancelGeneration() { generationJob?.cancel() }
+
+    /** Resolve a pending ask_user with the option the user tapped. */
+    fun answerAgentQuestion(choice: String) {
+        askAnswer?.complete(choice)
+    }
 
     fun editCard(edit: (CharacterDraft) -> CharacterDraft) {
         if (_state.value.busy) return

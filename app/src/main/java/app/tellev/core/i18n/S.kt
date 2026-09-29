@@ -347,6 +347,7 @@ object S {
     const val creng_phase_receiving_draft = "creng_phase_receiving_draft"
     const val creng_phase_model_thinking = "creng_phase_model_thinking"
     const val creng_phase_waiting_model = "creng_phase_waiting_model"
+    const val creng_phase_waiting_user = "creng_phase_waiting_user"
     const val creng_phase_prepare_request = "creng_phase_prepare_request"
     const val creng_phase_connecting = "creng_phase_connecting"
     const val creng_phase_validating = "creng_phase_validating"
@@ -1509,6 +1510,7 @@ object S {
         "creng_phase_receiving_draft" to R.string.creng_phase_receiving_draft,
         "creng_phase_model_thinking" to R.string.creng_phase_model_thinking,
         "creng_phase_waiting_model" to R.string.creng_phase_waiting_model,
+        "creng_phase_waiting_user" to R.string.creng_phase_waiting_user,
         "creng_phase_prepare_request" to R.string.creng_phase_prepare_request,
         "creng_phase_connecting" to R.string.creng_phase_connecting,
         "creng_phase_validating" to R.string.creng_phase_validating,
@@ -2672,6 +2674,7 @@ object S {
         "creng_phase_receiving_draft" to "正在接收草稿",
         "creng_phase_model_thinking" to "模型正在思考",
         "creng_phase_waiting_model" to "等待模型响应",
+        "creng_phase_waiting_user" to "等待你在选项中点选…",
         "creng_phase_prepare_request" to "准备模型请求",
         "creng_phase_connecting" to "正在连接模型",
         "creng_phase_validating" to "校验结构化草稿",
