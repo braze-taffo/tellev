@@ -273,6 +273,8 @@
     <string name="crs_tab_chat">Chat</string>
     <string name="crs_tab_frontend">Frontend preview</string>
     <string name="crs_task_elapsed">Task running for %1$ds</string>
+    <string name="crs_tool_events_title">Tool activity (%1$d)</string>
+    <string name="crs_tool_round">Round %1$d</string>
     <string name="crs_unnamed_character">Unnamed character</string>
     <string name="crs_unnamed_draft">Unnamed draft</string>
     <string name="crs_unnamed_worldbook">Unnamed world book</string>

@@ -506,6 +506,26 @@ class CreationToolProtocolTest {
             .startsWith("<tool_result index=\"2\" name=\"unknown\""))
     }
 
+    @Test
+    fun toolEventDetailSummarizesEachToolKind() {
+        assertEquals("lore 2", toolEventDetail(box().execute(ToolCallRequest("read_card", buildJsonObject { }))))
+        assertEquals("2/2", toolEventDetail(box().execute(ToolCallRequest("list_lore", buildJsonObject { }))))
+        assertEquals("found 1, miss 1", toolEventDetail(box().execute(
+            ToolCallRequest("read_lore", buildJsonObject { put("ids", strings("L1", "L9")) }))))
+        assertEquals("name", toolEventDetail(box().execute(
+            ToolCallRequest("set_card_fields", buildJsonObject { put("name", "林月") }))))
+        assertEquals("new 2", toolEventDetail(box().execute(ToolCallRequest("upsert_lore", buildJsonObject {
+            put("entries", buildJsonArray {
+                add(buildJsonObject { put("title", "新甲"); put("content", "内容") })
+                add(buildJsonObject { put("title", "新乙"); put("content", "内容") })
+            })
+        }))))
+        assertEquals("del 1, miss 1", toolEventDetail(box().execute(
+            ToolCallRequest("remove_lore", buildJsonObject { put("ids", strings("L1", "L9")) }))))
+        assertTrue(toolEventDetail(box().execute(ToolCallRequest("hack", buildJsonObject { })))
+            .contains("未知工具"))
+    }
+
     // ── 对抗复核修复回归 ──────────────────────────────────────
 
     @Test

@@ -252,6 +252,7 @@ internal class CreationEngine(
         userText: String,
         onProgress: (CreationStreamUpdate) -> Unit = {},
         onCheckpoint: suspend (CreationSession) -> Unit = {},
+        onToolEvent: (CreationToolEvent) -> Unit = {},
     ): ConverseResult {
         val kind = if (session.kind == CreationKind.Character) "角色卡" else "世界书"
         val opener = creationConversationContext(session)
@@ -339,14 +340,24 @@ internal class CreationEngine(
             // multi-call round stays correlated even when names repeat.
             parsed.blocks.forEachIndexed { blockIndex, block ->
                 when (block) {
-                    is ToolCallBlock.Invalid -> feedback.appendLine(
-                        "<tool_result index=\"${blockIndex + 1}\" name=\"unknown\" ok=\"false\">" +
-                            "{\"error\":\"工具块无法解析：${block.reason}；请原样重发一个完整的工具块\"}</tool_result>")
+                    is ToolCallBlock.Invalid -> {
+                        feedback.appendLine(
+                            "<tool_result index=\"${blockIndex + 1}\" name=\"unknown\" ok=\"false\">" +
+                                "{\"error\":\"工具块无法解析：${block.reason}；请原样重发一个完整的工具块\"}</tool_result>")
+                        onToolEvent(CreationToolEvent(
+                            round, blockIndex + 1, "unknown", ok = false,
+                            detail = block.reason.take(80),
+                        ))
+                    }
                     is ToolCallBlock.Valid -> {
                         onProgress(CreationStreamUpdate(UiStrings.get(S.creng_phase_exec_tool, round, block.call.name)))
                         val before = toolbox.session
                         val result = toolbox.execute(block.call)
                         feedback.appendLine(result.render(blockIndex + 1))
+                        onToolEvent(CreationToolEvent(
+                            round, blockIndex + 1, result.name, result.ok,
+                            detail = toolEventDetail(result),
+                        ))
                         if (result.ok && toolbox.session !== before) wroteDraft = true
                     }
                 }

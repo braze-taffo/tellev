@@ -393,6 +393,31 @@ class CreationFeatureTest {
     }
 
     @Test
+    fun toolEventsCarryRoundIndexNameAndDetail() = runBlocking {
+        val requests = mutableListOf<GenerateRequest>()
+        val provider = fakeProvider(
+            listOf(
+                "<tool_call>{\"name\":\"read_card\",\"arguments\":{}}</tool_call>\n" +
+                    "<tool_call>{\"name\":\"set_card_fields\",\"arguments\":{\"name\":\"林月\"}}</tool_call>",
+                "已读取草稿并命名。",
+            ),
+            requests = requests,
+        )
+        val events = mutableListOf<CreationToolEvent>()
+        val reply = engine(provider).converse(
+            CreationSession(kind = CreationKind.Character), "写一个人物",
+            onToolEvent = { events += it },
+        )
+        assertEquals("已读取草稿并命名。", reply.message)
+        assertEquals(2, events.size)
+        assertEquals(listOf(1, 2), events.map { it.index })
+        assertEquals(listOf("read_card", "set_card_fields"), events.map { it.name })
+        assertTrue(events.all { it.round == 1 && it.ok })
+        assertEquals("lore 0", events[0].detail)
+        assertEquals("name", events[1].detail)
+    }
+
+    @Test
     fun toolRoundAppliesWritesAndFeedsResultsBackAsUserMessages() = runBlocking {
         val requests = mutableListOf<GenerateRequest>()
         val provider = fakeProvider(

@@ -273,6 +273,8 @@
     <string name="crs_tab_chat">대화</string>
     <string name="crs_tab_frontend">프론트엔드 미리보기</string>
     <string name="crs_task_elapsed">작업 실행 %1$d초</string>
+    <string name="crs_tool_events_title">도구 활동 (%1$d)</string>
+    <string name="crs_tool_round">라운드 %1$d</string>
     <string name="crs_unnamed_character">이름 없는 캐릭터</string>
     <string name="crs_unnamed_draft">이름 없는 초안</string>
     <string name="crs_unnamed_worldbook">이름 없는 월드북</string>

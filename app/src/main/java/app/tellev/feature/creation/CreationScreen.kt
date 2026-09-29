@@ -367,6 +367,39 @@ private fun CreationActivityPanel(state: CreationUiState, session: CreationSessi
                 if (state.busy) TextButton(onClick = viewModel::cancelGeneration) { Text(stringResource(R.string.crs_stop)) }
             }
             Text(state.modelPhase, style = MaterialTheme.typography.bodySmall)
+            if (state.toolEvents.isNotEmpty()) {
+                Text(stringResource(R.string.crs_tool_events_title, state.toolEvents.size),
+                    style = MaterialTheme.typography.labelMedium)
+                // Per-round grouped activity log: one line per call, in the same
+                // order the model issued them. Cap the log so a 32-round turn
+                // cannot grow the panel without bound.
+                Column(
+                    Modifier.fillMaxWidth().heightIn(max = 200.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    var lastRound = -1
+                    state.toolEvents.takeLast(60).forEach { event ->
+                        if (event.round != lastRound) {
+                            lastRound = event.round
+                            Text(stringResource(R.string.crs_tool_round, event.round),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(if (event.ok) "✓" else "✗",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (event.ok) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.error)
+                            Text(
+                                "  #${event.index} ${event.name}" +
+                                    if (event.detail.isNotBlank()) " — ${event.detail}" else "",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
             if (state.providerLabel.isNotBlank()) {
                 Text(stringResource(R.string.crs_provider_connected, state.providerLabel), style = MaterialTheme.typography.bodySmall)
             }

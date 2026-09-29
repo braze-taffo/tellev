@@ -39,6 +39,15 @@ data class CreationSessionSummary(
 @Serializable
 data class CreationTurn(val role: String, val text: String)
 
+/** One executed (or rejected) tool call inside a conversation turn, for the activity UI. */
+data class CreationToolEvent(
+    val round: Int,
+    val index: Int,
+    val name: String,
+    val ok: Boolean,
+    val detail: String,
+)
+
 @Serializable
 data class CharacterDraft(
     val name: String = "",

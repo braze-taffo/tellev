@@ -273,6 +273,8 @@
     <string name="crs_tab_chat">对话</string>
     <string name="crs_tab_frontend">前端预览</string>
     <string name="crs_task_elapsed">任务已运行 %1$d 秒</string>
+    <string name="crs_tool_events_title">工具活动（%1$d）</string>
+    <string name="crs_tool_round">第 %1$d 轮</string>
     <string name="crs_unnamed_character">未命名角色</string>
     <string name="crs_unnamed_draft">未命名草稿</string>
     <string name="crs_unnamed_worldbook">未命名世界书</string>

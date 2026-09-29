@@ -336,6 +336,66 @@ internal fun renderToolCallReplay(call: ToolCallRequest): String =
         put("arguments", call.arguments)
     } + TOOL_CALL_CLOSE
 
+/**
+ * Compact language-neutral one-liner for the activity UI: counts and field
+ * names only, since the tool name itself is already an English identifier.
+ */
+internal fun toolEventDetail(result: ToolResult): String {
+    if (!result.ok) {
+        return (result.payload["error"] as? JsonPrimitive)?.contentOrNull
+            .orEmpty().take(80).ifEmpty { "error" }
+    }
+    fun count(key: String): Int? = (result.payload[key] as? JsonArray)?.size
+    fun num(key: String): Int? =
+        (result.payload[key] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
+    return when (result.name) {
+        "read_card" -> num("lore_count")?.let { "lore $it" } ?: "card"
+        "list_lore" -> {
+            val shown = count("entries")
+            val total = num("total")
+            if (shown != null && total != null) "$shown/$total" else ""
+        }
+        "read_lore" -> {
+            val found = count("found")
+            val miss = count("not_found")
+            if (found != null && miss != null) "found $found, miss $miss" else ""
+        }
+        "set_card_fields" -> (result.payload["applied"] as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+            ?.joinToString(", ")?.take(80).orEmpty()
+        "upsert_lore" -> {
+            val results = result.payload["results"] as? JsonArray
+            val new = results?.count {
+                ((it as? JsonObject)?.get("status") as? JsonPrimitive)?.contentOrNull == "created"
+            } ?: 0
+            val updated = results?.count {
+                ((it as? JsonObject)?.get("status") as? JsonPrimitive)?.contentOrNull == "updated"
+            } ?: 0
+            val miss = count("not_found") ?: 0
+            buildString {
+                if (new > 0) append("new $new")
+                if (updated > 0) {
+                    if (isNotEmpty()) append(", ")
+                    append("upd $updated")
+                }
+                if (miss > 0) {
+                    if (isNotEmpty()) append(", ")
+                    append("miss $miss")
+                }
+            }
+        }
+        "remove_lore" -> {
+            val removed = count("removed") ?: 0
+            val miss = count("not_found") ?: 0
+            buildString {
+                append("del $removed")
+                if (miss > 0) append(", miss $miss")
+            }
+        }
+        else -> ""
+    }
+}
+
 /** Provenance and merge-base fields are system-managed; writes to them are ignored. */
 private val SYSTEM_MANAGED_LORE_FIELDS = setOf(
     "sourceQuote", "sourceOffset", "sourceName", "sourceSha256", "originalEntry",

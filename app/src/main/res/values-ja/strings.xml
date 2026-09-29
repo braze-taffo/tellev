@@ -273,6 +273,8 @@
     <string name="crs_tab_chat">会話</string>
     <string name="crs_tab_frontend">フロントエンドプレビュー</string>
     <string name="crs_task_elapsed">タスク実行時間：%1$d秒</string>
+    <string name="crs_tool_events_title">ツール活動（%1$d）</string>
+    <string name="crs_tool_round">第 %1$d ラウンド</string>
     <string name="crs_unnamed_character">名前のないキャラクター</string>
     <string name="crs_unnamed_draft">名称未ドラフト</string>
     <string name="crs_unnamed_worldbook">名称未ワールドブック</string>
