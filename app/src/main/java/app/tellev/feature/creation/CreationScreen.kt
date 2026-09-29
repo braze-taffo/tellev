@@ -8,6 +8,7 @@ import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -82,6 +83,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -1030,23 +1032,31 @@ private fun DraftField(label: String, value: String, busy: Boolean, minLines: In
         enabled = !busy)
 }
 
+/**
+ * The draft HTML is a bare styled div: wrap it with a device-width viewport and
+ * reset margins so full-screen opening pages (height:100% / absolute layouts)
+ * render at the WebView's own size instead of a default 980px desktop viewport.
+ */
+private fun wrapPreviewHtml(html: String): String =
+    "<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
+        "<style>html,body{margin:0;padding:0}</style></head><body>$html</body></html>"
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun FrontendPreview(card: CharacterDraft, viewModel: CreationViewModel, busy: Boolean) {
+    // Share the screen with the editor field below instead of a fixed 360dp slab:
+    // opening pages are designed for a full screen and were cut in half.
+    val previewHeight = (LocalConfiguration.current.screenHeightDp * 0.6f).dp
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(stringResource(R.string.crs_frontend_hint))
-        DraftField(stringResource(R.string.crs_field_frontend_html), card.frontendHtml, busy, 8) { value ->
-            viewModel.editCard { it.copy(frontendHtml = value) }
-        }
-        val issues = portableFrontendIssues(card.frontendHtml)
-        if (issues.isNotEmpty()) Text(stringResource(R.string.crs_portability_issues, issues.joinToString()), color = MaterialTheme.colorScheme.error)
-        Text(stringResource(R.string.crs_first_message_preview, card.firstMessage))
         if (card.frontendHtml.isNotBlank()) {
             val webView = remember { mutableStateOf<WebView?>(null) }
             DisposableEffect(Unit) { onDispose { webView.value?.destroy(); webView.value = null } }
             AndroidView(
-                modifier = Modifier.fillMaxWidth().height(360.dp),
+                modifier = Modifier.fillMaxWidth().height(previewHeight)
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
                 factory = { context ->
                     WebView(context).apply {
                         settings.javaScriptEnabled = false
@@ -1059,8 +1069,14 @@ private fun FrontendPreview(card: CharacterDraft, viewModel: CreationViewModel, 
                         webView.value = this
                     }
                 },
-                update = { it.loadDataWithBaseURL(null, card.frontendHtml, "text/html", "UTF-8", null) },
+                update = { it.loadDataWithBaseURL(null, wrapPreviewHtml(card.frontendHtml), "text/html", "UTF-8", null) },
             )
         }
+        DraftField(stringResource(R.string.crs_field_frontend_html), card.frontendHtml, busy, 8) { value ->
+            viewModel.editCard { it.copy(frontendHtml = value) }
+        }
+        val issues = portableFrontendIssues(card.frontendHtml)
+        if (issues.isNotEmpty()) Text(stringResource(R.string.crs_portability_issues, issues.joinToString()), color = MaterialTheme.colorScheme.error)
+        Text(stringResource(R.string.crs_first_message_preview, card.firstMessage))
     }
 }
