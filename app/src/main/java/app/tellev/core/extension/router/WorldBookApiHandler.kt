@@ -4,6 +4,7 @@ import app.tellev.core.extension.VirtualApiRequest
 import app.tellev.core.extension.VirtualApiResponse
 import app.tellev.core.model.WorldBook
 import app.tellev.core.storage.StDataStore
+import app.tellev.core.storage.safeStorageChild
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -71,7 +72,7 @@ internal class WorldBookApiHandler(
         val name = bodyObj?.get("name")?.jsonPrimitive?.content
             ?: bodyObj?.get("wim_name")?.jsonPrimitive?.content
             ?: return errorResponse(400, "Missing name", json)
-        val file = dataStore.layout.worlds.resolve("$name.json")
+        val file = safeStorageChild(dataStore.layout.worlds, name, ".json")
         if (!file.exists()) return errorResponse(404, "World info not found: $name", json)
         val raw = runCatching { json.parseToJsonElement(file.readText()) as? JsonObject }.getOrNull()
             ?: return errorResponse(500, "Failed to read world info: $name", json)
@@ -102,8 +103,9 @@ internal class WorldBookApiHandler(
         if (data["entries"] !is JsonObject) {
             return errorResponse(400, "Is not a valid world info file", json)
         }
+        val file = safeStorageChild(dataStore.layout.worlds, name, ".json")
         dataStore.layout.worlds.createDirectories()
-        dataStore.layout.worlds.resolve("$name.json").writeText(
+        file.writeText(
             json.encodeToString(JsonObject.serializer(), data),
         )
         return jsonResponse(200, buildJsonObject { put("name", name) }, json)

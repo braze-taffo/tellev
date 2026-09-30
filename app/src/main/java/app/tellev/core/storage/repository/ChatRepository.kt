@@ -11,6 +11,7 @@ import app.tellev.core.storage.GeneratedImage
 import app.tellev.core.storage.GeneratedImageStore
 import app.tellev.core.storage.JournaledFileWriter
 import app.tellev.core.storage.StDirectoryLayout
+import app.tellev.core.storage.safeStorageChild
 import app.tellev.core.storage.applyChatSessionMutation
 import app.tellev.core.storage.codec.ChatJsonlCodec
 import app.tellev.core.storage.codec.WorldBookCodec
@@ -47,8 +48,8 @@ internal class ChatRepository(
 ) {
     suspend fun listChatSessionSummaries(characterId: String?, groupId: String?) = withContext(Dispatchers.IO) {
         val roots = buildList {
-            if (characterId != null) add(layout.chats.resolve(characterId))
-            if (groupId != null) add(layout.groupChats.resolve(groupId))
+            if (characterId != null) add(safeStorageChild(layout.chats, characterId))
+            if (groupId != null) add(safeStorageChild(layout.groupChats, groupId))
             if (characterId == null && groupId == null) {
                 add(layout.chats)
                 add(layout.groupChats)
@@ -64,8 +65,8 @@ internal class ChatRepository(
 
     suspend fun listChatSessions(characterId: String?, groupId: String?): List<ChatSession> = withContext(Dispatchers.IO) {
         val roots = buildList {
-            if (characterId != null) add(layout.chats.resolve(characterId))
-            if (groupId != null) add(layout.groupChats.resolve(groupId))
+            if (characterId != null) add(safeStorageChild(layout.chats, characterId))
+            if (groupId != null) add(safeStorageChild(layout.groupChats, groupId))
             if (characterId == null && groupId == null) {
                 add(layout.chats)
                 add(layout.groupChats)
@@ -123,11 +124,11 @@ internal class ChatRepository(
         expectedRevision: Long? = null,
         operationId: String = UUID.randomUUID().toString(),
     ): JournaledFileWriter.Receipt {
-        val parent = session.groupId?.let { layout.groupChats.resolve(it) }
-            ?: session.characterId?.let { layout.chats.resolve(it) }
+        val parent = session.groupId?.let { safeStorageChild(layout.groupChats, it) }
+            ?: session.characterId?.let { safeStorageChild(layout.chats, it) }
             ?: layout.chats.resolve("_orphan")
+        val path = safeStorageChild(parent, session.id, ".jsonl")
         parent.createDirectories()
-        val path = parent.resolve("${session.id}.jsonl")
         val lockedMode = if (Files.isRegularFile(path)) runCatching {
             Files.newBufferedReader(path).use { reader ->
                 val header = json.parseToJsonElement(reader.readLine()).jsonObject
@@ -183,7 +184,7 @@ internal class ChatRepository(
                     if (file.startsWith(layout.userImages)) Files.deleteIfExists(file)
                 }
                 galleryStore.delete(id)
-                Files.deleteIfExists(layout.backgrounds.resolve("$id.png"))
+                Files.deleteIfExists(safeStorageChild(layout.backgrounds, id, ".png"))
                 val dir = path.parent
                 if (dir != null && dir != layout.chats && dir != layout.groupChats &&
                     Files.isDirectory(dir) && Files.list(dir).use { !it.findAny().isPresent }
@@ -218,7 +219,7 @@ internal class ChatRepository(
 
     suspend fun saveGroup(group: GroupChat): Unit = withContext(Dispatchers.IO) {
         layout.groups.createDirectories()
-        val path = layout.groups.resolve("${group.id}.json")
+        val path = safeStorageChild(layout.groups, group.id, ".json")
         StorageFileOps.durableWriteText(durableFiles, path, json.encodeToString(group))
     }
 
