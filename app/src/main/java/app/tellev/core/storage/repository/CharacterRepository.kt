@@ -8,6 +8,7 @@ import app.tellev.core.storage.JournaledFileWriter
 import app.tellev.core.storage.PngCardParser
 import app.tellev.core.storage.StDataStore
 import app.tellev.core.storage.StDirectoryLayout
+import app.tellev.core.storage.safeStorageChild
 import app.tellev.core.storage.WebpCardParser
 import app.tellev.core.storage.codec.CharacterCodec
 import app.tellev.core.storage.coordinator.EmbeddedAssetsCoordinator
@@ -93,7 +94,7 @@ internal class CharacterRepository(
     suspend fun saveCharacter(card: CharacterCard): Unit = withContext(Dispatchers.IO) {
         layout.characters.createDirectories()
 
-        val existingPng = layout.characters.resolve("${card.id}.png")
+        val existingPng = safeStorageChild(layout.characters, card.id, ".png")
         if (existingPng.exists()) {
             val exporter = CharacterExporter(json)
             val jsonStr = exporter.exportToJson(card)
@@ -105,7 +106,7 @@ internal class CharacterRepository(
             return@withContext
         }
 
-        val existingWebp = layout.characters.resolve("${card.id}.webp")
+        val existingWebp = safeStorageChild(layout.characters, card.id, ".webp")
         if (existingWebp.exists()) {
             val exporter = CharacterExporter(json)
             val jsonStr = exporter.exportToJson(card)
@@ -117,7 +118,7 @@ internal class CharacterRepository(
         }
 
         val exporter = CharacterExporter(json)
-        val path = layout.characters.resolve("${card.id}.json")
+        val path = safeStorageChild(layout.characters, card.id, ".json")
         StorageFileOps.durableWriteText(durableFiles, path, exporter.exportToJson(card))
         embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(path))
         characterChanges.tryEmit(card.id)
@@ -138,14 +139,14 @@ internal class CharacterRepository(
             "png" -> {
                 removeCharacterVariants(card.id, keepExtension = "png")
                 val pngBytes = PngCardParser.embedCardJson(sourceBytes, jsonString)
-                val pngPath = layout.characters.resolve("${card.id}.png")
+                val pngPath = safeStorageChild(layout.characters, card.id, ".png")
                 pngPath.outputStream().use { it.write(pngBytes) }
                 embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(pngPath))
             }
             "webp" -> {
                 removeCharacterVariants(card.id, keepExtension = "webp")
                 val webpBytes = WebpCardParser.embedCardJson(sourceBytes, jsonString)
-                val webpPath = layout.characters.resolve("${card.id}.webp")
+                val webpPath = safeStorageChild(layout.characters, card.id, ".webp")
                 webpPath.outputStream().use { it.write(webpBytes) }
                 embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(webpPath))
             }
@@ -156,7 +157,7 @@ internal class CharacterRepository(
 
     suspend fun deleteCharacter(id: String): Unit = withContext(Dispatchers.IO) {
         removeCharacterVariants(id, keepExtension = "")
-        val assetDir = layout.extensions.resolve("character-assets").resolve(id)
+        val assetDir = safeStorageChild(layout.extensions.resolve("character-assets"), id)
         if (assetDir.exists()) assetDir.toFile().deleteRecursively()
         runCatching { deleteWorldBook(StDataStore.embeddedCharacterBookId(id)) }
         characterChanges.tryEmit(id)
@@ -167,7 +168,7 @@ internal class CharacterRepository(
         val jsonString = CharacterExporter(json).exportToJson(card)
         val embedded = PngCardParser.embedCardJson(pngBytes, jsonString)
         layout.characters.createDirectories()
-        val pngPath = layout.characters.resolve("$id.png")
+        val pngPath = safeStorageChild(layout.characters, id, ".png")
         pngPath.outputStream().use { it.write(embedded) }
         removeCharacterVariants(id, keepExtension = "png")
         embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(pngPath))
@@ -177,6 +178,6 @@ internal class CharacterRepository(
     fun removeCharacterVariants(id: String, keepExtension: String) {
         supportedCharacterExtensions
             .filter { it != keepExtension }
-            .forEach { extension -> layout.characters.resolve("$id.$extension").deleteIfExists() }
+            .forEach { extension -> safeStorageChild(layout.characters, id, ".$extension").deleteIfExists() }
     }
 }

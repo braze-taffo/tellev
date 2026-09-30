@@ -8,6 +8,7 @@ import app.tellev.core.model.PresetImportResult
 import app.tellev.core.storage.JournaledFileWriter
 import app.tellev.core.storage.ST_1_18_OPENAI_DEFAULT_JSON
 import app.tellev.core.storage.StDirectoryLayout
+import app.tellev.core.storage.safeStorageChild
 import app.tellev.core.storage.codec.PresetCodec
 import app.tellev.core.storage.parsePresetPrompts
 import kotlinx.coroutines.Dispatchers
@@ -50,7 +51,7 @@ internal class PresetRepository(
 
     suspend fun readPreset(category: PresetCategory, name: String): GenerationPreset? =
         withContext(Dispatchers.IO) {
-            val path = resolvePresetDirectory(category).resolve("$name.json")
+            val path = safeStorageChild(resolvePresetDirectory(category), name, ".json")
             if (!path.exists()) return@withContext null
             val raw = runCatching { json.parseToJsonElement(path.readText()) as? JsonObject }.getOrNull()
                 ?: return@withContext null
@@ -69,7 +70,7 @@ internal class PresetRepository(
     suspend fun selectPreset(category: PresetCategory, name: String): Unit =
         withContext(Dispatchers.IO) {
             val directory = resolvePresetDirectory(category)
-            val source = directory.resolve("$name.json")
+            val source = safeStorageChild(directory, name, ".json")
             if (!source.exists()) error(UiStrings.get(S.prrepo_error_not_found, category.name.lowercase(), name))
             source.copyTo(directory.resolve("in_use.json"), overwrite = true)
 
@@ -110,7 +111,7 @@ internal class PresetRepository(
             merged["prompt_order"] = PresetCodec.serializePromptOrder(merged["prompt_order"], preset.prompts)
         }
         if (preset.extensions.isNotEmpty()) merged["extensions"] = preset.extensions
-        val path = parent.resolve("${preset.id}.json")
+        val path = safeStorageChild(parent, preset.id, ".json")
         StorageFileOps.durableWriteText(
             durableFiles,
             path,
@@ -141,7 +142,7 @@ internal class PresetRepository(
         }
         var deletedAny = false
         targets.forEach { (category, directory) ->
-            if (directory.resolve("$id.json").deleteIfExists()) {
+            if (safeStorageChild(directory, id, ".json").deleteIfExists()) {
                 deletedAny = true
                 ensureDefaultPreset(category)
                 if (readSelectedPresetName(category) == id) {
@@ -174,8 +175,8 @@ internal class PresetRepository(
             .ifBlank { "preset" }
         var id = baseStem
         var suffix = 2
-        while (parent.resolve("$id.json").exists()) id = "$baseStem-${suffix++}"
-        val destination = parent.resolve("$id.json")
+        while (safeStorageChild(parent, id, ".json").exists()) id = "$baseStem-${suffix++}"
+        val destination = safeStorageChild(parent, id, ".json")
         destination.outputStream().use { it.write(jsonBytes) }
         destination.copyTo(parent.resolve("in_use.json"), overwrite = true)
         val statePath = layout.root.resolve("preset-selection.json")
