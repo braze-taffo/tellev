@@ -3,10 +3,13 @@ package app.tellev.core.storage
 import java.nio.file.Files
 import java.nio.file.Path
 
+private val windowsDrivePrefix = Regex("^[A-Za-z]:")
+
 /** Resolve a request-controlled filename or directory as a single child of its data root. */
 internal fun safeStorageChild(root: Path, name: String, suffix: String = ""): Path {
     require(name.isNotBlank() && name != "." && name != ".." &&
-        name.none { it == '/' || it == '\\' || it == ':' || it == '\u0000' }) {
+        !windowsDrivePrefix.containsMatchIn(name) &&
+        name.none { it == '/' || it == '\\' || it == '\u0000' }) {
         "Invalid storage name"
     }
     val directory = root.toAbsolutePath().normalize()
