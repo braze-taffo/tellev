@@ -1,6 +1,7 @@
 package app.tellev.core.storage.repository
 
 import app.tellev.core.storage.JournaledFileWriter
+import app.tellev.core.storage.safeStorageChild
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
@@ -29,17 +30,22 @@ internal object StorageFileOps {
 
     fun resolveExisting(root: Path, id: String, extensions: Set<String>): Path? =
         extensions.asSequence()
-            .map { root.resolve("$id.$it") }
+            .map { safeStorageChild(root, id, ".$it") }
             .firstOrNull { it.exists() }
 
-    fun findByFileName(roots: List<Path>, fileName: String): Path? =
-        roots.asSequence()
+    fun findByFileName(roots: List<Path>, fileName: String): Path? {
+        // Validate before listing, even when the requested roots do not exist.
+        roots.forEach { safeStorageChild(it, fileName) }
+        return roots.asSequence()
             .filter { it.exists() }
             .flatMap { root ->
                 root.listDirectoryEntries().asSequence().flatMap { entry ->
-                    if (entry.isDirectory()) entry.listDirectoryEntries(fileName).asSequence()
+                    if (java.nio.file.Files.isSymbolicLink(entry)) emptySequence()
+                    else if (entry.isDirectory()) entry.listDirectoryEntries().asSequence().filter { it.name == fileName }
                     else sequenceOf(entry).filter { it.name == fileName }
                 }
             }
+            .filter { !java.nio.file.Files.isSymbolicLink(it) }
             .firstOrNull()
+    }
 }

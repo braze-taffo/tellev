@@ -3,6 +3,7 @@ package app.tellev.core.storage.repository
 import app.tellev.core.model.Persona
 import app.tellev.core.storage.JournaledFileWriter
 import app.tellev.core.storage.StDirectoryLayout
+import app.tellev.core.storage.safeStorageChild
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.withContext
@@ -37,13 +38,13 @@ internal class PersonaRepository(
 
     suspend fun savePersona(persona: Persona): Unit = withContext(Dispatchers.IO) {
         layout.user.createDirectories()
-        val path = layout.user.resolve("${persona.id}.json")
+        val path = safeStorageChild(layout.user, persona.id, ".json")
         StorageFileOps.durableWriteText(durableFiles, path, json.encodeToString(persona))
         personaChanges.tryEmit(persona.id)
     }
 
     suspend fun deletePersona(id: String): Unit = withContext(Dispatchers.IO) {
-        layout.user.resolve("$id.json").deleteIfExists()
+        safeStorageChild(layout.user, id, ".json").deleteIfExists()
         personaChanges.tryEmit(id)
     }
 

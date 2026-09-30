@@ -6,6 +6,7 @@ import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookSummary
 import app.tellev.core.storage.JournaledFileWriter
 import app.tellev.core.storage.StDirectoryLayout
+import app.tellev.core.storage.safeStorageChild
 import app.tellev.core.storage.codec.WorldBookCodec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -61,8 +62,7 @@ internal class WorldBookRepository(
     }
 
     suspend fun readWorldBook(id: String): WorldBook = withContext(Dispatchers.IO) {
-        require(id.isNotBlank() && '/' !in id && '\\' !in id) { "Invalid world book id" }
-        val path = layout.worlds.resolve("$id.json")
+        val path = safeStorageChild(layout.worlds, id, ".json")
         val raw = json.parseToJsonElement(path.readText()).jsonObject
         WorldBook(
             id = id,
@@ -73,9 +73,9 @@ internal class WorldBookRepository(
     }
 
     suspend fun saveWorldBook(book: WorldBook): Unit = withContext(Dispatchers.IO) {
+        val path = safeStorageChild(layout.worlds, book.id, ".json")
         layout.worlds.createDirectories()
         val output = WorldBookCodec.serializeWorldBook(book)
-        val path = layout.worlds.resolve("${book.id}.json")
         StorageFileOps.durableWriteText(durableFiles, path, json.encodeToString(JsonObject.serializer(), output))
         worldBookChanges.tryEmit(book.id)
     }
@@ -108,7 +108,7 @@ internal class WorldBookRepository(
     }
 
     suspend fun deleteWorldBook(id: String): Unit = withContext(Dispatchers.IO) {
-        layout.worlds.resolve("$id.json").deleteIfExists()
+        safeStorageChild(layout.worlds, id, ".json").deleteIfExists()
         val disabled = readDisabledWorldIds() - id
         if (disabled.isEmpty()) {
             layout.worldInfoActivation.deleteIfExists()

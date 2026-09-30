@@ -3,6 +3,7 @@ package app.tellev.core.update
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -15,6 +16,7 @@ import kotlin.coroutines.coroutineContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.IOException
 import java.security.MessageDigest
 
 /**
@@ -252,23 +254,27 @@ class UpdateChecker(
                     .build()
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        lastError = IllegalStateException("HTTP ${response.code}")
-                        return@use
+                        throw IOException("HTTP ${response.code}")
                     }
-                    val body = response.body ?: error(UiStrings.get(S.updchk_empty_response_body))
-                    val total = body.contentLength().takeIf { it > 0 } ?: info.apkSize
+                    val body = response.body ?: throw IOException(UiStrings.get(S.updchk_empty_response_body))
+                    val contentLength = body.contentLength()
+                    val total = contentLength.takeIf { it > 0 } ?: info.apkSize
+                    var read = 0L
                     target.outputStream().use { out ->
                         val input = body.byteStream()
                         val buffer = ByteArray(64 * 1024)
-                        var read = 0L
                         while (true) {
                             coroutineContext.ensureActive()
                             val n = input.read(buffer)
                             if (n == -1) break
                             out.write(buffer, 0, n)
                             read += n
-                            if (total > 0) onProgress(read.toFloat() / total)
+                            if (total > 0) onProgress((read.toFloat() / total).coerceIn(0f, 1f))
                         }
+                    }
+                    if (read == 0L || (contentLength >= 0 && read != contentLength) ||
+                        (info.apkSize > 0 && read != info.apkSize)) {
+                        throw IOException("Incomplete APK download: received $read bytes, expected $total")
                     }
                 }
                 // Verify integrity only after a clean download; a mismatch is
@@ -282,7 +288,10 @@ class UpdateChecker(
                 }
                 onProgress(1f)
                 return@withContext target
-            } catch (e: java.io.IOException) {
+            } catch (e: CancellationException) {
+                target.delete()
+                throw e
+            } catch (e: IOException) {
                 lastError = e
                 target.delete()
             }
