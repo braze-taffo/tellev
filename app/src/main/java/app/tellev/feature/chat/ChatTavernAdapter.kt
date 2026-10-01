@@ -37,6 +37,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -240,6 +241,7 @@ internal object ChatTavernAdapter {
             emitStEvent(extensionHost, StEventCatalog.APP_INITIALIZED)
             emitStEvent(extensionHost, StEventCatalog.APP_READY)
         }.onFailure { e ->
+            if (e is kotlinx.coroutines.CancellationException) throw e
             onError(UiStrings.get(S.chtav_script_load_failed, e.message))
         }
     }
@@ -390,7 +392,18 @@ internal object ChatTavernAdapter {
             putJsonArray("tags") { }
             put("tagMap", buildJsonObject { })
             put("tag_map", buildJsonObject { })
-            put("chatCompletionSettings", buildJsonObject { })
+            // ST scripts iterate chatCompletionSettings.prompts at boot
+            // (SPreset's remote inject.js does); the shape must exist.
+            put("chatCompletionSettings", buildJsonObject {
+                put("extensions", state.selectedPreset?.extensions ?: buildJsonObject { })
+                putJsonArray("prompts") { }
+                putJsonArray("prompt_order") {
+                    addJsonObject {
+                        put("character_id", 100001)
+                        putJsonArray("order") { }
+                    }
+                }
+            })
             put("oai_settings", buildJsonObject { })
             put("textCompletionSettings", buildJsonObject { })
             put("powerUserSettings", buildJsonObject { })

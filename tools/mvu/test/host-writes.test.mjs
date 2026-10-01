@@ -220,7 +220,7 @@ test('formatAsDisplayedMessage runs macro substitution and audio family resolves
   const host = await createHost({ chat: messages() });
   try {
     const { w } = host;
-    assert.equal(await w.formatAsDisplayedMessage('文本'), '文本');
+    assert.equal(w.formatAsDisplayedMessage('文本'), '<p>文本</p>');
     await w.audioPlay('x');
     await w.audioEnable('x', true);
     const proxies = await w.TavernHelper.getProxyPresetNames();

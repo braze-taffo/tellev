@@ -83,7 +83,9 @@ internal object PromptMacroContextBuilder {
             description = macroEngine.expand(character.description, context),
             personality = macroEngine.expand(character.personality, context),
             scenario = macroEngine.expand(character.scenario, context),
-            firstMessage = macroEngine.expand(character.firstMessage, context),
+            // Keep first_mes lazy. Explicit {{greeting}} still resolves the card's
+            // main greeting; merely building character fields must not replay it.
+            firstMessage = character.firstMessage,
             exampleMessages = macroEngine.expand(character.exampleMessages, context),
         )
     }

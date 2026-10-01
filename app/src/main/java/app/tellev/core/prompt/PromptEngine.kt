@@ -22,6 +22,14 @@ import java.util.IdentityHashMap
 interface PromptEngine {
     fun build(request: PromptBuildRequest): PromptBuildResult
 
+    fun processChatText(
+        text: String, role: MessageRole, character: app.tellev.core.model.CharacterCard?,
+        preset: app.tellev.core.model.GenerationPreset?, context: MacroContext,
+        expandMacros: Boolean = true, depth: Int = 0, isEdit: Boolean = false,
+        includeNormal: Boolean = true,
+    ): ProcessedChatText = ChatTextProcessing.process(text, role, character, preset, context,
+        expandMacros = expandMacros, depth = depth, isEdit = isEdit, includeNormal = includeNormal)
+
     fun buildWithLocalVariableBackend(
         request: PromptBuildRequest,
         backend: LocalVariableBackend,
@@ -41,6 +49,14 @@ class DefaultPromptEngine(
     private val macroEngine: MacroEngine = DefaultMacroEngine(),
     private val promptTemplateProcessor: PromptTemplateProcessor = DefaultPromptTemplateProcessor(),
 ) : PromptEngine {
+
+    override fun processChatText(
+        text: String, role: MessageRole, character: app.tellev.core.model.CharacterCard?,
+        preset: app.tellev.core.model.GenerationPreset?, context: MacroContext,
+        expandMacros: Boolean, depth: Int, isEdit: Boolean,
+        includeNormal: Boolean,
+    ): ProcessedChatText = ChatTextProcessing.process(text, role, character, preset, context, macroEngine,
+        expandMacros, depth, isEdit, includeNormal)
 
     /**
      * Update the EJS template settings used by the internal
@@ -83,7 +99,9 @@ class DefaultPromptEngine(
 
         // 2. Expand macros in all text fields
         val expandedCharacter = PromptMacroContextBuilder.expandCharacterFields(request.character, macroContext, macroEngine)
-        val expandedUserInput = macroEngine.expand(request.userInput, macroContext)
+        val expandedUserInput = if (request.metadata["userInputNormalProcessed"]?.jsonPrimitive?.booleanOrNull == true) {
+            request.userInput
+        } else macroEngine.expand(request.userInput, macroContext)
         val quietPrompt = request.quietPrompt?.takeIf { it.isNotBlank() }
             ?.let { macroEngine.expand(it, macroContext) }
 
@@ -91,19 +109,17 @@ class DefaultPromptEngine(
         val worldInfoScanDepth = request.metadata["worldInfoScanDepth"]?.jsonPrimitive?.intOrNull
             ?.coerceAtLeast(1) ?: 12
         val userName = request.persona?.name ?: "User"
-        val searchText = buildString {
-            append(userName)
-            append(": ")
-            append(expandedUserInput)
-            append('\n')
-            request.messages.filterNot { it.isHidden }.takeLast(worldInfoScanDepth).forEach {
-                append(it.name.ifBlank { if (it.role == MessageRole.User) userName else request.character.name })
-                append(": ")
-                appendLine(it.swipes.getOrNull(it.swipeIndex) ?: it.content)
-            }
+        val scanMessages = (request.messages.filterNot { it.isHidden }.map {
+            "${it.name.ifBlank { if (it.role == MessageRole.User) userName else request.character.name }}: ${it.swipes.getOrNull(it.swipeIndex) ?: it.content}"
+        } + if (quietPrompt == null) listOf("$userName: $expandedUserInput") else emptyList()).asReversed()
+        fun searchTextAtDepth(depth: Int) = buildString {
+            if (depth <= 0) return@buildString
+            // WorldInfoBuffer.get: newest first, depth includes the pending user floor.
+            scanMessages.take(depth.coerceAtMost(1000)).forEach { append('\u0001'); appendLine(it.trim()) }
             PromptInjectionProcessor.extensionInjectionScanText(request.metadata).forEach(::appendLine)
             quietPrompt?.let(::appendLine)
         }
+        val searchText = searchTextAtDepth(worldInfoScanDepth)
 
         val maxContextTokens = request.preset.maxContextTokens
             ?: PromptMacroContextBuilder.extractMaxContextTokens(request.metadata)
@@ -144,12 +160,14 @@ class DefaultPromptEngine(
                             character = request.character,
                             userName = request.persona?.name ?: "User",
                             preset = request.preset,
+                            macroExpander = { macroEngine.expand(it, macroContext) },
                         ),
                         raw = entry.raw,
                     ),
                 )
             },
             keyExpand = { macroEngine.expand(it, macroContext) },
+            entrySearchText = { entry -> searchTextAtDepth(entry.scanDepth ?: worldInfoScanDepth) },
         )
         val activatedEntries = worldScan.allActivated.map { it.entry }
 
@@ -165,6 +183,7 @@ class DefaultPromptEngine(
                     character = request.character,
                     userName = request.persona?.name ?: "User",
                     preset = request.preset,
+                    macroExpander = { macroEngine.expand(it, macroContext) },
                 ),
                 raw = entry.raw,
                 bookId = book.id,
@@ -194,16 +213,24 @@ class DefaultPromptEngine(
 
         // 6. Build prompt messages
         val visibleHistory = request.messages.filterNot { it.isHidden }
-        // ST chat.ts reads operate on the raw chat floors; expose them to the
-        // template environment with ST's message shape (id/is_user/is_system/
-        // name/mes). Content is macro-expanded like ST's processMessage.
+        // Both projections must share one evaluation of side-effecting macros.
+        val expandedHistory = visibleHistory.map { message ->
+            val body = message.reasoningParts().body
+            // script.js expands chat[0].mes before filtering coreChat, including
+            // a user first floor. Later stored bodies are not fully expanded.
+            if (message.id == request.messages.firstOrNull()?.id) {
+                macroEngine.expand(body, macroContext)
+            } else body
+        }
+        // Expose the same processed floors to templates and the model, retaining
+        // ST's message shape and its special handling of the original first floor.
         val chatSnippets = visibleHistory.mapIndexed { index, message ->
             PromptTemplateChatMessage(
                 id = index,
                 isUser = message.role == MessageRole.User,
                 isSystem = message.role == MessageRole.System,
                 name = message.name,
-                content = macroEngine.expand(message.reasoningParts().body, macroContext),
+                content = expandedHistory[index],
             )
         }
         val groupNames = PromptMacroContextBuilder.groupMemberNamesList(request.metadata)
@@ -228,7 +255,7 @@ class DefaultPromptEngine(
             visibleHistory.forEachIndexed { index, message ->
                 val parts = message.reasoningParts()
                 if (parts.body.isBlank() && parts.reasoning.isNotBlank()) return@forEachIndexed
-                val expandedContent = macroEngine.expand(parts.body, macroContext)
+                val expandedContent = expandedHistory[index]
                 add(
                     PromptMessage(
                         role = when (message.role) {
@@ -246,6 +273,7 @@ class DefaultPromptEngine(
                             },
                             preset = request.preset,
                             includeNormal = !CharacterRegexApplier.isNormalProcessed(message),
+                            macroExpander = { macroEngine.expand(it, macroContext) },
                         ),
                         channel = CHANNEL_CHAT,
                     ),
@@ -264,6 +292,7 @@ class DefaultPromptEngine(
                         preset = request.preset,
                         includeNormal = request.metadata["userInputNormalProcessed"]
                             ?.jsonPrimitive?.booleanOrNull != true,
+                        macroExpander = { macroEngine.expand(it, macroContext) },
                     ),
                     channel = CHANNEL_CHAT,
                 ),

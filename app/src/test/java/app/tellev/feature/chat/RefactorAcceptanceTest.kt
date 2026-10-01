@@ -70,6 +70,18 @@ class RefactorAcceptanceTest {
         assertTrue("USER_MESSAGE_RENDERED disappeared for user edits", f.events.any { it.name == StEventCatalog.USER_MESSAGE_RENDERED })
     }
 
+    @Test fun userMacrosArePersistedOnceBeforeGeneration() = exercise { f ->
+        val userName = f.vm.uiState.value.selectedPersona?.name ?: "User"
+        f.textResponse = "{{setvar::count::99}}[{{getvar::count}}]"
+        f.events.clear()
+        assertTrue(withContext(f.main) { f.vm.sendMessage("{{user}} {{incvar::count}}") })
+        waitUntil { f.events.any { it.name == StEventCatalog.GENERATION_ENDED } }
+        val saved = f.disk.readChatSession("a")
+        assertEquals("$userName 1", saved.messages.last { it.role == MessageRole.User }.content)
+        assertEquals("1", (saved.metadata["variables"] as JsonObject)["count"]!!.jsonPrimitive.content)
+        assertEquals(f.textResponse, saved.messages.last { it.role == MessageRole.Character }.content)
+    }
+
     private fun exercise(block: suspend (Fixture) -> Unit) = runBlocking {
         val root = Files.createTempDirectory("tellev-refactor-audit-")
         val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()

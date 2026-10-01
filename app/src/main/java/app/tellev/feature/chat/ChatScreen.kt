@@ -78,6 +78,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.tellev.LocalTellevGraph
 import app.tellev.R
+import app.tellev.ui.CharacterAvatar
 import app.tellev.core.extension.WebViewJsExtensionHost
 import app.tellev.core.model.Attachment
 import app.tellev.core.memory.MemoryMode
@@ -143,6 +144,7 @@ private fun ChatContentScreen(
     chatFontSizeSp: Int,
     modifier: Modifier = Modifier,
 ) {
+    val renderMacroContext = viewModel.messageMacroContext(state)
     val runtimeToken = viewModel.currentRuntimeToken(state.currentSession?.id)
     LaunchedEffect(state.currentSession?.id) { viewModel.refreshMemory() }
     val listState = key(state.currentSession?.id) {
@@ -266,6 +268,11 @@ private fun ChatContentScreen(
     Column(modifier = modifier.fillMaxSize().padding(bottom = imeExtraPadding)) {
         TopAppBar(
             title = {
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                CharacterAvatar(file = state.characterAvatarFile,
+                    fallbackText = state.selectedCharacter?.name.orEmpty(),
+                    modifier = Modifier.size(38.dp))
                 Column {
                     Text(
                         text = state.selectedCharacter?.name ?: "",
@@ -282,6 +289,7 @@ private fun ChatContentScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
+                }
                 }
             },
             navigationIcon = {
@@ -413,7 +421,7 @@ private fun ChatContentScreen(
                 }
             },
             colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = MaterialTheme.colorScheme.surface,
+                containerColor = MaterialTheme.colorScheme.background,
             ),
         )
 
@@ -490,6 +498,7 @@ private fun ChatContentScreen(
                         )
                     } else {
                         ChatBubble(
+                            macroContext = renderMacroContext,
                             message = message,
                             character = state.selectedCharacter,
                             characterAvatar = state.characterAvatarFile,
@@ -537,6 +546,7 @@ private fun ChatContentScreen(
                 if (state.isGenerating && (state.streamingText.isNotEmpty() || state.streamingReasoning.isNotEmpty())) {
                     item(key = "streaming") {
                         StreamingBubble(
+                            macroContext = renderMacroContext,
                             text = state.streamingText,
                             reasoning = state.streamingReasoning,
                             characterName = state.selectedCharacter?.name ?: stringResource(R.string.chat_default_character_name),

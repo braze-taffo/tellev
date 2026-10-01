@@ -548,6 +548,11 @@
       try {
         await result;
         await window.__tellevReady();
+      } catch (error) {
+        // Report inside the module before the browser turns a rejected top-level
+        // await into an opaque "Script error." event at the parent document.
+        tellevNative.extensionFailed(String(error?.stack || error));
+        throw error;
       } finally { URL.revokeObjectURL(url); }
     }
   };
@@ -582,8 +587,11 @@
   const regexCharacterId = async option => {
     if (option && typeof option === 'object') {
       const c = context();
-      if (option.type && option.type !== 'character') {
-        throw new Error(`Tellev does not support ${option.type} regex writes through this API`);
+      // tavern_regex.ts: deprecated scope defaults to all, not character.
+      const type = option.type ?? option.scope ?? 'all';
+      if (!['all', 'global', 'preset', 'character'].includes(type)) throw new Error(`Invalid regex scope: ${type}`);
+      if (type !== 'character') {
+        throw new Error(`Tellev does not support ${type} regex access through this API`);
       }
       if (option.name && option.name !== 'current') {
         const listing = await api('GET', '/api/characters');
@@ -591,9 +599,13 @@
         if (!character) throw new Error(`Unknown character: ${option.name}`);
         return character.id;
       }
+      if (!c.characterId) throw new Error('No current character');
       return c.characterId;
     }
-    return option ?? context().characterId;
+    if (typeof option !== 'string' || !option) {
+      throw new Error('Tellev does not support the default all-regex scope; specify {type:"character"}');
+    }
+    return option;
   };
   const toHelperRegex = r => ({
     id: r.id, script_name: r.scriptName ?? '', enabled: !r.disabled,
@@ -612,9 +624,19 @@
     minDepth: r.min_depth ?? null, maxDepth: r.max_depth ?? null,
   });
   expose('getTavernRegexes', async option => {
+    const legacy = option && typeof option === 'object' && option.type === undefined;
+    if (legacy && !['all', 'enabled', 'disabled'].includes(option.enable_state ?? 'all')) {
+      throw new Error(`Invalid enable_state: ${option.enable_state}`);
+    }
     const charId = await regexCharacterId(option);
     const result = await api('GET', `/api/characters/${encodeURIComponent(charId)}/regex`);
-    return typeof option === 'string' ? result.regex_scripts : result.regex_scripts.map(toHelperRegex);
+    if (typeof option === 'string') return result.regex_scripts;
+    let regexes = result.regex_scripts.map(toHelperRegex);
+    if (legacy) {
+      regexes = regexes.map(r => ({ ...r, scope: 'character' }));
+      if (option.enable_state && option.enable_state !== 'all') regexes = regexes.filter(r => r.enabled === (option.enable_state === 'enabled'));
+    }
+    return regexes;
   });
   expose('replaceTavernRegexes', async (regexesOrOption, optionOrRegexes) => {
     // Upstream order (regexes, option); the old tellev order (charId, regexes)
@@ -623,10 +645,12 @@
       ? [regexesOrOption, optionOrRegexes]
       : [optionOrRegexes, regexesOrOption];
     const charId = await regexCharacterId(option);
+    if (!Array.isArray(regexes)) throw new Error('regexes must be an array');
     const path = `/api/characters/${encodeURIComponent(charId)}`;
     const current = (await api('GET', `${path}/regex`)).regex_scripts;
     await api('POST', `${path}/tavern-helper`, {
-      regex_scripts: regexes.map(r => toStoredRegex(r, current.find(x => x.id === r.id))),
+      regex_scripts: regexes.filter(r => option?.type !== undefined || typeof option === 'string' || r.scope !== 'global')
+        .map(r => toStoredRegex(r, current.find(x => x.id === r.id))),
     });
     window.__tellevInvalidateContext();
   });
@@ -638,10 +662,78 @@
     return updated;
   });
 
-  // formatAsDisplayedMessage (displayed_message.ts): macros + regex applied
-  // over the raw text. Tellev applies card regex upstream already, so the
-  // honest remaining step is macro substitution.
-  expose('formatAsDisplayedMessage', mes => th.substitudeMacros(String(mes ?? '')));
+  // Locked ST regex engine.js runRegexScript/getRegexedString. Keep capture ->
+  // trim -> macro order, and preserve regexFromString's accepted flags.
+  const parseDisplayRegex = input => {
+    // public/scripts/utils.js regexFromString (locked source).
+    try {
+      const m = input.match(/(\/?)(.+)\1([a-z]*)/i);
+      if (m[3] && !/^(?!.*?(.).*?\1)[gmixXsuUAJ]+$/.test(m[3])) return RegExp(input);
+      return new RegExp(m[2], m[3]);
+    } catch { return undefined; }
+  };
+  const displayRegex = (text, message, id, c) => {
+    const card = c.character?.data ?? c.character ?? c.characters?.[0]?.data ?? {};
+    const scripts = [...(c.extension_settings?.regex ?? []),
+      ...(c.chatCompletionSettings?.extensions?.regex_scripts ?? []), ...(card.extensions?.regex_scripts ?? [])];
+    const depth = c.chat.length - id - 1;
+    return scripts.reduce((value, r) => {
+      if (r.disabled || !r.markdownOnly || !r.placement?.includes(message.is_user ? 1 : 2) ||
+          (r.minDepth != null && depth < r.minDepth) || (r.maxDepth >= 0 && r.maxDepth != null && depth > r.maxDepth)) return value;
+      let source = String(r.findRegex ?? '');
+      if (Number(r.substituteRegex) === 1) source = th.substitudeMacros(source);
+      if (Number(r.substituteRegex) === 2) source = source.replace(/\{\{[^{}]+\}\}/g,
+        macro => th.substitudeMacros(macro).replace(/[\n\r\t\v\f\0.^$*+?{}[\]\\/|()]/gs,
+          ch => ({'\n':'\\n','\r':'\\r','\t':'\\t','\v':'\\v','\f':'\\f','\0':'\\0'}[ch] ?? '\\' + ch)));
+      const regex = parseDisplayRegex(source);
+      if (!regex) return value;
+      return value.replace(regex, (...args) => {
+        const replacement = String(r.replaceString ?? '').replace(/\{\{match\}\}/gi, '$0')
+          .replace(/\$(\d+)|\$<([^>]+)>/g, (_, num, name) => {
+            let captured = num ? args[Number(num)] : args.at(-1)?.[name];
+            if (!captured) return '';
+            for (const trim of r.trimStrings ?? []) captured = String(captured).replaceAll(th.substitudeMacros(trim), '');
+            return captured;
+          });
+        return th.substitudeMacros(replacement);
+      });
+    }, text);
+  };
+  expose('formatAsDisplayedMessage', (text, { message_id = 'last' } = {}) => {
+    const c = context(), chat = c.chat ?? [];
+    if (typeof message_id !== 'number' && !['last', 'last_user', 'last_char'].includes(message_id)) throw new Error(`Invalid message_id: ${message_id}`);
+    if (!chat.length) throw new Error('No chat messages');
+    let id = message_id;
+    if (id === 'last') id = chat.length - 1;
+    if (id === 'last_user') id = chat.findLastIndex(m => m.is_user && !m.is_system);
+    if (id === 'last_char') id = chat.findLastIndex(m => !m.is_user && !m.is_system);
+    if (typeof message_id === 'number' && id < 0) id += chat.length;
+    if (!Number.isInteger(id) || id < 0 || id >= chat.length) throw new Error(`Message floor not found: ${message_id}`);
+    const message = chat[id];
+    let result = String(text ?? '');
+    // script.js messageFormatting expands full text only on the first bot floor.
+    if (id === 0 && !message.is_user && !message.is_system) result = th.substitudeMacros(result);
+    result = displayRegex(result, message, id, c);
+    if (!message.is_system) {
+      // script.js messageFormatting protects tag quotes before quoting speech.
+      result = result.replace(/<([^>]+)>/g, (_, contents) => '<' + contents.replace(/"/g, '\ufffe') + '>')
+        .replace(/<style>[\s\S]*?<\/style>|```[\s\S]*?```|~~~[\s\S]*?~~~|``[\s\S]*?``|`[\s\S]*?`|(".*?")|(\u201C.*?\u201D)|(\u00AB.*?\u00BB)|(\u300C.*?\u300D)|(\u300E.*?\u300F)|(\uFF02.*?\uFF02)/gim,
+          (match, ...groups) => groups.slice(0, 6).some(Boolean) ? '<q>' + match + '</q>' : match)
+        .replace(/\ufffe/g, '"').replaceAll('\\begin{align*}', '$$').replaceAll('\\end{align*}', '$$');
+      if (!window.__tellevDisplayMarkdown) window.__tellevDisplayMarkdown = new showdown.Converter({
+        emoji: true, literalMidWordUnderscores: true, parseImgDimensions: true, tables: true,
+        underline: true, strikethrough: true, simpleLineBreaks: true, disableForced4SpacesIndentedSublists: true,
+      });
+      result = window.__tellevDisplayMarkdown.makeHtml(result).trim();
+    }
+    result = DOMPurify.sanitize(result, { ADD_TAGS: ['custom-style'] });
+    const div = document.createElement('div');
+    div.innerHTML = result;
+    div.querySelectorAll('pre code').forEach(node => {
+      if (!node.classList.contains('hljs') && !['html>', '<head>', '<body'].some(tag => node.textContent.includes(tag))) hljs.highlightElement(node);
+    });
+    return div.innerHTML;
+  });
 
   // Tellev has no proxy presets; the list is always empty.
   expose('getProxyPresetNames', () => Promise.resolve([]));

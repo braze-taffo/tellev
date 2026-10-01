@@ -20,6 +20,7 @@ import app.tellev.core.provider.GenerateRequest
 import app.tellev.core.provider.GenerationRuntimeResolver
 import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.regex.CharacterRegexApplier
+import app.tellev.core.prompt.ChatTextProcessing
 import app.tellev.core.storage.StDataStore
 import app.tellev.feature.chat.ChatSessionInit.generateMessageId
 import app.tellev.feature.chat.ChatSessionInit.withTavernInitVariables
@@ -161,19 +162,16 @@ internal class ChatGenerationCoordinator(
                     }
                 }
 
+                val processedInput = if (regenerationInput == null) promptEngine.processChatText(
+                    messageText, messageRole, character, preset,
+                    ChatTextProcessing.context(character, initializedSession, runtime.persona?.name ?: "User", runtime.persona),
+                    isEdit = regexIsEdit,
+                ) else null
                 val inputMessage = regenerationInput ?: CharacterRegexApplier.markNormalProcessed(ChatMessage(
                     id = generateMessageId(),
                     role = messageRole,
                     name = if (messageRole == MessageRole.System) "System" else runtime.persona?.name ?: "你",
-                    content = CharacterRegexApplier.applyNormal(
-                        text = messageText,
-                        role = messageRole,
-                        character = character,
-                        preset = preset,
-                        userName = runtime.persona?.name ?: "User",
-                        depth = 0,
-                        isEdit = regexIsEdit,
-                    ),
+                    content = requireNotNull(processedInput).text,
                     createdAtMillis = System.currentTimeMillis(),
                     attachments = attachments,
                 ))
@@ -181,7 +179,8 @@ internal class ChatGenerationCoordinator(
                 val isRegeneration = regenerationMessageId != null
                 val baseSessionMessages = initializedSession.messages
                 val updatedMessages = if (isRegeneration) baseSessionMessages else baseSessionMessages + inputMessage
-                val updatedSession = initializedSession.copy(messages = updatedMessages)
+                val updatedSession = initializedSession.copy(messages = updatedMessages,
+                    metadata = processedInput?.let { JsonObject(initializedSession.metadata + ("variables" to it.localVariables)) } ?: initializedSession.metadata)
 
                 if (!isRegeneration) {
                     sessionRuntime.persistSessionMutation(initializedSession, updatedSession) { updated ->
@@ -341,14 +340,11 @@ internal class ChatGenerationCoordinator(
                             // 内容拦截等）：显式报错，不再把空气泡持久化进会话。
                             val rawFinalText = chunk.text
                             val parts = MessageReasoning.fromResponse(rawFinalText, chunk.reasoning)
-                            val finalText = CharacterRegexApplier.applyNormal(
-                                text = parts.body,
-                                role = MessageRole.Character,
-                                character = character,
-                                preset = preset,
-                                userName = runtime.persona?.name ?: "User",
-                                depth = 0,
-                            )
+                            val finalBase = uiState.value.currentSession?.takeIf { it.id == updatedSession.id } ?: updatedSession
+                            val processedFinal = promptEngine.processChatText(parts.body, MessageRole.Character, character, preset,
+                                ChatTextProcessing.context(character, finalBase, runtime.persona?.name ?: "User", runtime.persona),
+                                expandMacros = false)
+                            val finalText = processedFinal.text
                             if (finalText.isBlank()) {
                                 activeRegeneration = null
                                 uiState.update {
@@ -397,7 +393,8 @@ internal class ChatGenerationCoordinator(
                                 ).withGenerationReasoning(parts, rawFinalText, chunk.reasoning, chunk.finishReason, false))
                             }
                             val finalSession = (latestSession?.takeIf { it.id == updatedSession.id } ?: updatedSession)
-                                .copy(messages = finalMessages)
+                                .copy(messages = finalMessages,
+                                    metadata = JsonObject(finalBase.metadata + ("variables" to processedFinal.localVariables)))
 
                             sessionRuntime.persistSessionMutation(
                                 latestSession?.takeIf { it.id == updatedSession.id } ?: updatedSession,

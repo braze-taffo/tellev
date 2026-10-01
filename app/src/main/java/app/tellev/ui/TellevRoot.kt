@@ -1,9 +1,14 @@
 package app.tellev.ui
 
 import android.widget.Toast
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +27,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -37,6 +44,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -90,6 +98,12 @@ import app.tellev.feature.world.WorldViewModel
 import app.tellev.feature.world.WorldViewModelFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+
+private tailrec fun Context.hostActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.hostActivity()
+    else -> null
+}
 
 private enum class TellevTab(
     val route: String,
@@ -225,7 +239,8 @@ fun TellevRoot() {
     } ?: TellevTab.Chat
 
     // Hide bottom bar on detail/edit screens.
-    val showBottomBar = currentDestination?.route in TellevTab.entries.map { it.route }
+    val showBottomBar = isTopLevelScreen(currentDestination?.route)
+    var showExitConfirmation by rememberSaveable { mutableStateOf(false) }
 
     // 指引覆盖层的宿主：它是一个应用窗口内的全屏层，不是独立窗口——全屏 Dialog 的窗口
     // 几何会让底部按钮被切掉（见 GuideOverlay 的注释）。Box 里唯一需要留意的是顺序：
@@ -235,7 +250,12 @@ fun TellevRoot() {
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             if (showBottomBar) {
-                NavigationBar {
+                Surface(
+                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    shadowElevation = 8.dp,
+                ) {
+                NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp) {
                     TellevTab.entries.forEach { tab ->
                         val tabLabelRes = when (tab) {
                             TellevTab.Chat -> R.string.nav_tab_chat
@@ -246,6 +266,11 @@ fun TellevRoot() {
                         }
                         NavigationBarItem(
                             selected = currentTab == tab,
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                            ),
                             onClick = {
                                 navController.navigate(tab.route) {
                                     // Pop up to the graph's start destination to avoid
@@ -271,13 +296,14 @@ fun TellevRoot() {
                         )
                     }
                 }
+                }
             }
         },
     ) { innerPadding ->
         NavHost(
             navController = navController,
             startDestination = TellevTab.Chat.route,
-            modifier = Modifier.padding(innerPadding),
+            modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
         ) {
             // Chat tab - single screen
             composable(TellevTab.Chat.route) {
@@ -312,6 +338,14 @@ fun TellevRoot() {
                             navController.navigate("characters/detail/$characterId")
                         },
                     )
+                    // Scope the callback to the visible library entry. A root
+                    // callback can be registered before NavHost's own callback
+                    // and lose priority when the user later opens this tab.
+                    BackHandler(
+                        enabled = shouldConfirmAppExit(currentDestination?.route) &&
+                            startupGuide == null && manualGuide == null &&
+                            !showPresetLimitUpgradeNotice && !showQqGroupNotice,
+                    ) { showExitConfirmation = true }
                 }
                 composable("characters/create") {
                     CharacterDetailScreen(
@@ -545,6 +579,25 @@ fun TellevRoot() {
     manualGuide?.let { kind ->
         GuideOverlay(kind = kind, onDismiss = { manualGuide = null })
     }
+    }
+
+    if (showExitConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showExitConfirmation = false },
+            title = { Text(stringResource(R.string.ui_exit_title)) },
+            text = { Text(stringResource(R.string.ui_exit_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showExitConfirmation = false
+                    activityContext.hostActivity()?.finish()
+                }) { Text(stringResource(R.string.ui_exit_yes)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExitConfirmation = false }) {
+                    Text(stringResource(R.string.ui_exit_no))
+                }
+            },
+        )
     }
 
     if (showPresetLimitUpgradeNotice && startupGuide == null) {

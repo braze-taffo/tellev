@@ -28,6 +28,8 @@ export async function createHost({ chat, card = {}, failWrite = () => null, fail
   const native = {
     stGetContext: () => JSON.stringify({ chat, chatId: 'fixture', name1: 'User', name2: card.name || 'Fixture',
       characterId: 'fixture', characterWorldBooks: ['fixture'],
+      character: { data: { extensions: { regex_scripts: card.regexScripts ?? [] } } },
+      chatCompletionSettings: { extensions: { regex_scripts: card.presetRegexScripts ?? [] } },
       globalWorldBooks: [...worldsStore.values()].filter(b => !disabledWorlds.has(b.id)).map(b => b.name),
       // Same projection as ChatTavernAdapter: never expose the stored model here.
       worldBooks: [...worldsStore.values()].map(b => ({ id: b.id, name: b.name,
@@ -121,6 +123,7 @@ export async function createHost({ chat, card = {}, failWrite = () => null, fail
   w.tellevNative = native;
   try {
     w.eval(await readAsset('globals.js'));
+    w.eval(await readFile(new URL('../../../app/src/main/assets/showdown/showdown.min.js', import.meta.url), 'utf8'));
     const html = await readFile(new URL('../../../app/build/compat-host.html', import.meta.url), 'utf8');
     const legacy = html.slice(html.indexOf('__SHOWDOWN_SOURCE__'), html.indexOf('</script><script>__HOST_ADAPTER__'))
       .replace('__SHOWDOWN_SOURCE__', '').replaceAll('__EXTENSION_ID__', 'fixture')

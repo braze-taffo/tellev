@@ -58,6 +58,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.tellev.R
 import app.tellev.core.model.WorldBookSummary
+import app.tellev.ui.AtmosphereIntro
+import app.tellev.ui.QuietTag
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Surface
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -139,7 +152,7 @@ fun WorldBooksListScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                 ),
             )
         },
@@ -201,9 +214,19 @@ fun WorldBooksListScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(padding),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        start = 18.dp, end = 18.dp, top = 16.dp, bottom = 104.dp,
+                    ),
                 ) {
+                    item(key = "world_library_intro") {
+                        AtmosphereIntro(
+                            title = stringResource(R.string.ui_world_library),
+                            subtitle = stringResource(R.string.ui_world_library_hint),
+                            icon = Icons.AutoMirrored.Filled.MenuBook,
+                            label = stringResource(R.string.ui_world_count, state.worldBookSummaries.size),
+                        )
+                    }
                     items(state.worldBookSummaries, key = { it.id }) { book ->
                         WorldBookListItem(
                             book = book,
@@ -415,13 +438,13 @@ private fun WorldBookListItem(
     onDelete: () -> Unit,
 ) {
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
         onClick = onClick,
         colors = CardDefaults.cardColors(
-            containerColor = if (activated) MaterialTheme.colorScheme.surfaceVariant
-            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
         ),
     ) {
         Row(
@@ -430,11 +453,27 @@ private fun WorldBookListItem(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = if (activated) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.width(54.dp).height(74.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Box(Modifier.align(Alignment.CenterStart).width(5.dp).height(74.dp)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)))
+                    Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+                }
+            }
+            Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = book.name,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
@@ -442,28 +481,35 @@ private fun WorldBookListItem(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Spacer(Modifier.height(6.dp))
+                QuietTag(stringResource(if (activated) R.string.ui_world_enabled else R.string.ui_world_disabled))
             }
 
             Switch(
                 checked = activated,
                 onCheckedChange = { onToggleActivation() },
+                modifier = Modifier.semantics { contentDescription = book.name },
             )
 
             Spacer(modifier = Modifier.padding(horizontal = 4.dp))
 
-            IconButton(onClick = onEditWithAi) {
-                Icon(
-                    Icons.Default.Edit,
-                    contentDescription = stringResource(R.string.wblist_ai_edit_cd),
-                )
-            }
-
-            IconButton(onClick = { showDeleteDialog = true }) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = stringResource(R.string.wblist_delete_cd),
-                    tint = MaterialTheme.colorScheme.error,
-                )
+            Box {
+                IconButton(onClick = { showMenu = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.ui_world_more))
+                }
+                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.wblist_ai_edit_cd)) },
+                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                        onClick = { showMenu = false; onEditWithAi() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.wblist_delete_cd)) },
+                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error) },
+                        onClick = { showMenu = false; showDeleteDialog = true },
+                    )
+                }
             }
         }
     }

@@ -1,5 +1,6 @@
 package app.tellev.core.extension
 
+import app.tellev.core.prompt.MacroVariableAccess
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CompletableDeferred
@@ -59,7 +60,7 @@ class VariableStore(
     private val scope: CoroutineScope,
     private val settingsStore: ExtensionSettingsStore,
     private val settingsKey: String,
-) {
+) : MacroVariableAccess {
     @Volatile
     private var localBackend: LocalVariableBackend? = null
     private val scopedLocalBackend = ThreadLocal<LocalVariableBackend?>()
@@ -112,15 +113,15 @@ class VariableStore(
 
     // ── LOCAL (String API) ───────────────────────────────────────────────
 
-    fun getLocal(name: String): String? =
+    override fun getLocal(name: String): String? =
         activeLocalBackend()?.snapshot()?.get(name)?.let { elementToString(it) }
 
-    fun setLocal(name: String, value: String) {
+    override fun setLocal(name: String, value: String) {
         if (name.isBlank()) return
         activeLocalBackend()?.update { it[name] = JsonPrimitive(value) }
     }
 
-    fun addLocal(name: String, increment: String): String {
+    override fun addLocal(name: String, increment: String): String {
         val b = activeLocalBackend() ?: return "0"
         val snap = b.update { m ->
             val current = m[name]?.let { elementToString(it) } ?: "0"
@@ -129,29 +130,29 @@ class VariableStore(
         return snap[name]?.let { elementToString(it) } ?: "0"
     }
 
-    fun incLocal(name: String): String = addLocal(name, "1")
-    fun decLocal(name: String): String = addLocal(name, "-1")
+    override fun incLocal(name: String): String = addLocal(name, "1")
+    override fun decLocal(name: String): String = addLocal(name, "-1")
 
-    fun deleteLocal(name: String) {
+    override fun deleteLocal(name: String) {
         activeLocalBackend()?.update { it.remove(name) }
     }
 
-    fun hasLocal(name: String): Boolean = activeLocalBackend()?.snapshot()?.containsKey(name) == true
+    override fun hasLocal(name: String): Boolean = activeLocalBackend()?.snapshot()?.containsKey(name) == true
 
     fun listLocal(): List<String> = activeLocalBackend()?.snapshot()?.keys?.sorted() ?: emptyList()
 
     // ── GLOBAL (String API) ──────────────────────────────────────────────
 
-    fun getGlobal(name: String): String? = withGlobalState { global[name]?.let { elementToString(it) } }
+    override fun getGlobal(name: String): String? = withGlobalState { global[name]?.let { elementToString(it) } }
 
-    fun setGlobal(name: String, value: String) = withGlobalState {
+    override fun setGlobal(name: String, value: String) = withGlobalState {
         requireGlobalWritable()
         if (name.isBlank()) return@withGlobalState
         global[name] = JsonPrimitive(value)
         persistGlobal()
     }
 
-    fun addGlobal(name: String, increment: String): String = withGlobalState {
+    override fun addGlobal(name: String, increment: String): String = withGlobalState {
         requireGlobalWritable()
         val current = global[name]?.let { elementToString(it) } ?: "0"
         val result = addStrings(current, increment)
@@ -160,16 +161,16 @@ class VariableStore(
         result
     }
 
-    fun incGlobal(name: String): String = addGlobal(name, "1")
-    fun decGlobal(name: String): String = addGlobal(name, "-1")
+    override fun incGlobal(name: String): String = addGlobal(name, "1")
+    override fun decGlobal(name: String): String = addGlobal(name, "-1")
 
-    fun deleteGlobal(name: String) = withGlobalState {
+    override fun deleteGlobal(name: String) = withGlobalState {
         requireGlobalWritable()
         global.remove(name)
         persistGlobal()
     }
 
-    fun hasGlobal(name: String): Boolean = withGlobalState { global.containsKey(name) }
+    override fun hasGlobal(name: String): Boolean = withGlobalState { global.containsKey(name) }
 
     fun listGlobal(): List<String> = withGlobalState { global.keys().toList().sorted() }
 

@@ -97,6 +97,7 @@ internal fun ChatBubble(
     onRegenerate: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    macroContext: app.tellev.core.prompt.MacroContext? = null,
 ) {
     val context = LocalContext.current
     val exportScope = rememberCoroutineScope()
@@ -206,16 +207,18 @@ internal fun ChatBubble(
         // The regex pipeline (card- and preset-embedded scripts) runs off the
         // compose thread under a budget; catastrophic rules degrade to
         // regex-free text instead of freezing the chat.
-        val renderInputs = remember(parts, message.role, character, preset, userName, depth) {
+        val renderInputs = remember(parts, message.role, character, preset, userName, depth, message.metadata, macroContext) {
             RenderInputs(
                 parts, message.role, character, preset, userName, depth,
                 includeNormal = !CharacterRegexApplier.isNormalProcessed(message),
+                macroContext = macroContext,
             )
         }
         val renderSegments = rememberRenderedSegments(renderInputs, message.id) {
             renderMessageParts(
                 parts, message.role, character, preset, userName, depth,
                 includeNormal = !CharacterRegexApplier.isNormalProcessed(message),
+                macroContext = macroContext,
             )
         }.value
         if (!isUser && parts.body.isBlank() && parts.reasoning.isNotBlank()) {
@@ -484,17 +487,20 @@ internal fun StreamingBubble(
     availableMaxHeight: Dp,
     tavernRuntime: TavernMessageRuntime,
     onHtmlBoundaryDrag: (Float) -> Unit,
+    macroContext: app.tellev.core.prompt.MacroContext? = null,
 ) {
-    val streamingInputs = remember(text, reasoning, character, preset, userName) {
+    val streamingInputs = remember(text, reasoning, character, preset, userName, macroContext) {
         RenderInputs(
             MessageReasoning.fromResponse(text, reasoning), MessageRole.Character,
             character, preset, userName, 0, includeNormal = true,
+            macroContext = macroContext,
         )
     }
     val segments = rememberRenderedSegments(streamingInputs, "streaming") {
         renderMessageParts(
             MessageReasoning.fromResponse(text, reasoning), MessageRole.Character,
             character, preset, userName, 0, includeNormal = true,
+            macroContext = macroContext,
         )
     }.value
     Column(

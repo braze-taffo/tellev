@@ -45,6 +45,17 @@ import app.tellev.core.model.Persona
 import app.tellev.core.model.PresetCategory
 import app.tellev.feature.update.UpdateViewModel
 import app.tellev.util.UriUtils
+import app.tellev.ui.AtmosphereIntro
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.FilterChip
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -64,6 +75,8 @@ internal fun SettingsScreen(
     val updateState by updateViewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    var settingsSection by rememberSaveable { mutableIntStateOf(0) }
     val context = LocalContext.current
     val versionUnknown = stringResource(R.string.setscreen_version_unknown)
     val versionName = remember(context, versionUnknown) {
@@ -142,8 +155,10 @@ internal fun SettingsScreen(
     }
 
     LaunchedEffect(presetFocusRequest, state.isLoading, providerDetailsOnly) {
-        if (presetFocusRequest > 0 && !state.isLoading && !providerDetailsOnly) {
-            listState.animateScrollToItem(3)
+        if (presetFocusRequest > 0 && !state.isLoading && !providerDetailsOnly && !imageGenDetailsOnly) {
+            settingsSection = 0
+            // Intro, provider card/divider, image card/divider, preset divider.
+            listState.animateScrollToItem(6)
         }
     }
 
@@ -171,7 +186,7 @@ internal fun SettingsScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                 ),
             )
         },
@@ -187,11 +202,25 @@ internal fun SettingsScreen(
                 CircularProgressIndicator()
             }
         } else {
+            Column(Modifier.fillMaxSize().padding(padding)) {
+            if (!providerDetailsOnly && !imageGenDetailsOnly) {
+                val categories = listOf(R.string.ui_settings_models, R.string.ui_settings_identity,
+                    R.string.ui_settings_appearance, R.string.ui_settings_data)
+                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 18.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    categories.forEachIndexed { index, label ->
+                        FilterChip(
+                            selected = settingsSection == index,
+                            onClick = { settingsSection = index; scope.launch { listState.scrollToItem(0) } },
+                            label = { Text(stringResource(label)) },
+                        )
+                    }
+                }
+            }
             LazyColumn(
                 state = listState,
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
+                    .weight(1f),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 contentPadding = PaddingValues(16.dp),
             ) {
@@ -215,6 +244,14 @@ internal fun SettingsScreen(
                         onDeleteCustomConfigClick = { pendingDeleteConfigId = it },
                     )
                 } else {
+                    item(key = "settings_intro") {
+                        AtmosphereIntro(
+                            title = stringResource(R.string.ui_settings_intro),
+                            subtitle = stringResource(R.string.ui_settings_intro_hint),
+                            icon = Icons.Default.Settings,
+                        )
+                    }
+                    if (settingsSection == 0) {
                     item(key = "provider_quick_switch") {
                         ProviderQuickSwitchCard(
                             state = state,
@@ -252,7 +289,14 @@ internal fun SettingsScreen(
                         onDeletePreset = { viewModel.deletePreset(it.id, it.providerType) },
                         onEditPreset = { editingPreset = it },
                     )
+                    secretSectionItems(
+                        state = state,
+                        onAddSecret = { showAddSecretDialog = true },
+                        onDeleteSecret = { viewModel.deleteSecret(it) },
+                    )
+                    }
 
+                    if (settingsSection == 1) {
                     personaSectionItems(
                         state = state,
                         onAddPersona = {
@@ -265,13 +309,9 @@ internal fun SettingsScreen(
                         },
                         onDeletePersona = { viewModel.deletePersona(it) },
                     )
+                    }
 
-                    secretSectionItems(
-                        state = state,
-                        onAddSecret = { showAddSecretDialog = true },
-                        onDeleteSecret = { viewModel.deleteSecret(it) },
-                    )
-
+                    if (settingsSection == 2) {
                     appearanceSectionItems(
                         state = state,
                         onSetThemeMode = viewModel::setThemeMode,
@@ -287,7 +327,9 @@ internal fun SettingsScreen(
                             (context as? android.app.Activity)?.recreate()
                         },
                     )
+                    }
 
+                    if (settingsSection == 3) {
                     backupSectionItems(
                         onExportClick = { showExportDialog = true },
                         onImportClick = { showImportDialog = true },
@@ -299,7 +341,9 @@ internal fun SettingsScreen(
                         updateViewModel = updateViewModel,
                         onOpenGuide = onOpenGuide,
                     )
+                    }
                 }
+            }
             }
         }
     }

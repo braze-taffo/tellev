@@ -36,6 +36,7 @@ import app.tellev.core.storage.GeneratedImage
 import app.tellev.core.storage.GeneratedImageStore
 import app.tellev.core.storage.StDataStore
 import app.tellev.feature.chat.ChatSessionInit.withCharacterGreetingSwipes
+import app.tellev.feature.chat.ChatSessionInit.withProcessedGreeting
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -137,7 +138,7 @@ class ChatViewModel(
             }
         },
     )
-    private val messageActions = ChatMessageActions(sessionRuntime)
+    private val messageActions = ChatMessageActions(sessionRuntime, promptEngine)
     private val runtimeResolver = GenerationRuntimeResolver(dataStore, providerRegistry, secretStore)
     private val memoryService = MemoryService(dataStore, providerRegistry, secretStore)
     private val generatedImageStore = GeneratedImageStore(dataStore.layout)
@@ -249,21 +250,25 @@ class ChatViewModel(
                             )
                         }
                     }
-                val selected = _uiState.value.selectedCharacter
-                if (selected?.id != characterId) return@collect
-                runCatching { dataStore.readCharacter(characterId) }
-                    .onSuccess { refreshed ->
-                        _uiState.update {
-                            it.copy(
-                                selectedCharacter = refreshed,
-                                characterAvatarFile = ChatSessionAssets.characterCardFile(refreshed.id, dataStore.layout),
-                            )
+                // A refresh can suspend on disk or script loading. Serialize it with
+                // selection so the old card cannot replace the destination's state.
+                sessionRuntime.sessionTransitions.withLock {
+                    if (_uiState.value.selectedCharacter?.id != characterId) return@withLock
+                    runCatching { dataStore.readCharacter(characterId) }
+                        .onSuccess { refreshed ->
+                            _uiState.update {
+                                it.copy(
+                                    selectedCharacter = refreshed,
+                                    characterAvatarFile = ChatSessionAssets.characterCardFile(refreshed.id, dataStore.layout),
+                                )
+                            }
+                            reloadCharacterTavernHelperScripts(refreshed)
                         }
-                        reloadCharacterTavernHelperScripts(refreshed)
-                    }
-                    .onFailure { error ->
-                        _uiState.update { it.copy(error = UiStrings.get(S.chatvm_reread_character_failed, error.message)) }
-                    }
+                        .onFailure { error ->
+                            if (error is CancellationException) throw error
+                            _uiState.update { it.copy(error = UiStrings.get(S.chatvm_reread_character_failed, error.message)) }
+                        }
+                }
             }
         }
     }
@@ -413,7 +418,9 @@ class ChatViewModel(
 
                         val session = if (sessions.isNotEmpty()) {
                             val loaded = dataStore.readChatSession(sessions.first().id)
-                            loaded.withCharacterGreetingSwipes(character).let { upgraded ->
+                            loaded.withCharacterGreetingSwipes(character).withProcessedGreeting(
+                                character, _uiState.value.selectedPersona?.name ?: "User", promptEngine, _uiState.value.selectedPreset,
+                            ).let { upgraded ->
                                 if (upgraded != loaded) dataStore.commitChatMutation(loaded, upgraded) else upgraded
                             }
                         } else {
@@ -421,6 +428,7 @@ class ChatViewModel(
                                 character,
                                 _uiState.value.selectedPersona?.name ?: "User",
                                 dataStore,
+                                promptEngine, _uiState.value.selectedPreset,
                             )
                         }
                         val allSessions = (listOf(session.toSummary()) + sessions.filterNot { it.id == session.id })
@@ -492,6 +500,18 @@ class ChatViewModel(
         }
     }
 
+    fun messageMacroContext(state: ChatUiState): app.tellev.core.prompt.MacroContext? {
+        val character = state.selectedCharacter ?: return null
+        val session = state.currentSession ?: return null
+        return app.tellev.core.prompt.ChatTextProcessing.context(character, session,
+            state.selectedPersona?.name ?: "User", state.selectedPersona).copy(
+            globalVariables = promptEngine.snapshotPromptTemplateVariables().global,
+            modelName = state.providerConfig?.model.orEmpty(),
+            maxContextTokens = state.selectedPreset?.maxContextTokens ?: 0,
+            maxResponseTokens = state.selectedPreset?.maxCompletionTokens ?: state.selectedPreset?.maxTokens ?: 0,
+        )
+    }
+
     fun deselectCharacter() {
         viewModelScope.launch {
             sessionRuntime.sessionTransitions.withLock {
@@ -527,6 +547,7 @@ class ChatViewModel(
                         character,
                         _uiState.value.selectedPersona?.name ?: "User",
                         dataStore,
+                        promptEngine, _uiState.value.selectedPreset,
                     )
                     val token = sessionRuntime.activateSessionWrites(newSession)
                     val sessions = dataStore.listChatSessionSummaries(characterId = character.id)
@@ -682,7 +703,13 @@ class ChatViewModel(
                 _uiState.update { it.copy(isLoading = true) }
                 try {
                     retireSessionRuntime()
-                    val session = dataStore.readChatSession(sessionId)
+                    val loaded = dataStore.readChatSession(sessionId)
+                    val upgraded = _uiState.value.selectedCharacter?.let { character ->
+                        loaded.withCharacterGreetingSwipes(character).withProcessedGreeting(
+                            character, _uiState.value.selectedPersona?.name ?: "User", promptEngine, _uiState.value.selectedPreset,
+                        )
+                    } ?: loaded
+                    val session = if (upgraded != loaded) dataStore.commitChatMutation(loaded, upgraded) else loaded
                     val token = sessionRuntime.activateSessionWrites(session)
                     _uiState.update {
                         it.copy(
@@ -920,7 +947,12 @@ class ChatViewModel(
                         clearToNoSession()
                         ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.CHAT_CHANGED, "")
                     } else {
-                        val next = dataStore.readChatSession(remaining.first().id)
+                        val loadedNext = dataStore.readChatSession(remaining.first().id)
+                        val upgradedNext = character?.let {
+                            loadedNext.withCharacterGreetingSwipes(it).withProcessedGreeting(it,
+                                _uiState.value.selectedPersona?.name ?: "User", promptEngine, _uiState.value.selectedPreset)
+                        } ?: loadedNext
+                        val next = if (upgradedNext != loadedNext) dataStore.commitChatMutation(loadedNext, upgradedNext) else loadedNext
                         val token = sessionRuntime.activateSessionWrites(next)
                         _uiState.update {
                             it.copy(

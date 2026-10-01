@@ -7,6 +7,10 @@ import app.tellev.core.model.MessageRole
 import app.tellev.core.model.preserveReasoningSwipe
 import app.tellev.core.model.selectReasoningSwipe
 import app.tellev.core.regex.CharacterRegexApplier
+import app.tellev.core.prompt.ChatTextProcessing
+import app.tellev.core.prompt.DefaultPromptEngine
+import app.tellev.core.prompt.PromptEngine
+import app.tellev.feature.chat.ChatSessionInit.withProcessedGreeting
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -18,6 +22,7 @@ import kotlinx.serialization.json.put
  */
 internal class ChatMessageActions(
     private val sessionRuntime: ChatSessionRuntime,
+    private val promptEngine: PromptEngine = DefaultPromptEngine(),
 ) {
     fun swipeMessage(
         messageIndex: Int,
@@ -46,11 +51,14 @@ internal class ChatMessageActions(
         messages[messageIndex] = updatedMessage
 
         val session = state.currentSession ?: return
-        val updatedSession = session.copy(messages = messages)
+        val selectedSession = session.copy(messages = messages)
+        val updatedSession = if (messageIndex == 0) state.selectedCharacter?.let {
+            selectedSession.withProcessedGreeting(it, state.selectedPersona?.name ?: "User", promptEngine, state.selectedPreset)
+        } ?: selectedSession else selectedSession
 
         val commit = sessionRuntime.scheduleUiMutation(session, updatedSession, onSessionUpdated, onError) ?: return
         sessionRuntime.launchAfterCommit(scope, commit, onError) {
-            onSwipeCommitted(updatedMessage)
+            onSwipeCommitted(updatedSession.messages[messageIndex])
         }
     }
 
@@ -77,28 +85,25 @@ internal class ChatMessageActions(
         if (messageIndex !in messages.indices) return
         val message = messages[messageIndex]
 
-        val processedContent = CharacterRegexApplier.applyNormal(
-            text = newContent,
-            role = message.role,
-            character = state.selectedCharacter,
-            preset = state.selectedPreset,
-            userName = state.selectedPersona?.name ?: "User",
-            depth = visibleRegexDepth(state.messages, messageIndex),
-            isEdit = true,
-        )
-        val updatedMessage = editedChatMessage(message, processedContent)
-        messages[messageIndex] = updatedMessage
-
         val session = state.currentSession ?: return
 
         if (message.role == MessageRole.User) {
+            // The send path processes this edit once, after resolving its preset.
             val trimmedMessages = messages.take(messageIndex)
             val trimmedSession = session.copy(messages = trimmedMessages)
-            onUserMessageEdit(session, trimmedSession, trimmedMessages, newContent, message.attachments, updatedMessage)
+            onUserMessageEdit(session, trimmedSession, trimmedMessages, newContent, message.attachments, editedChatMessage(message, newContent))
             return
         }
 
-        val updatedSession = session.copy(messages = messages)
+        val character = state.selectedCharacter
+        val processed = promptEngine.processChatText(newContent, message.role, character, state.selectedPreset,
+            character?.let { ChatTextProcessing.context(it, session, state.selectedPersona?.name ?: "User", state.selectedPersona) }
+                ?: app.tellev.core.prompt.MacroContext(userName = state.selectedPersona?.name ?: "User",
+                    localVariables = session.metadata["variables"] as? JsonObject),
+            depth = visibleRegexDepth(state.messages, messageIndex), isEdit = true)
+        val updatedMessage = editedChatMessage(message, processed.text)
+        messages[messageIndex] = updatedMessage
+        val updatedSession = session.copy(messages = messages, metadata = JsonObject(session.metadata + ("variables" to processed.localVariables)))
         val commit = sessionRuntime.scheduleUiMutation(session, updatedSession, onSessionUpdated, onError) ?: return
         sessionRuntime.launchAfterCommit(scope, commit, onError) {
             onEditCommitted(updatedMessage)

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -89,6 +90,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.tellev.R
+import app.tellev.ui.AtmosphereIntro
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import app.tellev.util.UriUtils
@@ -158,11 +160,19 @@ fun CreationHomeScreen(
     Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.crs_home_title)) }, navigationIcon = {
         TextButton(onClick = onBack) { Text(stringResource(R.string.crs_back)) }
     }) }) { padding ->
-        Column(
-            Modifier.fillMaxSize().padding(padding).padding(16.dp),
+        LazyColumn(
+            Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(stringResource(R.string.crs_home_intro), style = MaterialTheme.typography.bodyMedium)
+            item(key = "creation_intro") {
+            AtmosphereIntro(
+                title = stringResource(R.string.ui_creation_intro),
+                subtitle = stringResource(R.string.ui_creation_intro_hint),
+                icon = Icons.Filled.Badge,
+            )
+            }
+            item(key = "creation_start") {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 CreationStartCard(
                     modifier = Modifier.weight(1f),
@@ -181,8 +191,10 @@ fun CreationHomeScreen(
                     onClick = { viewModel.start(CreationKind.WorldBook); onOpenEditor() },
                 )
             }
-            Text(stringResource(R.string.crs_drafts_title), style = MaterialTheme.typography.titleMedium)
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            }
+            item(key = "drafts_header") {
+                Text(stringResource(R.string.crs_drafts_title), style = MaterialTheme.typography.titleMedium)
+            }
                 items(state.sessions, key = CreationSessionSummary::id) { session ->
                     Surface(
                         shape = RoundedCornerShape(14.dp),
@@ -215,7 +227,6 @@ fun CreationHomeScreen(
                         }
                     }
                 }
-            }
         }
     }
 }
@@ -231,11 +242,11 @@ private fun CreationStartCard(
     onClick: () -> Unit,
 ) {
     Surface(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(22.dp),
         color = MaterialTheme.colorScheme.primaryContainer,
-        modifier = modifier.clip(RoundedCornerShape(16.dp)).clickable(enabled = enabled, onClick = onClick),
+        modifier = modifier.clip(RoundedCornerShape(22.dp)).clickable(enabled = enabled, onClick = onClick),
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(
                 Modifier.clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))

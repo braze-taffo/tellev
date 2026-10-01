@@ -35,6 +35,8 @@ object CharacterRegexApplier {
         val phase: RegexPhase,
         val globalScripts: JsonArray = JsonArray(emptyList()),
         val onDiagnostic: ((RegexDiagnostic) -> Unit)? = null,
+        /** Full, explicitly scoped macro resolver; never reads an active-chat singleton. */
+        val macroExpander: ((String) -> String)? = null,
     )
 
     data class RegexDiagnostic(
@@ -85,8 +87,9 @@ object CharacterRegexApplier {
         isEdit: Boolean = false,
         preset: GenerationPreset? = null,
         includeNormal: Boolean = true,
+        macroExpander: ((String) -> String)? = null,
     ): String {
-        val context = RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Display)
+        val context = RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Display, macroExpander = macroExpander)
         val normalized = if (includeNormal) apply(text, context.copy(phase = RegexPhase.Normal)) else text
         return apply(normalized, context)
     }
@@ -99,7 +102,8 @@ object CharacterRegexApplier {
         userName: String = "User",
         depth: Int = 0,
         isEdit: Boolean = false,
-    ): String = apply(text, RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Normal))
+        macroExpander: ((String) -> String)? = null,
+    ): String = apply(text, RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Normal, macroExpander = macroExpander))
 
     fun applyForPrompt(
         text: String,
@@ -110,8 +114,9 @@ object CharacterRegexApplier {
         isEdit: Boolean = false,
         preset: GenerationPreset? = null,
         includeNormal: Boolean = true,
+        macroExpander: ((String) -> String)? = null,
     ): String {
-        val context = RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Prompt)
+        val context = RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Prompt, macroExpander = macroExpander)
         val normalized = if (includeNormal) apply(text, context.copy(phase = RegexPhase.Normal)) else text
         return apply(normalized, context)
     }
@@ -122,9 +127,10 @@ object CharacterRegexApplier {
         userName: String = "User",
         depth: Int = 0,
         preset: GenerationPreset? = null,
+        macroExpander: ((String) -> String)? = null,
     ): String = apply(
         text,
-        RegexExecutionContext(character, preset, MessageRole.System, userName, depth, false, RegexPhase.Prompt),
+        RegexExecutionContext(character, preset, MessageRole.System, userName, depth, false, RegexPhase.Prompt, macroExpander = macroExpander),
         WORLD_INFO,
     )
 
@@ -157,7 +163,7 @@ object CharacterRegexApplier {
         context: RegexExecutionContext,
         forcedPlacement: Int? = null,
     ): String {
-        if (text.isBlank()) return text
+        if (text.isEmpty()) return text
         val placement = forcedPlacement ?: when (context.role) {
             MessageRole.User -> USER_INPUT
             MessageRole.Character, MessageRole.Assistant -> AI_OUTPUT
@@ -170,7 +176,7 @@ object CharacterRegexApplier {
         val presetScripts = context.preset?.extensions?.arrayValue("regex_scripts")
             ?: JsonArray(emptyList())
         // Matches ST's effective order and makes conflicts deterministic.
-        val scripts = context.globalScripts + cardScripts + presetScripts
+        val scripts = context.globalScripts + presetScripts + cardScripts
         val characterName = context.character?.name.orEmpty().ifBlank { "Character" }
 
         return scripts.fold(text) { current, scriptElement ->
@@ -191,7 +197,7 @@ object CharacterRegexApplier {
                 RegexPhase.Prompt -> promptOnly
             }
             if (!appliesInMode) return@fold current
-            runScript(script, current, characterName, context.userName, context.onDiagnostic)
+            runScript(script, current, characterName, context.userName, context.onDiagnostic, context.macroExpander)
         }
     }
 
@@ -201,14 +207,15 @@ object CharacterRegexApplier {
         characterName: String,
         userName: String,
         onDiagnostic: ((RegexDiagnostic) -> Unit)?,
+        macroExpander: ((String) -> String)?,
     ): String {
         // RP Hub uses a bare pattern plus separate flags. Standard Tavern fields win.
         val standardSource = script.stringValue("findRegex")
         val rawSource = standardSource ?: script.stringValue("regex") ?: return input
         val separateFlags = if (standardSource == null) script.stringValue("flags").orEmpty() else null
         val source = when (script.intValue("substituteRegex") ?: 0) {
-            1 -> substituteMacros(rawSource, characterName, userName, escaped = false)
-            2 -> substituteMacros(rawSource, characterName, userName, escaped = true)
+            1 -> substituteMacros(rawSource, characterName, userName, escaped = false, macroExpander)
+            2 -> substituteMacros(rawSource, characterName, userName, escaped = true, macroExpander)
             else -> rawSource
         }
         val regexSource = javascriptRegexSource(source, separateFlags)
@@ -237,20 +244,15 @@ object CharacterRegexApplier {
             return input
         }
         val flags = regexSource.flags
-        val replacement = substituteMacros(
-            (script.stringValue("replaceString") ?: script.stringValue("replacement")).orEmpty(),
-            characterName,
-            userName,
-            escaped = false,
-        )
+        val replacement = (script.stringValue("replaceString") ?: script.stringValue("replacement")).orEmpty()
         val trimStrings = script.stringArray("trimStrings")
-            .map { substituteMacros(it, characterName, userName, escaped = false) }
         val replacer: (MatchResult) -> CharSequence = { match ->
-            expandReplacement(
+            substituteMacros(expandReplacement(
                 replacement = replacement.replace("{{match}}", "$0", ignoreCase = true),
                 match = match,
                 trimStrings = trimStrings,
-            )
+                trimExpand = { substituteMacros(it, characterName, userName, escaped = false, macroExpander) },
+            ), characterName, userName, escaped = false, macroExpander)
         }
         return runCatching {
             // JavaScript String.replace(): g replaces all matches; y without g
@@ -280,19 +282,21 @@ object CharacterRegexApplier {
         replacement: String,
         match: MatchResult,
         trimStrings: List<String>,
+        trimExpand: (String) -> String,
     ): String {
-        // JavaScript replacement syntax: $& = full match, $0 = full match
-        // (tellev extension), $1-$9 = capture groups, $<name> = named group.
-        val backrefRegex = Regex("""\$(\d{1,2})|\$<([^>]+)>|\$0|\$&""")
+        // ST uses its own replacement callback: $0/ {{match}} and captures;
+        // $& remains literal. Missing captures become empty strings.
+        val backrefRegex = Regex("""\$(\d+)|\$<([^>]+)>""")
         return backrefRegex.replace(replacement) { ref ->
             val value = when {
                 ref.value == "$0" -> match.value
-                ref.value == "$&" -> match.value
-                ref.groups[1] != null -> match.groups[ref.groups[1]!!.value.toIntOrNull() ?: -1]?.value.orEmpty()
-                ref.groups[2] != null -> match.groups[ref.groups[2]!!.value]?.value.orEmpty()
+                ref.groups[1] != null -> (ref.groups[1]!!.value.toIntOrNull() ?: -1).let { index ->
+                    if (index in 0 until match.groups.size) match.groups[index]?.value.orEmpty() else ""
+                }
+                ref.groups[2] != null -> runCatching { match.groups[ref.groups[2]!!.value]?.value }.getOrNull().orEmpty()
                 else -> ""
             }
-            trimStrings.fold(value) { acc, trim -> acc.replace(trim, "") }
+            trimStrings.fold(value) { acc, trim -> acc.replace(trimExpand(trim), "") }
         }
     }
 
@@ -301,14 +305,20 @@ object CharacterRegexApplier {
         characterName: String,
         userName: String,
         escaped: Boolean,
+        macroExpander: ((String) -> String)? = null,
     ): String {
+        if (macroExpander != null) {
+            if (!escaped) return macroExpander(text)
+            // Escape macro results individually, leaving the authored regex intact.
+            return Regex("""\{\{[^{}]+\}\}""").replace(text) { Regex.escape(macroExpander(it.value)) }
+        }
         val characterValue = if (escaped) Regex.escape(characterName) else characterName
         val userValue = if (escaped) Regex.escape(userName) else userName
         // Escape both closing braces explicitly. Android's ICU regex engine
         // rejects bare `}}` here even though the desktop JVM engine accepts it.
         return Regex("""\{\{char(?:IfNotGroup)?\}\}""", RegexOption.IGNORE_CASE)
-            .replace(text, characterValue)
-            .let { Regex("""\{\{user\}\}""", RegexOption.IGNORE_CASE).replace(it, userValue) }
+            .replace(text) { characterValue }
+            .let { value -> Regex("""\{\{user\}\}""", RegexOption.IGNORE_CASE).replace(value) { userValue } }
     }
 
 
@@ -577,7 +587,7 @@ object CharacterRegexApplier {
         flags.all { it in "gmixXsuUAJ" } && flags.toSet().size == flags.length
 
     private fun compileJavascriptRegex(source: JavascriptRegexSource): Regex? {
-        val pattern = source.pattern
+        var pattern = source.pattern
         if (pattern.isEmpty()) return null
         val flags = source.flags
 
@@ -586,6 +596,10 @@ object CharacterRegexApplier {
         // standard flags here keeps diagnostics deterministic and isolated.
         if (flags.any { it !in "dgimsuvy" } || flags.toSet().size != flags.length) return null
 
+        if ('u' in flags) {
+            pattern = translateCodePointEscapes(pattern) ?: return null
+        }
+
         val options = buildSet {
             if ('i' in flags) add(RegexOption.IGNORE_CASE)
             if ('m' in flags) add(RegexOption.MULTILINE)
@@ -593,6 +607,28 @@ object CharacterRegexApplier {
         }
 
         return runCatching { Regex(pattern, options) }.getOrNull()
+    }
+
+    /** Translate only unescaped JS Unicode code points to JVM/ICU's shared syntax. */
+    private fun translateCodePointEscapes(pattern: String): String? {
+        val result = StringBuilder()
+        var i = 0
+        while (i < pattern.length) {
+            if (pattern[i] == '\\' && i + 1 < pattern.length) {
+                if (pattern.startsWith("\\u{", i)) {
+                    val end = pattern.indexOf('}', i + 3)
+                    if (end < 0) return null
+                    val code = pattern.substring(i + 3, end).toIntOrNull(16) ?: return null
+                    if (code !in 0..0x10FFFF) return null
+                    result.append("\\x{").append(code.toString(16)).append('}')
+                    i = end + 1
+                } else {
+                    result.append(pattern[i]).append(pattern[i + 1])
+                    i += 2
+                }
+            } else result.append(pattern[i++])
+        }
+        return result.toString()
     }
 
     private fun JsonObject.cardDataObject(): JsonObject =

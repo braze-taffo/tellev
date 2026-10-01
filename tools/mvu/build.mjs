@@ -21,6 +21,9 @@ for (const [entry, name, format] of [
 ]) {
   await build({ absWorkingDir: root, entryPoints: [entry], outfile: path.join(outdir, name),
     bundle: true, minify: true, legalComments: 'linked', format, target: 'chrome100',
+    // Highlight grammars contain multiline keyword strings. Escape their newlines
+    // in the generated bundle instead of emitting trailing whitespace inside literals.
+    supported: name === 'globals.js' ? { 'template-literal': false } : {},
     plugins: [httpsNpm], define: { 'process.env.NODE_ENV': '"production"' } });
 }
 const files = {};

@@ -67,6 +67,11 @@ data class MacroContext(
      * `{{get_character_variable::…}}` / `{{format_character_variable::…}}`.
      */
     val characterVariables: kotlinx.serialization.json.JsonObject? = null,
+    /** Immutable render inputs, or an explicit mutable scope for message processing. */
+    val localVariables: JsonObject? = null,
+    val globalVariables: JsonObject? = null,
+    val variableAccess: MacroVariableAccess? = null,
+    val preserveExistingLocalVariables: Boolean = false,
 )
 
 class DefaultMacroEngine : MacroEngine {
@@ -94,7 +99,10 @@ class DefaultMacroEngine : MacroEngine {
     }
 
     override fun expand(text: String, context: MacroContext): String {
-        return expandRecursive(text, context, depth = 0)
+        val scoped = if (context.variableAccess == null && context.localVariables != null) {
+            context.copy(variableAccess = SnapshotMacroVariables(context.localVariables, context.globalVariables ?: JsonObject(emptyMap())))
+        } else context
+        return expandRecursive(text, scoped, depth = 0)
     }
 
     // ST trim macro: {{trim}} removes itself AND any surrounding newlines
@@ -129,7 +137,7 @@ class DefaultMacroEngine : MacroEngine {
         // forms ({{.name++}}, {{.name=value}}, {{.name==value}}, {{$name||default}},
         // ...). Must run before the `::` variable macros and the standard `when`,
         // since these expressions contain no `::` and would otherwise fall through.
-        resolveShorthand(expression)?.let { return it }
+        resolveShorthand(expression, context)?.let { return it }
 
         // Text transform macros: {{upper:...}}, {{lower:...}}, {{capitalize:...}}
         if (expression.startsWith("upper:")) {
@@ -219,7 +227,7 @@ class DefaultMacroEngine : MacroEngine {
         resolveScopedVariableMacro(expression, context)?.let { return it }
 
         // SillyTavern variable macros: {{getvar::name}}, {{setvar::name::value}}, ...
-        resolveVariableMacro(expression)?.let { return it }
+        resolveVariableMacro(expression, context)?.let { return it }
 
         // Bias macro: {{bias "text"}} -> pass through
         if (expression.startsWith("bias ")) {
@@ -455,7 +463,8 @@ class DefaultMacroEngine : MacroEngine {
      * Global scope: the `*globalvar` variants. Returns null if [expression]
      * is not a variable macro, so the caller can continue resolution.
      */
-    private fun resolveVariableMacro(expression: String): String? {
+    private fun resolveVariableMacro(expression: String, context: MacroContext): String? {
+        val variableStore = context.variableAccess ?: variableStore
         val separator = "::"
         val firstSep = expression.indexOf(separator)
         if (firstSep <= 0) return null
@@ -530,7 +539,8 @@ class DefaultMacroEngine : MacroEngine {
      * conditional assignment. Returns null when [expression] is not a shorthand
      * so the caller continues resolution.
      */
-    private fun resolveShorthand(expression: String): String? {
+    private fun resolveShorthand(expression: String, context: MacroContext): String? {
+        val variableStore = context.variableAccess ?: variableStore
         if (expression.isEmpty()) return null
         val scopeChar = expression[0]
         if (scopeChar != '.' && scopeChar != '$') return null
@@ -541,6 +551,9 @@ class DefaultMacroEngine : MacroEngine {
         val name = nameMatch.value
         if (name.isEmpty()) return null
         val op = body.substring(nameMatch.range.last + 1)
+
+        fun has(name: String, global: Boolean): Boolean =
+            if (global) variableStore?.hasGlobal(name) == true else variableStore?.hasLocal(name) == true
 
         fun get(): String =
             if (scopeIsGlobal) variableStore?.getGlobal(name) ?: "" else variableStore?.getLocal(name) ?: ""
@@ -589,9 +602,6 @@ class DefaultMacroEngine : MacroEngine {
             else -> null
         }
     }
-
-    private fun has(name: String, global: Boolean): Boolean =
-        if (global) variableStore?.hasGlobal(name) == true else variableStore?.hasLocal(name) == true
 
     private fun isFalsy(value: String): Boolean =
         value.isEmpty() || value == "0" || value.equals("false", ignoreCase = true) || value == "null"

@@ -65,6 +65,31 @@ class FileStDataStoreTest {
     // ---- World Book Tests ----
 
     @Test
+    fun `exporting a card does not mutate its identity or either chat history`() = runBlocking {
+        for (id in listOf("exported", "other")) {
+            store.saveCharacter(app.tellev.core.model.CharacterCard(id, "Card $id"))
+            store.saveChatSession(ChatSession("history-$id", id, id, null,
+                listOf(ChatMessage("message-$id", MessageRole.Character, id, "history of $id", 1))))
+        }
+        val paths = listOf(layout.characters.resolve("exported.json"),
+            layout.chats.resolve("exported/history-exported.jsonl"),
+            layout.chats.resolve("other/history-other.jsonl"))
+        val originalBytes = paths.map { Files.readAllBytes(it) }
+        val exported = CharacterExporter().exportToJson(store.readCharacter("exported"))
+        assertEquals("Card exported", CharacterImporter().parseCharacterJsonObject(
+            FileStDataStore.defaultJson.parseToJsonElement(exported).jsonObject).name)
+        paths.forEachIndexed { index, path ->
+            org.junit.Assert.assertArrayEquals(originalBytes[index], Files.readAllBytes(path))
+        }
+        val reopened = FileStDataStore(layout)
+        for (id in listOf("exported", "other")) {
+            assertEquals(1, reopened.listChatSessionSummaries(id).size)
+            assertEquals("history of $id", reopened.readChatSession("history-$id").messages.single().content)
+        }
+        Unit
+    }
+
+    @Test
     fun `reasoning variants survive JSONL disk restart and export`() = runBlocking {
         val first = ChatMessage("r", MessageRole.Character, "Bob", "body", 1L)
             .withGenerationReasoning(MessageReasoning.Parts("body", "thought"), "body", "thought", "stop", false)

@@ -66,6 +66,11 @@ try {
     }
     if (url.pathname === '/') return route.fulfill({ status: 200, contentType: 'text/html', body: html });
     if (url.pathname === '/isolation') return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>isolation</title>' });
+    // Served without CORS headers so its top-level throw reaches the host
+    // document's window.onerror as an opaque cross-origin "Script error.".
+    if (url.hostname === 'remote-fixtures.invalid' && url.pathname === '/throwing.js') {
+      return route.fulfill({ status: 200, contentType: 'application/javascript', body: "throw new Error('remote bootstrap failure');" });
+    }
     return route.abort();
   });
   const page = await context.newPage();
@@ -92,6 +97,28 @@ try {
   assert.equal(result.sound, 'on');
   assert.deepEqual(result.registrations.slice(1), ['storage', 'listener']);
   assert.equal(result.childSession, 'ok');
+  const failure = await page.evaluate(async () => {
+    try {
+      await window.__tellevLoadScripts([{ id: 'broken', name: 'Broken card script',
+        content: "throw new Error('fixture module failure')" }]);
+    } catch (error) {
+      return { reported: window.__testFailure, rejected: String(error) };
+    }
+  });
+  assert.match(failure.reported, /Broken card script:.*fixture module failure/);
+  assert.match(failure.rejected, /Broken card script:.*fixture module failure/);
+  // A remote script a card injects SPreset-style must not poison the load
+  // when it throws: cross-origin errors reach window.onerror as an opaque
+  // "Script error." and are downgraded to a log entry.
+  await page.evaluate(() => { window.__testFailure = null; });
+  const remote = await page.evaluate(async () => {
+    await window.__tellevLoadScripts([{ id: 'spreset-like', name: 'Remote bootstrap',
+      content: "const s=document.createElement('script');s.src='https://remote-fixtures.invalid/throwing.js';document.body.appendChild(s);" }]);
+    return 'loaded';
+  });
+  assert.equal(remote, 'loaded');
+  await page.waitForTimeout(800);
+  assert.equal(await page.evaluate(() => window.__testFailure), null);
   const sameOrigin = await context.newPage();
   await sameOrigin.goto('https://e-0000000000000000000000000000000000000001.extensions.tellev.local/isolation');
   assert.equal(await sameOrigin.evaluate(() => localStorage.getItem('card.sound')), 'on');

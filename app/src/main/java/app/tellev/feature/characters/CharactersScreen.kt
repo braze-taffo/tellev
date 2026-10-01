@@ -27,6 +27,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.background
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.material.icons.filled.Save
+import app.tellev.ui.AtmosphereIntro
+import app.tellev.ui.CharacterCover
+import app.tellev.ui.CharacterPortraitCard
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -113,7 +128,7 @@ fun CharactersListScreen(
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var searchActive by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
+    val searchQuery = state.searchQuery
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pendingExport by remember { mutableStateOf<Pair<String, String>?>(null) }
@@ -198,7 +213,7 @@ fun CharactersListScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                 ),
             )
         },
@@ -222,7 +237,6 @@ fun CharactersListScreen(
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = {
-                            searchQuery = it
                             viewModel.search(it)
                         },
                         modifier = Modifier
@@ -234,7 +248,6 @@ fun CharactersListScreen(
                         trailingIcon = {
                             if (searchQuery.isNotEmpty()) {
                                 IconButton(onClick = {
-                                    searchQuery = ""
                                     viewModel.search("")
                                 }) {
                                     Icon(Icons.Default.Close, contentDescription = stringResource(R.string.chars_clear_cd))
@@ -289,11 +302,21 @@ fun CharactersListScreen(
                         }
                     }
                 } else {
-                    LazyColumn(
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(148.dp),
                         modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 16.dp, bottom = 104.dp),
                     ) {
+                        item(key = "library_intro", span = { GridItemSpan(maxLineSpan) }) {
+                            AtmosphereIntro(
+                                title = stringResource(R.string.ui_character_library),
+                                subtitle = stringResource(R.string.ui_character_library_hint),
+                                icon = Icons.Default.People,
+                                label = stringResource(R.string.ui_character_count, state.filteredCharacters.size),
+                            )
+                        }
                         items(
                             state.filteredCharacters,
                             key = { it.id },
@@ -336,73 +359,19 @@ private fun CharacterListItem(
     var showContextMenu by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = { showContextMenu = true },
-            ),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        ),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CharacterAvatar(
-                file = avatarFile,
-                fallbackText = character.name,
-                modifier = Modifier.size(48.dp),
-            )
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = character.name,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                if (character.tags.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        character.tags.take(5).forEach { tag ->
-                            AssistChip(
-                                onClick = {},
-                                label = {
-                                    Text(
-                                        text = tag,
-                                        style = MaterialTheme.typography.labelSmall,
-                                    )
-                                },
-                                modifier = Modifier.height(24.dp),
-                            )
-                        }
-                        if (character.tags.size > 5) {
-                            AssistChip(
-                                onClick = {},
-                                label = {
-                                    Text(
-                                        text = "+${character.tags.size - 5}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                    )
-                                },
-                                modifier = Modifier.height(24.dp),
-                            )
-                        }
-                    }
-                }
-            }
-
+    CharacterPortraitCard(
+        name = character.name,
+        tags = character.tags,
+        file = avatarFile,
+        onClick = onClick,
+        onLongClick = { showContextMenu = true },
+        trailing = {
             Box {
-                IconButton(onClick = { showContextMenu = true }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.chars_more_options_cd))
+                Surface(shape = CircleShape, color = Color.Black.copy(alpha = 0.4f)) {
+                    IconButton(onClick = { showContextMenu = true }) {
+                        Icon(Icons.Default.MoreVert, tint = Color.White,
+                            contentDescription = stringResource(R.string.chars_more_options_cd))
+                    }
                 }
                 DropdownMenu(
                     expanded = showContextMenu,
@@ -455,8 +424,8 @@ private fun CharacterListItem(
                     )
                 }
             }
-        }
-    }
+        },
+    )
 
     if (showDeleteDialog) {
         AlertDialog(
@@ -632,7 +601,7 @@ fun CharacterDetailScreen(
                         enabled = !state.isLoading,
                     ) {
                         Icon(
-                            Icons.Default.FileDownload,
+                            Icons.Default.Save,
                             contentDescription = if (isCreating) {
                                 stringResource(R.string.chars_create_character)
                             } else {
@@ -642,7 +611,7 @@ fun CharacterDetailScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                 ),
             )
         },
@@ -677,10 +646,25 @@ fun CharacterDetailScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                // A picked image stays in the draft until the character is created.
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                // Cover and avatar are presentation only; the picked image stays
+                // in the existing draft until Create is pressed.
+                Box(Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(24.dp))) {
+                    CharacterCover(
+                        file = if (isCreating) null else state.avatarFiles[character.id],
+                        name = name,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    if (pendingAvatar != null && isCreating) {
+                        Image(bitmap = pendingAvatar, contentDescription = null,
+                            contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    }
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+                        listOf(Color.Black.copy(alpha = 0.1f), Color.Black.copy(alpha = 0.8f)),
+                    )))
+                    Row(
+                        modifier = Modifier.align(Alignment.BottomStart).padding(18.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                     if (pendingAvatar != null && isCreating) {
                         Image(
                             bitmap = pendingAvatar,
@@ -698,20 +682,22 @@ fun CharacterDetailScreen(
                         )
                     }
                     Spacer(modifier = Modifier.width(16.dp))
-                    Column {
+                    Column(Modifier.weight(1f)) {
                         Text(
-                            text = stringResource(R.string.chars_card_section),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            text = name.ifBlank { stringResource(R.string.chars_card_section) },
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color.White,
+                            maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         )
                         Text(
                             text = if (isCreating) {
                                 stringResource(R.string.chars_name_only_hint)
                             } else {
-                                stringResource(R.string.chars_character_id, character.id)
+                                stringResource(R.string.chars_card_section)
                             },
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            color = Color.White.copy(alpha = 0.8f),
                         )
                         TextButton(onClick = { avatarPicker.launch("image/*") }) {
                             Text(
@@ -720,8 +706,10 @@ fun CharacterDetailScreen(
                                 } else {
                                     stringResource(R.string.chars_change_avatar)
                                 },
+                                color = Color.White,
                             )
                         }
+                    }
                     }
                 }
 

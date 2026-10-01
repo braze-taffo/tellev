@@ -211,7 +211,7 @@ class JsonAndChatCompatTest {
     }
 
     @Test
-    fun `chat content is macro-expanded before exposure through the engine`() {
+    fun `ST generation first floor macro exception also applies to a user floor`() {
         val result = DefaultPromptEngine().build(
             PromptBuildRequest(
                 character = app.tellev.core.model.CharacterCard(id = "alice", name = "Alice"),
@@ -236,6 +236,7 @@ class JsonAndChatCompatTest {
         )
 
         val prompt = result.messages.joinToString("\n") { it.content }
+        // ST script.js substitutes chat[0].mes before coreChat.map.
         assertTrue(prompt.contains("talk to Alice"))
     }
 }

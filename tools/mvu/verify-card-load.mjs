@@ -6,14 +6,19 @@ const options = process.argv.slice(3);
 const selectedName = options.find(option => !option.startsWith('--'));
 const expectMvu = options.includes('--expect-mvu');
 const expectedUi = options.find(option => option.startsWith('--expect-ui='))?.slice('--expect-ui='.length);
+const presetPath = options.find(option => option.startsWith('--preset='))?.slice('--preset='.length);
+const resourceMapPath = options.find(option => option.startsWith('--resource-map='))?.slice('--resource-map='.length);
+const resourceMap = resourceMapPath ? JSON.parse(await readFile(resourceMapPath, 'utf8')) : {};
 if (!file) {
   console.error('Usage: node tools/mvu/verify-card-load.mjs <extracted-card.json> [script-name] [--expect-mvu] [--expect-ui=id]');
   process.exit(2);
 }
 const card = JSON.parse(await readFile(file, 'utf8')).data;
-const scripts = card.extensions?.tavern_helper?.scripts
-  ?.filter(script => script.enabled && (!selectedName || script.name === selectedName))
-  .map(({ id, name, content }) => ({ id, name, content })) ?? [];
+const preset = presetPath ? JSON.parse(await readFile(presetPath, 'utf8')) : null;
+const scripts = [...(card.extensions?.tavern_helper?.scripts ?? []),
+  ...(preset?.extensions?.tavern_helper?.scripts ?? [])]
+  .filter(script => script.enabled && (!selectedName || script.name === selectedName))
+  .map(({ id, name, content }) => ({ id, name, content }));
 if (!scripts.length) throw Error('No matching enabled scripts');
 const read = path => readFile(new URL(path, import.meta.url), 'utf8');
 const [template, globals, chat, host, mvu, zod] = await Promise.all([
@@ -52,7 +57,7 @@ try {
     window.tellevNative = new Proxy({
       getSettings: () => '{}',
       stGetContext: () => JSON.stringify({ chat, chatId: 'browser-replay', name2: character.name,
-        name1: 'User', characterId: 'browser-replay' }),
+        name1: 'User', characterId: 'browser-replay', extensionSettings: {} }),
       stGetVariablesForScope: () => '{}', stGetAllVariables: () => '{}',
       stGetMessageVariables: () => '{}',
       apiCall: requestId => queueMicrotask(() => window.Tellev?.onApiResponse(
@@ -64,6 +69,9 @@ try {
   }, { name: card.name, first_mes: card.first_mes });
   await context.route('**/*', route => {
     const url = route.request().url();
+    if (resourceMap[url]) {
+      return route.fulfill({ status: 200, contentType: 'application/javascript', path: resourceMap[url] });
+    }
     if (url === 'https://extensions.tellev.local/compat/globals.js') {
       return route.fulfill({ status: 200, contentType: 'application/javascript', body: globals,
         headers: { 'access-control-allow-origin': '*' } });

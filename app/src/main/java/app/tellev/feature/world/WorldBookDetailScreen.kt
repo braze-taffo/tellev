@@ -57,6 +57,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.tellev.R
 import app.tellev.core.model.WorldBookEntry
+import app.tellev.ui.AtmosphereIntro
+import app.tellev.ui.QuietTag
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.ui.text.style.TextOverflow
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -110,7 +114,7 @@ fun WorldBookDetailScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.background,
                 ),
             )
         },
@@ -199,9 +203,19 @@ fun WorldBookDetailScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        start = 18.dp, end = 18.dp, top = 16.dp, bottom = 104.dp,
+                    ),
                 ) {
+                    item(key = "book_intro") {
+                        AtmosphereIntro(
+                            title = book.name,
+                            subtitle = stringResource(R.string.ui_world_library_hint),
+                            icon = Icons.AutoMirrored.Filled.MenuBook,
+                            label = stringResource(R.string.wblist_entry_count, book.entries.size),
+                        )
+                    }
                     items(state.filteredEntries, key = { it.id }) { entry ->
                         WorldBookEntryItem(
                             entry = entry,
@@ -237,8 +251,8 @@ private fun WorldBookEntryItem(
         modifier = Modifier.fillMaxWidth(),
         onClick = onClick,
         colors = CardDefaults.cardColors(
-            containerColor = if (entry.enabled) MaterialTheme.colorScheme.surfaceVariant
-            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            containerColor = if (entry.enabled) MaterialTheme.colorScheme.surfaceContainerLowest
+            else MaterialTheme.colorScheme.surfaceContainerLow,
         ),
     ) {
         Column(
@@ -255,12 +269,13 @@ private fun WorldBookEntryItem(
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.weight(1f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
 
                 Switch(
                     checked = entry.enabled,
                     onCheckedChange = { onToggleEnabled() },
-                    modifier = Modifier.height(24.dp),
                 )
             }
 

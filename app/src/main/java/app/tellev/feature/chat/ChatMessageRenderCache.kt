@@ -39,6 +39,7 @@ internal data class RenderInputs(
     val userName: String,
     val depth: Int,
     val includeNormal: Boolean,
+    val macroContext: app.tellev.core.prompt.MacroContext? = null,
 )
 
 /**

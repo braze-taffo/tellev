@@ -23,6 +23,83 @@ import java.util.concurrent.Executors
 /** Real JSONL storage and ViewModel; the gate pauses only the disk commit, never the UI. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatWriteLifecycleTest {
+    @Test fun `late character refresh cannot replace destination card or its history`() = runBlocking {
+        val root = Files.createTempDirectory("tellev-character-refresh-")
+        val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        Dispatchers.setMain(main)
+        val models = ViewModelStore()
+        val readStarted = CompletableDeferred<Unit>()
+        val releaseRead = CompletableDeferred<Unit>()
+        try {
+            val disk = FileStDataStore(StDirectoryLayout.fromRoot(root))
+            disk.bootstrap()
+            for (id in listOf("a", "b")) {
+                disk.saveCharacter(CharacterCard(id, "Card $id"))
+                disk.saveChatSession(ChatSession("history-$id", id, id, null,
+                    listOf(ChatMessage("message-$id", MessageRole.Character, id, "history of $id", 1))))
+            }
+            val changes = MutableSharedFlow<String>()
+            var pauseRead = false
+            val store = object : StDataStore by disk {
+                override val characterChanges = changes
+                override suspend fun readCharacter(id: String): CharacterCard {
+                    if (id == "a" && pauseRead) {
+                        readStarted.complete(Unit)
+                        releaseRead.await()
+                    }
+                    return disk.readCharacter(id)
+                }
+            }
+            val vm = withContext(main) {
+                ChatViewModel(store, ProviderRegistry(emptyList()), object : PromptEngine {
+                    override fun build(request: PromptBuildRequest): PromptBuildResult = error("No model calls")
+                }, TestSecrets(), HostProbe().api, ExtensionPermissionManager()).also { models.put("chat", it) }
+            }
+            waitUntil { !vm.uiState.value.isLoading }
+            withContext(main) { vm.selectCharacter("a") }
+            waitUntil { vm.uiState.value.currentSession?.id == "history-a" }
+            // The exact long-press menu entry: exporting must leave the active
+            // history and the other card's stored history untouched.
+            val characterVm = withContext(main) {
+                app.tellev.feature.characters.CharactersViewModel(store, MutableStateFlow(0L))
+                    .also { models.put("characters", it) }
+            }
+            val beforeExport = vm.uiState.value.currentSession
+            val historyPath = disk.layout.chats.resolve("a/history-a.jsonl")
+            val historyBytes = Files.readAllBytes(historyPath)
+            val exported = withContext(main) { characterVm.exportCharacterToJson("a") }
+            assertNotNull(exported)
+            assertEquals(beforeExport, vm.uiState.value.currentSession)
+            assertArrayEquals(historyBytes, Files.readAllBytes(historyPath))
+            pauseRead = true
+            changes.emit("a")
+            withTimeout(5_000) { readStarted.await() }
+            withContext(main) { vm.selectCharacter("b") }
+            // Let the destination transition run while the old card read is suspended.
+            delay(150)
+            releaseRead.complete(Unit)
+            changes.emit("unrelated") // previous refresh has finished before inspecting its result
+            waitUntil { vm.uiState.value.currentSession?.id == "history-b" && !vm.uiState.value.isLoading }
+            assertEquals("b", vm.uiState.value.selectedCharacter?.id)
+            assertEquals("history of b", vm.uiState.value.messages.single().content)
+            withContext(main) { vm.deselectCharacter() }
+            waitUntil { vm.uiState.value.currentSession == null }
+            withContext(main) { vm.selectCharacter("b") }
+            waitUntil { vm.uiState.value.currentSession?.id == "history-b" && !vm.uiState.value.isLoading }
+            assertEquals("b", vm.uiState.value.selectedCharacter?.id)
+            assertEquals("history of b", vm.uiState.value.messages.single().content)
+            assertEquals("history of a", disk.readChatSession("history-a").messages.single().content)
+            assertEquals(1, disk.listChatSessionSummaries("b").size)
+            Unit
+        } finally {
+            releaseRead.complete(Unit)
+            withContext(main) { models.clear() }
+            Dispatchers.resetMain()
+            main.close()
+            root.toFile().deleteRecursively()
+        }
+    }
+
     @Test fun `cancelled generation preparation releases state and permits retry`() = runBlocking {
         val root = Files.createTempDirectory("tellev-generation-recovery-")
         val disk = FileStDataStore(StDirectoryLayout.fromRoot(root))

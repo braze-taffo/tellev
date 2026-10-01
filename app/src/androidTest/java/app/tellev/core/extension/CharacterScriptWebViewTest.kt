@@ -5,6 +5,12 @@ import android.content.Intent
 import app.tellev.MainActivity
 import app.tellev.TellevGraph
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -26,6 +32,28 @@ class CharacterScriptWebViewTest {
     @org.junit.After fun closeForegroundActivity() {
         activity.finish()
         InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+    }
+
+    @Test
+    fun cancelledBootstrapDestroysRuntimeAndAllowsReload() = runBlocking {
+        val graph = TellevGraph.create(InstrumentationRegistry.getInstrumentation().targetContext)
+        val host = graph.extensionHost as WebViewJsExtensionHost
+        val id = "cancelled-bootstrap-${UUID.randomUUID()}"
+        try {
+            val loading = async {
+                host.load(ExtensionManifest(id = id), "export {}; await new Promise(() => {});")
+            }
+            withTimeout(10_000) {
+                while (withContext(Dispatchers.Main) { host.webViewForUi(id) == null }) delay(10)
+            }
+            loading.cancelAndJoin()
+            org.junit.Assert.assertNull(host.capabilityToken(id))
+            withContext(Dispatchers.Main) { org.junit.Assert.assertNull(host.webViewForUi(id)) }
+            host.load(ExtensionManifest(id = id), "export {}; window.reloaded = true;")
+            assertEquals("true", host.evaluateRuntime(id, "window.reloaded"))
+        } finally {
+            host.unload(id)
+        }
     }
 
     @Test

@@ -23,6 +23,7 @@ import app.tellev.core.prompt.MacroEngine
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
@@ -219,171 +220,175 @@ class WebViewJsExtensionHost(
         scriptSource: String,
     ): ExtensionHandle {
         val readySignal = CompletableDeferred<Unit>()
-        val handle = try {
-            withContext(Dispatchers.Main) {
-                webViews.remove(manifest.id)?.let(::destroyRuntimeWebView)
-                requests.pendingLoads.remove(manifest.id)?.cancel()
-                requests.pendingLoadFailures.remove(manifest.id)
+        val token = UUID.randomUUID().toString()
+        var loaded = false
+        try {
+            val handle =
+                withContext(Dispatchers.Main) {
+                    webViews.remove(manifest.id)?.let(::destroyRuntimeWebView)
+                    requests.pendingLoads.remove(manifest.id)?.cancel()
+                    requests.pendingLoadFailures.remove(manifest.id)
 
-                val token = UUID.randomUUID().toString()
-                capabilityTokens[manifest.id] = token
-                declaredPermissions[manifest.id] = manifest.permissions
-                requests.pendingLoads[manifest.id] = readySignal
+                    capabilityTokens[manifest.id] = token
+                    declaredPermissions[manifest.id] = manifest.permissions
+                    requests.pendingLoads[manifest.id] = readySignal
 
-                val settingsJson = settingsStore.getSettings(manifest.id)
-                settingsCache[manifest.id] = json.encodeToString(JsonObject.serializer(), settingsJson)
+                    val settingsJson = settingsStore.getSettings(manifest.id)
+                    settingsCache[manifest.id] = json.encodeToString(JsonObject.serializer(), settingsJson)
 
-                // Read built-in compat-module settings so they can be
-                // injected into the WebView's _ejsFeatures and
-                // _tavernHelperSettings globals.
-                val ejsSettings = settingsStore.readEjsTemplateSettings()
-                val ejsSettingsStr = json.encodeToString(
-                    EjsTemplateSettings.serializer(), ejsSettings,
-                )
-                val tavernHelperSettings = settingsStore.readTavernHelperSettings()
-                val tavernHelperSettingsStr = json.encodeToString(
-                    TavernHelperSettings.serializer(), tavernHelperSettings,
-                )
+                    // Read built-in compat-module settings so they can be
+                    // injected into the WebView's _ejsFeatures and
+                    // _tavernHelperSettings globals.
+                    val ejsSettings = settingsStore.readEjsTemplateSettings()
+                    val ejsSettingsStr = json.encodeToString(
+                        EjsTemplateSettings.serializer(), ejsSettings,
+                    )
+                    val tavernHelperSettings = settingsStore.readTavernHelperSettings()
+                    val tavernHelperSettingsStr = json.encodeToString(
+                        TavernHelperSettings.serializer(), tavernHelperSettings,
+                    )
 
-                val webView = WebView(context.applicationContext).apply {
-                    setBackgroundColor(Color.TRANSPARENT)
-                    settings.javaScriptEnabled = true
-                    settings.allowFileAccess = false
-                    settings.allowContentAccess = false
-                    settings.allowFileAccessFromFileURLs = false
-                    settings.allowUniversalAccessFromFileURLs = false
-                    // Character modules use localStorage at module evaluation time.
-                    // Each extension has a distinct HTTPS origin (see extensionBaseUrl).
-                    settings.domStorageEnabled = true
-                    settings.databaseEnabled = false
-                    settings.javaScriptCanOpenWindowsAutomatically = false
-                    settings.setSupportMultipleWindows(false)
+                    val webView = WebView(context.applicationContext).apply {
+                        setBackgroundColor(Color.TRANSPARENT)
+                        settings.javaScriptEnabled = true
+                        settings.allowFileAccess = false
+                        settings.allowContentAccess = false
+                        settings.allowFileAccessFromFileURLs = false
+                        settings.allowUniversalAccessFromFileURLs = false
+                        // Character modules use localStorage at module evaluation time.
+                        // Each extension has a distinct HTTPS origin (see extensionBaseUrl).
+                        settings.domStorageEnabled = true
+                        settings.databaseEnabled = false
+                        settings.javaScriptCanOpenWindowsAutomatically = false
+                        settings.setSupportMultipleWindows(false)
 
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-                            CompatAssets.intercept(context, request.url.toString())
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+                                CompatAssets.intercept(context, request.url.toString())
 
-                        override fun shouldOverrideUrlLoading(
-                            view: WebView,
-                            request: WebResourceRequest,
-                        ): Boolean {
-                            val blocked = if (request.isForMainFrame) {
-                                !isAllowedExtensionNavigation(manifest.id, request.url.toString())
-                            } else {
-                                !isAllowedExtensionFrameNavigation(manifest.id, request.url.toString())
+                            override fun shouldOverrideUrlLoading(
+                                view: WebView,
+                                request: WebResourceRequest,
+                            ): Boolean {
+                                val blocked = if (request.isForMainFrame) {
+                                    !isAllowedExtensionNavigation(manifest.id, request.url.toString())
+                                } else {
+                                    !isAllowedExtensionFrameNavigation(manifest.id, request.url.toString())
+                                }
+                                if (blocked) reportExtensionLog(
+                                    manifest.id,
+                                    "warning",
+                                    "Blocked module navigation to ${request.url}",
+                                )
+                                return blocked
                             }
-                            if (blocked) reportExtensionLog(
-                                manifest.id,
-                                "warning",
-                                "Blocked module navigation to ${request.url}",
-                            )
-                            return blocked
+
+                            @Suppress("DEPRECATION")
+                            override fun shouldOverrideUrlLoading(view: WebView, url: String?): Boolean {
+                                val target = url ?: return true
+                                val blocked = !isAllowedExtensionNavigation(manifest.id, target)
+                                if (blocked) reportExtensionLog(
+                                    manifest.id,
+                                    "warning",
+                                    "Blocked module navigation to $target",
+                                )
+                                return blocked
+                            }
+                        }
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                                val level = if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) "error" else "debug"
+                                reportExtensionLog(manifest.id, level, "${message.message()} (${message.sourceId()}:${message.lineNumber()})")
+                                return true
+                            }
                         }
 
-                        @Suppress("DEPRECATION")
-                        override fun shouldOverrideUrlLoading(view: WebView, url: String?): Boolean {
-                            val target = url ?: return true
-                            val blocked = !isAllowedExtensionNavigation(manifest.id, target)
-                            if (blocked) reportExtensionLog(
-                                manifest.id,
-                                "warning",
-                                "Blocked module navigation to $target",
-                            )
-                            return blocked
-                        }
+                        addJavascriptInterface(Bridge(manifest.id, token), "tellevNative")
+
+                        loadDataWithBaseURL(
+                            extensionBaseUrl(manifest.id),
+                            ExtensionScriptTemplate.buildExtensionHtml(
+                                context = context,
+                                extensionId = manifest.id,
+                                token = token,
+                                scriptSource = scriptSource,
+                                ejsSettingsJson = ejsSettingsStr,
+                                tavernHelperSettingsJson = tavernHelperSettingsStr,
+                            ),
+                            "text/html",
+                            "UTF-8",
+                            null,
+                        )
                     }
-                    webChromeClient = object : WebChromeClient() {
-                        override fun onConsoleMessage(message: ConsoleMessage): Boolean {
-                            val level = if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) "error" else "debug"
-                            reportExtensionLog(manifest.id, level, "${message.message()} (${message.sourceId()}:${message.lineNumber()})")
-                            return true
-                        }
-                    }
 
-                    addJavascriptInterface(Bridge(manifest.id, token), "tellevNative")
+                    webViews[manifest.id] = webView
 
-                    loadDataWithBaseURL(
-                        extensionBaseUrl(manifest.id),
-                        ExtensionScriptTemplate.buildExtensionHtml(
-                            context = context,
-                            extensionId = manifest.id,
-                            token = token,
-                            scriptSource = scriptSource,
-                            ejsSettingsJson = ejsSettingsStr,
-                            tavernHelperSettingsJson = tavernHelperSettingsStr,
-                        ),
-                        "text/html",
-                        "UTF-8",
-                        null,
+                    ExtensionHandle(
+                        id = manifest.id,
+                        name = manifest.effectiveName,
+                        loaded = true,
+                        version = manifest.version,
+                        capabilities = ExtensionScriptTemplate.defaultCapabilities(manifest),
+                        capabilityToken = token,
                     )
                 }
 
-                webViews[manifest.id] = webView
-
-                ExtensionHandle(
-                    id = manifest.id,
-                    name = manifest.effectiveName,
-                    loaded = true,
-                    version = manifest.version,
-                    capabilities = ExtensionScriptTemplate.defaultCapabilities(manifest),
-                    capabilityToken = token,
-                )
-            }
-        } catch (e: Throwable) {
+            // Character cards may load several CDN modules in order. Keep the
+            // ordinary extension deadline while allowing that larger bootstrap.
+            val loadTimeoutMs = if (manifest.version == "character-card") {
+                maxOf(scriptReadyTimeoutMs, CHARACTER_SCRIPT_READY_TIMEOUT_MS)
+            } else scriptReadyTimeoutMs
+            val becameReady = withTimeoutOrNull(loadTimeoutMs) {
+                readySignal.await()
+                true
+            } ?: false
             requests.pendingLoads.remove(manifest.id, readySignal)
-            requests.pendingLoadFailures.remove(manifest.id)
-            capabilityTokens.remove(manifest.id)
-            declaredPermissions.remove(manifest.id)
-            settingsCache.remove(manifest.id)
-            withContext(Dispatchers.Main) { webViews.remove(manifest.id)?.let(::destroyRuntimeWebView) }
-            throw e
+            val scriptFailure = requests.pendingLoadFailures.remove(manifest.id)
+            if (!becameReady || scriptFailure != null) {
+                val message = scriptFailure ?: UiStrings.get(S.webviewhost_error_module_not_ready, loadTimeoutMs)
+                publishLocalEvent(
+                    ExtensionEvent(
+                        name = "extension_load_failed",
+                        extensionId = manifest.id,
+                        payload = buildJsonObject { put("message", message) },
+                    ),
+                )
+                throw IllegalStateException(message)
+            }
+            emit(ExtensionEvent(name = "extension_loaded", extensionId = manifest.id))
+            loaded = true
+            return handle
+        } finally {
+            if (!loaded) withContext(NonCancellable + Dispatchers.Main) {
+                // Cancellation while awaiting ready must retire the old WebView too.
+                // A superseded load must never destroy a newer runtime with the same id.
+                if (capabilityTokens.remove(manifest.id, token)) {
+                    webViews.remove(manifest.id)?.let(::destroyRuntimeWebView)
+                    declaredPermissions.remove(manifest.id)
+                    settingsCache.remove(manifest.id)
+                    slashCommands.entries.removeIf { it.value.extensionId == manifest.id }
+                    virtualRoutes.entries.removeIf { it.value.extensionId == manifest.id }
+                    requests.cancelPendingForExtension(manifest.id)
+                    promptStore.clearExtension(manifest.id)
+                }
+            }
         }
-
-        // Character cards may load several CDN modules in order. Keep the
-        // ordinary extension deadline while allowing that larger bootstrap.
-        val loadTimeoutMs = if (manifest.version == "character-card") {
-            maxOf(scriptReadyTimeoutMs, CHARACTER_SCRIPT_READY_TIMEOUT_MS)
-        } else scriptReadyTimeoutMs
-        val becameReady = withTimeoutOrNull(loadTimeoutMs) {
-            readySignal.await()
-            true
-        } ?: false
-        requests.pendingLoads.remove(manifest.id, readySignal)
-        val scriptFailure = requests.pendingLoadFailures.remove(manifest.id)
-        if (!becameReady || scriptFailure != null) {
-            withContext(Dispatchers.Main) { webViews.remove(manifest.id)?.let(::destroyRuntimeWebView) }
-            capabilityTokens.remove(manifest.id)
-            declaredPermissions.remove(manifest.id)
-            settingsCache.remove(manifest.id)
-            slashCommands.entries.removeIf { it.value.extensionId == manifest.id }
-            virtualRoutes.entries.removeIf { it.value.extensionId == manifest.id }
-            promptStore.clearExtension(manifest.id)
-            val message = scriptFailure ?: UiStrings.get(S.webviewhost_error_module_not_ready, loadTimeoutMs)
-            publishLocalEvent(
-                ExtensionEvent(
-                    name = "extension_load_failed",
-                    extensionId = manifest.id,
-                    payload = buildJsonObject { put("message", message) },
-                ),
-            )
-            throw IllegalStateException(message)
-        }
-        emit(ExtensionEvent(name = "extension_loaded", extensionId = manifest.id))
-        return handle
     }
 
     override suspend fun unload(extensionId: String) {
         withContext(Dispatchers.Main) {
+            // Revoke and clear on the same dispatcher that installs runtimes;
+            // resuming off-main here used to let an old unload clear a new load.
+            capabilityTokens.remove(extensionId)
+            declaredPermissions.remove(extensionId)
+            settingsCache.remove(extensionId)
+            slashCommands.entries.removeIf { it.value.extensionId == extensionId }
+            virtualRoutes.entries.removeIf { it.value.extensionId == extensionId }
+            requests.cancelPendingForExtension(extensionId)
+            promptStore.clearExtension(extensionId)
+            permissionManager.clearExtension(extensionId)
             webViews.remove(extensionId)?.let(::destroyRuntimeWebView)
         }
-        capabilityTokens.remove(extensionId)
-        declaredPermissions.remove(extensionId)
-        settingsCache.remove(extensionId)
-        slashCommands.entries.removeIf { it.value.extensionId == extensionId }
-        virtualRoutes.entries.removeIf { it.value.extensionId == extensionId }
-        requests.cancelPendingForExtension(extensionId)
-        promptStore.clearExtension(extensionId)
-        permissionManager.clearExtension(extensionId)
         emit(ExtensionEvent(name = "extension_unloaded", extensionId = extensionId))
     }
 
@@ -895,14 +900,16 @@ class WebViewJsExtensionHost(
 
         @JavascriptInterface
         fun extensionReady() {
+            if (capabilityTokens[extensionId] != token) return
             requests.pendingLoads.remove(extensionId)?.complete(Unit)
         }
 
         @JavascriptInterface
         fun extensionFailed(message: String) {
+            if (capabilityTokens[extensionId] != token) return
             val detail = message.trim().ifBlank { "Unknown JavaScript error" }
             if (requests.pendingLoads.containsKey(extensionId)) {
-                requests.pendingLoadFailures[extensionId] = detail
+                requests.pendingLoadFailures.putIfAbsent(extensionId, detail)
                 requests.pendingLoads[extensionId]?.complete(Unit)
             }
             reportExtensionLog(extensionId, "error", detail)

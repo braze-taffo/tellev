@@ -39,6 +39,8 @@ internal object WorldBookCodec {
                     priority = entryObj["priority"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
                     insertionOrder = entryObj["order"]?.jsonPrimitive?.content?.toIntOrNull() ?: 100,
                     depth = entryObj["depth"]?.jsonPrimitive?.content?.toIntOrNull() ?: 4,
+                    scanDepth = if ("scanDepth" in entryObj) entryObj["scanDepth"]?.jsonPrimitive?.content?.toIntOrNull()
+                        else extensions?.get("scan_depth")?.jsonPrimitive?.content?.toIntOrNull(),
                     position = entryObj["position"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
                     probability = entryObj["probability"]?.jsonPrimitive?.content?.toIntOrNull() ?: 100,
                     useProbability = entryObj["useProbability"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: true,
@@ -113,6 +115,7 @@ internal object WorldBookCodec {
                     merged["groupOverride"] = JsonPrimitive(entry.groupOverride)
                     merged["groupWeight"] = JsonPrimitive(entry.groupWeight)
                     merged["useGroupScoring"] = JsonPrimitive(entry.useGroupScoring)
+                    merged["scanDepth"] = entry.scanDepth?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull
                     if (entry.priority != 0 || entry.raw.containsKey("priority")) {
                         merged["priority"] = JsonPrimitive(entry.priority)
                     }

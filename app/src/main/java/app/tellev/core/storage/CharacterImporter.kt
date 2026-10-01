@@ -246,6 +246,7 @@ class CharacterImporter(
                 ?: entryObj.int("depth")
                 ?: 4,
             position = position,
+            scanDepth = extensions?.int("scan_depth") ?: entryObj.int("scanDepth") ?: entryObj.int("scan_depth"),
             probability = extensions?.int("probability")
                 ?: entryObj.int("probability")
                 ?: 100,

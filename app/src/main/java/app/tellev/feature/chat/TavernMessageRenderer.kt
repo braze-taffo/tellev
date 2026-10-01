@@ -5,6 +5,10 @@ import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageReasoning
 import app.tellev.core.model.MessageRole
 import app.tellev.core.regex.CharacterRegexApplier
+import app.tellev.core.prompt.DefaultMacroEngine
+import app.tellev.core.prompt.MacroContext
+import app.tellev.core.prompt.SnapshotMacroVariables
+import kotlinx.serialization.json.JsonObject
 
 internal fun renderMessageParts(
     parts: MessageReasoning.Parts,
@@ -14,11 +18,20 @@ internal fun renderMessageParts(
     userName: String,
     depth: Int,
     includeNormal: Boolean,
+    macroContext: MacroContext? = null,
 ): List<TavernRenderSegment> = buildList {
+    // Workers retain the owning session's snapshot, including after a chat switch.
+    val base = macroContext ?: MacroContext(characterName = character?.name ?: "Character", userName = userName)
+    val scoped = base.copy(variableAccess = SnapshotMacroVariables(
+        base.localVariables ?: JsonObject(emptyMap()), base.globalVariables ?: JsonObject(emptyMap()),
+    ))
+    val engine = DefaultMacroEngine()
+    val expand: (String) -> String = { engine.expand(it, scoped) }
     if (parts.reasoning.isNotBlank()) {
         val context = CharacterRegexApplier.RegexExecutionContext(
             character, preset, role, userName, depth,
             phase = CharacterRegexApplier.RegexPhase.Normal,
+            macroExpander = expand,
         )
         val normal = CharacterRegexApplier.apply(parts.reasoning, context, 6)
         val display = CharacterRegexApplier.apply(normal, context.copy(phase = CharacterRegexApplier.RegexPhase.Display), 6)
@@ -26,6 +39,7 @@ internal fun renderMessageParts(
     }
     val displayBody = CharacterRegexApplier.applyForDisplay(
         parts.body, role, character, userName, depth, preset = preset, includeNormal = includeNormal,
+        macroExpander = expand,
     )
     // Display rules may create tags, but cannot move body text into the reasoning channel.
     val assistant = role == MessageRole.Character || role == MessageRole.Assistant

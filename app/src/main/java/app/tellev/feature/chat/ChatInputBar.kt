@@ -2,6 +2,8 @@ package app.tellev.feature.chat
 
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -67,7 +70,10 @@ internal fun ChatInputBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .clip(RoundedCornerShape(28.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = bubbleAlpha))
+            .padding(8.dp),
     ) {
         // 生图进行中的状态行（可随时用 Stop 按钮取消）。
         if (isGeneratingImage) {
@@ -95,7 +101,8 @@ internal fun ChatInputBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 8.dp),
+                    .padding(bottom = 8.dp)
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 attachments.forEach { attachment ->
@@ -147,8 +154,8 @@ internal fun ChatInputBar(
                 enabled = !isGenerating,
                 modifier = Modifier
                     .size(48.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha)),
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = bubbleAlpha)),
             ) {
                 Icon(
                     Icons.Default.AddPhotoAlternate,
@@ -164,8 +171,8 @@ internal fun ChatInputBar(
                     enabled = !isGenerating && !isGeneratingImage,
                     modifier = Modifier
                         .size(48.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha)),
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = bubbleAlpha)),
                 ) {
                     Icon(
                         Icons.Default.Palette,
@@ -182,12 +189,13 @@ internal fun ChatInputBar(
                 minLines = 1,
                 maxLines = 6,
                 placeholder = { Text(stringResource(R.string.chat_input_hint)) },
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(18.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha),
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha),
-                    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha),
-                    errorContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha),
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = bubbleAlpha),
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = bubbleAlpha),
+                    disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = bubbleAlpha),
+                    errorContainerColor = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = bubbleAlpha),
+                    unfocusedBorderColor = Color.Transparent,
                 ),
             )
 

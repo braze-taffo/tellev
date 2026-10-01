@@ -254,6 +254,8 @@ data class WorldBookEntry(
     val groupWeight: Int = 100,
     /** Keep only the best key-match scorers in the group before rolling. */
     val useGroupScoring: Boolean = false,
+    /** Per-entry history depth. null inherits the global world-info depth. */
+    val scanDepth: Int? = null,
     val raw: JsonObject = buildJsonObject { },
 )
 

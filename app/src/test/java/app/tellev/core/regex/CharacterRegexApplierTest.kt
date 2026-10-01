@@ -205,7 +205,7 @@ class CharacterRegexApplierTest {
     }
 
     @Test
-    fun `normal display and prompt phases merge card before preset`() {
+    fun `normal display and prompt phases merge preset before card like ST SCRIPT_TYPES`() {
         val card = CharacterImporter().importFromJson(
             """{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"C","extensions":{"regex_scripts":[
               {"findRegex":"/x/g","replaceString":"card","placement":[2]},
@@ -226,7 +226,7 @@ class CharacterRegexApplierTest {
             } },
         )
 
-        assertEquals("preset", CharacterRegexApplier.applyNormal("x", MessageRole.Character, card, preset))
+        assertEquals("card", CharacterRegexApplier.applyNormal("x", MessageRole.Character, card, preset))
         assertEquals(
             "<details>shown</details>",
             CharacterRegexApplier.applyForDisplay("SHOW", MessageRole.Character, card, preset = preset, includeNormal = false),

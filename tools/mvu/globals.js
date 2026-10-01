@@ -5,4 +5,7 @@ import * as Vue from 'vue';
 import * as z from 'zod';
 import * as YAML from 'yaml';
 import ejs from 'ejs/ejs.min.js';
-Object.assign(window, { _, $, jQuery: $, toastr, Vue, z, YAML, ejs });
+// Same sanitizer version as the locked SillyTavern package-lock.json.
+import DOMPurify from 'dompurify';
+import hljs from 'highlight.js';
+Object.assign(window, { _, $, jQuery: $, toastr, Vue, z, YAML, ejs, DOMPurify, hljs });

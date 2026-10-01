@@ -84,6 +84,7 @@ class WorldInfoScanner(
         searchText: String,
         expand: (WorldBookEntry, String) -> String,
         keyExpand: (String) -> String = { it },
+        entrySearchText: (WorldBookEntry) -> String = { searchText },
     ): ScanResult {
         // SillyTavern always rejects disabled entries before considering the
         // constant flag. A disabled constant is still disabled.
@@ -102,7 +103,7 @@ class WorldInfoScanner(
         val activated = LinkedHashMap<WorldBookEntry, String>()
         val failedProbability = mutableSetOf<WorldBookEntry>()
 
-        fun processMatchedPass(matched: List<WorldBookEntry>, passText: String): List<WorldBookEntry> {
+        fun processMatchedPass(matched: List<WorldBookEntry>, passText: (WorldBookEntry) -> String): List<WorldBookEntry> {
             // Inclusion groups run on each pass's fresh matches BEFORE the
             // probability rolls (world-info.js:4893 filterByInclusionGroups).
             val survivors = filterByInclusionGroups(matched, activated.keys, passText, keyExpand)
@@ -123,9 +124,9 @@ class WorldInfoScanner(
         // ST suppresses delayUntilRecursion entries outside recursion scans
         // (world-info.js:4749-4752), regardless of the delay level.
         val initialMatches = candidates.filter {
-            it.delayUntilRecursion <= 0 && matchEntry(it, searchText, keyExpand, decorators.getValue(it))
+            it.delayUntilRecursion <= 0 && matchEntry(it, entrySearchText(it), keyExpand, decorators.getValue(it))
         }
-        processMatchedPass(initialMatches, searchText)
+        processMatchedPass(initialMatches, entrySearchText)
 
         // ── Recursive passes ──────────────────────────────────────────────
         if (maxRecursionSteps > 0) {
@@ -146,7 +147,9 @@ class WorldInfoScanner(
                 if (recursionText.isBlank() && recurseBuffer.isBlank()) break
                 recurseBuffer.append(recursionText)
 
-                val combinedText = "$searchText\n$recurseBuffer"
+                val combinedText: (WorldBookEntry) -> String = {
+                    if (it.scanDepth != null && it.scanDepth <= 0) "" else "${entrySearchText(it)}\n$recurseBuffer"
+                }
                 // Recursion candidates: anything not yet activated and not
                 // already failed a probability roll. delayUntilRecursion
                 // entries become eligible once the scan reaches their level
@@ -159,7 +162,7 @@ class WorldInfoScanner(
                 }
 
                 val matchedThisRound = recursionCandidates
-                    .filter { matchEntry(it, combinedText, keyExpand, decorators.getValue(it)) }
+                    .filter { matchEntry(it, combinedText(it), keyExpand, decorators.getValue(it)) }
 
                 newlyActivated = processMatchedPass(matchedThisRound, combinedText)
                 steps++
@@ -300,7 +303,7 @@ class WorldInfoScanner(
     private fun filterByInclusionGroups(
         matched: List<WorldBookEntry>,
         alreadyActivated: Collection<WorldBookEntry>,
-        passText: String,
+        passText: (WorldBookEntry) -> String,
         keyExpand: (String) -> String,
     ): List<WorldBookEntry> {
         val grouped = LinkedHashMap<String, MutableList<WorldBookEntry>>()
@@ -319,7 +322,7 @@ class WorldInfoScanner(
             // Scoring pass: keep only the best key-match scorers among entries
             // that opted into group scoring (world-info.js:5173-5209).
             if (alive.any { it.useGroupScoring }) {
-                val scores = alive.associateWith { groupScore(it, passText, keyExpand) }
+                val scores = alive.associateWith { groupScore(it, passText(it), keyExpand) }
                 val maxScore = scores.values.maxOrNull() ?: 0
                 alive.filter { it.useGroupScoring && (scores[it] ?: 0) < maxScore }
                     .forEach { removed.add(it); alive.remove(it) }
