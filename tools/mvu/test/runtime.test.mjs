@@ -21,6 +21,13 @@ test('actual MVU bundle initializes and applies DaoYuan Zod updates', {timeout:2
   try {
     w.fetch = async () => ({ok:true, json:async()=>({pkgVersion:'1.18.0'}), text:async()=>''});
     w.tellevNative = {
+      stCompatStorage:(operation,body)=> {
+        const payload=JSON.parse(body);
+        if(operation==='getCharWorldbookNames')return JSON.stringify({primary:'dao',additional:[]});
+        if(operation==='getVariables')return JSON.stringify({variables:scopes[payload.type]||{}});
+        if(operation==='replaceVariables'){scopes[payload.type]=payload.variables;return '{}';}
+        throw new Error('Unexpected fixture storage operation: '+operation);
+      },
       stGetContext:()=>JSON.stringify({chat, chatId:'replay', name1:'User', name2:card.name,
         characterWorldBooks:['dao'], globalWorldBooks:[], worldBooks:[{name:'dao',entries:card.character_book.entries}]}),
       stGetVariablesForScope:s=>JSON.stringify(scopes[s] || {}),
@@ -67,6 +74,15 @@ test('actual MVU bundle initializes and applies DaoYuan Zod updates', {timeout:2
     await Promise.race([w.__tellevReady(), new Promise((_,reject)=>setTimeout(()=>reject(Error('Initialization timeout: '+errors.join('\n'))),7000))]);
     assert.ok(w.Mvu, 'MVU global initialized: '+errors.join('\n'));
     assert.equal(chat[0].variables[0]?.stat_data?.主角?.生命,100, errors.join('\n'));
+    // Actual MVU filterPrompts reads messages.filter(), then mutates content.
+    // Return the edits to native without touching the persisted chat floor.
+    const source = '继续前进。\n<StatusPlaceHolderImpl/>';
+    const result = await w.__tellevDispatch('chat_completion_settings_ready', JSON.stringify({
+      args: [{ messages: [{ role: 'assistant', content: source }] }],
+    }));
+    assert.equal(result.args[0].messages[0].content, '继续前进。');
+    assert.equal(chat[0].mes, card.first_mes);
+    assert.equal(errors.length, 0, errors.join('\n'));
     chat.push({name:card.name,is_user:false,is_system:false,swipe_id:0,swipes:[],variables:[],
       mes:'继续前进。<UpdateVariable><JSONPatch>[{"op":"delta","path":"/主角/生命","value":-15}]</JSONPatch></UpdateVariable>'});
     await w.__tellevDispatch('message_received', JSON.stringify({args:[1,'normal']}));

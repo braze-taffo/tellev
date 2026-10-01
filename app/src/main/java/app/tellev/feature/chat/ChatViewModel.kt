@@ -200,6 +200,9 @@ class ChatViewModel(
                 onGenerateText = { options ->
                     generationCoordinator.generateTextFromExtension(options, _uiState)
                 },
+                onCompatibilityStorage = { operation, payload ->
+                    ChatTavernStorage.call(operation, payload, dataStore, _uiState, sessionRuntime)
+                },
             ),
         )
 

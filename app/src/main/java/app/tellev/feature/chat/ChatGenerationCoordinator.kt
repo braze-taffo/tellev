@@ -154,7 +154,7 @@ internal class ChatGenerationCoordinator(
                 val readySession = requireNotNull(uiState.value.currentSession?.takeIf { it.id == session.id })
                 val initializedSession = readySession.withTavernInitVariables(
                     character = character,
-                    worldBooks = runtime.activeWorldBooks,
+                    worldBooks = ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession),
                 )
                 if (initializedSession != readySession) {
                     sessionRuntime.persistSessionMutation(readySession, initializedSession) { updated ->
@@ -259,7 +259,7 @@ internal class ChatGenerationCoordinator(
                     } else {
                         promptMessages
                     },
-                    worldBooks = runtime.activeWorldBooks,
+                    worldBooks = ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession),
                     preset = preset,
                     userInput = when {
                         isRegeneration -> inputMessage.content
@@ -295,35 +295,14 @@ internal class ChatGenerationCoordinator(
                 )
                 ChatPromptBuilder.emitPromptDiagnostics(promptResult, extensionHost)
 
-                ChatTavernAdapter.emitStEvent(
-                    extensionHost,
-                    StEventCatalog.CHAT_COMPLETION_SETTINGS_READY,
-                    buildJsonObject {
-                        put("chatId", updatedSession.id)
-                        put("characterId", character.id)
-                        put("providerType", config.providerType)
-                    },
-                )
-
-                ChatTavernAdapter.emitStEvent(
-                    extensionHost,
-                    StEventCatalog.CHAT_COMPLETION_PROMPT_READY,
-                    buildJsonObject {
-                        put("chatId", updatedSession.id)
-                        put("characterId", character.id)
-                        put("providerType", config.providerType)
-                    },
-                )
-
-                val generateRequest = GenerateRequest(
+                val adapter = providerRegistry.require(config.providerType)
+                val prepared = ChatCompletionEvents.prepare(extensionHost, config, GenerateRequest(
                     prompt = promptResult,
                     preset = preset,
                     attachments = if (isRegeneration) inputMessage.attachments else attachments,
                     stream = true,
-                )
-
-                val adapter = providerRegistry.require(config.providerType)
-                val flow = adapter.streamGenerate(config, generateRequest)
+                ), adapter)
+                val flow = adapter.streamGenerate(prepared.config, prepared.request)
 
                 var accumulatedText = ""
                 var accumulatedReasoning = ""
@@ -454,7 +433,6 @@ internal class ChatGenerationCoordinator(
                             }
                             uiState.update { it.copy(isGenerating = false) }
                             ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.GENERATION_ENDED, finalMessages.size)
-                            ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.GENERATE_AFTER_DATA, finalMessages.size)
                         }
                         is GenerateChunk.Failed -> {
                             activeRegeneration = null
@@ -662,13 +640,13 @@ internal class ChatGenerationCoordinator(
         val character = state.selectedCharacter
             ?: throw IllegalStateException("No character is selected")
         val runtime = runtimeResolver.resolve(state.selectedPersona?.id)
-        val preset = runtime.preset
-        val config = runtime.providerConfig
+        val preset = ExtensionGenerationOptions.preset(options, runtime.preset, dataStore)
+        val config = ExtensionGenerationOptions.config(options, runtime.providerConfig)
         val runtimeState = state.copy(
             selectedProvider = runtime.selectedProviderId,
-            providerConfig = config,
+            providerConfig = runtime.providerConfig,
             presets = runtime.presets,
-            selectedPreset = preset,
+            selectedPreset = runtime.preset,
             personas = runtime.personas,
             selectedPersona = runtime.persona,
             worldBooks = runtime.worldBooks,
@@ -677,9 +655,9 @@ internal class ChatGenerationCoordinator(
         uiState.update { current ->
             current.copy(
                 selectedProvider = runtime.selectedProviderId,
-                providerConfig = config,
+                providerConfig = runtime.providerConfig,
                 presets = runtime.presets,
-                selectedPreset = preset,
+                selectedPreset = runtime.preset,
                 personas = runtime.personas,
                 selectedPersona = runtime.persona,
                 worldBooks = runtime.worldBooks,
@@ -694,11 +672,11 @@ internal class ChatGenerationCoordinator(
         return try {
             ChatTavernAdapter.emitStEvent(extensionHost, "js_generation_started", generationId)
 
-            val promptRequest = PromptBuildRequest(
+            val promptRequest = ExtensionGenerationOptions.promptRequest(options, PromptBuildRequest(
                 character = character,
                 persona = runtime.persona,
                 messages = state.messages,
-                worldBooks = runtime.activeWorldBooks,
+                worldBooks = ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession),
                 preset = preset,
                 userInput = userInput,
                 providerType = config.providerType,
@@ -711,7 +689,7 @@ internal class ChatGenerationCoordinator(
                     dataStore = dataStore,
                     promptEngine = promptEngine,
                 ),
-            )
+            ))
             val promptResult = ChatPromptBuilder.buildPromptWithSessionScope(promptRequest, state.currentSession, promptEngine)
             ChatPromptBuilder.persistPromptTemplateVariableUpdates(
                 updates = promptResult.promptTemplateVariableUpdates,
@@ -725,17 +703,19 @@ internal class ChatGenerationCoordinator(
             )
             ChatPromptBuilder.emitPromptDiagnostics(promptResult, extensionHost)
             val adapter = providerRegistry.require(config.providerType)
+            if (adapter !is app.tellev.core.provider.CompletionSettingsAdapter) {
+                require(options["tools"] == null && options["json_schema"] == null) {
+                    "Provider ${adapter.id} does not support helper tools or JSON schema requests"
+                }
+            }
 
             var accumulatedText = ""
             var finalText = ""
-            adapter.streamGenerate(
-                config,
-                GenerateRequest(
-                    prompt = promptResult,
-                    preset = preset,
-                    stream = shouldStream,
-                ),
-            ).collect { chunk ->
+            var toolCalls: kotlinx.serialization.json.JsonArray? = null
+            val generationRequest = ExtensionGenerationOptions.request(options, promptResult, preset, shouldStream)
+            ExtensionGenerationOptions.validateCapabilities(options, config, generationRequest, adapter)
+            val prepared = ChatCompletionEvents.prepare(extensionHost, config, generationRequest, adapter)
+            adapter.streamGenerate(prepared.config, prepared.request).collect { chunk ->
                 when (chunk) {
                     is GenerateChunk.Delta -> {
                         accumulatedText += chunk.text
@@ -746,6 +726,7 @@ internal class ChatGenerationCoordinator(
                     }
                     is GenerateChunk.Completed -> {
                         finalText = chunk.text.ifBlank { accumulatedText }
+                        toolCalls = chunk.toolCalls
                     }
                     is GenerateChunk.Failed -> {
                         throw IllegalStateException(chunk.error.message)
@@ -761,13 +742,13 @@ internal class ChatGenerationCoordinator(
                 generationId,
             )
             ChatTavernAdapter.emitStEvent(extensionHost, "js_generation_ended", resultText, generationId)
-            ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.GENERATE_AFTER_DATA, generationId)
 
             buildJsonObject {
                 put("text", resultText)
                 put("message", resultText)
                 put("content", resultText)
                 put("generation_id", generationId)
+                toolCalls?.let { put("tool_calls", it) }
             }
         } catch (e: Exception) {
             ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.GENERATION_STOPPED, generationId)

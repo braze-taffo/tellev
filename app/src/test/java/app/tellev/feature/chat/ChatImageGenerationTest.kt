@@ -123,6 +123,7 @@ class ChatImageGenerationTest {
                 "setContextProvider", "setLocalVariableBackend", "setMessageVariableBackend", "unload", "flushWrites" -> Unit
                 "getEvents" -> events
                 "emit", "reportHostEvent" -> { events.tryEmit(args[0] as ExtensionEvent); Unit }
+                "emitMutable" -> (args[0] as ExtensionEvent).payload
                 "snapshotExtensionSettings", "collectInjectedPrompts" -> JsonObject(emptyMap())
                 else -> error("Unexpected host call: ${method.name}")
             }

@@ -18,14 +18,17 @@ internal object PromptOrderProcessor {
         preferCharPrompt: Boolean = true,
         preferCharJailbreak: Boolean = true,
         macroEngine: MacroEngine,
+        rawGeneration: Boolean = false,
+        overrides: JsonObject = JsonObject(emptyMap()),
     ): PresetOrderResult {
-        if (preset.prompts.isEmpty() || messages.isEmpty()) return PresetOrderResult(messages)
+        if (!rawGeneration && (preset.prompts.isEmpty() || messages.isEmpty())) return PresetOrderResult(messages)
         val unused = preset.promptsUnused.map { it.identifier }.toSet()
         val enabled = preset.prompts
             .filter { it.enabled && it.identifier !in unused }
             .sortedWith(compareBy({ it.order }, { it.identifier }))
         val system = messages.firstOrNull { it.role == MessageRole.System }
-        val history = messages.filterNot { it === system }
+        val userInput = if (rawGeneration) messages.lastOrNull { it.channel == "user_input" } else null
+        val history = messages.filterNot { it === system || it === userInput }
         // worldInfoBefore/worldInfoAfter carry only ↑Char/↓Char entries
         // (world-info.js:5093-5098). ↑AT/↓AT and @D are chat injections, ↑EM/↓EM
         // wrap dialogue examples, and outlets need an explicit placeholder.
@@ -53,6 +56,10 @@ internal object PromptOrderProcessor {
 
         enabled.forEach { prompt ->
             val identifier = prompt.identifier.lowercase().replace("_", "").replace("-", "")
+            if (identifier == "userinput") {
+                userInput?.takeIf { it.content.isNotBlank() }?.let { ordered += it }
+                return@forEach
+            }
             if (identifier in setOf("chathistory", "history")) {
                 ordered += history
                 return@forEach
@@ -77,7 +84,7 @@ internal object PromptOrderProcessor {
             }
             val channel = when (identifier) {
                 "main", "system", "systemprompt" -> CHANNEL_MAIN
-                else -> null
+                else -> if (rawGeneration) prompt.identifier else null
             }
             val component = when (identifier) {
                 "main", "system", "systemprompt" -> {
@@ -86,8 +93,8 @@ internal object PromptOrderProcessor {
                 }
                 "jailbreak", "posthistoryinstructions", "phi" ->
                     applyOverride(prompt.content, charJailbreak, preferCharJailbreak, prompt.forbidOverrides)
-                "worldinfobefore" -> worldBefore
-                "worldinfoafter" -> worldAfter
+                "worldinfobefore" -> overrides["world_info_before"]?.jsonPrimitive?.content ?: worldBefore
+                "worldinfoafter" -> overrides["world_info_after"]?.jsonPrimitive?.content ?: worldAfter
                 "chardescription", "characterdescription" -> character.description
                 "charpersonality", "characterpersonality" -> character.personality
                 "scenario" -> character.scenario

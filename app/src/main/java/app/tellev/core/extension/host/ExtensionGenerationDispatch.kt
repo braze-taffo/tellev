@@ -4,6 +4,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.coroutines.CancellationException
 
 internal suspend fun dispatchExtensionGeneration(
     contextProvider: ExtensionContextProvider?,
@@ -18,6 +19,8 @@ internal suspend fun dispatchExtensionGeneration(
     )
     val result = try {
         provider.generateText(options)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
     } catch (error: IllegalStateException) {
         return extensionGenerationError(
             json = json,

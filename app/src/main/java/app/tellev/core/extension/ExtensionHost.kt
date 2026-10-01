@@ -20,6 +20,9 @@ interface ExtensionContextProvider {
     suspend fun setChatMessages(messages: kotlinx.serialization.json.JsonArray, options: JsonObject): Boolean = false
 
     suspend fun generateText(options: JsonObject): JsonObject? = null
+
+    /** Canonical card/preset variables and current character/chat worldbook bindings. */
+    suspend fun compatibilityStorage(operation: String, payload: JsonObject): JsonObject? = null
 }
 
 interface ExtensionHost {
@@ -46,6 +49,11 @@ interface ExtensionHost {
     suspend fun load(manifest: ExtensionManifest, scriptSource: String): ExtensionHandle
     suspend fun unload(extensionId: String)
     suspend fun emit(event: ExtensionEvent)
+    /** Dispatch an event whose arguments can be edited before the request is sent. */
+    suspend fun emitMutable(event: ExtensionEvent): JsonObject {
+        emit(event)
+        return event.payload
+    }
     /** Internal durability boundary for host-owned state, separate from public JS contracts. */
     suspend fun flushWrites() {}
 

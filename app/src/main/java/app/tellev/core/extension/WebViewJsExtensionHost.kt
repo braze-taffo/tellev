@@ -420,6 +420,27 @@ class WebViewJsExtensionHost(
         )
     }
 
+    override suspend fun emitMutable(event: ExtensionEvent): JsonObject {
+        publishLocalEvent(event)
+        var payload = event.payload
+        dispatchExtensionEventToRuntimes(
+            extensionIds = webViews.keys.toList(),
+            excludeExtensionId = null,
+            dispatch = { id ->
+                val result = evaluateRuntime(id, "window.__tellevDispatch(" + JsonPrimitive(event.name) +
+                    "," + JsonPrimitive(payload.toString()) + ")")
+                val updated = json.parseToJsonElement(result) as? JsonObject
+                    ?: error("Mutable event returned no payload: ${event.name}")
+                require(updated["args"] is JsonArray) { "Mutable event lost its arguments: ${event.name}" }
+                payload = updated
+            },
+            onFailure = { id, failure ->
+                android.util.Log.w("tellev-ext", "Mutable event dispatch to $id failed: ${failure.message}")
+            },
+        )
+        return payload
+    }
+
     suspend fun evaluateRuntime(extensionId: String, expression: String): String {
         val id = UUID.randomUUID().toString()
         val result = CompletableDeferred<String>()
@@ -924,6 +945,32 @@ class WebViewJsExtensionHost(
                 reportExtensionLog(extensionId, "warning", "Denied $operation: Storage permission not declared or granted")
             }
             return allowed
+        }
+
+        @JavascriptInterface
+        fun stCompatStorage(operation: String, body: String): String {
+            check(hasStorageBridgeAccess("stCompatStorage")) { "Storage permission denied" }
+            val provider = requireNotNull(_contextProvider) { "No active compatibility context" }
+            val payload = json.parseToJsonElement(body).jsonObject
+            return runBlocking(Dispatchers.IO) {
+                requireCurrentRuntime()
+                provider.compatibilityStorage(operation, payload)
+                    ?: error("Compatibility storage is unavailable")
+            }.toString()
+        }
+
+        @JavascriptInterface
+        fun stPresetCall(method: String, path: String, body: String): String {
+            check(hasStorageBridgeAccess("stPresetCall")) { "Storage permission denied" }
+            require(path == "/api/presets" || path.startsWith("/api/presets/")) { "Not a preset API" }
+            val result = runBlocking(Dispatchers.IO) {
+                requireCurrentRuntime()
+                apiRouter.route(VirtualApiRequest(method = method, path = path, body = body))
+            }
+            return buildJsonObject {
+                put("status", result.status)
+                put("body", json.parseToJsonElement(result.body))
+            }.toString()
         }
 
         @JavascriptInterface

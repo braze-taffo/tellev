@@ -34,7 +34,7 @@ import kotlin.coroutines.coroutineContext
 class AzureAdapter(
     private val client: OkHttpClient = OkHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
-) : ProviderAdapter {
+) : CompletionSettingsAdapter {
     override val id: String = ProviderCatalog.AZURE_OPENAI
     override val displayName: String = "Azure OpenAI"
     override val capabilities: Set<ProviderCapability> = setOf(
@@ -96,7 +96,7 @@ class AzureAdapter(
 
     override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> = flow {
         val url = buildChatUrl(config, stream = request.stream)
-        val payload = buildPayload(config, request)
+        val payload = request.completionSettings?.let { JsonObject(it - "model") } ?: completionPayload(config, request)
 
         val httpRequest = Request.Builder()
             .url(url)
@@ -193,7 +193,7 @@ class AzureAdapter(
         return "$base/openai/deployments/$deployment/chat/completions?api-version=$apiVersion"
     }
 
-    private fun buildPayload(config: ProviderConfig, request: GenerateRequest): JsonObject =
+    override fun completionPayload(config: ProviderConfig, request: GenerateRequest): JsonObject =
         buildJsonObject {
             put("stream", JsonPrimitive(request.stream))
             request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
@@ -215,6 +215,7 @@ class AzureAdapter(
                             MessageRole.Tool -> "tool"
                         }))
                         put("content", JsonPrimitive(msg.content))
+                        msg.wireFields?.forEach { (key, value) -> put(key, value) }
                         msg.name?.let { put("name", JsonPrimitive(it)) }
                     })
                 }

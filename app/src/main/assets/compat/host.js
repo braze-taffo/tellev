@@ -39,7 +39,8 @@
   const persistent = JSON.parse(tellevNative.getSettings() || '{}');
   const scopes = persistent.compatVariables ||= {};
   expose('getVariables', (option = { type: 'chat' }) => {
-    if (['character','preset','script','extension'].includes(option.type)) {
+    if (['character','preset'].includes(option.type)) return clone(compatStorage('getVariables',{type:option.type}).variables);
+    if (['script','extension'].includes(option.type)) {
       return clone(scopes[option.type + ':' + (option.script_id || option.extension_id || '')] || {});
     }
     if (option.type === 'message' && (option.message_id === undefined || option.message_id === 'latest')) {
@@ -51,7 +52,11 @@
     return clone(oldGet(option));
   });
   expose('replaceVariables', (data, option = { type: 'chat' }) => {
-    if (['character','preset','script','extension'].includes(option.type)) {
+    if (['character','preset'].includes(option.type)) {
+      compatStorage('replaceVariables',{type:option.type,variables:clone(data)});
+      window.__tellevInvalidateContext(); return;
+    }
+    if (['script','extension'].includes(option.type)) {
       scopes[option.type + ':' + (option.script_id || option.extension_id || '')] = clone(data);
       tellevNative.saveSettings(JSON.stringify(persistent));
       return;
@@ -106,6 +111,182 @@
     }
     return result.body;
   };
+
+  const compatStorage = (operation, payload) => JSON.parse(tellevNative.stCompatStorage(operation,JSON.stringify(payload)));
+  expose('getCharWorldbookNames', (name = 'current') => compatStorage('getCharWorldbookNames',{name}));
+  expose('getCharLorebooks', async (option = {}) => getCharWorldbookNames(option.name || 'current'));
+  expose('rebindCharWorldbooks', async (name, binding) => {
+    compatStorage('rebindCharWorldbooks',{name,binding}); window.__tellevInvalidateContext();
+  });
+  const currentChat = chat => { if (chat !== 'current') throw new Error('Only current chat is supported upstream'); };
+  expose('getChatWorldbookName', (chat = 'current') => { currentChat(chat); return context().chat_metadata?.world_info || null; });
+  expose('rebindChatWorldbook', async (chat, name) => {
+    currentChat(chat); compatStorage('rebindChatWorldbook',{chat,name}); window.__tellevInvalidateContext();
+  });
+  expose('getOrCreateChatWorldbook', async (chat, name) => {
+    currentChat(chat); const result = compatStorage('getOrCreateChatWorldbook',{chat,name});
+    window.__tellevInvalidateContext(); return result.name;
+  });
+  for (const name of ['getCharWorldbookNames','rebindCharWorldbooks','getChatWorldbookName','rebindChatWorldbook','getOrCreateChatWorldbook'])
+    th.builtin[name] = th[name];
+
+  // Synchronous reads are required by upstream MVU's extra-model preset picker.
+  // Translate at this boundary; the virtual API continues to expose raw ST JSON.
+  const presetCategory = option => String(option?.category || 'openai').toLowerCase();
+  const presetPath = (name, option) => `/api/presets/${encodeURIComponent(presetCategory(option))}/${encodeURIComponent(name)}`;
+  const syncPreset = (method, path, body) => {
+    const result = JSON.parse(tellevNative.stPresetCall(method, path, JSON.stringify(body || {})));
+    if (result.status < 200 || result.status >= 300) {
+      const error = new Error(result.body?.error || `Preset operation failed (${result.status})`);
+      error.status = result.status; throw error;
+    }
+    return result.body;
+  };
+  const presetSettings = {
+    max_context:'openai_max_context', max_completion_tokens:'openai_max_tokens', reply_count:'n',
+    should_stream:'stream_openai', temperature:'temperature', frequency_penalty:'frequency_penalty',
+    presence_penalty:'presence_penalty', repetition_penalty:'repetition_penalty', top_p:'top_p',
+    min_p:'min_p', top_k:'top_k', top_a:'top_a', seed:'seed', squash_system_messages:'squash_system_messages',
+    reasoning_effort:'reasoning_effort', request_thoughts:'show_thoughts', request_images:'request_images',
+    enable_function_calling:'function_calling', enable_web_search:'enable_web_search',
+    allow_sending_videos:'video_inlining', wrap_user_messages_in_quotes:'wrap_in_quotes',
+  };
+  const inUseSettings = { temperature:'temp_openai', frequency_penalty:'freq_pen_openai',
+    presence_penalty:'pres_pen_openai', top_p:'top_p_openai', repetition_penalty:'repetition_penalty_openai',
+    min_p:'min_p_openai', top_k:'top_k_openai', top_a:'top_a_openai' };
+  const presetDefaults = { max_context:2000000, max_completion_tokens:300, reply_count:1, should_stream:false,
+    temperature:1, frequency_penalty:0, presence_penalty:0, repetition_penalty:1, top_p:1, min_p:0,
+    top_k:0, top_a:0, seed:-1, squash_system_messages:false, reasoning_effort:'auto', request_thoughts:false,
+    request_images:false, enable_function_calling:false, enable_web_search:false, allow_sending_images:'disabled',
+    allow_sending_videos:false, character_name_prefix:'none', wrap_user_messages_in_quotes:false };
+  const placeholders = ['worldInfoBefore','personaDescription','charDescription','charPersonality','scenario',
+    'worldInfoAfter','dialogueExamples','chatHistory'];
+  const systemPrompts = ['main','nsfw','jailbreak','enhanceDefinitions'];
+  const toPreset = (raw, name) => {
+    const settings = {...presetDefaults};
+    for (const [key, field] of Object.entries(presetSettings)) {
+      const value = raw[field] ?? (name === 'in_use' ? raw[inUseSettings[key]] : undefined);
+      if (value !== undefined) settings[key] = value;
+    }
+    settings.allow_sending_images = raw.image_inlining ? raw.inline_image_quality || 'auto' : 'disabled';
+    settings.character_name_prefix = ({'-1':'none',0:'default',2:'content',1:'completion'})[raw.names_behavior ?? -1];
+    const order = raw.prompt_order?.find(x => x.character_id === 100001)?.order
+      ?? raw.prompts?.map(p => ({identifier:p.identifier ?? p.id,enabled:p.enabled ?? true})) ?? [];
+    const definitions = [...(raw.prompts || []),...(raw.prompts_unused || [])];
+    const mapped = new Map(definitions.map(p => {
+      const id = p.identifier ?? p.id;
+      const result = {id,name:p.name ?? id,enabled:order.find(o => o.identifier === id)?.enabled ?? p.enabled ?? true,
+        role:p.role || 'system'};
+      if (!systemPrompts.includes(id)) result.position = (p.injection_position ?? (p.relative ? 1 : 0)) === 1
+        ? {type:'in_chat',depth:p.injection_depth ?? p.depth ?? 4,order:p.injection_order ?? p.injectionOrder ?? 100} : {type:'relative'};
+      if (!placeholders.includes(id)) result.content = p.content ?? '';
+      if (p.extra) result.extra = clone(p.extra);
+      return [id,result];
+    }));
+    return {settings, prompts:order.map(o => mapped.get(o.identifier)).filter(Boolean),
+      prompts_unused:[...mapped.values()].filter(p => !order.some(o => o.identifier === p.id)),
+      extensions:clone(raw.extensions || {tavern_helper:{scripts:[],variables:{}}})};
+  };
+  const fromPreset = (data, previous = {}) => {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Preset must be an object');
+    // Accept legacy raw callers without changing their wire format.
+    if (!data.settings && !data.prompts?.some(p => p.id !== undefined)) return {...clone(previous),...clone(data)};
+    const raw = clone(previous);
+    for (const [key, field] of Object.entries(presetSettings)) {
+      if (data.settings?.[key] !== undefined) {
+        raw[field] = data.settings[key];
+        if (inUseSettings[key]) raw[inUseSettings[key]] = data.settings[key];
+      }
+    }
+    if (data.settings?.allow_sending_images !== undefined) {
+      raw.image_inlining = data.settings.allow_sending_images !== 'disabled';
+      raw.inline_image_quality = raw.image_inlining ? data.settings.allow_sending_images : 'auto';
+    }
+    if (data.settings?.character_name_prefix !== undefined)
+      raw.names_behavior = ({none:-1,default:0,content:2,completion:1})[data.settings.character_name_prefix];
+    const used = data.prompts ?? toPreset(previous,'').prompts;
+    const unused = data.prompts_unused ?? toPreset(previous,'').prompts_unused;
+    const ids = new Set();
+    raw.prompts = [...used,...unused].map(p => {
+      if (!p.id || ids.has(p.id)) throw new Error(`Invalid or duplicate prompt id: ${p.id}`);
+      ids.add(p.id);
+      const old = previous.prompts?.find(x => (x.identifier ?? x.id) === p.id) || {};
+      const out = {...clone(old),identifier:p.id,name:p.name ?? p.id,enabled:p.enabled ?? true,role:p.role || 'system',
+        system_prompt:systemPrompts.includes(p.id) || placeholders.includes(p.id),marker:placeholders.includes(p.id)};
+      if (!systemPrompts.includes(p.id)) Object.assign(out, {injection_position:p.position?.type === 'in_chat' ? 1 : 0,
+        injection_depth:p.position?.depth ?? 4,injection_order:p.position?.order ?? 100,
+        relative:p.position?.type === 'in_chat',depth:p.position?.depth ?? 4});
+      if (!placeholders.includes(p.id)) out.content = p.content ?? '';
+      if (p.extra !== undefined) out.extra = clone(p.extra);
+      return out;
+    });
+    raw.prompts_unused = [];
+    const otherOrders = (previous.prompt_order || []).filter(x => x.character_id !== 100001);
+    raw.prompt_order = [...otherOrders,{character_id:100001,order:used.map(p => ({identifier:p.id,enabled:p.enabled ?? true}))}];
+    if (data.extensions !== undefined) raw.extensions = clone(data.extensions);
+    return raw;
+  };
+  expose('getPresetNames', option => ['in_use',...syncPreset('GET','/api/presets').presets
+    .filter(p => p.category.toLowerCase() === presetCategory(option) && p.id !== 'in_use').map(p => p.id)]);
+  expose('getLoadedPresetName', option => syncPreset('GET','/api/presets').selected[presetCategory(option)] || '');
+  expose('getPreset', (name = 'in_use', option) => toPreset(syncPreset('GET',presetPath(name,option)),name));
+  expose('loadPreset', (name, option) => {
+    try { syncPreset('POST','/api/presets/load',{category:presetCategory(option),name}); }
+    catch (error) { if (error.status === 404) return false; throw error; }
+    window.__tellevInvalidateContext(); eventSource.emit(event_types.PRESET_CHANGED,name); return true;
+  });
+  const writePreset = async (name, data, option, create) => {
+    let previous = {};
+    if (!create) previous = syncPreset('GET',presetPath(name,option));
+    await api('POST',`/api/presets/${create ? 'create' : 'replace'}`,{
+      category:presetCategory(option),name,preset:fromPreset(data,previous),load:false});
+    window.__tellevInvalidateContext(); eventSource.emit(event_types.SETTINGS_UPDATED,'preset');
+  };
+  expose('replacePreset', (name, data, option) => writePreset(name,data,option,false));
+  expose('setPreset', th.replacePreset);
+  expose('createPreset', async (name, data = {settings:presetDefaults,prompts:[],prompts_unused:[],extensions:{}}, option) => {
+    if (getPresetNames(option).includes(name)) return false;
+    await writePreset(name,data,option,true); return true;
+  });
+  expose('createOrReplacePreset', async (name, data, option) => {
+    const existed = getPresetNames(option).includes(name);
+    await writePreset(name,data,option,!existed); return !existed;
+  });
+  expose('updatePresetWith', async (name, updater, option) => {
+    const current = getPreset(name,option);
+    const next = await updater(current);
+    await replacePreset(name,next ?? current,option); return next ?? current;
+  });
+  expose('deletePreset', async (name, option) => {
+    if (!getPresetNames(option).includes(name)) return false;
+    await api('POST','/api/presets/delete',{category:presetCategory(option),name});
+    eventSource.emit(event_types.PRESET_DELETED,name); return true;
+  });
+  expose('renamePreset', async (name, newName, option) => {
+    if (!getPresetNames(option).includes(name)) return false;
+    await api('POST','/api/presets/rename',{category:presetCategory(option),name,newName});
+    eventSource.emit(event_types.PRESET_RENAMED,name,newName); return true;
+  });
+  for (const name of ['getPresetNames','getLoadedPresetName','getPreset','loadPreset','replacePreset','updatePresetWith',
+    'createPreset','createOrReplacePreset','deletePreset','renamePreset']) th.builtin[name] = th[name];
+  const generate = usePreset => async (options = {}) => {
+    const image = async value => {
+      if (value == null) return value;
+      if (Array.isArray(value)) return Promise.all(value.map(image));
+      if (typeof value === 'string') return value;
+      if (value instanceof Blob) return new Promise((resolve,reject)=> {
+        const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(reader.error);reader.readAsDataURL(value);
+      });
+      throw new Error('Generation image must be a File or URL');
+    };
+    const wire = {...options,image:await image(options.image),__tellev_use_preset:usePreset};
+    if (options.ordered_prompts) wire.ordered_prompts = await Promise.all(options.ordered_prompts.map(async prompt =>
+      typeof prompt === 'object' ? {...prompt,image:await image(prompt.image)} : prompt));
+    const body = await api('POST','/api/backends/chat-completions/generate',wire);
+    return body.tool_calls?.length ? {content:body.text,tool_calls:body.tool_calls} : String(body.text ?? body.content ?? '');
+  };
+  expose('generate', generate(true));
+  expose('generateRaw', generate(false));
 
   // Keep the three contracts separate: stored WorldBookEntry, raw ST entry,
   // and the public LorebookEntry / WorldbookEntry APIs (pinned helper 4.8.11).
@@ -559,7 +740,8 @@
   window.__tellevDispatch = async (name, payload) => {
     window.__tellevInvalidateContext();
     await window.__tellevReady();
-    const id = JSON.parse(payload).args?.[0];
+    const event = JSON.parse(payload);
+    const id = event.args?.[0];
     const chat = context().chat;
     const expectsMvuWrite = name === 'message_received' && window.Mvu &&
       chat[id]?.mes?.length >= 5 && chat.slice(0, Math.max(1,id)).some(m => m.variables?.[m.swipe_id || 0]?.stat_data);
@@ -571,8 +753,11 @@
     // A native failure can arrive while the event listener is still unwinding.
     committed.catch(() => {});
     try {
-      await eventSource._fireNative(name, payload);
+      // Keep the same arguments through every listener and return their edits
+      // to native generation, as ST does with its mutable request events.
+      await eventSource._fireLocal(name, event);
       await committed;
+      return event;
     } finally { clearTimeout(timer); variableWrites.delete(id); }
   };
   EjsTemplate.evalTemplate = EjsTemplate.evaltemplate = async (code, env = {}, options = {}) =>

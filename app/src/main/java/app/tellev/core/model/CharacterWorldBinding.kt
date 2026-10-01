@@ -1,5 +1,6 @@
 package app.tellev.core.model
 
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -36,11 +37,25 @@ object CharacterWorldBinding {
         add((data["extensions"] as? JsonObject)?.get("world"))
         add(data["world"])
         add(card.raw["world"])
+        ((data["extensions"] as? JsonObject)?.get("tellev_additional_worldbooks") as? JsonArray)?.forEach(::add)
         return names.distinct()
     }
 
+    fun withWorldBookNames(card: CharacterCard, primary: String?, additional: List<String>): CharacterCard {
+        val bound = withLinkedWorldBookName(card, primary)
+        val data = (bound.raw["data"] as? JsonObject) ?: bound.raw
+        val extensions = (data["extensions"] as? JsonObject) ?: JsonObject(emptyMap())
+        val next = JsonObject(data + ("extensions" to JsonObject(extensions +
+            ("tellev_additional_worldbooks" to JsonArray(additional.distinct().map(::JsonPrimitive))))))
+        return bound.copy(raw = if (bound.raw["data"] is JsonObject) JsonObject(bound.raw + ("data" to next)) else next)
+    }
+
     /** The primary bound lorebook name, or null if none. */
-    fun linkedWorldBookName(card: CharacterCard): String? = linkedWorldBookNames(card).firstOrNull()
+    fun linkedWorldBookName(card: CharacterCard): String? {
+        val data = card.raw["data"] as? JsonObject ?: card.raw
+        return listOf((data["extensions"] as? JsonObject)?.get("world"), data["world"], card.raw["world"])
+            .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }.firstOrNull()
+    }
 
     /**
      * Returns a copy of [card] whose raw JSON has `data.extensions.world` set to
@@ -53,14 +68,14 @@ object CharacterWorldBinding {
         val cleanName = name?.trim()?.takeIf { it.isNotEmpty() }
         val worldValue: JsonElement? = cleanName?.let { JsonPrimitive(it) }
 
-        val data = (card.raw["data"] as? JsonObject) ?: buildJsonObject {}
+        val data = (card.raw["data"] as? JsonObject) ?: card.raw
         val extensions = (data["extensions"] as? JsonObject) ?: buildJsonObject {}
 
         val newExtensions = setOrRemove(extensions, "world", worldValue)
         // Drop legacy bare `world` inside data so it can't shadow the canonical binding.
         val newData = setOrRemove(data, "extensions", newExtensions).let { setOrRemove(it, "world", null) }
         // And the top-level legacy `world` too.
-        val newRaw = setOrRemove(card.raw, "data", newData).let { setOrRemove(it, "world", null) }
+        val newRaw = if (card.raw["data"] is JsonObject) setOrRemove(card.raw, "data", newData).let { setOrRemove(it, "world", null) } else newData
 
         return card.copy(raw = newRaw)
     }

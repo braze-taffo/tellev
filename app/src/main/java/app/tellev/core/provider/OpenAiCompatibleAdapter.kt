@@ -42,7 +42,7 @@ class OpenAiCompatibleAdapter(
     private val maxTokensField: String = "max_tokens",
     /** Resolves file-backed attachments (relativePath) to raw bytes for vision requests. */
     private val resolveAttachmentBytes: ((app.tellev.core.model.Attachment) -> ByteArray?)? = null,
-) : ProviderAdapter {
+) : CompletionSettingsAdapter {
     override val id: String = providerId
     override val displayName: String = providerDisplayName
     override val capabilities: Set<ProviderCapability> = setOf(
@@ -318,8 +318,10 @@ class OpenAiCompatibleAdapter(
 
     // -- Payload construction --
 
+    override fun completionPayload(config: ProviderConfig, request: GenerateRequest): JsonObject = buildPayload(config, request)
+
     protected fun buildPayload(config: ProviderConfig, request: GenerateRequest): JsonObject =
-        if (providerId == ProviderCatalog.DEEPSEEK) {
+        request.completionSettings ?: if (providerId == ProviderCatalog.DEEPSEEK) {
             buildDeepSeekPayload(config, request)
         } else buildJsonObject {
             put("model", JsonPrimitive(config.model ?: defaultModel ?: error(UiStrings.get(S.oai_error_model_not_configured))))
@@ -437,7 +439,9 @@ class OpenAiCompatibleAdapter(
                         promptMessage.name?.let { put("name", JsonPrimitive(it)) }
 
                         // Use multipart content if there are image attachments on user messages
-                        if (promptMessage.role == MessageRole.User && imageAttachments.isNotEmpty()) {
+                        if (promptMessage.wireFields != null) {
+                            promptMessage.wireFields.forEach { (key, value) -> put(key, value) }
+                        } else if (promptMessage.role == MessageRole.User && imageAttachments.isNotEmpty()) {
                             put("content", buildJsonArray {
                                 add(buildJsonObject {
                                     put("type", JsonPrimitive("text"))

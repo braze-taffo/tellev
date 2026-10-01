@@ -143,7 +143,8 @@ class CreationViewModelCancelTest {
                 val sessionId = vm.state.value.current!!.id
 
                 vm.send("加一条新城设定")
-                fixture.secondRoundStarted.await()
+                waitUntil { fixture.secondRoundStarted.isCompleted || vm.state.value.error != null }
+                assertTrue("Second round never started: ${vm.state.value.error}", fixture.secondRoundStarted.isCompleted)
                 vm.cancelGeneration()
                 waitUntil { !vm.state.value.busy }
 

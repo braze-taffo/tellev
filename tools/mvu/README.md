@@ -44,3 +44,7 @@ adb shell am instrument -w app.tellev.mvuvalidation.test/androidx.test.runner.An
 For actual process termination and recovery, run `tools/mvu/android-storage-replay.ps1 -Serial <device>`. This targets only the validation package and kills its test process at four journal stages; each is followed by a separate recovery process. Output is saved in `android-storage-process-death.json`. Physical disk-full and power-cut tests are not covered by this driver.
 
 Run `:app:lintDebug` and `git diff --check`. Passing JVM/lint/current Android checks is not full MVU, API31, performance, Sakura or real-model acceptance. See `docs/MVU-COMPATIBILITY.md` for remaining gaps.
+
+## Compatibility repair regression
+
+`test/preset-contract.test.mjs` exercises the production preset, scoped-variable, binding and generation adapters. `vendor/extra_model_preset.ts` is the unmodified MVU consumer from `61010dab47bc3a08a1b626320bf7fc8c9573eca4` (`src/function/update/extra_model_preset.ts`, covered by MVU-LICENSE). The test replaces only its localization import. Its SHA-256 is recorded with the other vendor inputs. Native JSON persistence, raw prompt ordering and the outgoing HTTP body are covered by `CompatibilityRepairTest`; synchronous Android reads and the actual generation route are covered by `CharacterScriptWebViewTest`.

@@ -182,6 +182,18 @@ class TavernMessageCompatTest {
     }
 
     @Test
+    fun `Tavern fragments inherit native theme variables without overriding authored themes`() {
+        val card = "<body><style>:root { --SmartThemeBodyColor: #eeeeee; }</style><div style='color:var(--SmartThemeBodyColor);background:var(--SmartThemeBlurTintColor)'>选项</div></body>"
+        for ((foreground, background) in listOf("#211A17" to "#FCF6EF", "#F3E9E2" to "#191512")) {
+            val wrapped = wrapTavernHtml(card, foreground, themeColors = mapOf("SmartThemeBlurTintColor" to background))
+            assertTrue(wrapped.contains("--SmartThemeBodyColor: $foreground;"))
+            assertTrue(wrapped.contains("--SmartThemeBlurTintColor: $background;"))
+            assertTrue(wrapped.indexOf("--SmartThemeBodyColor: $foreground;") < wrapped.indexOf("--SmartThemeBodyColor: #eeeeee;"))
+            assertTrue(wrapped.contains(card))
+        }
+    }
+
+    @Test
     fun `code blocks keep their line breaks and scroll sideways instead of being cut off`() {
         val markdown = wrapTavernHtml("<pre><code>long line</code></pre>", "#111111")
         val frontend = wrapTavernHtml("<pre>card block</pre>", "#111111")

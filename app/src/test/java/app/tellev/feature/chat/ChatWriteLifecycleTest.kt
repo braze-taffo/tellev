@@ -351,6 +351,7 @@ class ChatWriteLifecycleTest {
                     Unit
                 }
                 "snapshotExtensionSettings", "collectInjectedPrompts" -> JsonObject(emptyMap())
+                "emitMutable" -> (args[0] as ExtensionEvent).payload
                 else -> error("Unexpected host call in storage test: ${method.name}")
             }
         } as ExtensionHost

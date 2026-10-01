@@ -28,7 +28,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 class OpenRouterAdapter(
     private val client: OkHttpClient = OkHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
-) : ProviderAdapter {
+) : CompletionSettingsAdapter {
     override val id: String = ProviderCatalog.OPENROUTER
     override val displayName: String = "OpenRouter"
     override val capabilities: Set<ProviderCapability> = setOf(
@@ -74,8 +74,7 @@ class OpenRouterAdapter(
         }.getOrDefault(emptyList())
     }
 
-    override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> = flow {
-        val payload = buildJsonObject {
+    override fun completionPayload(config: ProviderConfig, request: GenerateRequest) = buildJsonObject {
             put("model", JsonPrimitive(config.model ?: "openai/gpt-4o-mini"))
             put("stream", JsonPrimitive(request.stream))
             request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
@@ -95,10 +94,15 @@ class OpenRouterAdapter(
                         }))
                         put("content", JsonPrimitive(msg.content))
                         msg.name?.let { put("name", JsonPrimitive(it)) }
+                        msg.wireFields?.forEach { (key, value) -> put(key, value) }
                     })
                 }
             })
         }
+
+
+    override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> = flow {
+        val payload = request.completionSettings ?: completionPayload(config, request)
 
         val httpRequest = Request.Builder()
             .url(config.baseUrl.trimEnd('/') + "/api/v1/chat/completions")

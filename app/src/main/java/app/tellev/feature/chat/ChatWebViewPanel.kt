@@ -220,8 +220,16 @@ internal fun TavernHtmlPanel(
     if (tavernRuntime.token == null) return
     androidx.compose.runtime.key(tavernRuntime.token) {
         val themeOnSurface = MaterialTheme.colorScheme.onSurface.toCssHex()
-        val wrappedHtml = remember(html, themeOnSurface, dialogueQuoteColor, baseFontSizePx) {
-            wrapTavernHtml(html, themeOnSurface, dialogueQuoteColor, baseFontSizePx)
+        val themeColors = mapOf(
+            "SmartThemeBlurTintColor" to MaterialTheme.colorScheme.surface.toCssHex(),
+            "SmartThemeChatTintColor" to MaterialTheme.colorScheme.surface.toCssHex(),
+            "SmartThemeBorderColor" to MaterialTheme.colorScheme.outlineVariant.toCssHex(),
+            "SmartThemeEmColor" to MaterialTheme.colorScheme.primary.toCssHex(),
+            "SmartThemeQuoteColor" to (dialogueQuoteColor ?: MaterialTheme.colorScheme.primary.toCssHex()),
+            "SmartThemeShadowColor" to "rgba(0, 0, 0, 0.2)",
+        )
+        val wrappedHtml = remember(html, themeOnSurface, dialogueQuoteColor, baseFontSizePx, themeColors) {
+            wrapTavernHtml(html, themeOnSurface, dialogueQuoteColor, baseFontSizePx, themeColors)
         }
         val density = LocalDensity.current
         val configuration = LocalConfiguration.current
@@ -413,7 +421,12 @@ internal fun wrapTavernHtml(
     themeOnSurface: String,
     dialogueQuoteColor: String? = null,
     baseFontSizePx: Int? = null,
+    themeColors: Map<String, String> = emptyMap(),
 ): String {
+    // Tavern fragments inherit these from the host page. Keep authored styles
+    // after our defaults so explicit card themes can still override them.
+    val themeVariables = (mapOf("SmartThemeBodyColor" to themeOnSurface) + themeColors)
+        .entries.joinToString("\n") { (name, value) -> "--$name: $value;" }
     val dialogueQuoteCss = dialogueQuoteColor?.let { color ->
         "q { color: $color; } q::before, q::after { content: none; }"
     }.orEmpty()
@@ -426,6 +439,9 @@ internal fun wrapTavernHtml(
         <script src="https://extensions.tellev.local/compat/chat.js"></script>
         <script src="https://extensions.tellev.local/compat/message.js"></script>
         <style id="tellev-host-style">
+            :root {
+                $themeVariables
+            }
             html, body {
                 width: 100%;
                 min-width: 0;

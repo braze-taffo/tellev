@@ -219,6 +219,7 @@ class SceneImageGenerationTest {
                 "setContextProvider", "setLocalVariableBackend", "setMessageVariableBackend", "unload", "flushWrites" -> Unit
                 "getEvents" -> events
                 "emit", "reportHostEvent" -> { events.tryEmit(args[0] as ExtensionEvent); Unit }
+                "emitMutable" -> (args[0] as ExtensionEvent).payload
                 "snapshotExtensionSettings" -> JsonObject(emptyMap())
                 "collectInjectedPrompts" -> buildJsonObject {
                     putJsonObject("scene-state") {

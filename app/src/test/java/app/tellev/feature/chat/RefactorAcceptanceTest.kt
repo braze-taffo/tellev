@@ -82,6 +82,57 @@ class RefactorAcceptanceTest {
         assertEquals(f.textResponse, saved.messages.last { it.role == MessageRole.Character }.content)
     }
 
+    @Test fun generationEventFiltersReachProviderWithoutEditingStoredChat() = exercise { f ->
+        f.eventTransform = { event ->
+            val data = event.payload.getValue("args").jsonArray.first().jsonObject
+            if (event.name == StEventCatalog.CHAT_COMPLETION_PROMPT_READY) {
+                assertEquals(false, data.getValue("dryRun").jsonPrimitive.boolean)
+                assertEquals("raw input", data.getValue("chat").jsonArray.single().jsonObject.getValue("content").jsonPrimitive.content)
+                event.payload
+            } else if (event.name == StEventCatalog.GENERATE_AFTER_DATA) {
+                assertEquals(false, event.payload.getValue("args").jsonArray[1].jsonPrimitive.boolean)
+                assertEquals("raw input", data.getValue("prompt").jsonArray.single().jsonObject.getValue("content").jsonPrimitive.content)
+                event.payload
+            } else {
+                assertEquals(StEventCatalog.CHAT_COMPLETION_SETTINGS_READY, event.name)
+                val messages = data.getValue("messages").jsonArray
+                val updated = JsonObject(messages.single().jsonObject + ("content" to JsonPrimitive("filtered input")))
+                buildJsonObject { put("args", JsonArray(listOf(JsonObject(data + ("messages" to JsonArray(listOf(updated))))))) }
+            }
+        }
+        assertTrue(withContext(f.main) { f.vm.sendMessage("raw input") })
+        waitUntil { f.events.any { it.name == StEventCatalog.GENERATION_ENDED } }
+        assertEquals("filtered input", f.outgoingRequest!!.prompt.messages.single().content)
+        assertEquals("raw input", f.disk.readChatSession("a").messages.last { it.role == MessageRole.User }.content)
+        val events = f.events.map { it.name }
+        assertTrue(events.indexOf(StEventCatalog.CHAT_COMPLETION_PROMPT_READY) < events.indexOf(StEventCatalog.CHAT_COMPLETION_SETTINGS_READY))
+    }
+
+    @Test fun scriptGenerationUsesCompletionEventsWithoutChangingStoredChatOrPreset() = exercise { f ->
+        val before = f.disk.readChatSession("a")
+        val originalPreset = f.vm.uiState.value.selectedPreset
+        f.eventTransform = { event ->
+            if (event.name != StEventCatalog.CHAT_COMPLETION_SETTINGS_READY) event.payload else {
+                val data = event.payload["args"]!!.jsonArray.first().jsonObject
+                buildJsonObject { put("args", JsonArray(listOf(JsonObject(data + buildJsonObject {
+                    put("temperature", 0.2); put("messages", JsonArray(listOf(buildJsonObject {
+                        put("role", "user"); put("content", "filtered script input")
+                    })))
+                })))) }
+            }
+        }
+        val result = f.context!!.generateText(buildJsonObject { put("user_input", "script input") })!!
+        assertEquals("reply", result["text"]!!.jsonPrimitive.content)
+        assertEquals("filtered script input", f.outgoingRequest!!.prompt.messages.single().content)
+        assertEquals(0.2, f.outgoingRequest!!.preset.temperature!!, 0.0)
+        assertEquals(before, f.disk.readChatSession("a"))
+        assertEquals(originalPreset, f.vm.uiState.value.selectedPreset)
+        val names = f.events.map { it.name }
+        assertTrue(names.indexOf(StEventCatalog.GENERATE_AFTER_DATA) < names.indexOf(StEventCatalog.CHAT_COMPLETION_SETTINGS_READY))
+        assertTrue(names.indexOf(StEventCatalog.CHAT_COMPLETION_SETTINGS_READY) < names.indexOf("js_generation_ended"))
+        assertEquals(1, names.count { it == StEventCatalog.GENERATE_AFTER_DATA })
+    }
+
     private fun exercise(block: suspend (Fixture) -> Unit) = runBlocking {
         val root = Files.createTempDirectory("tellev-refactor-audit-")
         val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
@@ -117,6 +168,7 @@ class RefactorAcceptanceTest {
             }
             val textAdapter = object : Adapter(ProviderCatalog.OPENAI_COMPATIBLE) {
                 override fun streamGenerate(config: ProviderConfig, request: GenerateRequest) = flow<GenerateChunk> {
+                    f.outgoingRequest = request
                     emit(GenerateChunk.Completed(f.textResponse))
                 }
             }
@@ -168,7 +220,10 @@ class RefactorAcceptanceTest {
         lateinit var vm: ChatViewModel
         @Volatile var failWrites = false
         @Volatile var textResponse = "reply"
+        @Volatile var outgoingRequest: GenerateRequest? = null
+        var eventTransform: (ExtensionEvent) -> JsonObject = { it.payload }
         var local: LocalVariableBackend? = null
+        var context: ExtensionContextProvider? = null
         val imageStarted = CompletableDeferred<Unit>()
         val imageGate = CompletableDeferred<Unit>()
         val writeFailed = CompletableDeferred<Unit>()
@@ -178,9 +233,11 @@ class RefactorAcceptanceTest {
             return Proxy.newProxyInstance(ExtensionHost::class.java.classLoader, arrayOf(ExtensionHost::class.java)) { _, method, args ->
                 when (method.name) {
                     "setLocalVariableBackend" -> { local = args[0] as LocalVariableBackend?; Unit }
-                    "setContextProvider", "setMessageVariableBackend", "unload", "flushWrites" -> Unit
+                    "setContextProvider" -> { context = args[0] as ExtensionContextProvider?; Unit }
+                    "setMessageVariableBackend", "unload", "flushWrites" -> Unit
                     "getEvents" -> flow
                     "emit", "reportHostEvent" -> { val e = args[0] as ExtensionEvent; events.add(e); flow.tryEmit(e); Unit }
+                    "emitMutable" -> { val e = args[0] as ExtensionEvent; events.add(e); flow.tryEmit(e); eventTransform(e) }
                     "snapshotExtensionSettings", "collectInjectedPrompts" -> JsonObject(emptyMap())
                     else -> error("Unexpected host call: ${method.name}")
                 }

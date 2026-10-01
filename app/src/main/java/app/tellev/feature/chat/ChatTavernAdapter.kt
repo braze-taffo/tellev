@@ -63,6 +63,7 @@ internal object ChatTavernAdapter {
         onSessionUpdated: (ChatSession) -> Unit,
         onSetChatMessage: suspend (index: Int, field: String, value: String) -> Boolean,
         onGenerateText: suspend (options: JsonObject) -> JsonObject?,
+        onCompatibilityStorage: suspend (String, JsonObject) -> JsonObject? = { _, _ -> null },
     ): ExtensionContextProvider = object : ExtensionContextProvider {
         override fun snapshot(): JsonObject {
             val state = getCurrentState()
@@ -86,6 +87,9 @@ internal object ChatTavernAdapter {
 
         override suspend fun generateText(options: JsonObject): JsonObject? =
             onGenerateText(options)
+
+        override suspend fun compatibilityStorage(operation: String, payload: JsonObject): JsonObject? =
+            onCompatibilityStorage(operation, payload)
     }
 
     fun createLocalVariableBackend(
@@ -178,6 +182,7 @@ internal object ChatTavernAdapter {
                     state.selectedCharacter?.let { CharacterTavernHelperScripts.extractCharacterVariables(it) }
                         ?: buildJsonObject {},
                 )
+                put("preset", state.selectedPreset?.extensions?.get("tavern_helper")?.jsonObject?.get("variables") ?: buildJsonObject {})
             }
         }.toString()
     }
@@ -367,13 +372,18 @@ internal object ChatTavernAdapter {
                 }
             }
             putJsonArray("characterWorldBooks") {
-                character?.characterBook?.let { add(JsonPrimitive(it.name)) }
                 character?.let {
                     app.tellev.core.model.CharacterWorldBinding.linkedWorldBookNames(it).forEach { name ->
                         add(JsonPrimitive(name))
                     }
                 }
             }
+            put("characterWorldbookBindings", buildJsonObject {
+                val primary = character?.let(app.tellev.core.model.CharacterWorldBinding::linkedWorldBookName)
+                put("primary", primary?.let(::JsonPrimitive) ?: JsonNull)
+                put("additional", JsonArray(character?.let { app.tellev.core.model.CharacterWorldBinding.linkedWorldBookNames(it) }
+                    .orEmpty().filter { it != primary }.map(::JsonPrimitive)))
+            })
             putJsonArray("globalWorldBooks") {
                 state.worldBooks.filter { it.id !in state.disabledWorldIds }.forEach { add(JsonPrimitive(it.name)) }
             }
@@ -394,17 +404,12 @@ internal object ChatTavernAdapter {
             put("tag_map", buildJsonObject { })
             // ST scripts iterate chatCompletionSettings.prompts at boot
             // (SPreset's remote inject.js does); the shape must exist.
-            put("chatCompletionSettings", buildJsonObject {
-                put("extensions", state.selectedPreset?.extensions ?: buildJsonObject { })
-                putJsonArray("prompts") { }
-                putJsonArray("prompt_order") {
-                    addJsonObject {
-                        put("character_id", 100001)
-                        putJsonArray("order") { }
-                    }
-                }
+            put("chatCompletionSettings", state.selectedPreset?.raw ?: buildJsonObject {
+                put("extensions", state.selectedPreset?.extensions ?: buildJsonObject {})
+                put("prompts", JsonArray(emptyList()))
+                put("prompt_order", JsonArray(emptyList()))
             })
-            put("oai_settings", buildJsonObject { })
+            put("oai_settings", state.selectedPreset?.raw ?: buildJsonObject { })
             put("textCompletionSettings", buildJsonObject { })
             put("powerUserSettings", buildJsonObject { })
             put("power_user", buildJsonObject { })
@@ -519,6 +524,7 @@ internal object ChatTavernAdapter {
                 put("global", vars.global)
                 put("chat", state.currentSession?.metadata?.get("variables") ?: vars.local)
                 put("character", state.selectedCharacter?.let { CharacterTavernHelperScripts.extractCharacterVariables(it) } ?: buildJsonObject {})
+                put("preset", state.selectedPreset?.extensions?.get("tavern_helper")?.jsonObject?.get("variables") ?: buildJsonObject {})
             }
         }.toString()
     }
@@ -567,6 +573,9 @@ internal object ChatTavernAdapter {
                 sessionRuntime.requireMessageRuntime(token, uiState.value.currentSession?.id)
                 val payload = (Json.parseToJsonElement(payloadJson) as? JsonObject) ?: buildJsonObject { }
                 when (operation) {
+                    "compatibilityStorage" -> ChatTavernStorage.call(
+                        payload["operation"]!!.jsonPrimitive.content, payload["payload"]!!.jsonObject,
+                        dataStore, uiState, sessionRuntime)
                     "mvuReady", "mvuCall" -> {
                         characterScriptJob?.join()
                         sessionRuntime.requireMessageRuntime(token, uiState.value.currentSession?.id)
@@ -608,6 +617,9 @@ internal object ChatTavernAdapter {
                                     uiState.update { if (it.currentSession?.id == updated.id) it.copy(currentSession = updated, messages = updated.messages) else it }
                                 }
                             }
+                            "character", "preset" -> ChatTavernStorage.call("replaceVariables",
+                                buildJsonObject { put("type", options["type"]!!); put("variables", variables) },
+                                dataStore, uiState, sessionRuntime)
                             else -> error("Unsupported writable variable scope")
                         }
                         buildJsonObject { put("ok", true) }

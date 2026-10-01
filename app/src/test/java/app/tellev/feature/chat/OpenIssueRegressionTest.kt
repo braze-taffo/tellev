@@ -244,6 +244,7 @@ class OpenIssueRegressionTest {
                     "getEvents" -> eventFlow
                     "emit", "reportHostEvent" -> { val event = args[0] as ExtensionEvent; events.add(event); eventFlow.tryEmit(event); Unit }
                     "snapshotExtensionSettings", "collectInjectedPrompts" -> JsonObject(emptyMap())
+                    "emitMutable" -> { val event = args[0] as ExtensionEvent; events.add(event); eventFlow.tryEmit(event); event.payload }
                     else -> error("Unexpected host call: ${method.name}")
                 }
             } as ExtensionHost

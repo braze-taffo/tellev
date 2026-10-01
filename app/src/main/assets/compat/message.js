@@ -26,6 +26,15 @@
     const variables=await updater(getVariables(options)); await replaceVariables(variables,options); return variables;
   });
   expose('setChatMessages',(messages,options)=>request('setChatMessages',{messages,options}));
+  const storage = (operation,payload) => request('compatibilityStorage',{operation,payload});
+  const current = name => { if (name !== 'current') throw new Error('Only current context is supported'); };
+  expose('getCharWorldbookNames',(name='current')=> {
+    current(name); const c=snapshot(); return c.characterWorldbookBindings || {primary:null,additional:[]};
+  });
+  expose('rebindCharWorldbooks',(name,binding)=>storage('rebindCharWorldbooks',{name,binding}));
+  expose('getChatWorldbookName',(chat='current')=> { current(chat); return snapshot().chat_metadata?.world_info || null; });
+  expose('rebindChatWorldbook',(chat,name)=>storage('rebindChatWorldbook',{chat,name}));
+  expose('getOrCreateChatWorldbook',async(chat,name)=>(await storage('getOrCreateChatWorldbook',{chat,name})).name);
   const listeners=new Map();
   expose('eventOn',(event,callback)=> {
     if(!listeners.has(event))listeners.set(event,new Set()); listeners.get(event).add(callback);

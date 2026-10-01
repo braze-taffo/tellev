@@ -94,6 +94,7 @@ class DefaultPromptEngine(
     }
 
     override fun build(request: PromptBuildRequest): PromptBuildResult {
+        val rawGeneration = request.metadata["tavernRawGeneration"]?.jsonPrimitive?.booleanOrNull == true
         // 1. Build MacroContext from request data
         val macroContext = PromptMacroContextBuilder.buildMacroContext(request)
 
@@ -294,7 +295,7 @@ class DefaultPromptEngine(
                             ?.jsonPrimitive?.booleanOrNull != true,
                         macroExpander = { macroEngine.expand(it, macroContext) },
                     ),
-                    channel = CHANNEL_CHAT,
+                    channel = if (rawGeneration) "user_input" else CHANNEL_CHAT,
                 ),
             )
         }
@@ -314,6 +315,8 @@ class DefaultPromptEngine(
             preferCharPrompt = preferCharPrompt,
             preferCharJailbreak = preferCharJailbreak,
             macroEngine = macroEngine,
+            rawGeneration = rawGeneration,
+            overrides = request.metadata["tavernPromptOverrides"] as? JsonObject ?: JsonObject(emptyMap()),
         )
         val orderedMessages = PromptOrderProcessor.applyGroupChatOrdering(presetOrder.messages, request.metadata)
 
@@ -349,7 +352,7 @@ class DefaultPromptEngine(
         // 9. Apply token budget
         val extensionInjections = PromptInjectionProcessor.collectExtensionInjections(
             request.metadata,
-            worldScan.atDepth,
+            if (request.metadata["tavernWithDepthEntries"]?.jsonPrimitive?.booleanOrNull == false) emptyList() else worldScan.atDepth,
             macroContext,
             macroEngine,
         )
@@ -357,7 +360,7 @@ class DefaultPromptEngine(
             character = request.character,
             context = macroContext,
             preferCharJailbreak = preferCharJailbreak,
-            includeJailbreak = !request.preset.hasJailbreakSlot(),
+            includeJailbreak = !rawGeneration && !request.preset.hasJailbreakSlot(),
             macroEngine = macroEngine,
         )
         val anInjections = PromptInjectionProcessor.collectAuthorsNoteWorldInfo(worldScan)
@@ -370,14 +373,14 @@ class DefaultPromptEngine(
         val injectionTokens = PromptInjectionProcessor.injectionTokenCost(allInjectionsForBudget)
         val quietTokens = quietPrompt?.let { TokenBudget.estimateTokens(it) + 4 } ?: 0
         val budgetedRaw = TokenBudget.fitToBudget(
-            systemPrompt = templatedSystemPrompt,
+            systemPrompt = if (rawGeneration) "" else templatedSystemPrompt,
             worldInfo = emptyList(),
             characterDescription = "",
-            messages = templatedMessages.drop(1),
+            messages = if (rawGeneration) templatedMessages else templatedMessages.drop(1),
             budget = (maxContextTokens - (maxCompletionTokens ?: 0) - injectionTokens - quietTokens)
                 .coerceAtLeast(0),
         )
-        val budgetedMessages = if (budgetedRaw.isEmpty()) budgetedRaw else {
+        val budgetedMessages = if (rawGeneration) budgetedRaw.drop(1) else if (budgetedRaw.isEmpty()) budgetedRaw else {
             listOf(budgetedRaw.first().copy(channel = templatedMessages.firstOrNull()?.channel)) + budgetedRaw.drop(1)
         }
 

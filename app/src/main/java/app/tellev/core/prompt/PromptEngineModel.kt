@@ -76,6 +76,8 @@ data class PromptMessage(
      * relative extension prompts insert around the `main` prompt (injectToMain).
      */
     val channel: String? = null,
+    /** Structured OpenAI content/tool fields supplied by a request-time script. */
+    val wireFields: JsonObject? = null,
 )
 
 @Serializable

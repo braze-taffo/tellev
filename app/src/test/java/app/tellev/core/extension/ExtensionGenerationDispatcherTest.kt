@@ -9,6 +9,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ExtensionGenerationDispatcherTest {
+    @Test fun `generation cancellation propagates without converting to HTTP errors`() = runBlocking {
+        val cancellation = kotlinx.coroutines.CancellationException("cancelled")
+        val result = runCatching { dispatchExtensionGeneration(object : ExtensionContextProvider {
+            override fun snapshot() = buildJsonObject { }
+            override suspend fun generateText(options: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject? = throw cancellation
+        }, buildJsonObject { }) }
+        org.junit.Assert.assertSame(cancellation, result.exceptionOrNull())
+    }
     @Test
     fun `generation dispatcher returns provider result`() = runBlocking {
         val provider = object : ExtensionContextProvider {

@@ -19,6 +19,11 @@ interface ProviderAdapter {
     fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk>
 }
 
+/** OpenAI-shaped bodies exposed to request-time completion hooks. */
+interface CompletionSettingsAdapter : ProviderAdapter {
+    fun completionPayload(config: ProviderConfig, request: GenerateRequest): JsonObject
+}
+
 @Serializable
 enum class ProviderCapability {
     Text,
@@ -68,6 +73,8 @@ data class GenerateRequest(
     val attachments: List<Attachment> = emptyList(),
     val stream: Boolean = true,
     val metadata: JsonObject = buildJsonObject { },
+    /** Final per-request OpenAI body after completion events; never persisted in presets. */
+    val completionSettings: JsonObject? = null,
 )
 
 @Serializable
