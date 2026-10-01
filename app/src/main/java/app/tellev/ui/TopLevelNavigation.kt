@@ -5,5 +5,5 @@ internal fun isTopLevelScreen(route: String?): Boolean = route in setOf(
     "chat", "characters/list", "world/list", "extensions", "settings",
 )
 
-/** Returning within an editor or a conversation must keep its existing behavior. */
-internal fun shouldConfirmAppExit(route: String?): Boolean = route == "characters/list"
+/** Every app page confirms system back; toolbar buttons retain page navigation. */
+internal fun shouldConfirmAppExit(route: String?): Boolean = !route.isNullOrBlank()

@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContentScope
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,8 +59,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
+import androidx.navigation.NamedNavArgument
+import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
+import androidx.navigation.compose.composable as navigationComposable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
@@ -241,6 +245,9 @@ fun TellevRoot() {
     // Hide bottom bar on detail/edit screens.
     val showBottomBar = isTopLevelScreen(currentDestination?.route)
     var showExitConfirmation by rememberSaveable { mutableStateOf(false) }
+    val exitConfirmationEnabled = shouldConfirmAppExit(currentDestination?.route) &&
+        startupGuide == null && manualGuide == null &&
+        !showPresetLimitUpgradeNotice && !showQqGroupNotice
 
     // 指引覆盖层的宿主：它是一个应用窗口内的全屏层，不是独立窗口——全屏 Dialog 的窗口
     // 几何会让底部按钮被切掉（见 GuideOverlay 的注释）。Box 里唯一需要留意的是顺序：
@@ -305,8 +312,21 @@ fun TellevRoot() {
             startDestination = TellevTab.Chat.route,
             modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
         ) {
+            fun NavGraphBuilder.appPage(
+                route: String,
+                arguments: List<NamedNavArgument> = emptyList(),
+                content: @Composable AnimatedContentScope.(NavBackStackEntry) -> Unit,
+            ) {
+                navigationComposable(route = route, arguments = arguments) { entry ->
+                    content(entry)
+                    // Register after the page's handlers, within its entry,
+                    // so every page has priority over NavHost's back callback.
+                    BackHandler(enabled = exitConfirmationEnabled) { showExitConfirmation = true }
+                }
+            }
+
             // Chat tab - single screen
-            composable(TellevTab.Chat.route) {
+            appPage(TellevTab.Chat.route) {
                 val bubbleAlpha by graph.chatBubbleAlphaFlow.collectAsState()
                 val chatFontSizeSp by graph.chatFontSizeSpFlow.collectAsState()
                 ChatScreen(
@@ -322,7 +342,7 @@ fun TellevRoot() {
                 startDestination = "characters/list",
                 route = TellevTab.Characters.route,
             ) {
-                composable("characters/list") {
+                appPage("characters/list") {
                     CharactersListScreen(
                         viewModel = charactersViewModel,
                         onCreateWithAi = { navController.navigate("creation/home") },
@@ -338,16 +358,8 @@ fun TellevRoot() {
                             navController.navigate("characters/detail/$characterId")
                         },
                     )
-                    // Scope the callback to the visible library entry. A root
-                    // callback can be registered before NavHost's own callback
-                    // and lose priority when the user later opens this tab.
-                    BackHandler(
-                        enabled = shouldConfirmAppExit(currentDestination?.route) &&
-                            startupGuide == null && manualGuide == null &&
-                            !showPresetLimitUpgradeNotice && !showQqGroupNotice,
-                    ) { showExitConfirmation = true }
                 }
-                composable("characters/create") {
+                appPage("characters/create") {
                     CharacterDetailScreen(
                         viewModel = charactersViewModel,
                         onBack = { navController.popBackStack() },
@@ -359,7 +371,7 @@ fun TellevRoot() {
                         },
                     )
                 }
-                composable(
+                appPage(
                     route = "characters/detail/{characterId}",
                     arguments = listOf(
                         navArgument("characterId") { type = NavType.StringType },
@@ -381,7 +393,7 @@ fun TellevRoot() {
                 startDestination = "world/list",
                 route = TellevTab.World.route,
             ) {
-                composable("world/list") {
+                appPage("world/list") {
                     WorldBooksListScreen(
                         viewModel = worldViewModel,
                         onCreateWithAi = { navController.navigate("creation/home") },
@@ -394,7 +406,7 @@ fun TellevRoot() {
                         },
                     )
                 }
-                composable(
+                appPage(
                     route = "world/book/{bookId}",
                     arguments = listOf(
                         navArgument("bookId") { type = NavType.StringType },
@@ -412,7 +424,7 @@ fun TellevRoot() {
                         },
                     )
                 }
-                composable(
+                appPage(
                     route = "world/book/{bookId}/entry/{entryId}",
                     arguments = listOf(
                         navArgument("bookId") { type = NavType.StringType },
@@ -434,14 +446,14 @@ fun TellevRoot() {
             }
 
             // Extensions tab - single screen
-            composable("creation/home") {
+            appPage("creation/home") {
                 CreationHomeScreen(
                     viewModel = creationViewModel,
                     onBack = { navController.popBackStack() },
                     onOpenEditor = { navController.navigate("creation/editor") },
                 )
             }
-            composable(
+            appPage(
                 route = "creation/edit/character/{cardId}",
                 arguments = listOf(navArgument("cardId") { type = NavType.StringType }),
             ) { backStackEntry ->
@@ -461,7 +473,7 @@ fun TellevRoot() {
                     },
                 )
             }
-            composable(
+            appPage(
                 route = "creation/edit/world/{bookId}",
                 arguments = listOf(navArgument("bookId") { type = NavType.StringType }),
             ) { backStackEntry ->
@@ -481,7 +493,7 @@ fun TellevRoot() {
                     },
                 )
             }
-            composable(
+            appPage(
                 route = "creation/from-character/world/{cardId}",
                 arguments = listOf(navArgument("cardId") { type = NavType.StringType }),
             ) { backStackEntry ->
@@ -499,7 +511,7 @@ fun TellevRoot() {
                     },
                 )
             }
-            composable("creation/editor") {
+            appPage("creation/editor") {
                 CreationEditorScreen(
                     viewModel = creationViewModel,
                     onBack = { navController.popBackStack() },
@@ -514,12 +526,12 @@ fun TellevRoot() {
             }
 
             // Extensions tab - single screen
-            composable(TellevTab.Extensions.route) {
+            appPage(TellevTab.Extensions.route) {
                 ExtensionsScreen(viewModel = extensionsViewModel)
             }
 
             // Settings tab - single screen
-            composable(TellevTab.Settings.route) {
+            appPage(TellevTab.Settings.route) {
                 SettingsScreen(
                     viewModel = settingsViewModel,
                     updateViewModel = updateViewModel,
@@ -533,7 +545,7 @@ fun TellevRoot() {
                     },
                 )
             }
-            composable("settings/imagegen") {
+            appPage("settings/imagegen") {
                 SettingsScreen(
                     viewModel = settingsViewModel,
                     updateViewModel = updateViewModel,
@@ -542,7 +554,7 @@ fun TellevRoot() {
                     onBack = { navController.popBackStack() },
                 )
             }
-            composable("settings/providers") {
+            appPage("settings/providers") {
                 SettingsScreen(
                     viewModel = settingsViewModel,
                     updateViewModel = updateViewModel,
