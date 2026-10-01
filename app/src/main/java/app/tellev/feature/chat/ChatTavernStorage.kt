@@ -75,6 +75,8 @@ internal object ChatTavernStorage {
                     when (payload["type"]?.jsonPrimitive?.content) {
                         "character" -> {
                             val card = store.readCharacter(requireNotNull(character).id)
+                            if ((CharacterTavernHelperScripts.extractCharacterVariables(card) ?: JsonObject(emptyMap())) == vars)
+                                return@withLock ok()
                             val wrapped = card.raw["data"] as? JsonObject
                             val data = wrapped ?: card.raw
                             val raw = variableRaw(data, vars)

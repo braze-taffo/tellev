@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.tellev.core.extension.ExternalChatWritePort
 import app.tellev.core.extension.ExtensionHost
+import app.tellev.core.extension.CharacterTavernHelperScripts
 import app.tellev.core.extension.ExtensionPermissionManager
 import app.tellev.core.extension.MutableExternalChatWritePort
 import app.tellev.core.extension.RuntimeToken
@@ -152,6 +153,8 @@ class ChatViewModel(
     private var characterScriptJob: Job? = null
     @Volatile
     private var loadedCharacterScriptExtensionId: String? = null
+    @Volatile
+    private var loadedCharacterScriptSource: String? = null
 
     init {
         // The extension virtual API saves/appends chats straight to storage; these hooks
@@ -755,6 +758,7 @@ class ChatViewModel(
             loadedCharacterScriptExtensionId,
         ) {
             loadedCharacterScriptExtensionId = it
+            loadedCharacterScriptSource = null
             _uiState.update { state -> state.copy(characterUiExtensionId = it) }
         }
         _uiState.value.selectedCharacter?.let {
@@ -1210,6 +1214,10 @@ class ChatViewModel(
     }
 
     private suspend fun reloadCharacterTavernHelperScripts(character: CharacterCard) {
+        val scriptSource = CharacterTavernHelperScripts.buildIsolatedScriptSource(character, _uiState.value.selectedPreset)
+        if (loadedCharacterScriptExtensionId == ChatTavernAdapter.characterScriptExtensionId(character.id) &&
+            loadedCharacterScriptSource == scriptSource) return
+
         ChatTavernAdapter.reloadCharacterTavernHelperScripts(
             character = character,
             preset = _uiState.value.selectedPreset,
@@ -1218,6 +1226,7 @@ class ChatViewModel(
             currentLoadedId = loadedCharacterScriptExtensionId,
             onLoadedIdChanged = { id ->
                 loadedCharacterScriptExtensionId = id
+                loadedCharacterScriptSource = scriptSource.takeIf { id != null }
                 _uiState.update { it.copy(characterUiExtensionId = id) }
             },
             onError = { err -> _uiState.update { it.copy(error = err) } },

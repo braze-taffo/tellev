@@ -46,11 +46,10 @@ object CharacterTavernHelperScripts {
                 put("content", kotlinx.serialization.json.JsonPrimitive(script.content))
             }) }
         }
-        val vars = extractCharacterVariables(character) ?: JsonObject(emptyMap())
-        val presetVars = presetCard?.let(::extractCharacterVariables) ?: JsonObject(emptyMap())
-        return "export {};\nTavernHelper.insertVariables($vars,{type:'character'});\n" +
-            "TavernHelper.insertVariables($presetVars,{type:'preset'});\n" +
-            "await window.__tellevLoadScripts($modules);\n"
+        // The canonical storage bridge already reads card/preset variables from disk.
+        // Seeding them through insertVariables would save the card at every boot and
+        // notify the character observer again. Variables are data, not module identity.
+        return "export {};\nawait window.__tellevLoadScripts($modules);\n"
     }
 
     data class Script(

@@ -24,7 +24,6 @@ import kotlin.io.path.extension
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
 import kotlin.io.path.nameWithoutExtension
-import kotlin.io.path.outputStream
 import kotlin.io.path.readBytes
 
 internal class CharacterRepository(
@@ -37,6 +36,9 @@ internal class CharacterRepository(
     private val deleteWorldBook: suspend (String) -> Unit,
 ) {
     private val supportedCharacterExtensions = setOf("png", "webp", "json")
+    // A second store may read the same directory. Share the file lock so reads
+    // cannot keep an open handle across replacement (including Windows JVM tests).
+    private val cardFileLock = fileLocks.computeIfAbsent(layout.characters.toAbsolutePath().normalize()) { Any() }
 
     private data class SummaryCacheEntry(val mtimeMillis: Long, val size: Long, val summary: CharacterSummary)
 
@@ -63,7 +65,7 @@ internal class CharacterRepository(
                 if (stats != null && cached != null && cached.mtimeMillis == stats.first && cached.size == stats.second) {
                     cached.summary
                 } else {
-                    val nameAndTags = CharacterCodec.readCharacterNameAndTags(path, json)
+                    val nameAndTags = synchronized(cardFileLock) { CharacterCodec.readCharacterNameAndTags(path, json) }
                     CharacterSummary(
                         id = id,
                         name = nameAndTags?.first ?: id,
@@ -81,13 +83,15 @@ internal class CharacterRepository(
     }
 
     suspend fun readCharacter(id: String): CharacterCard = withContext(Dispatchers.IO) {
-        val path = StorageFileOps.resolveExisting(layout.characters, id, supportedCharacterExtensions)
-            ?: error("Character not found: $id")
-        when (path.extension.lowercase()) {
-            "json" -> CharacterCodec.decodeCharacterJson(path, id, json, characterImporter)
-            "png" -> CharacterCodec.decodeCharacterPng(path, id, characterImporter)
-            "webp" -> CharacterCodec.decodeCharacterWebp(path, id, characterImporter)
-            else -> error("Unsupported character format: ${path.extension}")
+        synchronized(cardFileLock) {
+            val path = StorageFileOps.resolveExisting(layout.characters, id, supportedCharacterExtensions)
+                ?: error("Character not found: $id")
+            when (path.extension.lowercase()) {
+                "json" -> CharacterCodec.decodeCharacterJson(path, id, json, characterImporter)
+                "png" -> CharacterCodec.decodeCharacterPng(path, id, characterImporter)
+                "webp" -> CharacterCodec.decodeCharacterWebp(path, id, characterImporter)
+                else -> error("Unsupported character format: ${path.extension}")
+            }
         }
     }
 
@@ -98,8 +102,10 @@ internal class CharacterRepository(
         if (existingPng.exists()) {
             val exporter = CharacterExporter(json)
             val jsonStr = exporter.exportToJson(card)
-            val pngBytes = PngCardParser.embedCardJson(existingPng.readBytes(), jsonStr)
-            existingPng.outputStream().use { it.write(pngBytes) }
+            synchronized(cardFileLock) {
+                val pngBytes = PngCardParser.embedCardJson(existingPng.readBytes(), jsonStr)
+                durableFiles.write(existingPng, pngBytes)
+            }
             // 保存后传入新指纹，启动重建的跳过优化才能跨保存存活。
             embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(existingPng))
             characterChanges.tryEmit(card.id)
@@ -110,8 +116,10 @@ internal class CharacterRepository(
         if (existingWebp.exists()) {
             val exporter = CharacterExporter(json)
             val jsonStr = exporter.exportToJson(card)
-            val webpBytes = WebpCardParser.embedCardJson(existingWebp.readBytes(), jsonStr)
-            existingWebp.outputStream().use { it.write(webpBytes) }
+            synchronized(cardFileLock) {
+                val webpBytes = WebpCardParser.embedCardJson(existingWebp.readBytes(), jsonStr)
+                durableFiles.write(existingWebp, webpBytes)
+            }
             embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(existingWebp))
             characterChanges.tryEmit(card.id)
             return@withContext
@@ -119,7 +127,7 @@ internal class CharacterRepository(
 
         val exporter = CharacterExporter(json)
         val path = safeStorageChild(layout.characters, card.id, ".json")
-        StorageFileOps.durableWriteText(durableFiles, path, exporter.exportToJson(card))
+        synchronized(cardFileLock) { StorageFileOps.durableWriteText(durableFiles, path, exporter.exportToJson(card)) }
         embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(path))
         characterChanges.tryEmit(card.id)
     }
@@ -140,14 +148,14 @@ internal class CharacterRepository(
                 removeCharacterVariants(card.id, keepExtension = "png")
                 val pngBytes = PngCardParser.embedCardJson(sourceBytes, jsonString)
                 val pngPath = safeStorageChild(layout.characters, card.id, ".png")
-                pngPath.outputStream().use { it.write(pngBytes) }
+                synchronized(cardFileLock) { durableFiles.write(pngPath, pngBytes) }
                 embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(pngPath))
             }
             "webp" -> {
                 removeCharacterVariants(card.id, keepExtension = "webp")
                 val webpBytes = WebpCardParser.embedCardJson(sourceBytes, jsonString)
                 val webpPath = safeStorageChild(layout.characters, card.id, ".webp")
-                webpPath.outputStream().use { it.write(webpBytes) }
+                synchronized(cardFileLock) { durableFiles.write(webpPath, webpBytes) }
                 embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(webpPath))
             }
             else -> saveCharacter(card)
@@ -169,15 +177,21 @@ internal class CharacterRepository(
         val embedded = PngCardParser.embedCardJson(pngBytes, jsonString)
         layout.characters.createDirectories()
         val pngPath = safeStorageChild(layout.characters, id, ".png")
-        pngPath.outputStream().use { it.write(embedded) }
+        synchronized(cardFileLock) { durableFiles.write(pngPath, embedded) }
         removeCharacterVariants(id, keepExtension = "png")
         embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(pngPath))
         characterChanges.tryEmit(id)
     }
 
     fun removeCharacterVariants(id: String, keepExtension: String) {
-        supportedCharacterExtensions
-            .filter { it != keepExtension }
-            .forEach { extension -> safeStorageChild(layout.characters, id, ".$extension").deleteIfExists() }
+        synchronized(cardFileLock) {
+            supportedCharacterExtensions
+                .filter { it != keepExtension }
+                .forEach { extension -> safeStorageChild(layout.characters, id, ".$extension").deleteIfExists() }
+        }
+    }
+
+    private companion object {
+        val fileLocks = java.util.concurrent.ConcurrentHashMap<Path, Any>()
     }
 }
