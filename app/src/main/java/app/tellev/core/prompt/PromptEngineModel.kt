@@ -12,6 +12,8 @@ import kotlinx.serialization.json.buildJsonObject
 
 internal const val DEFAULT_MAX_CONTEXT_TOKENS = 1_000_000
 internal const val DEFAULT_MAX_COMPLETION_TOKENS = 128 * 1_024
+/** Rough context cost of one image attachment (mainstream vision resolutions). */
+internal const val IMAGE_ATTACHMENT_TOKENS = 800
 
 /** [PromptMessage.channel] of the main/system prompt — anchor for BEFORE_PROMPT/IN_PROMPT injections. */
 internal const val CHANNEL_MAIN = "main"

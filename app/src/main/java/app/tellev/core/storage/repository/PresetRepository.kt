@@ -46,7 +46,13 @@ internal class PresetRepository(
     suspend fun listPresets(): List<GenerationPreset> = withContext(Dispatchers.IO) {
         presetDirectoriesWithCategories().flatMap { (category, root) ->
             StorageFileOps.readJsonFiles(root, json).filterNot { (path, _) -> path.nameWithoutExtension == "in_use" }
-                .map { (path, raw) -> PresetCodec.parsePreset(path, raw, category, resolvePresetDirectory(category).name) }
+                .mapNotNull { (path, raw) ->
+                    // One broken preset file must not take down the whole list;
+                    // the bad file is skipped and the rest stay loadable.
+                    runCatching {
+                        PresetCodec.parsePreset(path, raw, category, resolvePresetDirectory(category).name)
+                    }.getOrNull()
+                }
         }
     }
 

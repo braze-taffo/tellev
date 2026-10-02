@@ -120,6 +120,7 @@ object S {
     const val chatrepo_error_memory_mode_locked = "chatrepo_error_memory_mode_locked"
     const val cregex_unnamed_script = "cregex_unnamed_script"
     const val cregex_diag_invalid_regex = "cregex_diag_invalid_regex"
+    const val cregex_diag_regex_timeout = "cregex_diag_regex_timeout"
     const val cregex_diag_replace_failed = "cregex_diag_replace_failed"
     const val memmod_error_mode_locked = "memmod_error_mode_locked"
     const val memsvc_error_vector_need_enable = "memsvc_error_vector_need_enable"
@@ -1434,6 +1435,7 @@ object S {
         "chatrepo_error_memory_mode_locked" to R.string.chatrepo_error_memory_mode_locked,
         "cregex_unnamed_script" to R.string.cregex_unnamed_script,
         "cregex_diag_invalid_regex" to R.string.cregex_diag_invalid_regex,
+        "cregex_diag_regex_timeout" to R.string.cregex_diag_regex_timeout,
         "cregex_diag_replace_failed" to R.string.cregex_diag_replace_failed,
         "memmod_error_mode_locked" to R.string.memmod_error_mode_locked,
         "memsvc_error_vector_need_enable" to R.string.memsvc_error_vector_need_enable,
@@ -2749,6 +2751,7 @@ object S {
         "chatrepo_error_memory_mode_locked" to "对话记忆模式已锁定",
         "cregex_unnamed_script" to "未命名脚本",
         "cregex_diag_invalid_regex" to "无效或不兼容的正则表达式/flag，已跳过该规则",
+        "cregex_diag_regex_timeout" to "正则执行超时（疑似灾难性回溯），已跳过该规则",
         "cregex_diag_replace_failed" to "正则替换失败，已跳过该规则",
         "memmod_error_mode_locked" to "记忆模式已锁定",
         "memsvc_error_vector_need_enable" to "请先开启记忆与向量检索",

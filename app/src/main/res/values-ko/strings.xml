@@ -117,6 +117,7 @@
     <string name="chatrepo_error_memory_mode_locked">이 대화의 기억 모드가 잠겨 있습니다</string>
     <string name="cregex_unnamed_script">이름 없는 스크립트</string>
     <string name="cregex_diag_invalid_regex">잘못되었거나 지원되지 않는 정규식/플래그로 규칙을 건너뛰었습니다</string>
+    <string name="cregex_diag_regex_timeout">정규식 실행 시간 초과(치명적인 역추적으로 추정)로 규칙을 건너뛰었습니다</string>
     <string name="cregex_diag_replace_failed">정규식 치환 실패로 규칙을 건너뛰었습니다</string>
     <string name="memmod_error_mode_locked">기억 모드가 잠겨 있습니다</string>
     <string name="memsvc_error_vector_need_enable">먼저 기억과 벡터 검색을 활성화하세요</string>

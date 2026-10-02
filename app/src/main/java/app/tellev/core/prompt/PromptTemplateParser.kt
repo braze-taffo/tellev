@@ -181,8 +181,15 @@ internal object PromptTemplateParser {
     fun normalizeCode(code: String): String =
         stripTrimMarkers(code).trim()
 
+    /**
+     * EJS trim markers (`<%_`, `_%>`, `<%-`, `-%>`) only count when glued to
+     * the tag, and the tokenizer already consumes them at the tag level — so a
+     * leading `_` in the code BODY is a plain identifier (`_foo = 1` used to
+     * be silently renamed to `foo`). A body that is literally just a stray
+     * marker still clears to empty.
+     */
     fun stripTrimMarkers(code: String): String =
-        code.trim().removePrefix("_").removeSuffix("_").removeSuffix("-").trim()
+        code.trim().takeUnless { it == "_" || it == "-" }.orEmpty()
 
     fun isBlockEnd(code: String): Boolean =
         code == "}" || code == "};"

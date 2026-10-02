@@ -772,13 +772,85 @@ internal object PromptTemplateExpressionEvaluator {
         } catch (_: Exception) {}
         val noTrailing = trimmed.replace(Regex(",\\s*([}\\]])"), "$1")
         val unquotedKeys = noTrailing.replace(Regex("([{,]\\s*)([A-Za-z_$][\\w$]*)\\s*:"), "$1\"$2\":")
-        val singleQuoted = unquotedKeys.replace(Regex("'((?:[^'\"\\\\]|\\\\.)*)'"), "\"$1\"")
-        for (attempt in listOf(noTrailing, unquotedKeys, singleQuoted)) {
+        val singleQuoted = repairSingleQuotedStrings(unquotedKeys)
+        // singleQuoted first: kotlinx's element parser accepts single-quoted
+        // tokens but keeps the quote characters in the primitive content
+        // ('ok' parses to the literal string 'ok'), so the unrepaired forms
+        // must not win. The repaired form parses to the true string values.
+        for (attempt in listOf(singleQuoted, noTrailing, unquotedKeys)) {
             try {
                 return toKotlinValue(Json.parseToJsonElement(attempt))
             } catch (_: Exception) {}
         }
         throw IllegalArgumentException("parseJSON: unable to repair input")
+    }
+
+    /**
+     * Single-quote → double-quote repair, aware of quote state. A global
+     * regex paired up ANY two apostrophes — including inside double-quoted
+     * strings — so {"a": "it's", "b": "that's"} mangled into invalid JSON and
+     * 'they said "hi"' lost its inner quotes. The scanner copies double-quoted
+     * spans verbatim (apostrophes inside stay), pairs only unpaired apostrophes
+     * into strings (JS strings cannot span lines), and escapes inner double
+     * quotes per JSON.
+     */
+    private fun repairSingleQuotedStrings(text: String): String {
+        if (!text.contains('\'')) return text
+        val out = StringBuilder(text.length)
+        var i = 0
+        while (i < text.length) {
+            val ch = text[i]
+            when {
+                ch == '"' -> {
+                    out.append(ch)
+                    i++
+                    while (i < text.length) {
+                        val c = text[i]
+                        out.append(c)
+                        i++
+                        if (c == '\\' && i < text.length) {
+                            out.append(text[i])
+                            i++
+                        } else if (c == '"') break
+                    }
+                }
+                ch == '\'' -> {
+                    val close = findSingleQuoteClose(text, i + 1)
+                    if (close == null) {
+                        out.append(ch)
+                        i++
+                    } else {
+                        out.append('"')
+                        var j = i + 1
+                        while (j < close) {
+                            val c = text[j]
+                            when {
+                                c == '\\' && j + 1 < close -> { out.append(c).append(text[j + 1]); j += 2 }
+                                c == '"' -> { out.append('\\').append('"'); j++ }
+                                else -> { out.append(c); j++ }
+                            }
+                        }
+                        out.append('"')
+                        i = close + 1
+                    }
+                }
+                else -> { out.append(ch); i++ }
+            }
+        }
+        return out.toString()
+    }
+
+    private fun findSingleQuoteClose(text: String, from: Int): Int? {
+        var j = from
+        while (j < text.length) {
+            when (val c = text[j]) {
+                '\\' -> j += 2
+                '\'' -> return j
+                '\n', '\r' -> return null
+                else -> j++
+            }
+        }
+        return null
     }
 
     /** RFC 6902 JSON Patch over Kotlin maps/lists (ST jsonPatch, lodash-backed). */

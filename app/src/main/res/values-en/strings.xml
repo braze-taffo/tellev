@@ -117,6 +117,7 @@
     <string name="chatrepo_error_memory_mode_locked">This chat\'s memory mode is locked</string>
     <string name="cregex_unnamed_script">Unnamed script</string>
     <string name="cregex_diag_invalid_regex">Invalid or unsupported regex/flags; rule skipped</string>
+    <string name="cregex_diag_regex_timeout">Regex execution timed out (likely catastrophic backtracking); rule skipped</string>
     <string name="cregex_diag_replace_failed">Regex replacement failed; rule skipped</string>
     <string name="memmod_error_mode_locked">Memory mode is locked</string>
     <string name="memsvc_error_vector_need_enable">Enable memory and vector search first</string>

@@ -108,6 +108,9 @@ internal object PromptSystemBuilder {
             context = enrichedContext,
             worldInfoBefore = entriesBefore,
             worldInfoAfter = entriesAfter,
+            // story_string {{getvar}}/custom macros resolve through the caller's
+            // engine — a fresh engine lost every registered custom macro.
+            macroEngine = macroEngine,
         )
     }
 }

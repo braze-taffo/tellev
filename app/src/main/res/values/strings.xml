@@ -117,6 +117,7 @@
     <string name="chatrepo_error_memory_mode_locked">对话记忆模式已锁定</string>
     <string name="cregex_unnamed_script">未命名脚本</string>
     <string name="cregex_diag_invalid_regex">无效或不兼容的正则表达式/flag，已跳过该规则</string>
+    <string name="cregex_diag_regex_timeout">正则执行超时（疑似灾难性回溯），已跳过该规则</string>
     <string name="cregex_diag_replace_failed">正则替换失败，已跳过该规则</string>
     <string name="memmod_error_mode_locked">记忆模式已锁定</string>
     <string name="memsvc_error_vector_need_enable">请先开启记忆与向量检索</string>

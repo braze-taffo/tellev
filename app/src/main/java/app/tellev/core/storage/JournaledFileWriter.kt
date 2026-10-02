@@ -88,7 +88,9 @@ class JournaledFileWriter(
         val payload = bytes?.let { key(path) + ".payload" }
         val receipt = Receipt(operationId, revision + 1, digest)
         val beforeSha = shaOf(path)
-        // Retain the exact pre-migration file. Subsequent commits do not overwrite it.
+        // Retain the exact pre-migration file (manual-recovery artifact,
+        // test-pinned by JournaledFileWriterTest). Subsequent commits do not
+        // overwrite it; the sweep bounds its age.
         val backup = journal.resolve(key(path) + ".original")
         if (beforeSha != null && !backup.exists()) atomicWrite(backup, path.readBytes())
         if (payload != null) atomicWrite(journal.resolve(payload), bytes)
@@ -98,7 +100,7 @@ class JournaledFileWriter(
         fault(Stage.PREPARED)
         finish(prepared, path, pending)
         // The state file survives deletion so revisions stay monotonic across recreate cycles;
-        // only dead-weight copies are dropped and commit history stays bounded.
+        // legacy `.original` copies (no longer written) are dropped with the delete.
         if (bytes == null) Files.deleteIfExists(journal.resolve(key(path) + ".original"))
         trimCommits(path, completed)
         receipt

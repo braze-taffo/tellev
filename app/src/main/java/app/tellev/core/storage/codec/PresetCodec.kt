@@ -51,7 +51,7 @@ internal object PresetCodec {
             maxCompletionTokens = completionTokens,
             presencePenalty = raw.doubleValue("presence_penalty"),
             frequencyPenalty = raw.doubleValue("frequency_penalty"),
-            seed = raw["seed"]?.jsonPrimitive?.content?.toLongOrNull(),
+            seed = (raw["seed"] as? JsonPrimitive)?.content?.toLongOrNull(),
             stop = raw.stringList("stop"),
             prompts = orderedPrompts,
             promptsUnused = (inferredUnused + explicitUnused).distinctBy { it.identifier },
@@ -91,14 +91,17 @@ internal object PresetCodec {
         return JsonArray(groups)
     }
 
+    // `jsonPrimitive` throws on objects/arrays (a preset with
+    // "openai_max_tokens": {...} then took down the whole preset list);
+    // cast instead so unexpected shapes read as absent.
     private fun JsonObject.doubleValue(key: String): Double? =
-        this[key]?.jsonPrimitive?.content?.toDoubleOrNull()
+        (this[key] as? JsonPrimitive)?.content?.toDoubleOrNull()
 
     private fun JsonObject.intValue(key: String): Int? =
-        this[key]?.jsonPrimitive?.content?.toIntOrNull()
+        (this[key] as? JsonPrimitive)?.content?.toIntOrNull()
 
     private fun JsonObject.stringList(key: String): List<String> =
         (this[key] as? JsonArray)
-            ?.mapNotNull { it.jsonPrimitive.content.takeIf(String::isNotBlank) }
+            ?.mapNotNull { (it as? JsonPrimitive)?.content?.takeIf(String::isNotBlank) }
             ?: emptyList()
 }

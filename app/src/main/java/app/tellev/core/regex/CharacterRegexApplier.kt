@@ -21,6 +21,11 @@ object CharacterRegexApplier {
     private const val USER_INPUT = 1
     private const val AI_OUTPUT = 2
     private const val WORLD_INFO = 5
+    // Match-read budget for StepBoundedInput: base + per-char headroom. An
+    // honest linear-time rule costs ~n reads; catastrophic backtracking burns
+    // the whole budget in milliseconds and gets skipped with a diagnostic.
+    private const val STEP_BUDGET_BASE = 300_000
+    private const val STEP_BUDGET_PER_CHAR = 100
 
     enum class RegexPhase { Normal, Display, Prompt }
 
@@ -267,23 +272,57 @@ object CharacterRegexApplier {
             // matches only at position 0. When both g and y are present, g
             // takes precedence (replace still replaces all matches).
             when {
-                'g' in flags -> regex.replace(input, replacer)
+                'g' in flags -> regex.replace(StepBoundedInput(input), replacer)
                 'y' in flags -> {
-                    val first = regex.find(input)?.takeIf { it.range.first == 0 } ?: return@runCatching input
+                    val first = regex.find(StepBoundedInput(input))?.takeIf { it.range.first == 0 } ?: return@runCatching input
                     input.replaceRange(first.range, replacer(first))
                 }
                 else -> {
-                    val first = regex.find(input) ?: return@runCatching input
+                    val first = regex.find(StepBoundedInput(input)) ?: return@runCatching input
                     input.replaceRange(first.range, replacer(first))
                 }
             }
         }.getOrElse { error ->
             onDiagnostic?.invoke(RegexDiagnostic(
                 scriptName = script.stringValue("scriptName").orEmpty().ifBlank { rawSource },
-                message = error.message ?: UiStrings.get(S.cregex_diag_replace_failed),
+                message = if (error is RegexStepLimitException) {
+                    UiStrings.get(S.cregex_diag_regex_timeout)
+                } else {
+                    error.message ?: UiStrings.get(S.cregex_diag_replace_failed)
+                },
             ))
             input
         }
+    }
+
+    /** Thrown when a match exhausts its read budget; mapped to a diagnostic by the caller. */
+    private class RegexStepLimitException : Exception()
+
+    /**
+     * java.util.regex (Kotlin Regex) has no match timeout, and card-shipped
+     * regexes apply untrusted patterns to large messages — catastrophic
+     * backtracking then freezes the generation synchronously. The matcher
+     * re-reads the input through this CharSequence on every attempt, so
+     * counting reads bounds the total match work. The budget scales with the
+     * input length and sits far above any honest linear-time rule; tripping
+     * it skips the rule (result-neutral, like the literal-gate skips above)
+     * instead of hanging the chat.
+     */
+    private class StepBoundedInput(
+        private val wrapped: CharSequence,
+        private val budget: Int = STEP_BUDGET_BASE + wrapped.length * STEP_BUDGET_PER_CHAR,
+        private val steps: IntArray = intArrayOf(0),
+    ) : CharSequence {
+        override val length: Int get() = wrapped.length
+        override fun get(index: Int): Char {
+            if (++steps[0] > budget) throw RegexStepLimitException()
+            return wrapped[index]
+        }
+        override fun subSequence(startIndex: Int, endIndex: Int): CharSequence =
+            StepBoundedInput(wrapped.subSequence(startIndex, endIndex), budget, steps)
+        // Kotlin's MatchGroup.value is a live subSequence of the matcher input;
+        // replacements interpolate it, so the wrapper must render as its text.
+        override fun toString(): String = wrapped.toString()
     }
 
     private fun expandReplacement(

@@ -97,6 +97,21 @@ class OpenAiCompatibleAdapterTest {
         assertFalse(diagnostic.toString().contains("Bearer"))
     }
 
+    @Test
+    fun `content as array of parts parses and unparseable frames are counted`() = runBlocking {
+        // G9: relays ship `content` as an array of parts; a frame that still
+        // fails to parse must surface in the diagnostics instead of vanishing.
+        val wire = "data: {\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"Hel\"}]}}]}\n" +
+            "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n" +
+            "data: {broken json\n" +
+            "data: [DONE]\n"
+        val adapter = OpenAiCompatibleAdapter(client = client { response(it, 200, wire, "text/event-stream") })
+        val completed = adapter.streamGenerate(config("test"), generateRequest(true, GenerationPreset("p", "p", "openai-compatible")))
+            .toList().filterIsInstance<GenerateChunk.Completed>().single()
+        assertEquals("Hello", completed.text)
+        assertEquals("1", completed.providerDiagnostics!!["parseFailures"]!!.jsonPrimitive.content)
+    }
+
 
     @Test
     fun `stream and nonstream preserve independent response channels including no body`() = runBlocking {

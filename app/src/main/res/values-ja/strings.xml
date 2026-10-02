@@ -117,6 +117,7 @@
     <string name="chatrepo_error_memory_mode_locked">このセッションの記憶モードはロックされています</string>
     <string name="cregex_unnamed_script">名称未スクリプト</string>
     <string name="cregex_diag_invalid_regex">無効または非対応の正規表現/フラグのため、このルールをスキップしました</string>
+    <string name="cregex_diag_regex_timeout">正規表現の実行がタイムアウトしました（破滅的なバックトラックの可能性）。このルールをスキップしました</string>
     <string name="cregex_diag_replace_failed">正規表現置換に失敗したため、このルールをスキップしました</string>
     <string name="memmod_error_mode_locked">記憶モードはロックされています</string>
     <string name="memsvc_error_vector_need_enable">先に記憶とベクトル検索を有効にしてください</string>

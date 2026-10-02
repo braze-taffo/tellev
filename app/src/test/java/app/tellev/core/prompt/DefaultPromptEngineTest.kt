@@ -178,6 +178,25 @@ class DefaultPromptEngineTest {
     }
 
     @Test
+    fun unconfiguredOutputBudgetIsNotSentAsMaxTokens() {
+        val request = PromptBuildRequest(
+            character = CharacterCard(id = "alice", name = "Alice"),
+            persona = null,
+            messages = emptyList(),
+            worldBooks = emptyList(),
+            preset = GenerationPreset(id = "default", name = "Default", providerType = "openai-compatible"),
+            userInput = "Hello",
+            providerType = "openai-compatible",
+        )
+        // G14: the internal default (131072) bounds context math only — an
+        // unconfigured budget must not ride the request as max_tokens.
+        assertNull(DefaultPromptEngine().build(request).maxTokens)
+        assertEquals(512, DefaultPromptEngine().build(
+            request.copy(preset = request.preset.copy(maxCompletionTokens = 512)),
+        ).maxTokens)
+    }
+
+    @Test
     fun buildCarriesPromptTemplateVariablesWithinRenderedPrompt() {
         val result = DefaultPromptEngine().build(
             PromptBuildRequest(
