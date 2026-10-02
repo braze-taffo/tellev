@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlin.coroutines.coroutineContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -158,32 +159,54 @@ class AnthropicAdapter(
             if (request.stream) {
                 val source = response.body?.source()
                 var fullText = ""
+                var reasoningText = ""
                 while (source != null && !source.exhausted()) {
                     val line = source.readUtf8Line().orEmpty()
                     if (!line.startsWith("data:")) continue
                     val data = line.removePrefix("data:").trim()
                     if (data == "[DONE]") break
-                    val parsed = runCatching {
-                        val obj = json.parseToJsonElement(data).jsonObject
-                        val type = obj["type"]?.jsonPrimitive?.contentOrNull
-                        when (type) {
-                            "content_block_delta" -> {
-                                obj["delta"]?.jsonObject?.get("text")?.jsonPrimitive?.contentOrNull.orEmpty()
-                            }
-                            else -> ""
-                        }
-                    }.getOrDefault("")
-                    if (parsed.isNotEmpty()) {
-                        fullText += parsed
-                        emit(GenerateChunk.Delta(parsed))
+                    val obj = runCatching { json.parseToJsonElement(data).jsonObject }.getOrNull()
+                        ?: continue
+                    // An SSE error frame (overloaded_error etc.) must fail the
+                    // generation — the old path swallowed it and emitted
+                    // Completed with the partial text, surfacing "空回复".
+                    if (obj["type"]?.jsonPrimitive?.contentOrNull == "error") {
+                        val error = obj["error"] as? JsonObject
+                        val errorType = error?.get("type")?.jsonPrimitive?.contentOrNull
+                        emit(GenerateChunk.Failed(TellevError(
+                            code = "anthropic_stream_${errorType ?: "error"}",
+                            message = error?.get("message")?.jsonPrimitive?.contentOrNull
+                                ?.takeIf { it.isNotBlank() }
+                                ?: errorType?.takeIf { it.isNotBlank() }
+                                ?: data.take(500),
+                            retryable = errorType in RETRYABLE_SSE_ERRORS,
+                        )))
+                        return@use
+                    }
+                    if (obj["type"]?.jsonPrimitive?.contentOrNull != "content_block_delta") continue
+                    val delta = obj["delta"]?.jsonObject
+                    val text = delta?.get("text")?.jsonPrimitive?.contentOrNull.orEmpty()
+                    // Extended thinking arrives as thinking_delta — route it to
+                    // the reasoning channel instead of dropping it on the floor.
+                    val thinking = delta?.get("thinking")?.jsonPrimitive?.contentOrNull.orEmpty()
+                    if (text.isNotEmpty() || thinking.isNotEmpty()) {
+                        fullText += text
+                        reasoningText += thinking
+                        emit(GenerateChunk.Delta(text, reasoning = thinking))
                     }
                 }
-                emit(GenerateChunk.Completed(fullText))
+                emit(GenerateChunk.Completed(fullText, reasoning = reasoningText))
             } else {
                 val body = response.body?.string().orEmpty()
                 val text = runCatching {
                     val obj = json.parseToJsonElement(body).jsonObject
-                    obj["content"]?.jsonArray?.firstOrNull()?.jsonObject?.get("text")?.jsonPrimitive?.contentOrNull.orEmpty()
+                    // Content blocks can start with a thinking block when
+                    // extended thinking is on; take the text blocks only.
+                    obj["content"]?.jsonArray
+                        ?.filterIsInstance<JsonObject>()
+                        ?.filter { it["type"]?.jsonPrimitive?.contentOrNull == "text" }
+                        ?.joinToString("") { it["text"]?.jsonPrimitive?.contentOrNull.orEmpty() }
+                        .orEmpty()
                 }.getOrDefault("")
                 emit(GenerateChunk.Completed(text))
             }
@@ -218,5 +241,6 @@ class AnthropicAdapter(
 
     private companion object {
         val JSON = "application/json; charset=utf-8".toMediaType()
+        val RETRYABLE_SSE_ERRORS = setOf("overloaded_error", "rate_limit_error", "timeout_error", "api_error")
     }
 }

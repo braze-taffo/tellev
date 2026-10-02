@@ -607,22 +607,36 @@ class DefaultMacroEngine : MacroEngine {
         value.isEmpty() || value == "0" || value.equals("false", ignoreCase = true) || value == "null"
 
     private fun compareEq(a: String, b: String): String {
+        // ST comparisons run through JS Number(): "1.0" == "1", "007" == "7",
+        // "1e3" == "1000". Exact long compare stays the fast path so huge
+        // integers never lose precision through doubles.
         val la = a.toLongOrNull()
         val lb = b.toLongOrNull()
-        val equal = if (la != null && lb != null) la == lb else a == b
+        val equal = when {
+            la != null && lb != null -> la == lb
+            a == b -> true
+            a.toDoubleOrNull() != null && b.toDoubleOrNull() != null -> a.toDouble() == b.toDouble()
+            else -> false
+        }
         return if (equal) "true" else "false"
     }
 
     /**
-     * Ordered comparison. Numeric when both sides parse as Long; lexicographic
-     * when neither does; mixed (one numeric, one not) is not comparable → false.
+     * Ordered comparison. Numeric when both sides parse as Long (exact), then
+     * as Double (JS Number semantics cover "1.0" vs "1"); lexicographic when
+     * neither does; mixed (one numeric, one not) is not comparable → false.
      */
     private fun compareCmp(a: String, b: String, op: String): String {
         val la = a.toLongOrNull()
         val lb = b.toLongOrNull()
+        val da = a.toDoubleOrNull()
+        val db = b.toDoubleOrNull()
         val result = when {
             la != null && lb != null -> when (op) {
                 ">=" -> la >= lb; "<=" -> la <= lb; ">" -> la > lb; "<" -> la < lb; else -> false
+            }
+            da != null && db != null -> when (op) {
+                ">=" -> da >= db; "<=" -> da <= db; ">" -> da > db; "<" -> da < db; else -> false
             }
             la == null && lb == null -> {
                 val c = a.compareTo(b)
@@ -651,15 +665,16 @@ class DefaultMacroEngine : MacroEngine {
     }
 
     private fun resolveRoll(spec: String): String {
-        // Supports: `d20`, `1d20`, `3d6`, `3d6+4`, `6` (bare count = 1dN).
+        // Supports: `d20`, `1d20`, `3d6`, `3d6+4`, `d%` (ST shorthand for d100),
+        // `6` (bare count = 1dN).
         val trimmed = spec.trim()
-        val dice = Regex("""^(\d*)d(\d+)([+-]\d+)?$""", RegexOption.IGNORE_CASE)
+        val dice = Regex("""^(\d*)d(\d+|%)([+-]\d+)?$""", RegexOption.IGNORE_CASE)
         val bare = trimmed.toIntOrNull()
         return when {
             dice.matches(trimmed) -> {
                 val g = dice.find(trimmed)!!.groupValues
                 val count = g[1].ifEmpty { "1" }.toInt()
-                val sides = g[2].toInt()
+                val sides = if (g[2] == "%") 100 else g[2].toInt()
                 val mod = g[3].ifEmpty { "0" }.toInt()
                 var total = 0
                 repeat(count) { total += Random.nextInt(1, sides + 1) }

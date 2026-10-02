@@ -83,7 +83,21 @@ class CreationRepository(private val root: File) {
             root.mkdirs()
             val bytes = text.toByteArray(Charsets.UTF_8)
             val hash = sha256(bytes)
-            sourceFile(id, hash).writeBytes(bytes)
+            val destination = sourceFile(id, hash)
+            // Same tmp+ATOMIC_MOVE discipline as save()/saveCover(): a crash
+            // mid-write must not leave a truncated source file behind.
+            if (!destination.isFile) {
+                val temporary = File(root, "${safeId(id)}.$hash.source.tmp")
+                temporary.writeBytes(bytes)
+                try {
+                    Files.move(
+                        temporary.toPath(), destination.toPath(),
+                        StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE,
+                    )
+                } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                    Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                }
+            }
             hash to text.length
         }
 

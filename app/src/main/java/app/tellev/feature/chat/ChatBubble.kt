@@ -232,17 +232,12 @@ internal fun ChatBubble(
         }
         val hasFrontend = renderSegments.any { it is TavernRenderSegment.Frontend }
         // 生成图片消息：解析附件里的本地图片文件（生图结果落盘于 st-data/user/images）。
-        // tellev-img 日志用于真机排查生图链路（附件→路径→文件存在性）。
+        // 不打附件名/内部路径日志（logcat 可被同机应用读取，属隐私泄露面）。
         val imageFiles = remember(message.id, message.attachments, dataRoot) {
             message.attachments
                 .filter { it.relativePath.isNotBlank() && it.mimeType.startsWith("image/") }
                 .mapNotNull { attachment ->
-                    val resolved = dataRoot.resolve(attachment.relativePath)
-                    android.util.Log.i(
-                        "tellev-img",
-                        "attachment=${attachment.name} rel=${attachment.relativePath} resolved=${resolved.path} exists=${resolved.isFile}",
-                    )
-                    resolved.takeIf { it.isFile }
+                    dataRoot.resolve(attachment.relativePath).takeIf { it.isFile }
                 }
         }
         val dragModifier = Modifier.pointerInput(message.id) {

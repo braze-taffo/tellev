@@ -325,8 +325,14 @@ internal data class ToolResult(val ok: Boolean, val name: String, val payload: J
      * model correlate results with its own calls even when names repeat. */
     fun render(index: Int): String {
         val safeName = name.takeIf { Regex("[A-Za-z_][A-Za-z_0-9]{0,63}").matches(it) } ?: "unknown"
+        // Payloads echo card content that can itself contain the protocol tag
+        // (e.g. read_card on a card whose text mentions tool results). The
+        // payload is JSON, so the tag can only appear inside a string value —
+        // and `\/` is a legal JSON escape that parses back to `/`, neutralizing
+        // the tag without corrupting the payload.
+        val body = payload.toString().replace("</tool_result", "<\\/tool_result", ignoreCase = true)
         return "<tool_result index=\"$index\" name=\"$safeName\" ok=\"${if (ok) "true" else "false"}\">" +
-            payload.toString() + "</tool_result>"
+            body + "</tool_result>"
     }
 }
 

@@ -853,7 +853,13 @@ internal object PromptTemplateExpressionEvaluator {
         }
         val parent = getPointer(doc, parentPointer(segments)) ?: return
         when (parent) {
-            is MutableMap<*, *> -> @Suppress("UNCHECKED_CAST") (parent as MutableMap<String, Any?>)[segments.last()] = value
+            // No parenthesized assignment LHS here: Kotlin 2.2 turns it into a
+            // compile error.
+            is MutableMap<*, *> -> {
+                @Suppress("UNCHECKED_CAST")
+                val map = parent as MutableMap<String, Any?>
+                map[segments.last()] = value
+            }
             is MutableList<*> -> segments.last().toIntOrNull()?.let { index ->
                 @Suppress("UNCHECKED_CAST")
                 val list = parent as MutableList<Any?>
@@ -1195,10 +1201,15 @@ internal object PromptTemplateExpressionEvaluator {
         return ""
     }
 
+    // JS equality semantics: === compares same-typed operands only (1 === "1"
+    // is false — both used to stringify, flipping card branches), == coerces
+    // booleans to numbers and numbers↔strings before comparing.
     private fun compare(left: Any?, right: Any?, operator: String): Boolean {
         return when (operator) {
-            "==", "===" -> stringify(left) == stringify(right)
-            "!=", "!==" -> stringify(left) != stringify(right)
+            "==" -> looseEquals(left, right)
+            "===" -> strictEquals(left, right)
+            "!=" -> !looseEquals(left, right)
+            "!==" -> !strictEquals(left, right)
             ">=" -> numeric(left) >= numeric(right)
             "<=" -> numeric(left) <= numeric(right)
             ">" -> numeric(left) > numeric(right)
@@ -1207,14 +1218,39 @@ internal object PromptTemplateExpressionEvaluator {
         }
     }
 
+    private fun strictEquals(left: Any?, right: Any?): Boolean = when {
+        left == null || right == null -> left == null && right == null
+        left is String && right is String -> left == right
+        left is Boolean && right is Boolean -> left == right
+        left is Number && right is Number -> jsNumber(left) == jsNumber(right)
+        // JS objects (arrays/maps included) compare by reference.
+        left is Collection<*> && right is Collection<*> -> left === right
+        left is Map<*, *> && right is Map<*, *> -> left === right
+        else -> false
+    }
+
+    private fun looseEquals(left: Any?, right: Any?): Boolean {
+        val leftValue = if (left is Boolean) (if (left) 1.0 else 0.0) else left
+        val rightValue = if (right is Boolean) (if (right) 1.0 else 0.0) else right
+        return when {
+            leftValue == null || rightValue == null -> leftValue == null && rightValue == null
+            leftValue is Number && rightValue is Number -> jsNumber(leftValue) == jsNumber(rightValue)
+            leftValue is Number && rightValue is String -> jsNumber(leftValue) == jsNumber(rightValue)
+            leftValue is String && rightValue is Number -> jsNumber(leftValue) == jsNumber(rightValue)
+            leftValue is String && rightValue is String -> leftValue == rightValue
+            else -> stringify(leftValue) == stringify(rightValue)
+        }
+    }
+
     private fun truthy(value: Any?): Boolean {
+        // JS ToBoolean: every non-empty string is truthy ("0", "false", " " —
+        // the previous custom rule flipped `<% if (getvar('x')) %>` branches on
+        // real ST cards), NaN is falsy, empty arrays/objects are truthy.
         return when (value) {
             null, UnsupportedExpression -> false
             is Boolean -> value
-            is Number -> value.toDouble() != 0.0
-            is String -> value.isNotBlank() && value != "false" && value != "0"
-            is Collection<*> -> value.isNotEmpty()
-            is Map<*, *> -> value.isNotEmpty()
+            is Number -> value.toDouble().let { !it.isNaN() && it != 0.0 }
+            is String -> value.isNotEmpty()
             else -> true
         }
     }
@@ -1226,6 +1262,14 @@ internal object PromptTemplateExpressionEvaluator {
             is Boolean -> if (value) 1.0 else 0.0
             else -> 0.0
         }
+    }
+
+    /** JS Number() for equality: unparseable strings are NaN, so 0 == "abc" is false. */
+    private fun jsNumber(value: Any?): Double = when (value) {
+        is Number -> value.toDouble()
+        is Boolean -> if (value) 1.0 else 0.0
+        is String -> value.toDoubleOrNull() ?: Double.NaN
+        else -> Double.NaN
     }
 
     private fun stringify(value: Any?): String {
@@ -1325,14 +1369,70 @@ internal object PromptTemplateExpressionEvaluator {
         if (expression.length < 2) return null
         val quote = expression.first()
         if (quote !in setOf('\'', '"', '`') || expression.last() != quote) return null
-        return expression.substring(1, expression.length - 1)
-            .replace("\\n", "\n")
-            .replace("\\r", "\r")
-            .replace("\\t", "\t")
-            .replace("\\'", "'")
-            .replace("\\\"", "\"")
-            .replace("\\`", "`")
-            .replace("\\\\", "\\")
+        return unescapeStringLiteral(expression.substring(1, expression.length - 1))
+    }
+
+    /**
+     * JS string unescape in a single left-to-right pass. Chained replaces
+     * mis-expanded `\\n` (backslash + literal n became a newline); unknown
+     * escapes and malformed \xNN/\uXXXX degrade to their literal text instead
+     * of failing the whole literal, matching the tolerant parser style here.
+     */
+    private fun unescapeStringLiteral(body: String): String? {
+        if (!body.contains('\\')) return body
+        val out = StringBuilder(body.length)
+        var i = 0
+        while (i < body.length) {
+            val ch = body[i]
+            if (ch != '\\') {
+                out.append(ch)
+                i++
+                continue
+            }
+            if (i + 1 >= body.length) {
+                out.append('\\')
+                break
+            }
+            when (val next = body[i + 1]) {
+                'n' -> { out.append('\n'); i += 2 }
+                'r' -> { out.append('\r'); i += 2 }
+                't' -> { out.append('\t'); i += 2 }
+                'b' -> { out.append('\b'); i += 2 }
+                'f' -> { out.append('\u000C'); i += 2 }
+                'v' -> { out.append('\u000B'); i += 2 }
+                '0' -> { out.append('\u0000'); i += 2 }
+                'x' -> {
+                    val hex = body.substring(i + 2, (i + 4).coerceAtMost(body.length))
+                    val code = hex.toIntOrNull(16)
+                    if (hex.length == 2 && code != null && code != 0) {
+                        out.append(code.toChar())
+                        i += 4
+                    } else {
+                        out.append("\\x")
+                        i += 2
+                    }
+                }
+                'u' -> {
+                    val braceForm = i + 2 < body.length && body[i + 2] == '{'
+                    val close = if (braceForm) body.indexOf('}', i + 3) else -1
+                    val hex = if (braceForm && close in 1..i + 9) {
+                        body.substring(i + 3, close)
+                    } else {
+                        body.substring(i + 2, (i + 6).coerceAtMost(body.length))
+                    }
+                    val code = hex.toIntOrNull(16)
+                    if (hex.isNotEmpty() && code != null && code != 0 && code <= 0x10FFFF) {
+                        out.appendCodePoint(code)
+                        i = if (braceForm && close != -1) close + 1 else i + 2 + hex.length
+                    } else {
+                        out.append("\\u")
+                        i += 2
+                    }
+                }
+                else -> { out.append(next); i += 2 }
+            }
+        }
+        return out.toString()
     }
 
     private fun stripBalancedParens(expression: String): String {
