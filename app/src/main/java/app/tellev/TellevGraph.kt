@@ -9,6 +9,7 @@ import app.tellev.core.extension.VariableStore
 import app.tellev.core.extension.EjsTemplateSettings
 import app.tellev.core.extension.TavernHelperSettings
 import app.tellev.core.extension.WebViewJsExtensionHost
+import app.tellev.core.network.CleartextGuard
 import app.tellev.core.prompt.DefaultMacroEngine
 import app.tellev.core.prompt.DefaultPromptEngine
 import app.tellev.core.prompt.MacroEngine
@@ -116,6 +117,12 @@ class TellevGraph private constructor(
             val root = context.filesDir.toPath().resolve("st-data")
             val layout = StDirectoryLayout.fromRoot(root)
 
+            val appPreferences = AppPreferences(context)
+            // Cleartext policy is enforced in-app (CleartextGuard) so it can be
+            // an opt-in setting: loopback always allowed, other http:// hosts
+            // blocked until the user enables LAN cleartext in settings.
+            CleartextGuard.configure { appPreferences.allowRemoteCleartext }
+
             val macroEngine = DefaultMacroEngine()
             val templateEvaluator = app.tellev.core.prompt.WebViewTemplateEvaluator(context)
             val promptEngine = DefaultPromptEngine(macroEngine,
@@ -129,6 +136,7 @@ class TellevGraph private constructor(
                 // A dead host (firewall DROP) used to hang the connect phase for
                 // the full 5 minutes; 15s is ample even for slow proxies. The
                 // long read/write timeouts stay for reasoning-model streams.
+                .addInterceptor(CleartextGuard)
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .writeTimeout(5, TimeUnit.MINUTES)
                 .readTimeout(5, TimeUnit.MINUTES)
@@ -205,9 +213,9 @@ class TellevGraph private constructor(
 
             // Update checker: short timeouts so a dead mirror is abandoned
             // quickly before falling back to the next one.
-            val appPreferences = AppPreferences(context)
             val updateChecker = UpdateChecker(
                 OkHttpClient.Builder()
+                    .addInterceptor(CleartextGuard)
                     .connectTimeout(8, TimeUnit.SECONDS)
                     .readTimeout(15, TimeUnit.SECONDS)
                     .build(),

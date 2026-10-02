@@ -506,6 +506,9 @@ object S {
     const val setprov_status_failed = "setprov_status_failed"
     const val setprov_test_connection = "setprov_test_connection"
     const val setprov_testing = "setprov_testing"
+    const val setnet_cleartext = "setnet_cleartext"
+    const val setnet_cleartext_desc = "setnet_cleartext_desc"
+    const val net_cleartext_blocked = "net_cleartext_blocked"
     const val setabout_author = "setabout_author"
     const val setabout_author_bilibili = "setabout_author_bilibili"
     const val setabout_auto_check = "setabout_auto_check"
@@ -1065,6 +1068,13 @@ object S {
     const val chat_delete = "chat_delete"
     const val chat_close = "chat_close"
     const val chat_cancel = "chat_cancel"
+    const val chat_script_consent_title = "chat_script_consent_title"
+    const val chat_script_consent_body = "chat_script_consent_body"
+    const val chat_script_consent_approve = "chat_script_consent_approve"
+    const val chat_script_consent_deny = "chat_script_consent_deny"
+    const val chat_script_disabled_banner = "chat_script_disabled_banner"
+    const val chat_script_consent_enable = "chat_script_consent_enable"
+    const val chatvm_script_consent_save_failed = "chatvm_script_consent_save_failed"
     const val chat_delete_image_title = "chat_delete_image_title"
     const val chat_delete_image_message = "chat_delete_image_message"
     const val chat_delete_session_message = "chat_delete_session_message"
@@ -1669,6 +1679,9 @@ object S {
         "setprov_status_failed" to R.string.setprov_status_failed,
         "setprov_test_connection" to R.string.setprov_test_connection,
         "setprov_testing" to R.string.setprov_testing,
+        "setnet_cleartext" to R.string.setnet_cleartext,
+        "setnet_cleartext_desc" to R.string.setnet_cleartext_desc,
+        "net_cleartext_blocked" to R.string.net_cleartext_blocked,
         "setabout_author" to R.string.setabout_author,
         "setabout_author_bilibili" to R.string.setabout_author_bilibili,
         "setabout_auto_check" to R.string.setabout_auto_check,
@@ -2228,6 +2241,13 @@ object S {
         "chat_delete" to R.string.chat_delete,
         "chat_close" to R.string.chat_close,
         "chat_cancel" to R.string.chat_cancel,
+        "chat_script_consent_title" to R.string.chat_script_consent_title,
+        "chat_script_consent_body" to R.string.chat_script_consent_body,
+        "chat_script_consent_approve" to R.string.chat_script_consent_approve,
+        "chat_script_consent_deny" to R.string.chat_script_consent_deny,
+        "chat_script_disabled_banner" to R.string.chat_script_disabled_banner,
+        "chat_script_consent_enable" to R.string.chat_script_consent_enable,
+        "chatvm_script_consent_save_failed" to R.string.chatvm_script_consent_save_failed,
         "chat_delete_image_title" to R.string.chat_delete_image_title,
         "chat_delete_image_message" to R.string.chat_delete_image_message,
         "chat_delete_session_message" to R.string.chat_delete_session_message,
@@ -2833,6 +2853,9 @@ object S {
         "setprov_status_failed" to "连接失败",
         "setprov_test_connection" to "测试连接",
         "setprov_testing" to "测试中...",
+        "setnet_cleartext" to "允许明文 HTTP（局域网后端）",
+        "setnet_cleartext_desc" to "关闭时仅允许本机（localhost）使用未加密连接；开启后才允许向其他地址发送明文 HTTP。仅建议在自建后端位于局域网且无法启用 HTTPS 时开启。",
+        "net_cleartext_blocked" to "已拦截到 %1\$s 的明文 HTTP 请求：未加密连接默认仅限本机。如需连接局域网后端，请在「设置 → 模型」中开启「允许明文 HTTP」。",
         "setabout_author" to "作者",
         "setabout_author_bilibili" to "B站：迷迭香のねこ",
         "setabout_auto_check" to "启动时自动检查更新",
@@ -3392,6 +3415,13 @@ object S {
         "chat_delete" to "删除",
         "chat_close" to "关闭",
         "chat_cancel" to "取消",
+        "chat_script_consent_title" to "启用卡内嵌脚本？",
+        "chat_script_consent_body" to "此角色卡包含 %1\$d 个启用的内嵌脚本（%2\$s）。启用后脚本将以角色 TavernHelper 身份随聊天自动运行，并获得存储、剪贴板、界面面板等权限。请仅在信任该卡片来源时启用。",
+        "chat_script_consent_approve" to "启用并记住",
+        "chat_script_consent_deny" to "禁用并记住",
+        "chat_script_disabled_banner" to "卡内脚本已停用",
+        "chat_script_consent_enable" to "启用",
+        "chatvm_script_consent_save_failed" to "保存脚本授权状态失败：%1\$s",
         "chat_delete_image_title" to "删除图片",
         "chat_delete_image_message" to "将永久删除这张图片文件，无法恢复。",
         "chat_delete_session_message" to "将永久删除「%1\$s」的全部消息、图片与聊天背景，无法恢复。",

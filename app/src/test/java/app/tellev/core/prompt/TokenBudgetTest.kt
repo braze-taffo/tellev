@@ -64,24 +64,24 @@ class TokenBudgetTest {
     fun `estimateTokens uses higher rate for CJK characters`() {
         val chinese = "你好世界测试" // 6 CJK characters
         val tokens = TokenBudget.estimateTokens(chinese)
-        // 6 CJK chars * 1.5 ≈ 9 tokens
-        assertTrue("Expected ~9 tokens for 6 CJK chars, got $tokens", tokens in 6..15)
+        // 6 CJK chars * 0.7 ≈ 4.2 tokens (still above the 0.25/char ASCII rate)
+        assertTrue("Expected ~4 tokens for 6 CJK chars, got $tokens", tokens in 3..7)
     }
 
     @Test
     fun `estimateTokens for mixed text`() {
         val mixed = "Hello你好World世界" // 10 ASCII + 4 CJK
         val tokens = TokenBudget.estimateTokens(mixed)
-        // 10/4 = 2.5 (ceil to 3) + 4*1.5 = 6 = ~9 tokens
-        assertTrue("Expected ~9 tokens for mixed text, got $tokens", tokens in 5..15)
+        // 10/4 = 2.5 (ceil to 3) + 4*0.7 = 2.8 → 2 = ~5 tokens
+        assertTrue("Expected ~5 tokens for mixed text, got $tokens", tokens in 3..10)
     }
 
     @Test
     fun `estimateTokens for Japanese text`() {
         val japanese = "こんにちは世界" // 7 characters (hiragana + kanji)
         val tokens = TokenBudget.estimateTokens(japanese)
-        // 7 CJK chars * 1.5 ≈ 10.5 tokens
-        assertTrue("Expected ~10 tokens for Japanese, got $tokens", tokens in 6..16)
+        // 7 CJK chars * 0.7 ≈ 4.9 tokens
+        assertTrue("Expected ~5 tokens for Japanese, got $tokens", tokens in 3..9)
     }
 
     @Test

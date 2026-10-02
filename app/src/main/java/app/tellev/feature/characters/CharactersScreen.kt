@@ -92,6 +92,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -500,18 +501,18 @@ fun CharacterDetailScreen(
         }
     }
 
-    var name by remember(character?.id) { mutableStateOf(character?.name ?: "") }
-    var description by remember(character?.id) { mutableStateOf(character?.description ?: "") }
-    var personality by remember(character?.id) { mutableStateOf(character?.personality ?: "") }
-    var scenario by remember(character?.id) { mutableStateOf(character?.scenario ?: "") }
-    var firstMessage by remember(character?.id) { mutableStateOf(character?.firstMessage ?: "") }
+    var name by rememberSaveable(character?.id) { mutableStateOf(character?.name ?: "") }
+    var description by rememberSaveable(character?.id) { mutableStateOf(character?.description ?: "") }
+    var personality by rememberSaveable(character?.id) { mutableStateOf(character?.personality ?: "") }
+    var scenario by rememberSaveable(character?.id) { mutableStateOf(character?.scenario ?: "") }
+    var firstMessage by rememberSaveable(character?.id) { mutableStateOf(character?.firstMessage ?: "") }
     var alternateGreetings by remember(character?.id) { mutableStateOf(character?.alternateGreetings ?: emptyList()) }
-    var exampleMessages by remember(character?.id) { mutableStateOf(character?.exampleMessages ?: "") }
-    var creatorNotes by remember(character?.id) { mutableStateOf(character?.creatorNotes ?: "") }
-    var systemPrompt by remember(character?.id) { mutableStateOf(character?.systemPrompt ?: "") }
-    var postHistoryInstructions by remember(character?.id) { mutableStateOf(character?.postHistoryInstructions ?: "") }
-    var creator by remember(character?.id) { mutableStateOf(character?.creator ?: "") }
-    var characterVersion by remember(character?.id) { mutableStateOf(character?.characterVersion ?: "") }
+    var exampleMessages by rememberSaveable(character?.id) { mutableStateOf(character?.exampleMessages ?: "") }
+    var creatorNotes by rememberSaveable(character?.id) { mutableStateOf(character?.creatorNotes ?: "") }
+    var systemPrompt by rememberSaveable(character?.id) { mutableStateOf(character?.systemPrompt ?: "") }
+    var postHistoryInstructions by rememberSaveable(character?.id) { mutableStateOf(character?.postHistoryInstructions ?: "") }
+    var creator by rememberSaveable(character?.id) { mutableStateOf(character?.creator ?: "") }
+    var characterVersion by rememberSaveable(character?.id) { mutableStateOf(character?.characterVersion ?: "") }
     var tags by remember(character?.id) { mutableStateOf(character?.tags ?: emptyList()) }
     var newTag by remember { mutableStateOf("") }
     var saveAttempted by remember { mutableStateOf(false) }

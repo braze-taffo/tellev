@@ -513,6 +513,9 @@
     <string name="setprov_status_failed">연결 실패</string>
     <string name="setprov_test_connection">연결 테스트</string>
     <string name="setprov_testing">테스트 중...</string>
+    <string name="setnet_cleartext">평문 HTTP 허용(LAN 백엔드)</string>
+    <string name="setnet_cleartext_desc">끄면 로컬(localhost)만 암호화되지 않은 연결을 허용하며, 켜면 모든 호스트로의 평문 HTTP 요청이 허용됩니다. LAN의 자체 호스팅 백엔드에서 HTTPS를 사용할 수 없는 경우에만 켜세요.</string>
+    <string name="net_cleartext_blocked">%1$s(으)로의 평문 HTTP 요청이 차단되었습니다. 암호화되지 않은 연결은 기본적으로 로컬로 제한됩니다. LAN 백엔드에 연결하려면 설정 → 모델에서 “평문 HTTP 허용”을 켜세요.</string>
     <string name="setabout_author">제작자</string>
     <string name="setabout_author_bilibili">Bilibili: 迷迭香のねこ</string>
     <string name="setabout_auto_check">실행 시 업데이트 자동 확인</string>
@@ -1074,6 +1077,13 @@
     <string name="chat_delete">삭제</string>
     <string name="chat_close">닫기</string>
     <string name="chat_cancel">취소</string>
+    <string name="chat_script_consent_title">카드 내장 스크립트를 사용하시겠습니까?</string>
+    <string name="chat_script_consent_body">이 캐릭터 카드에는 활성화된 내장 스크립트가 %1$d개 있습니다(%2$s). 사용하도록 설정하면 스크립트가 캐릭터 TavernHelper로 채팅과 함께 자동 실행되며 저장소, 클립보드, UI 패널 권한을 얻습니다. 카드의 출처를 신뢰하는 경우에만 사용하세요.</string>
+    <string name="chat_script_consent_approve">사용 및 기억</string>
+    <string name="chat_script_consent_deny">사용 안 함 및 기억</string>
+    <string name="chat_script_disabled_banner">카드 스크립트가 비활성화됨</string>
+    <string name="chat_script_consent_enable">사용</string>
+    <string name="chatvm_script_consent_save_failed">스크립트 동의 상태 저장 실패: %1$s</string>
     <string name="chat_delete_image_title">이미지 삭제</string>
     <string name="chat_delete_image_message">이 이미지 파일은 영구 삭제되며 복구할 수 없습니다.</string>
     <string name="chat_delete_session_message">\"%1$s\"의 모든 메시지, 이미지, 채팅 배경이 영구 삭제되며 복구할 수 없습니다.</string>

@@ -22,6 +22,7 @@ import app.tellev.core.prompt.DefaultMacroEngine
 import app.tellev.core.prompt.MacroContext
 import app.tellev.core.prompt.MacroEngine
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -30,6 +31,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
@@ -538,8 +540,18 @@ class WebViewJsExtensionHost(
         // viewModelScope — without this switch any /delay or heavy script freezes
         // the UI thread outright (ANR after 5s of blocked input dispatch).
         val result = withContext(Dispatchers.Default) {
-            runCatching { slashCommandEngine.execute(script) }
-                .getOrElse { SlashCommandEngine.Result.error(it.message ?: "execution error") }
+            // runInterruptible turns cancellation into a thread interrupt so a
+            // blocking /delay aborts with the cancelled generation instead of
+            // pinning the worker for its full 30s. The interrupt surfaces as
+            // CancellationException and must not be swallowed into an error
+            // result here.
+            try {
+                runInterruptible { slashCommandEngine.execute(script) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                SlashCommandEngine.Result.error(e.message ?: "execution error")
+            }
         }
         return SlashCommandResult(
             handled = result.handled && !result.isError,

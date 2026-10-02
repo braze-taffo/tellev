@@ -2,6 +2,7 @@ package app.tellev.core.memory
 
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
+import app.tellev.core.network.CleartextGuard
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
@@ -52,7 +53,7 @@ class MemoryService(
     val settings = MemorySettingsStore(secrets)
     private val json = Json { ignoreUnknownKeys = true }
     private val processing = Mutex()
-    private val http = OkHttpClient()
+    private val http = OkHttpClient.Builder().addInterceptor(CleartextGuard).build()
 
     suspend fun initialize(session: ChatSession, mode: MemoryMode) = store.initialize(session, mode)
 

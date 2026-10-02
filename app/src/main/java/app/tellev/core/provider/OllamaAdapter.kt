@@ -124,22 +124,47 @@ class OllamaAdapter(
             if (request.stream) {
                 val source = response.body?.source()
                 var fullText = ""
+                var sawDone = false
                 while (source != null && !source.exhausted()) {
                     val line = source.readUtf8Line().orEmpty()
                     if (line.isBlank()) continue
-                    val parsed = runCatching {
-                        val obj = json.parseToJsonElement(line).jsonObject
-                        val done = obj["done"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
-                        val text = obj["message"]?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull.orEmpty()
-                        if (done) null else text
-                    }.getOrNull()
-                    if (parsed == null) break
-                    if (parsed.isNotEmpty()) {
-                        fullText += parsed
-                        emit(GenerateChunk.Delta(parsed))
+                    val obj = runCatching { json.parseToJsonElement(line).jsonObject }.getOrNull()
+                    // A malformed frame is a skipped line, not the end of the
+                    // stream — treating it as "done" silently truncated replies.
+                    if (obj == null) continue
+                    obj["error"]?.jsonPrimitive?.contentOrNull?.let { err ->
+                        emit(GenerateChunk.Failed(TellevError(
+                            code = "ollama_stream_error",
+                            message = err,
+                            retryable = true,
+                        )))
+                        return@use
+                    }
+                    val done = obj["done"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+                    if (done) {
+                        sawDone = true
+                        break
+                    }
+                    val text = obj["message"]?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull.orEmpty()
+                    if (text.isNotEmpty()) {
+                        fullText += text
+                        emit(GenerateChunk.Delta(text))
                     }
                 }
-                emit(GenerateChunk.Completed(fullText))
+                // Mirror the OpenAI adapter: callers that need a real end-of-
+                // stream marker (creation engine) get a failure instead of a
+                // silently truncated reply when the socket dies mid-stream.
+                if (!sawDone &&
+                    request.metadata["require_stream_terminator"]?.jsonPrimitive?.contentOrNull == "true"
+                ) {
+                    emit(GenerateChunk.Failed(TellevError(
+                        code = "provider_incomplete_stream",
+                        message = "Ollama stream ended without a done frame",
+                        retryable = true,
+                    )))
+                    return@use
+                }
+                emit(GenerateChunk.Completed(fullText, finishReason = if (sawDone) "stop" else null))
             } else {
                 val body = response.body?.string().orEmpty()
                 val text = runCatching {

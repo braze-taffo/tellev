@@ -513,6 +513,9 @@
     <string name="setprov_status_failed">接続失敗</string>
     <string name="setprov_test_connection">接続テスト</string>
     <string name="setprov_testing">テスト中...</string>
+    <string name="setnet_cleartext">平文 HTTP を許可（LAN バックエンド）</string>
+    <string name="setnet_cleartext_desc">オフのときはローカル（localhost）のみ暗号化されていない接続を許可します。オンにすると任意のホストへの平文 HTTP を許可します。LAN 上の自己ホスト型バックエンドで HTTPS が使えない場合のみ有効にしてください。</string>
+    <string name="net_cleartext_blocked">%1$s への平文 HTTP リクエストをブロックしました：暗号化されていない接続は既定でローカルのみ許可です。LAN バックエンドに接続するには「設定 → モデル」で「平文 HTTP を許可」を有効にしてください。</string>
     <string name="setabout_author">作者</string>
     <string name="setabout_author_bilibili">Bステーション：迷迭香のねこ</string>
     <string name="setabout_auto_check">起動時に更新を自動確認</string>
@@ -1074,6 +1077,13 @@
     <string name="chat_delete">削除</string>
     <string name="chat_close">閉じる</string>
     <string name="chat_cancel">キャンセル</string>
+    <string name="chat_script_consent_title">カード内蔵スクリプトを有効にしますか？</string>
+    <string name="chat_script_consent_body">このキャラクターカードには有効な内蔵スクリプトが %1$d 個あります（%2$s）。有効にすると、スクリプトはキャラクター TavernHelper としてチャットと共に自動実行され、ストレージ・クリップボード・UI パネルなどの権限を取得します。カードの出所を信頼できる場合のみ有効にしてください。</string>
+    <string name="chat_script_consent_approve">有効にして記憶</string>
+    <string name="chat_script_consent_deny">無効にして記憶</string>
+    <string name="chat_script_disabled_banner">カード内蔵スクリプトは無効です</string>
+    <string name="chat_script_consent_enable">有効にする</string>
+    <string name="chatvm_script_consent_save_failed">スクリプト許可状態の保存に失敗しました：%1$s</string>
     <string name="chat_delete_image_title">画像を削除</string>
     <string name="chat_delete_image_message">この画像ファイルは完全に削除され、元に戻せません。</string>
     <string name="chat_delete_session_message">「%1$s」のすべてのメッセージ・画像・チャット背景が完全に削除され、元に戻せません。</string>

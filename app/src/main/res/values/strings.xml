@@ -513,6 +513,9 @@
     <string name="setprov_status_failed">连接失败</string>
     <string name="setprov_test_connection">测试连接</string>
     <string name="setprov_testing">测试中...</string>
+    <string name="setnet_cleartext">允许明文 HTTP（局域网后端）</string>
+    <string name="setnet_cleartext_desc">关闭时仅允许本机（localhost）使用未加密连接；开启后才允许向其他地址发送明文 HTTP。仅建议在自建后端位于局域网且无法启用 HTTPS 时开启。</string>
+    <string name="net_cleartext_blocked">已拦截到 %1$s 的明文 HTTP 请求：未加密连接默认仅限本机。如需连接局域网后端，请在「设置 → 模型」中开启「允许明文 HTTP」。</string>
     <string name="setabout_author">作者</string>
     <string name="setabout_author_bilibili">B站：迷迭香のねこ</string>
     <string name="setabout_auto_check">启动时自动检查更新</string>
@@ -1074,6 +1077,13 @@
     <string name="chat_delete">删除</string>
     <string name="chat_close">关闭</string>
     <string name="chat_cancel">取消</string>
+    <string name="chat_script_consent_title">启用卡内嵌脚本？</string>
+    <string name="chat_script_consent_body">此角色卡包含 %1$d 个启用的内嵌脚本（%2$s）。启用后脚本将以角色 TavernHelper 身份随聊天自动运行，并获得存储、剪贴板、界面面板等权限。请仅在信任该卡片来源时启用。</string>
+    <string name="chat_script_consent_approve">启用并记住</string>
+    <string name="chat_script_consent_deny">禁用并记住</string>
+    <string name="chat_script_disabled_banner">卡内脚本已停用</string>
+    <string name="chat_script_consent_enable">启用</string>
+    <string name="chatvm_script_consent_save_failed">保存脚本授权状态失败：%1$s</string>
     <string name="chat_delete_image_title">删除图片</string>
     <string name="chat_delete_image_message">将永久删除这张图片文件，无法恢复。</string>
     <string name="chat_delete_session_message">将永久删除「%1$s」的全部消息、图片与聊天背景，无法恢复。</string>

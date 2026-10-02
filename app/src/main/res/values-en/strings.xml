@@ -513,6 +513,9 @@
     <string name="setprov_status_failed">Connection failed</string>
     <string name="setprov_test_connection">Test connection</string>
     <string name="setprov_testing">Testing...</string>
+    <string name="setnet_cleartext">Allow cleartext HTTP (LAN backends)</string>
+    <string name="setnet_cleartext_desc">When off, only loopback (localhost) may use unencrypted connections; enabling it allows cleartext HTTP to any host. Only turn this on for self-hosted backends on your LAN that cannot use HTTPS.</string>
+    <string name="net_cleartext_blocked">Blocked a cleartext HTTP request to %1$s: unencrypted connections are limited to localhost by default. To reach a LAN backend, enable “Allow cleartext HTTP” in Settings → Models.</string>
     <string name="setabout_author">Author</string>
     <string name="setabout_author_bilibili">Bilibili: 迷迭香のねこ</string>
     <string name="setabout_auto_check">Check for updates on launch</string>
@@ -1074,6 +1077,13 @@
     <string name="chat_delete">Delete</string>
     <string name="chat_close">Close</string>
     <string name="chat_cancel">Cancel</string>
+    <string name="chat_script_consent_title">Enable embedded card scripts?</string>
+    <string name="chat_script_consent_body">This character card contains %1$d enabled embedded script(s) (%2$s). Once enabled, they run automatically with the chat as the character TavernHelper and receive Storage, Clipboard and UI-panel permissions. Only enable this if you trust where the card came from.</string>
+    <string name="chat_script_consent_approve">Enable and remember</string>
+    <string name="chat_script_consent_deny">Disable and remember</string>
+    <string name="chat_script_disabled_banner">Card scripts are disabled</string>
+    <string name="chat_script_consent_enable">Enable</string>
+    <string name="chatvm_script_consent_save_failed">Failed to save script consent: %1$s</string>
     <string name="chat_delete_image_title">Delete Image</string>
     <string name="chat_delete_image_message">This image file will be permanently deleted. This cannot be undone.</string>
     <string name="chat_delete_session_message">All messages, images and the chat background of \"%1$s\" will be permanently deleted. This cannot be undone.</string>

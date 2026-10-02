@@ -2,6 +2,7 @@ package app.tellev.feature.creation
 
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
+import app.tellev.core.network.CleartextGuard
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.MessageReasoning
 import app.tellev.core.model.TellevError
@@ -238,6 +239,7 @@ internal class CreationEngine(
     private val compatibleCreationAdapter by lazy {
         OpenAiCompatibleAdapter(client = OkHttpClient.Builder()
             .protocols(listOf(Protocol.HTTP_1_1))
+            .addInterceptor(CleartextGuard)
             // The model may take minutes to answer, but opening a TCP socket should not.
             // A shorter connect limit lets OkHttp try another resolved address sooner.
             .connectTimeout(15, TimeUnit.SECONDS)

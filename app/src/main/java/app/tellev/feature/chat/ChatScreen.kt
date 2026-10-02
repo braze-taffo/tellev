@@ -49,6 +49,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -61,6 +62,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.input.pointer.pointerInput
@@ -155,7 +157,7 @@ private fun ChatContentScreen(
     val flingBehavior = ScrollableDefaults.flingBehavior()
     var followLatest by remember(state.currentSession?.id) { mutableStateOf(true) }
     val keyboardController = LocalSoftwareKeyboardController.current
-    var inputText by remember { mutableStateOf("") }
+    var inputText by rememberSaveable { mutableStateOf("") }
     var showSessionMenu by remember { mutableStateOf(false) }
     var sessionPendingDelete by remember { mutableStateOf<ChatSessionSummary?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
@@ -165,7 +167,7 @@ private fun ChatContentScreen(
         if (state.characterUiExtensionId == null) showCharacterInterface = false
     }
     var editingMessageIndex by remember { mutableStateOf<Int?>(null) }
-    var editTextField by remember { mutableStateOf("") }
+    var editTextField by rememberSaveable { mutableStateOf("") }
     var pendingAttachments by remember { mutableStateOf(listOf<Attachment>()) }
     var showImageDialog by remember { mutableStateOf(false) }
     var showImageGallery by remember(state.currentSession?.id) { mutableStateOf(false) }
@@ -486,6 +488,11 @@ private fun ChatContentScreen(
                 contentPadding = PaddingValues(bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (state.characterScriptsDisabled != null) {
+                    item(key = "character_scripts_disabled") {
+                        CharacterScriptsDisabledBanner(onEnable = viewModel::requestScriptConsentPrompt)
+                    }
+                }
                 itemsIndexed(state.messages, key = { _, msg -> msg.id }) { index, message ->
                     if (editingMessageIndex == index) {
                         EditMessageCard(
@@ -658,6 +665,32 @@ private fun ChatContentScreen(
                 },
             )
         }
+        state.pendingScriptConsent?.let { consent ->
+            AlertDialog(
+                onDismissRequest = { viewModel.denyCharacterScripts(persist = false) },
+                title = { Text(stringResource(R.string.chat_script_consent_title)) },
+                text = {
+                    Text(
+                        stringResource(
+                            R.string.chat_script_consent_body,
+                            consent.scriptNames.size,
+                            consent.scriptNames.take(5).joinToString(", ") +
+                                if (consent.scriptNames.size > 5) "…" else "",
+                        ),
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.approveCharacterScripts() }) {
+                        Text(stringResource(R.string.chat_script_consent_approve))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.denyCharacterScripts(persist = true) }) {
+                        Text(stringResource(R.string.chat_script_consent_deny))
+                    }
+                },
+            )
+        }
         if (state.imageGenError != null && state.imageGenDiagnostic == null) {
             AlertDialog(
                 onDismissRequest = viewModel::clearImageError,
@@ -757,4 +790,30 @@ private fun ChatContentScreen(
         }
     }
     MemoryChatDialogs(state, viewModel, showMemoryDialog) { showMemoryDialog = false }
+}
+
+@Composable
+private fun CharacterScriptsDisabledBanner(onEnable: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.chat_script_disabled_banner),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onEnable) {
+                Text(stringResource(R.string.chat_script_consent_enable))
+            }
+        }
+    }
 }
