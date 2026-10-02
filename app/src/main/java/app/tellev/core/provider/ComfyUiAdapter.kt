@@ -360,11 +360,15 @@ class ComfyUiAdapter(
         val completed: Boolean,
     )
 
-    private suspend fun pollHistory(config: ProviderConfig, promptId: String): HistoryResult {
+    /** Returns null when the polling deadline expires (caller maps it to comfy_timeout). */
+    private suspend fun pollHistory(config: ProviderConfig, promptId: String): HistoryResult? {
         val deadline = System.nanoTime() + POLL_TIMEOUT_NANOS
         while (true) {
             coroutineContext.ensureActive()
-            if (System.nanoTime() > deadline) return HistoryResult(output = null, error = null, completed = false)
+            // Deadline: signal as null so the caller's comfy_timeout branch fires.
+            // Returning an empty HistoryResult instead fell into "no images"
+            // (retryable=false) and the timeout branch was unreachable dead code.
+            if (System.nanoTime() > deadline) return null
             delay(POLL_INTERVAL_MS)
 
             val request = Request.Builder()

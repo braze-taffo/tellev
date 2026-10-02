@@ -88,6 +88,15 @@ class VariableStore(
     private val global = ConcurrentHashMap<String, JsonElement>()
     private val globalLock = Any()
     private var globalTail: Deferred<Unit>? = null
+    /**
+     * Last persistence failure, for diagnostics. Writes are chained through
+     * [globalTail], so the next write retries the LATEST snapshot on its own —
+     * a transient IO failure must not brick global variables for the process
+     * lifetime (there was no recovery entry point before). Callers that need a
+     * durable guarantee use [flushWrites], which still awaits the chain and
+     * propagates the failure.
+     */
+    @Volatile
     private var globalFailure: Throwable? = null
     @Volatile private var globalLoaded = false
     private val initialization = Mutex()
@@ -146,14 +155,12 @@ class VariableStore(
     override fun getGlobal(name: String): String? = withGlobalState { global[name]?.let { elementToString(it) } }
 
     override fun setGlobal(name: String, value: String) = withGlobalState {
-        requireGlobalWritable()
         if (name.isBlank()) return@withGlobalState
         global[name] = JsonPrimitive(value)
         persistGlobal()
     }
 
     override fun addGlobal(name: String, increment: String): String = withGlobalState {
-        requireGlobalWritable()
         val current = global[name]?.let { elementToString(it) } ?: "0"
         val result = addStrings(current, increment)
         global[name] = JsonPrimitive(result)
@@ -165,7 +172,6 @@ class VariableStore(
     override fun decGlobal(name: String): String = addGlobal(name, "-1")
 
     override fun deleteGlobal(name: String) = withGlobalState {
-        requireGlobalWritable()
         global.remove(name)
         persistGlobal()
     }
@@ -181,7 +187,6 @@ class VariableStore(
 
     /** Overwrite the entire global store and persist. */
     fun replaceGlobal(obj: JsonObject) = withGlobalState {
-        requireGlobalWritable()
         global.clear()
         obj.forEach { (k, v) -> global[k] = v }
         persistGlobal()
@@ -220,9 +225,6 @@ class VariableStore(
         pending?.await()
     }
 
-    private fun requireGlobalWritable() {
-        globalFailure?.let { throw IllegalStateException("全局变量保存失败，需要恢复后才能继续写入", it) }
-    }
 
     private fun persistGlobal() {
         val snapshot = globalObject()

@@ -93,8 +93,13 @@ internal object PromptOrderProcessor {
                 }
                 "jailbreak", "posthistoryinstructions", "phi" ->
                     applyOverride(prompt.content, charJailbreak, preferCharJailbreak, prompt.forbidOverrides)
-                "worldinfobefore" -> overrides["world_info_before"]?.jsonPrimitive?.content ?: worldBefore
-                "worldinfoafter" -> overrides["world_info_after"]?.jsonPrimitive?.content ?: worldAfter
+                // A JSON null override must fall through to the computed value:
+                // JsonNull.jsonPrimitive.content is the literal string "null",
+                // which used to be injected into the prompt verbatim.
+                "worldinfobefore" -> (overrides["world_info_before"] as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content ?: worldBefore
+                "worldinfoafter" -> (overrides["world_info_after"] as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content ?: worldAfter
                 "chardescription", "characterdescription" -> character.description
                 "charpersonality", "characterpersonality" -> character.personality
                 "scenario" -> character.scenario

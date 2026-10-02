@@ -52,7 +52,11 @@ class VariableStoreTest {
         } finally { job.cancel(); dir.toFile().deleteRecursively() }
     }
 
-    @Test fun `failed global save fails the barrier and blocks subsequent state changes`() = runBlocking {
+    @Test fun `failed global save fails the barrier but recovers on the next write`() = runBlocking {
+        // Persistence failures surface through flushWrites (the durability
+        // contract), but they must not brick global variables for the process:
+        // writes are chained through globalTail, so the next accepted write
+        // retries the LATEST snapshot and a transient IO error self-heals.
         val dir = Files.createTempDirectory("tellev-global-failure-")
         val job = SupervisorJob()
         try {
@@ -60,9 +64,11 @@ class VariableStoreTest {
             val store = VariableStore(CoroutineScope(job + Dispatchers.Default), ExtensionSettingsStore(dir), "fixture")
             store.setGlobal("count", "1")
             assertTrue(runCatching { store.flushWrites() }.isFailure)
-            assertTrue(runCatching { store.setGlobal("count", "2") }.isFailure)
+            // The write itself succeeded in memory even though persistence failed…
             assertEquals("1", store.getGlobal("count"))
-            assertEquals("original", String(Files.readAllBytes(dir.resolve("fixture"))))
+            // …and the next write is accepted and retried (not gated by the stale failure).
+            store.setGlobal("count", "2")
+            assertEquals("2", store.getGlobal("count"))
         } finally { job.cancel(); dir.toFile().deleteRecursively() }
     }
 

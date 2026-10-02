@@ -100,7 +100,7 @@ internal class WorldBookRepository(
         sourceFileName: String,
     ): WorldBook = withContext(Dispatchers.IO) {
         val raw = runCatching {
-            json.parseToJsonElement(jsonBytes.decodeToString()) as? JsonObject
+            json.parseToJsonElement(jsonBytes.decodeToString().removePrefix("﻿")) as? JsonObject
         }.getOrNull() ?: error(UiStrings.get(S.wbrepo_error_invalid_json, sourceFileName))
 
         if (raw["entries"] !is JsonObject) {

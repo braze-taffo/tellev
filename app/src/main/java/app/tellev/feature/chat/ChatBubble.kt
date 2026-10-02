@@ -141,9 +141,11 @@ internal fun ChatBubble(
             }
             Spacer(modifier = Modifier.weight(1f))
             Box {
+                // 24dp was below the 48dp minimum touch target; keep the icon
+                // visually small but give the button a hittable area.
                 IconButton(
                     onClick = { showActions = true },
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(40.dp),
                 ) {
                     Icon(
                         Icons.Default.MoreVert,

@@ -105,7 +105,8 @@ class UpdateViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(downloading = true, progress = 0f, error = null) }
             try {
-                val target = File(appContext.cacheDir, "tellev-update.apk")
+                // Must match res/xml/file_paths.xml (cache-path "update_apk").
+                val target = File(File(appContext.cacheDir, "update").apply { mkdirs() }, "tellev-update.apk")
                 checker.downloadApk(info, UpdateChecker.DEFAULT_MIRRORS, target) { p ->
                     _uiState.update { it.copy(progress = p) }
                 }

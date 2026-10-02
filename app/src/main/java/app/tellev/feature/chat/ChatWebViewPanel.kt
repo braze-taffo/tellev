@@ -351,7 +351,11 @@ internal fun TavernHtmlPanel(
                     settings.allowUniversalAccessFromFileURLs = false
                     settings.loadWithOverviewMode = false
                     settings.useWideViewPort = false
-                    settings.textZoom = 100
+                    // textZoom 100 ignored the system font size entirely: users
+                    // who enlarge system text got scaled Compose text but
+                    // fixed-size WebView text on the same screen. Follow the
+                    // system scale like the native side does.
+                    settings.textZoom = (100 * resources.configuration.fontScale).toInt().coerceAtLeast(100)
                     tag = bridge
                     bridge.attach(this)
                     addJavascriptInterface(bridge, "TellevBridge")

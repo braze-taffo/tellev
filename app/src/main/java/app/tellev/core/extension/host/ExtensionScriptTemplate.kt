@@ -347,6 +347,17 @@ internal object ExtensionScriptTemplate {
         }
     }
 
+    /**
+     * JSON text embedded directly as a JS *expression* (object/string literal,
+     * not inside a quoted string like [jsEscape]). U+2028/U+2029 are legal in
+     * JSON strings but are line terminators in pre-ES2019 JS string literals:
+     * unescaped they turn the whole evaluateJavascript snippet into a
+     * SyntaxError, so neither callback ever fires and the Kotlin awaiter stalls
+     * to its timeout.
+     */
+    internal fun jsExpression(json: String): String =
+        json.replace(" ", "\u2028").replace(" ", "\u2029")
+
     internal fun jsEscape(raw: String): String = raw
         .replace("\\", "\\\\")
         .replace("'", "\\'")

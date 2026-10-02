@@ -790,6 +790,11 @@ internal object PromptTemplateExpressionEvaluator {
             val op = patch["op"] as? String ?: continue
             val path = patch["path"]?.toString() ?: continue
             val fromPath = patch["from"]?.toString()
+            // A malformed patch (pointer without a leading "/", negative list
+            // index) used to throw out of the whole render and fail the
+            // generation. RFC 6902 implementations typically skip bad ops;
+            // do the same rather than losing the entire build.
+            try {
             when (op) {
                 "add", "replace", "set", "assign" -> setPointer(working, path, patch["value"])
                 "remove" -> removePointer(working, path)
@@ -809,6 +814,9 @@ internal object PromptTemplateExpressionEvaluator {
                     // ST: test failure aborts and returns the ORIGINAL document.
                     if (!jsonEquals(getPointer(working, path), patch["value"])) return doc
                 }
+            }
+            } catch (_: Exception) {
+                // Malformed op skipped; earlier ops in the same patch stay applied.
             }
         }
         return working

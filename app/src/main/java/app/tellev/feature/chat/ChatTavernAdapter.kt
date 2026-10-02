@@ -1,5 +1,6 @@
 package app.tellev.feature.chat
 
+import app.tellev.core.extension.host.ExtensionScriptTemplate
 import app.tellev.core.extension.CharacterTavernHelperScripts
 import app.tellev.core.extension.ExtensionContextProvider
 import app.tellev.core.extension.ExtensionEvent
@@ -585,7 +586,10 @@ internal object ChatTavernAdapter {
                         else {
                             val method = payload["method"]?.jsonPrimitive?.content ?: error("Missing MVU method")
                             require(method in setOf("parseMessage", "parseMessages"))
-                            "window.Mvu[" + JsonPrimitive(method) + "](..." + (payload["args"] ?: JsonArray(emptyList())) + ")"
+                            "window.Mvu[" + ExtensionScriptTemplate.jsExpression(JsonPrimitive(method).toString()) +
+                                "](..." + ExtensionScriptTemplate.jsExpression(
+                                    (payload["args"] ?: JsonArray(emptyList())).toString(),
+                                ) + ")"
                         }
                         Json.parseToJsonElement(runtime.evaluateRuntime(owner, expression))
                     }

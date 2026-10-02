@@ -9,6 +9,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import app.tellev.core.extension.host.ExtensionDiagnostics
@@ -23,6 +24,7 @@ import app.tellev.core.prompt.MacroEngine
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -226,13 +228,21 @@ class WebViewJsExtensionHost(
             val handle =
                 withContext(Dispatchers.Main) {
                     webViews.remove(manifest.id)?.let(::destroyRuntimeWebView)
-                    requests.pendingLoads.remove(manifest.id)?.cancel()
-                    requests.pendingLoadFailures.remove(manifest.id)
+                    // A superseded load destroys the old WebView, so its in-flight
+                    // evaluations/commands/API calls can never complete. Cancel them
+                    // here (awaitPending normalizes to a timeout-style result);
+                    // leaving them pending used to stall awaiters 10-30s each.
+                    requests.cancelPendingForExtension(manifest.id)
 
                     capabilityTokens[manifest.id] = token
                     declaredPermissions[manifest.id] = manifest.permissions
                     requests.pendingLoads[manifest.id] = readySignal
 
+                    // A previous saveSettings failure used to poison this id for
+                    // the whole process ("需要恢复" with no recovery path). A fresh
+                    // load re-reads persisted state anyway, so the stale failure
+                    // marker can go — the next save retries cleanly.
+                    synchronized(settingsWriteLock) { settingsFailures.remove(manifest.id) }
                     val settingsJson = settingsStore.getSettings(manifest.id)
                     settingsCache[manifest.id] = json.encodeToString(JsonObject.serializer(), settingsJson)
 
@@ -265,6 +275,24 @@ class WebViewJsExtensionHost(
                         webViewClient = object : WebViewClient() {
                             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
                                 CompatAssets.intercept(context, request.url.toString())
+
+                            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                                // Renderer crash (typically OOM inside the WebView
+                                // process). The platform default KILLS the whole app;
+                                // handled instead: drop the dead runtime, release all
+                                // its awaiters, report, and let the next load rebuild.
+                                if (webViews[manifest.id] === view) {
+                                    webViews.remove(manifest.id)
+                                    destroyRuntimeWebView(view)
+                                    requests.cancelPendingForExtension(manifest.id)
+                                    reportExtensionLog(
+                                        manifest.id,
+                                        "error",
+                                        if (detail.didCrash()) "WebView renderer crashed" else "WebView renderer killed by system",
+                                    )
+                                }
+                                return true
+                            }
 
                             override fun shouldOverrideUrlLoading(
                                 view: WebView,
@@ -412,7 +440,8 @@ class WebViewJsExtensionHost(
             extensionIds = webViews.keys.toList(),
             excludeExtensionId = excludeExtensionId,
             dispatch = { id ->
-                evaluateRuntime(id, "window.__tellevDispatch(" + JsonPrimitive(event.name) + "," + JsonPrimitive(payload) + ")")
+                evaluateRuntime(id, "window.__tellevDispatch(" + ExtensionScriptTemplate.jsExpression(JsonPrimitive(event.name).toString()) +
+                    "," + ExtensionScriptTemplate.jsExpression(JsonPrimitive(payload).toString()) + ")")
             },
             onFailure = { id, failure ->
                 android.util.Log.w("tellev-ext", "Event dispatch to $id failed: ${failure.message}")
@@ -427,8 +456,9 @@ class WebViewJsExtensionHost(
             extensionIds = webViews.keys.toList(),
             excludeExtensionId = null,
             dispatch = { id ->
-                val result = evaluateRuntime(id, "window.__tellevDispatch(" + JsonPrimitive(event.name) +
-                    "," + JsonPrimitive(payload.toString()) + ")")
+                val result = evaluateRuntime(id, "window.__tellevDispatch(" +
+                    ExtensionScriptTemplate.jsExpression(JsonPrimitive(event.name).toString()) + "," +
+                    ExtensionScriptTemplate.jsExpression(JsonPrimitive(payload.toString()).toString()) + ")")
                 val updated = json.parseToJsonElement(result) as? JsonObject
                     ?: error("Mutable event returned no payload: ${event.name}")
                 require(updated["args"] is JsonArray) { "Mutable event lost its arguments: ${event.name}" }
@@ -440,6 +470,20 @@ class WebViewJsExtensionHost(
         )
         return payload
     }
+
+    /**
+     * Awaits a pending request, normalizing an EXTERNAL cancellation of the
+     * deferred (superseded extension load, destroyed WebView, renderer crash)
+     * to a null — callers map null to their timeout result. A cancellation of
+     * the caller's own coroutine still propagates.
+     */
+    private suspend fun <T> awaitPending(deferred: CompletableDeferred<T>): T? =
+        try {
+            deferred.await()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            kotlin.coroutines.coroutineContext.ensureActive()
+            null
+        }
 
     suspend fun evaluateRuntime(extensionId: String, expression: String): String {
         val id = UUID.randomUUID().toString()
@@ -453,7 +497,7 @@ class WebViewJsExtensionHost(
                     "v=>tellevNative.evaluationDone('$id',true,JSON.stringify(v??null))," +
                     "e=>tellevNative.evaluationDone('$id',false,String(e.stack||e)))", null)
             }
-            return withTimeoutOrNull(apiCallTimeoutMs) { result.await() }
+            return withTimeoutOrNull(apiCallTimeoutMs) { awaitPending(result) }
                 ?: error("Runtime operation timed out: $extensionId")
         } finally {
             requests.pendingEvaluations.remove(id)
@@ -546,7 +590,7 @@ class WebViewJsExtensionHost(
         )
 
         val result = try {
-            withTimeoutOrNull(commandTimeoutMs) { deferred.await() }
+            withTimeoutOrNull(commandTimeoutMs) { awaitPending(deferred) }
         } finally {
             requests.pendingCommands.remove(requestId)
             requests.pendingCommandOwners.remove(requestId)
@@ -592,7 +636,7 @@ class WebViewJsExtensionHost(
             }
 
             val result = try {
-                withTimeoutOrNull(apiCallTimeoutMs) { deferred.await() }
+                withTimeoutOrNull(apiCallTimeoutMs) { awaitPending(deferred) }
             } finally {
                 requests.pendingVirtualApi.remove(requestId)
                 requests.pendingVirtualApiOwners.remove(requestId)
@@ -1179,8 +1223,10 @@ class WebViewJsExtensionHost(
                 }.exceptionOrNull()
                 withContext(Dispatchers.Main) {
                     webViews[extensionId]?.evaluateJavascript(
-                        "window.__tellevWriteDone(" + JsonPrimitive(requestId) + "," +
-                            (failure?.message?.let { JsonPrimitive(it).toString() } ?: "null") + ")", null)
+                        "window.__tellevWriteDone(" + ExtensionScriptTemplate.jsExpression(JsonPrimitive(requestId).toString()) + "," +
+                            ExtensionScriptTemplate.jsExpression(
+                                failure?.message?.let { JsonPrimitive(it).toString() } ?: "null"
+                            ) + ")", null)
                 }
             }
         }

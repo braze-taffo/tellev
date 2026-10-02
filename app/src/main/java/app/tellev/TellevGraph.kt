@@ -126,7 +126,10 @@ class TellevGraph private constructor(
             // for minutes, and OkHttp's default 10s read timeout kills those
             // streams mid-generation.
             val providerClient = OkHttpClient.Builder()
-                .connectTimeout(5, TimeUnit.MINUTES)
+                // A dead host (firewall DROP) used to hang the connect phase for
+                // the full 5 minutes; 15s is ample even for slow proxies. The
+                // long read/write timeouts stay for reasoning-model streams.
+                .connectTimeout(15, TimeUnit.SECONDS)
                 .writeTimeout(5, TimeUnit.MINUTES)
                 .readTimeout(5, TimeUnit.MINUTES)
                 .callTimeout(0, TimeUnit.MILLISECONDS)

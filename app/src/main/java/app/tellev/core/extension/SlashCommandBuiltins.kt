@@ -275,7 +275,11 @@ internal class SlashCommandBuiltins(
                 val input = cmd.textArgs().getOrNull(0) ?: ""
                 val start = cmd.textArgs().getOrNull(1)?.toIntOrNull() ?: 0
                 val end = cmd.textArgs().getOrNull(2)?.toIntOrNull() ?: input.length
-                Result.ok(input.substring(start.coerceAtLeast(0), end.coerceAtMost(input.length)))
+                val lo = start.coerceIn(0, input.length)
+                // end < start would throw StringIndexOutOfBoundsException; ST
+                // tolerates it, so clamp instead of erroring.
+                val hi = end.coerceIn(lo, input.length)
+                Result.ok(input.substring(lo, hi))
             }
 
             "add" -> {

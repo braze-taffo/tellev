@@ -617,7 +617,10 @@ class OpenAiCompatibleAdapter(
         buildJsonObject {
             put("model", JsonPrimitive(model))
             put("stream", JsonPrimitive(false))
-            put("max_tokens", JsonPrimitive(1))
+            // OpenAI's o-series / gpt-5-class endpoints reject "max_tokens"
+            // outright (they only accept max_completion_tokens); sending the
+            // capped field made the connection test fail on providers that
+            // generate fine. Omit the cap entirely — a 1-token ping needs it.
             put("messages", buildJsonArray {
                 add(
                     buildJsonObject {

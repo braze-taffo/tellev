@@ -160,7 +160,10 @@ internal class PresetRepository(
         providerCategory: String,
         sourceFileName: String,
     ): PresetImportResult = withContext(Dispatchers.IO) {
-        val rawJsonString = jsonBytes.decodeToString()
+        // Windows Notepad / some ST tools export JSON with a UTF-8 BOM;
+        // kotlinx refuses to parse it. CharacterImporter already strips BOM,
+        // so imports behaved inconsistently across entry points.
+        val rawJsonString = jsonBytes.decodeToString().removePrefix("﻿")
         val parsed = runCatching { json.parseToJsonElement(rawJsonString) }.getOrNull()
         val rawObj = parsed as? JsonObject
             ?: error(UiStrings.get(S.prrepo_error_invalid_json, sourceFileName))
