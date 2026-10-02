@@ -7,7 +7,11 @@ import app.tellev.core.prompt.PromptDiagnostics
 import app.tellev.core.prompt.PromptMessage
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
@@ -15,6 +19,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -87,6 +92,37 @@ class OllamaAdapterTest {
 
         assertEquals("provider_incomplete_stream", chunks.filterIsInstance<GenerateChunk.Failed>().single().error.code)
         assertTrue(chunks.none { it is GenerateChunk.Completed })
+    }
+
+    @Test
+    fun `attachments are encoded as images on the final user message only`() = runBlocking {
+        var capturedBody = ""
+        val adapter = OllamaAdapter(
+            client = client { chain ->
+                capturedBody = Buffer().also { chain.request().body?.writeTo(it) }.readUtf8()
+                response(chain, 200, "{\"done\":true}")
+            },
+            resolveAttachmentBytes = { "img-bytes".toByteArray() },
+        )
+        adapter.streamGenerate(
+            config(),
+            generateRequest(true).copy(attachments = listOf(
+                app.tellev.core.model.Attachment(
+                    id = "img-1", name = "img-1.png", mimeType = "image/png",
+                    relativePath = "user/images/img-1.png",
+                ),
+            )),
+        ).toList()
+
+        val payload = Json.parseToJsonElement(capturedBody).jsonObject
+        val messages = payload["messages"]!!.jsonArray
+        assertNull("system message must not carry images", messages[0].jsonObject["images"])
+        val images = messages[1].jsonObject["images"]?.jsonArray
+        assertEquals(1, images?.size)
+        assertEquals(
+            java.util.Base64.getEncoder().encodeToString("img-bytes".toByteArray()),
+            images!![0].jsonPrimitive.content,
+        )
     }
 
     private fun generateRequest(stream: Boolean) = GenerateRequest(

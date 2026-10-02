@@ -76,7 +76,8 @@ class NovelAiAdapter(
                 request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
                 request.preset.topK?.let { put("top_k", JsonPrimitive(it)) }
                 // Engine-resolved budget: honor maxCompletionTokens, not just maxTokens.
-                request.prompt.maxTokens?.let { put("max_length", JsonPrimitive(it)) }
+                (request.prompt.maxTokens ?: request.preset.maxCompletionTokens ?: request.preset.maxTokens)
+                    ?.let { put("max_length", JsonPrimitive(it)) }
                 if (request.preset.stop.isNotEmpty()) {
                     put("stop_sequences", buildJsonArray { request.preset.stop.forEach { add(JsonPrimitive(it)) } })
                 }

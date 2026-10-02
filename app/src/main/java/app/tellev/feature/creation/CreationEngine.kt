@@ -47,6 +47,19 @@ internal fun shouldRetryCreationConnect(
     (error.message.startsWith("failed to connect to", ignoreCase = true) ||
         error.message.contains("connect timed out", ignoreCase = true))
 
+/**
+ * A strict relay/provider rejected the request because the advertised output
+ * budget exceeds the model cap (O4). Halving and retrying adapts to whatever
+ * the upstream allows without hand-maintaining a per-provider cap table — a
+ * fixed low cap starved reasoning models that spend budget on thinking first.
+ */
+internal fun isCreationOutputBudgetRejection(error: TellevError): Boolean {
+    if (error.code !in setOf("provider_http_400", "provider_http_413", "provider_http_422")) return false
+    val message = error.message.lowercase()
+    return listOf("max_tokens", "max_completion_tokens", "max_output_tokens", "max_length", "num_predict")
+        .any { it in message }
+}
+
 /** Covers the entire source, including a final short tail, without silent truncation. */
 internal fun nextSourceChunk(source: String, cursor: Int, maxChars: Int = 7_000): SourceChunk? {
     require(maxChars >= 1_000)
@@ -595,11 +608,13 @@ internal class CreationEngine(
         }
         onProgress(CreationStreamUpdate(phasePrefix + UiStrings.get(S.creng_phase_waiting_model)))
         var retriedConnect = false
+        var budgetRetries = 0
+        var outputBudget = MAX_OUTPUT_TOKENS
         do {
             var retryConnect = false
             adapter.streamGenerate(
                 config,
-                GenerateRequest(prompt = prompt, preset = agentPreset, stream = true,
+                GenerateRequest(prompt = prompt.copy(maxTokens = outputBudget), preset = agentPreset, stream = true,
                     metadata = buildJsonObject {
                         put("creation_agent", true)
                         put("require_stream_terminator", true)
@@ -625,7 +640,17 @@ internal class CreationEngine(
                         completedToolCalls = chunk.toolCalls
                     }
                     is GenerateChunk.Failed -> {
-                        if (adapter === compatibleCreationAdapter &&
+                        if (deltaCount == 0 && deltas.isEmpty() && budgetRetries < 2 &&
+                            isCreationOutputBudgetRejection(chunk.error)
+                        ) {
+                            budgetRetries++
+                            outputBudget = (outputBudget / 2).coerceAtLeast(4096)
+                            retryConnect = true
+                            onProgress(CreationStreamUpdate(
+                                phase = phasePrefix + UiStrings.get(S.creng_phase_budget_retry),
+                                elapsedMillis = elapsedMillis(),
+                            ))
+                        } else if (adapter === compatibleCreationAdapter &&
                             shouldRetryCreationConnect(chunk.error, deltaCount > 0, retriedConnect)
                         ) {
                             retryConnect = true

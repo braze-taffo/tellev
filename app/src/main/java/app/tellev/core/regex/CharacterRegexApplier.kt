@@ -134,6 +134,14 @@ object CharacterRegexApplier {
         WORLD_INFO,
     )
 
+    /**
+     * Validation entry for tool-time upserts (O3): compile the ST-shaped regex
+     * with the exact pipeline [runScript] uses, so a pattern that would never
+     * match (or would freeze the chat) is rejected before it is persisted.
+     */
+    fun isCompilable(source: String): Boolean =
+        compileJavascriptRegex(splitJavascriptRegex(source)) != null
+
     /** Persist the authoritative switch in the character card itself. */
     fun withScriptEnabled(card: CharacterCard, scriptId: String, enabled: Boolean): CharacterCard {
         val raw = card.raw

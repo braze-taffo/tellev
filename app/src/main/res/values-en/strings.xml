@@ -1077,6 +1077,7 @@
     <string name="chat_delete">Delete</string>
     <string name="chat_close">Close</string>
     <string name="chat_cancel">Cancel</string>
+    <string name="creng_phase_budget_retry">Output budget exceeds the model cap — retrying with a lower budget…</string>
     <string name="chat_script_consent_title">Enable embedded card scripts?</string>
     <string name="chat_script_consent_body">This character card contains %1$d enabled embedded script(s) (%2$s). Once enabled, they run automatically with the chat as the character TavernHelper and receive Storage, Clipboard and UI-panel permissions. Only enable this if you trust where the card came from.</string>
     <string name="chat_script_consent_approve">Enable and remember</string>

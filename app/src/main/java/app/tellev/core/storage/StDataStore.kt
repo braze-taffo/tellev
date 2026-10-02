@@ -59,7 +59,14 @@ interface StDataStore {
     suspend fun listChatSessionSummaries(characterId: String? = null, groupId: String? = null): List<ChatSessionSummary> =
         listChatSessions(characterId, groupId).map { it.toSummary() }
     suspend fun readChatSession(id: String): ChatSession
-    suspend fun saveChatSession(session: ChatSession)
+
+    /**
+     * Persist a whole session. When [expectedRevision] is given the write is a
+     * CAS against the journal revision read beforehand (M3): a concurrent writer
+     * that committed in between fails the save with "Stale write" instead of
+     * silently clobbering it.
+     */
+    suspend fun saveChatSession(session: ChatSession, expectedRevision: Long? = null)
 
     // Permanently remove a session: the JSONL, its gallery index, chat image files
     // under user/images, and the per-session background. No-op when the id is unknown.

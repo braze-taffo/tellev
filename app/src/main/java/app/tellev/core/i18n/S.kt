@@ -1068,6 +1068,7 @@ object S {
     const val chat_delete = "chat_delete"
     const val chat_close = "chat_close"
     const val chat_cancel = "chat_cancel"
+    const val creng_phase_budget_retry = "creng_phase_budget_retry"
     const val chat_script_consent_title = "chat_script_consent_title"
     const val chat_script_consent_body = "chat_script_consent_body"
     const val chat_script_consent_approve = "chat_script_consent_approve"
@@ -2241,6 +2242,7 @@ object S {
         "chat_delete" to R.string.chat_delete,
         "chat_close" to R.string.chat_close,
         "chat_cancel" to R.string.chat_cancel,
+        "creng_phase_budget_retry" to R.string.creng_phase_budget_retry,
         "chat_script_consent_title" to R.string.chat_script_consent_title,
         "chat_script_consent_body" to R.string.chat_script_consent_body,
         "chat_script_consent_approve" to R.string.chat_script_consent_approve,
@@ -3415,6 +3417,7 @@ object S {
         "chat_delete" to "删除",
         "chat_close" to "关闭",
         "chat_cancel" to "取消",
+        "creng_phase_budget_retry" to "输出预算超过模型上限，降低后重试…",
         "chat_script_consent_title" to "启用卡内嵌脚本？",
         "chat_script_consent_body" to "此角色卡包含 %1\$d 个启用的内嵌脚本（%2\$s）。启用后脚本将以角色 TavernHelper 身份随聊天自动运行，并获得存储、剪贴板、界面面板等权限。请仅在信任该卡片来源时启用。",
         "chat_script_consent_approve" to "启用并记住",

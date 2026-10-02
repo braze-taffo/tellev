@@ -1077,6 +1077,7 @@
     <string name="chat_delete">삭제</string>
     <string name="chat_close">닫기</string>
     <string name="chat_cancel">취소</string>
+    <string name="creng_phase_budget_retry">출력 예산이 모델 한도를 초과하여 낮춘 후 재시도합니다…</string>
     <string name="chat_script_consent_title">카드 내장 스크립트를 사용하시겠습니까?</string>
     <string name="chat_script_consent_body">이 캐릭터 카드에는 활성화된 내장 스크립트가 %1$d개 있습니다(%2$s). 사용하도록 설정하면 스크립트가 캐릭터 TavernHelper로 채팅과 함께 자동 실행되며 저장소, 클립보드, UI 패널 권한을 얻습니다. 카드의 출처를 신뢰하는 경우에만 사용하세요.</string>
     <string name="chat_script_consent_approve">사용 및 기억</string>

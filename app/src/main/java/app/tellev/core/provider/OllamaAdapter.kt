@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlin.coroutines.coroutineContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -25,6 +26,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 class OllamaAdapter(
     private val client: OkHttpClient = OkHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
+    private val resolveAttachmentBytes: ((app.tellev.core.model.Attachment) -> ByteArray?)? = null,
 ) : ProviderAdapter {
     override val id: String = ProviderCatalog.OLLAMA
     override val displayName: String = "Ollama"
@@ -78,13 +80,18 @@ class OllamaAdapter(
                 request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
                 request.preset.topK?.let { put("top_k", JsonPrimitive(it)) }
                 // Engine-resolved budget: honor maxCompletionTokens, not just maxTokens.
-                request.prompt.maxTokens?.let { put("num_predict", JsonPrimitive(it)) }
+                (request.prompt.maxTokens ?: request.preset.maxCompletionTokens ?: request.preset.maxTokens)
+                    ?.let { put("num_predict", JsonPrimitive(it)) }
                 if (request.preset.stop.isNotEmpty()) {
                     put("stop", buildJsonArray { request.preset.stop.forEach { add(JsonPrimitive(it)) } })
                 }
             })
             put("messages", buildJsonArray {
-                request.prompt.messages.forEach { msg ->
+                // G6: declared Vision but never sent images. Ollama's chat API
+                // takes base64 strings in a per-message `images` array on the
+                // final user turn.
+                val lastUserIndex = request.prompt.messages.indexOfLast { it.role == MessageRole.User }
+                request.prompt.messages.forEachIndexed { index, msg ->
                     add(buildJsonObject {
                         put("role", JsonPrimitive(when (msg.role) {
                             MessageRole.System -> "system"
@@ -93,6 +100,12 @@ class OllamaAdapter(
                             MessageRole.Tool -> "tool"
                         }))
                         put("content", JsonPrimitive(msg.content))
+                        if (index == lastUserIndex) {
+                            val images = request.attachments.mapNotNull { visionBase64(it) }
+                            if (images.isNotEmpty()) {
+                                put("images", JsonArray(images.map { JsonPrimitive(it) }))
+                            }
+                        }
                     })
                 }
             })
@@ -194,6 +207,13 @@ class OllamaAdapter(
         }
         callGuard.complete()
     }.flowOn(Dispatchers.IO)
+
+    private fun visionBase64(attachment: app.tellev.core.model.Attachment): String? {
+        attachment.metadata["base64"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+        if (attachment.relativePath.isBlank()) return null
+        val bytes = resolveAttachmentBytes?.invoke(attachment) ?: return null
+        return java.util.Base64.getEncoder().encodeToString(bytes)
+    }
 
     private companion object {
         val JSON_TYPE = "application/json; charset=utf-8".toMediaType()

@@ -18,6 +18,11 @@ internal object StorageFileOps {
         durableFiles.write(path, text.toByteArray(Charsets.UTF_8))
     }
 
+    /** Same journaled discipline for raw/copy-style writes (preset import, in_use.json). */
+    fun durableWriteBytes(durableFiles: JournaledFileWriter, path: Path, bytes: ByteArray) {
+        durableFiles.write(path, bytes)
+    }
+
     fun readJsonFiles(root: Path, json: Json): List<Pair<Path, JsonObject>> {
         if (!root.exists() || !root.isDirectory()) return emptyList()
         return root.listDirectoryEntries("*.json").mapNotNull { path ->

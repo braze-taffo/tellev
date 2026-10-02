@@ -25,6 +25,7 @@ import app.tellev.core.model.MessageRole
 class AnthropicAdapter(
     private val client: OkHttpClient = OkHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
+    private val resolveAttachmentBytes: ((app.tellev.core.model.Attachment) -> ByteArray?)? = null,
 ) : ProviderAdapter {
     override val id: String = ProviderCatalog.ANTHROPIC
     override val displayName: String = "Anthropic"
@@ -91,10 +92,39 @@ class AnthropicAdapter(
                 put("stop_sequences", buildJsonArray { request.preset.stop.forEach { add(JsonPrimitive(it)) } })
             }
             put("messages", buildJsonArray {
-                conversationMessages.forEach { msg ->
+                val lastUserIndex = conversationMessages.indexOfLast { it.role == MessageRole.User }
+                conversationMessages.forEachIndexed { index, msg ->
                     add(buildJsonObject {
                         put("role", JsonPrimitive(if (msg.role == MessageRole.User) "user" else "assistant"))
-                        put("content", JsonPrimitive(msg.content))
+                        // G6: the adapter declared Vision but never sent images —
+                        // attachments went silently missing. Encode them into the
+                        // final user turn, mirroring the OpenAI/Gemini adapters.
+                        val images = if (index == lastUserIndex) {
+                            request.attachments.mapNotNull { attachment ->
+                                val base64 = visionBase64(attachment) ?: return@mapNotNull null
+                                buildJsonObject {
+                                    put("type", JsonPrimitive("image"))
+                                    put("source", buildJsonObject {
+                                        put("type", JsonPrimitive("base64"))
+                                        put("media_type", JsonPrimitive(attachment.mimeType))
+                                        put("data", JsonPrimitive(base64))
+                                    })
+                                }
+                            }
+                        } else emptyList()
+                        if (images.isEmpty()) {
+                            put("content", JsonPrimitive(msg.content))
+                        } else {
+                            put("content", buildJsonArray {
+                                if (msg.content.isNotBlank()) {
+                                    add(buildJsonObject {
+                                        put("type", JsonPrimitive("text"))
+                                        put("text", JsonPrimitive(msg.content))
+                                    })
+                                }
+                                images.forEach { add(it) }
+                            })
+                        }
                     })
                 }
             })
@@ -178,6 +208,13 @@ class AnthropicAdapter(
         }
         callGuard.complete()
     }.flowOn(Dispatchers.IO)
+
+    private fun visionBase64(attachment: app.tellev.core.model.Attachment): String? {
+        attachment.metadata["base64"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+        if (attachment.relativePath.isBlank()) return null
+        val bytes = resolveAttachmentBytes?.invoke(attachment) ?: return null
+        return java.util.Base64.getEncoder().encodeToString(bytes)
+    }
 
     private companion object {
         val JSON = "application/json; charset=utf-8".toMediaType()

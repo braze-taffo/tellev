@@ -176,7 +176,10 @@ internal object CreationAdvancedAssets {
                 val updated = JsonObject((previous ?: buildJsonObject {
                     put("id", id)
                     put("trimStrings", JsonArray(emptyList()))
-                    put("disabled", false)
+                    // 新建正则默认停用（对照 upsert_script 的 enabled=false 默认）：
+                    // 模型生成的灾难性回溯正则不允许直接入库冻结聊天，试编译通过后
+                    // 由用户手动启用。
+                    put("disabled", call.arguments.argBoolean("disabled") ?: true)
                     put("markdownOnly", false)
                     put("promptOnly", false)
                     put("runOnEdit", false)
@@ -187,11 +190,17 @@ internal object CreationAdvancedAssets {
                 require(updated.string("scriptName").orEmpty().isNotBlank()) { "正则需要 scriptName" }
                 require(updated.string("findRegex").orEmpty().isNotBlank()) { "正则需要 findRegex" }
                 require((updated["placement"] as? JsonArray)?.isNotEmpty() == true) { "正则需要 placement 数组" }
+                // 试编译（O3）：与 CharacterRegexApplier.runScript 同一条编译管线，
+                // 编译不过的正则入库即静默冻结聊天，必须在工具期就打回重试。
+                require(app.tellev.core.regex.CharacterRegexApplier.isCompilable(updated.string("findRegex").orEmpty())) {
+                    "findRegex 无法编译：请检查正则语法（支持 /pattern/flags 或纯模式）"
+                }
                 if (index >= 0) items[index] = updated else items += updated
                 val next = session.withRegexes(JsonArray(items))
                 next to result(call.name, buildJsonObject {
                     put("id", id)
                     put("status", if (index >= 0) "updated" else "created")
+                    updated["disabled"]?.let { put("disabled", it) }
                 })
             }
 

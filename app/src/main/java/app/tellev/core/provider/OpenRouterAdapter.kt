@@ -29,6 +29,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 class OpenRouterAdapter(
     private val client: OkHttpClient = OkHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
+    private val resolveAttachmentBytes: ((app.tellev.core.model.Attachment) -> ByteArray?)? = null,
 ) : CompletionSettingsAdapter {
     override val id: String = ProviderCatalog.OPENROUTER
     override val displayName: String = "OpenRouter"
@@ -81,12 +82,18 @@ class OpenRouterAdapter(
             request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
             request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
             // Engine-resolved budget: honor maxCompletionTokens, not just maxTokens.
-            request.prompt.maxTokens?.let { put("max_tokens", JsonPrimitive(it)) }
+            // A preset that only sets one of the two must still reach the wire.
+            (request.prompt.maxTokens ?: request.preset.maxCompletionTokens ?: request.preset.maxTokens)
+                ?.let { put("max_tokens", JsonPrimitive(it)) }
             if (request.preset.stop.isNotEmpty()) {
                 put("stop", buildJsonArray { request.preset.stop.forEach { add(JsonPrimitive(it)) } })
             }
             put("messages", buildJsonArray {
-                request.prompt.messages.forEach { msg ->
+                // G6: declared Vision but never sent images. OpenRouter proxies
+                // the OpenAI shape — image_url content parts on the final user
+                // turn, mirroring OpenAiCompatibleAdapter.
+                val lastUserIndex = request.prompt.messages.indexOfLast { it.role == MessageRole.User }
+                request.prompt.messages.forEachIndexed { index, msg ->
                     add(buildJsonObject {
                         put("role", JsonPrimitive(when (msg.role) {
                             MessageRole.System -> "system"
@@ -94,7 +101,30 @@ class OpenRouterAdapter(
                             MessageRole.Assistant, MessageRole.Character -> "assistant"
                             MessageRole.Tool -> "tool"
                         }))
-                        put("content", JsonPrimitive(msg.content))
+                        val images = if (index == lastUserIndex) {
+                            request.attachments.mapNotNull { attachment ->
+                                val base64 = visionBase64(attachment) ?: return@mapNotNull null
+                                buildJsonObject {
+                                    put("type", JsonPrimitive("image_url"))
+                                    put("image_url", buildJsonObject {
+                                        put("url", JsonPrimitive("data:${attachment.mimeType};base64,$base64"))
+                                    })
+                                }
+                            }
+                        } else emptyList()
+                        if (images.isEmpty()) {
+                            put("content", JsonPrimitive(msg.content))
+                        } else {
+                            put("content", buildJsonArray {
+                                if (msg.content.isNotBlank()) {
+                                    add(buildJsonObject {
+                                        put("type", JsonPrimitive("text"))
+                                        put("text", JsonPrimitive(msg.content))
+                                    })
+                                }
+                                images.forEach { add(it) }
+                            })
+                        }
                         msg.name?.let { put("name", JsonPrimitive(it)) }
                         msg.wireFields?.forEach { (key, value) -> put(key, value) }
                     })
@@ -102,6 +132,13 @@ class OpenRouterAdapter(
             })
         }
 
+
+    private fun visionBase64(attachment: app.tellev.core.model.Attachment): String? {
+        attachment.metadata["base64"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+        if (attachment.relativePath.isBlank()) return null
+        val bytes = resolveAttachmentBytes?.invoke(attachment) ?: return null
+        return java.util.Base64.getEncoder().encodeToString(bytes)
+    }
 
     override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> = flow {
         val payload = request.completionSettings ?: completionPayload(config, request)
