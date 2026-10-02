@@ -2,6 +2,7 @@ package app.tellev.core.provider
 
 import app.tellev.core.model.TellevError
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -63,12 +64,23 @@ class AnthropicAdapter(
     }
 
     override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> = flow {
-        val systemMessage = request.prompt.messages.firstOrNull { it.role == MessageRole.System }?.content
+        // Tellev's prompt pipeline emits MULTIPLE system messages (core memory
+        // injection, character-card jailbreak, at-depth world info, …). Anthropic
+        // accepts a single top-level system field, so merge them all — taking
+        // only the first silently dropped every later injection (parity with
+        // GeminiAdapter, which joins them with a blank line).
+        val systemMessage = request.prompt.messages
+            .filter { it.role == MessageRole.System }
+            .joinToString("\n\n") { it.content }
+            .takeIf { it.isNotBlank() }
         val conversationMessages = request.prompt.messages.filter { it.role != MessageRole.System }
 
         val payload = buildJsonObject {
             put("model", JsonPrimitive(config.model ?: "claude-sonnet-4-20250514"))
-            put("max_tokens", JsonPrimitive(request.preset.maxTokens ?: 8192))
+            // prompt.maxTokens is the engine-resolved output budget
+            // (maxCompletionTokens → maxTokens → default); the preset-only
+            // lookup ignored the maxCompletionTokens setting entirely.
+            put("max_tokens", JsonPrimitive(request.prompt.maxTokens ?: request.preset.maxCompletionTokens ?: request.preset.maxTokens ?: 8192))
             put("stream", JsonPrimitive(request.stream))
             request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
             request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
@@ -102,7 +114,8 @@ class AnthropicAdapter(
         // 让阻塞中的 body 读立即抛错，而不是等到读超时（生产配置 5 分钟）。
         val callGuard = Job(coroutineContext[Job])
         callGuard.invokeOnCompletion { if (!call.isCanceled()) call.cancel() }
-        call.execute().use { response ->
+        try {
+            call.execute().use { response ->
             if (!response.isSuccessful) {
                 emit(GenerateChunk.Failed(TellevError(
                     code = "anthropic_http_${response.code}",
@@ -144,6 +157,24 @@ class AnthropicAdapter(
                 }.getOrDefault("")
                 emit(GenerateChunk.Completed(text))
             }
+        }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A user stop closes the socket mid-read and surfaces as a generic
+            // IOException here. If the coroutine is cancelled this WAS a stop —
+            // rethrow as cancellation instead of flashing a bogus error banner.
+            coroutineContext.ensureActive()
+            emit(
+                GenerateChunk.Failed(
+                    TellevError(
+                        code = "provider_network",
+                        message = e.message ?: "Network error",
+                        retryable = true,
+                        causeType = e::class.simpleName,
+                    ),
+                ),
+            )
         }
         callGuard.complete()
     }.flowOn(Dispatchers.IO)

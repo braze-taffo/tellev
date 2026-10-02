@@ -231,6 +231,9 @@ class FileStDataStore(
     override suspend fun saveWorldBook(book: WorldBook) =
         worldBookRepository.saveWorldBook(book)
 
+    override suspend fun saveWorldBookRawJson(id: String, data: JsonObject) =
+        worldBookRepository.saveWorldBookRawJson(id, data)
+
     override suspend fun importWorldBook(jsonBytes: ByteArray, sourceFileName: String): WorldBook =
         worldBookRepository.importWorldBook(jsonBytes, sourceFileName)
 

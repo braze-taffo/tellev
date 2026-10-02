@@ -489,8 +489,14 @@ class WebViewJsExtensionHost(
     }
 
     override suspend fun executeStScript(script: String): SlashCommandResult {
-        val result = runCatching { slashCommandEngine.execute(script) }
-            .getOrElse { SlashCommandEngine.Result.error(it.message ?: "execution error") }
+        // The engine is a blocking interpreter (/delay sleeps up to 30s, loops run
+        // up to 1000 iterations). Callers arrive on Dispatchers.Main via
+        // viewModelScope — without this switch any /delay or heavy script freezes
+        // the UI thread outright (ANR after 5s of blocked input dispatch).
+        val result = withContext(Dispatchers.Default) {
+            runCatching { slashCommandEngine.execute(script) }
+                .getOrElse { SlashCommandEngine.Result.error(it.message ?: "execution error") }
+        }
         return SlashCommandResult(
             handled = result.handled && !result.isError,
             output = result.output,

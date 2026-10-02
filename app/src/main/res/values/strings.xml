@@ -125,6 +125,7 @@
     <string name="webviewhost_error_module_not_ready">Module did not report ready within %1$d ms</string>
     <string name="main_import_success">角色“%1$s”已导入</string>
     <string name="main_import_failed">导入失败：%1$s</string>
+    <string name="main_error_too_large">文件过大（上限 100 MB）</string>
     <string name="main_error_read_file">无法读取文件</string>
     <string name="memmod_mode_none">无记忆</string>
     <string name="memmod_mode_archive">柏宝书式</string>

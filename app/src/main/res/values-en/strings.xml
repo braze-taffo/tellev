@@ -125,6 +125,7 @@
     <string name="webviewhost_error_module_not_ready">Module did not report ready within %1$d ms</string>
     <string name="main_import_success">Imported character \"%1$s\"</string>
     <string name="main_import_failed">Import failed: %1$s</string>
+    <string name="main_error_too_large">The file is too large (100 MB limit)</string>
     <string name="main_error_read_file">Could not read the file</string>
     <string name="memmod_mode_none">No memory</string>
     <string name="memmod_mode_archive">Archive style</string>

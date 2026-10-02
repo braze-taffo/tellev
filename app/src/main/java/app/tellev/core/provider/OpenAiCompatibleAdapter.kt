@@ -430,9 +430,14 @@ class OpenAiCompatibleAdapter(
         } else {
             emptyList()
         }
+        // Attachments belong to the message the user just sent. Applying them to
+        // EVERY user message in the prompt multiplied the payload by the history
+        // length (50 turns × 1 image ≈ 50 base64 copies) — match GeminiAdapter,
+        // which attaches to the newest user message only.
+        val lastUserIndex = request.prompt.messages.indexOfLast { it.role == MessageRole.User }
 
         return buildJsonArray {
-            request.prompt.messages.forEach { promptMessage ->
+            request.prompt.messages.forEachIndexed { index, promptMessage ->
                 add(
                     buildJsonObject {
                         put("role", JsonPrimitive(mapRole(promptMessage.role)))
@@ -441,7 +446,9 @@ class OpenAiCompatibleAdapter(
                         // Use multipart content if there are image attachments on user messages
                         if (promptMessage.wireFields != null) {
                             promptMessage.wireFields.forEach { (key, value) -> put(key, value) }
-                        } else if (promptMessage.role == MessageRole.User && imageAttachments.isNotEmpty()) {
+                        } else if (promptMessage.role == MessageRole.User &&
+                            imageAttachments.isNotEmpty() && index == lastUserIndex
+                        ) {
                             put("content", buildJsonArray {
                                 add(buildJsonObject {
                                     put("type", JsonPrimitive("text"))

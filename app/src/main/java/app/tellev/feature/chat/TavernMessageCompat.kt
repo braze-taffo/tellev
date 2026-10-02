@@ -13,12 +13,28 @@ import kotlinx.serialization.json.jsonPrimitive
 
 internal class TavernMessageLoadTracker {
     private var loadedHtml: String? = null
+    private var lastLoadAtMs: Long = 0
 
-    fun shouldLoad(html: String, allowUpdates: Boolean = true): Boolean {
+    fun shouldLoad(
+        html: String,
+        allowUpdates: Boolean = true,
+        nowMs: Long = System.currentTimeMillis(),
+    ): Boolean {
         if (loadedHtml != null && !allowUpdates) return false
         if (loadedHtml == html) return false
+        // A full reload rebuilds the page, re-runs layout scripts and resets
+        // scroll — streaming pushes a new html per token, which used to mean
+        // one loadDataWithBaseURL PER TOKEN. Coalesce to ~6 loads/sec; the
+        // finished message gets its own fresh bubble with the complete text,
+        // so the final frame needs no trailing render here.
+        if (loadedHtml != null && nowMs - lastLoadAtMs < LOAD_INTERVAL_MS) return false
         loadedHtml = html
+        lastLoadAtMs = nowMs
         return true
+    }
+
+    private companion object {
+        const val LOAD_INTERVAL_MS = 160L
     }
 }
 

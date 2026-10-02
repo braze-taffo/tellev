@@ -1066,10 +1066,19 @@ internal object PromptTemplateExpressionEvaluator {
             is JsonObject -> element.mapValues { toKotlinValue(it.value) }.toMutableMap()
             is JsonArray -> element.map { toKotlinValue(it) }
             is JsonPrimitive -> {
-                element.booleanOrNull
-                    ?: element.longOrNull
-                    ?: element.doubleOrNull
-                    ?: runCatching { element.content }.getOrNull()
+                // kotlinx-serialization's booleanOrNull/longOrNull parse `content`
+                // without an isString check (verified against 1.8.1 bytecode), so a
+                // quoted "007" would collapse to Long 7 and "true" to Boolean true —
+                // silently rewriting variable values on every bridge round-trip.
+                // Quoted JSON strings must stay strings.
+                if (element.isString) {
+                    element.content
+                } else {
+                    element.booleanOrNull
+                        ?: element.longOrNull
+                        ?: element.doubleOrNull
+                        ?: runCatching { element.content }.getOrNull()
+                }
             }
         }
     }

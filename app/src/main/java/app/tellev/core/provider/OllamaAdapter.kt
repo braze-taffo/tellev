@@ -3,6 +3,7 @@ package app.tellev.core.provider
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.TellevError
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -76,7 +77,8 @@ class OllamaAdapter(
                 request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
                 request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
                 request.preset.topK?.let { put("top_k", JsonPrimitive(it)) }
-                request.preset.maxTokens?.let { put("num_predict", JsonPrimitive(it)) }
+                // Engine-resolved budget: honor maxCompletionTokens, not just maxTokens.
+                request.prompt.maxTokens?.let { put("num_predict", JsonPrimitive(it)) }
                 if (request.preset.stop.isNotEmpty()) {
                     put("stop", buildJsonArray { request.preset.stop.forEach { add(JsonPrimitive(it)) } })
                 }
@@ -108,6 +110,7 @@ class OllamaAdapter(
         // 让阻塞中的 body 读立即抛错，而不是等到读超时（生产配置 5 分钟）。
         val callGuard = Job(coroutineContext[Job])
         callGuard.invokeOnCompletion { if (!call.isCanceled()) call.cancel() }
+        try {
         call.execute().use { response ->
             if (!response.isSuccessful) {
                 emit(GenerateChunk.Failed(TellevError(
@@ -145,6 +148,24 @@ class OllamaAdapter(
                 }.getOrDefault("")
                 emit(GenerateChunk.Completed(text))
             }
+        }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A user stop closes the socket mid-read and surfaces as a generic
+            // IOException here. If the coroutine is cancelled this WAS a stop —
+            // rethrow as cancellation instead of flashing a bogus error banner.
+            coroutineContext.ensureActive()
+            emit(
+                GenerateChunk.Failed(
+                    TellevError(
+                        code = "provider_network",
+                        message = e.message ?: "Network error",
+                        retryable = true,
+                        causeType = e::class.simpleName,
+                    ),
+                ),
+            )
         }
         callGuard.complete()
     }.flowOn(Dispatchers.IO)

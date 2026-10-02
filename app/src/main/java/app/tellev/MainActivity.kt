@@ -24,11 +24,17 @@ import app.tellev.ui.theme.isDarkTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     private val graph: TellevGraph by lazy { TellevGraph.create(this) }
     private val characterImporter = CharacterImporter()
+
+    private companion object {
+        /** Import payload cap; see importCharacterFromUri. */
+        const val IMPORT_MAX_BYTES = 100L * 1024 * 1024
+    }
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLocale.wrap(newBase))
@@ -74,8 +80,23 @@ class MainActivity : ComponentActivity() {
     }
 
     private suspend fun importCharacterFromUri(uri: Uri): String {
-        val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: error(getString(R.string.main_error_read_file))
+        // An external app can hand us an arbitrarily large VIEW/SEND payload
+        // (BROWSABLE intent → a web page can trigger it too). Reading it fully
+        // into memory unbounded turned "import" into an OOM kill switch; a card
+        // with an embedded 4MB cover is ~6MB, so 100MB is generous headroom.
+        val bytes = contentResolver.openInputStream(uri)?.use { input ->
+            val out = ByteArrayOutputStream()
+            val buffer = ByteArray(64 * 1024)
+            var total = 0
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                total += read
+                check(total <= IMPORT_MAX_BYTES) { getString(R.string.main_error_too_large) }
+                out.write(buffer, 0, read)
+            }
+            out.toByteArray()
+        } ?: error(getString(R.string.main_error_read_file))
         val fileName = UriUtils.resolveDisplayName(this, uri)
             ?: uri.lastPathSegment?.substringAfterLast('/')
             ?: "imported_character"

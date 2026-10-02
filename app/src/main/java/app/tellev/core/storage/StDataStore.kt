@@ -92,6 +92,17 @@ interface StDataStore {
 
     suspend fun readWorldBook(id: String): WorldBook
     suspend fun saveWorldBook(book: WorldBook)
+
+    /**
+     * Persists an already-encoded world file verbatim under [id] (extension
+     * bridge saves). Default implementations write through the journaled
+     * path via [saveWorldBook]-equivalent storage; the intent is atomicity —
+     * never expose a raw writeText for user-visible data.
+     */
+    suspend fun saveWorldBookRawJson(id: String, data: kotlinx.serialization.json.JsonObject) {
+        error("当前存储实现不支持按原始 JSON 保存世界书")
+    }
+
     suspend fun importWorldBook(jsonBytes: ByteArray, sourceFileName: String): WorldBook {
         error("当前存储实现不支持导入世界书：$sourceFileName")
     }

@@ -443,7 +443,15 @@ class CreationViewModel(
                 if (index in items.indices) items.removeAt(index)
             } else if (index in items.indices) items[index] = entry
             else if (index == items.size) items.add(entry)
-            state.copy(current = session.copy(lore = items, updatedAt = System.currentTimeMillis()), info = null)
+            // Entries added by hand arrive with a blank id (the "add entry" button).
+            // Assign ids here too, not just on open/import: the model locates and
+            // edits entries by id, and a blank id is treated as "new" by upsert_lore
+            // while remove_lore(ids:[""]) would sweep every blank-id entry at once.
+            val normalized = session.copy(
+                lore = items,
+                updatedAt = System.currentTimeMillis(),
+            ).withAssignedLoreIds()
+            state.copy(current = normalized, info = null)
         }
         persist(_state.value.current)
     }

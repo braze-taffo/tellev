@@ -125,6 +125,7 @@
     <string name="webviewhost_error_module_not_ready">모듈이 %1$d ms 내에 준비 완료를 보고하지 않았습니다</string>
     <string name="main_import_success">캐릭터 \"%1$s\"을(를) 가져왔습니다</string>
     <string name="main_import_failed">가져오기 실패: %1$s</string>
+    <string name="main_error_too_large">파일이 너무 큽니다(100MB 제한)</string>
     <string name="main_error_read_file">파일을 읽을 수 없습니다</string>
     <string name="memmod_mode_none">기억 없음</string>
     <string name="memmod_mode_archive">아카이브 스타일</string>

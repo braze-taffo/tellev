@@ -125,6 +125,7 @@
     <string name="webviewhost_error_module_not_ready">モジュールが%1$d ms以内に準備完了を報告しませんでした</string>
     <string name="main_import_success">キャラクター「%1$s」をインポートしました</string>
     <string name="main_import_failed">インポートに失敗しました：%1$s</string>
+    <string name="main_error_too_large">ファイルが大きすぎます（上限100MB）</string>
     <string name="main_error_read_file">ファイルを読み取れませんでした</string>
     <string name="memmod_mode_none">記憶なし</string>
     <string name="memmod_mode_archive">柏宝書式</string>

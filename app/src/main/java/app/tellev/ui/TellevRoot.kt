@@ -318,10 +318,12 @@ fun TellevRoot() {
                 content: @Composable AnimatedContentScope.(NavBackStackEntry) -> Unit,
             ) {
                 navigationComposable(route = route, arguments = arguments) { entry ->
-                    content(entry)
-                    // Register after the page's handlers, within its entry,
-                    // so every page has priority over NavHost's back callback.
+                    // Compose gives priority to the LAST registered BackHandler.
+                    // Registering the exit confirmation BEFORE the page content lets
+                    // page-level handlers (editors' unsaved-changes guards, etc.) win;
+                    // this handler only fires when no page handler is enabled.
                     BackHandler(enabled = exitConfirmationEnabled) { showExitConfirmation = true }
+                    content(entry)
                 }
             }
 
