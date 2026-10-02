@@ -1,5 +1,17 @@
 package app.tellev.feature.creation
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
+
+/**
+ * The brief's leading marker is a protocol token shared with
+ * [creationConversationContext], which re-detects the brief turn when a draft
+ * is reopened. The token is language-neutral so detection never depends on the
+ * app language; the legacy Chinese marker keeps pre-i18n drafts working.
+ */
+internal const val CREATION_BRIEF_MARKER = "[CREATION BRIEF]"
+internal val CREATION_BRIEF_MARKERS = listOf(CREATION_BRIEF_MARKER, "【创作起点】")
+
 /** A starting brief stays in the conversation, so reopening a draft keeps the user's choices. */
 internal data class CreationBrief(
     val kind: CreationKind,
@@ -13,36 +25,41 @@ internal data class CreationBrief(
     val loreOneByOne: Boolean = false,
 ) {
     fun toPrompt(): String = buildString {
-        appendLine("【创作起点】")
-        appendLine(if (kind == CreationKind.Character) "请帮我创作角色卡。" else "请帮我创作世界书。")
-        appendLine("创作方式：${if (guided) "引导对话" else "直接生成初稿"}。")
+        appendLine(CREATION_BRIEF_MARKER)
+        appendLine(UiStrings.get(if (kind == CreationKind.Character) S.creng_brief_opening_character else S.creng_brief_opening_worldbook))
+        appendLine(UiStrings.get(S.creng_brief_mode_line,
+            UiStrings.get(if (guided) S.creng_brief_mode_guided else S.creng_brief_mode_direct)))
         if (kind == CreationKind.Character) {
-            appendLine("篇幅：${detail.label}（${detail.characterLength}，请以内容质量为准，不为凑字数重复）。")
-            if (characters.isNotBlank()) appendLine("多角色设定（每行一个角色，保留各自身份与关系）：\n${characters.trim()}")
-            if (relationship.isNotBlank()) appendLine("角色与用户的关系：${relationship.trim()}")
-            if (userPersona.isNotBlank()) appendLine("用户自身设定：${userPersona.trim()}")
+            appendLine(UiStrings.get(S.creng_brief_length_line, detail.label(), detail.characterLength()))
+            if (characters.isNotBlank()) appendLine(UiStrings.get(S.creng_brief_characters_line, characters.trim()))
+            if (relationship.isNotBlank()) appendLine(UiStrings.get(S.creng_brief_relationship_line, relationship.trim()))
+            if (userPersona.isNotBlank()) appendLine(UiStrings.get(S.creng_brief_persona_line, userPersona.trim()))
         } else {
-            appendLine(if (loreOneByOne) "世界书方式：先逐条讨论；每条确认后再加入草稿。" else "世界书方式：根据现有信息生成一版可编辑的完整条目草稿。")
+            appendLine(UiStrings.get(if (loreOneByOne) S.creng_brief_lore_one_by_one else S.creng_brief_lore_full_draft))
         }
-        if (title.isNotBlank()) appendLine("${if (kind == CreationKind.Character) "角色或故事名" else "世界书名"}：${title.trim()}")
-        if (premise.isNotBlank()) appendLine("核心设定：\n${premise.trim()}")
+        if (title.isNotBlank()) appendLine(UiStrings.get(S.creng_brief_title_line,
+            UiStrings.get(if (kind == CreationKind.Character) S.creng_brief_title_label_character else S.creng_brief_title_label_worldbook),
+            title.trim()))
+        if (premise.isNotBlank()) appendLine(UiStrings.get(S.creng_brief_premise_line, premise.trim()))
         if (guided) {
-            append("请先根据已提供的信息写出能确定的部分，再只问当前最关键的 1 至 2 个问题；不要重复询问已经填写的内容。")
+            append(UiStrings.get(S.creng_brief_guided_tail))
         } else {
-            append(if (kind == CreationKind.Character) {
-                "请现在实际填写角色卡草稿字段；有必要时再写可用的世界书条目。"
-            } else if (loreOneByOne) {
-                "请先提议第一条世界书条目，等我确认后再写入草稿。"
-            } else {
-                "请现在实际填写可编辑的世界书条目草稿。"
+            append(when {
+                kind == CreationKind.Character -> UiStrings.get(S.creng_brief_direct_character)
+                loreOneByOne -> UiStrings.get(S.creng_brief_direct_lore_one_by_one)
+                else -> UiStrings.get(S.creng_brief_direct_lore)
             })
-            append("最后简短说明哪些设定需要我核对。")
+            append(UiStrings.get(S.creng_brief_review_tail))
         }
     }.trim()
 }
 
-internal enum class CreationDetail(val label: String, val characterLength: String) {
-    Concise("精简", "约 500 至 1000 字"),
-    Normal("标准", "约 1000 至 2000 字"),
-    Rich("详细", "约 2000 至 5000 字"),
+/** Prompt-side labels; the UI shows its own crs_length_* strings. */
+internal enum class CreationDetail(val labelKey: String, val lengthKey: String) {
+    Concise(S.creng_detail_concise, S.creng_detail_length_concise),
+    Normal(S.creng_detail_normal, S.creng_detail_length_normal),
+    Rich(S.creng_detail_rich, S.creng_detail_length_rich);
+
+    internal fun label(): String = UiStrings.get(labelKey)
+    internal fun characterLength(): String = UiStrings.get(lengthKey)
 }

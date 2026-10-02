@@ -1,5 +1,7 @@
 package app.tellev.feature.creation
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -20,7 +22,7 @@ internal object CreationAdvancedAssets {
     private fun JsonObject.argString(key: String): String? {
         val value = this[key] ?: return null
         val primitive = value as? JsonPrimitive
-        require(primitive?.isString == true) { "$key 必须是字符串" }
+        require(primitive?.isString == true) { UiStrings.get(S.creng_arg_not_string, key) }
         return primitive.content
     }
 
@@ -28,7 +30,7 @@ internal object CreationAdvancedAssets {
         val value = this[key] ?: return null
         val primitive = value as? JsonPrimitive
         val parsed = primitive?.takeIf { !it.isString }?.booleanOrNull
-        require(parsed != null) { "$key 必须是布尔值" }
+        require(parsed != null) { UiStrings.get(S.creng_arg_not_boolean, key) }
         return parsed
     }
 
@@ -69,7 +71,7 @@ internal object CreationAdvancedAssets {
     private fun result(name: String, payload: JsonObject): ToolResult = ToolResult(true, name, payload)
 
     fun execute(session: CreationSession, call: ToolCallRequest): Pair<CreationSession, ToolResult> {
-        require(session.kind == CreationKind.Character) { "高级资源只能写入角色卡草稿" }
+        require(session.kind == CreationKind.Character) { UiStrings.get(S.creng_asset_character_only) }
         return when (call.name) {
             "list_assets" -> session to result(call.name, buildJsonObject {
                 put("scripts", JsonArray(session.scripts().mapNotNull { item ->
@@ -94,10 +96,10 @@ internal object CreationAdvancedAssets {
 
             "read_script" -> {
                 val id = call.arguments.argString("id")?.takeIf(String::isNotBlank)
-                    ?: throw IllegalArgumentException("id 不能为空")
+                    ?: throw IllegalArgumentException(UiStrings.get(S.creng_asset_id_empty))
                 val script = session.scripts().mapNotNull { it as? JsonObject }
                     .firstOrNull { it.string("id") == id && it.string("type") == "script" }
-                    ?: throw IllegalArgumentException("找不到脚本 $id")
+                    ?: throw IllegalArgumentException(UiStrings.get(S.creng_asset_script_not_found, id))
                 val content = script.string("content").orEmpty()
                 val offset = ((call.arguments["offset"] as? JsonPrimitive)?.intOrNull ?: 0).coerceIn(0, content.length)
                 val limit = ((call.arguments["limit"] as? JsonPrimitive)?.intOrNull ?: 4000).coerceIn(1, 6000)
@@ -116,18 +118,18 @@ internal object CreationAdvancedAssets {
                 val items = session.scripts().toMutableList()
                 val index = items.indexOfFirst { (it as? JsonObject)?.string("id") == id }
                 val previous = if (index >= 0) items[index] as? JsonObject
-                    ?: throw IllegalArgumentException("脚本结构无效") else null
-                require(previous == null || previous.string("type") == "script") { "该 id 属于脚本文件夹" }
+                    ?: throw IllegalArgumentException(UiStrings.get(S.creng_asset_script_structure)) else null
+                require(previous == null || previous.string("type") == "script") { UiStrings.get(S.creng_asset_id_is_folder) }
                 val unknown = call.arguments.keys - setOf("id", "name", "enabled", "content", "mode", "info")
-                require(unknown.isEmpty()) { "未知脚本字段：${unknown.joinToString()}" }
+                require(unknown.isEmpty()) { UiStrings.get(S.creng_asset_unknown_script_fields, unknown.joinToString()) }
                 val mode = call.arguments.argString("mode") ?: "replace"
-                require(mode in setOf("replace", "append")) { "mode 只能是 replace 或 append" }
+                require(mode in setOf("replace", "append")) { UiStrings.get(S.creng_asset_mode_invalid) }
                 val name = call.arguments.argString("name") ?: previous?.string("name").orEmpty()
-                require(name.isNotBlank()) { "脚本需要 name" }
+                require(name.isNotBlank()) { UiStrings.get(S.creng_asset_name_required) }
                 val enabled = call.arguments.argBoolean("enabled")
                     ?: ((previous?.get("enabled") as? JsonPrimitive)?.booleanOrNull ?: false)
                 val chunk = call.arguments.argString("content") ?: ""
-                require(chunk.length <= 24_000) { "单次脚本内容过长，请分块追加" }
+                require(chunk.length <= 24_000) { UiStrings.get(S.creng_asset_content_too_long) }
                 val content = if (mode == "append") previous?.string("content").orEmpty() + chunk
                     else if (call.arguments.containsKey("content")) chunk else previous?.string("content").orEmpty()
                 val updated = JsonObject((previous ?: JsonObject(emptyMap())) + buildMap<String, JsonElement> {
@@ -156,22 +158,22 @@ internal object CreationAdvancedAssets {
                 val allowed = setOf("id", "scriptName", "findRegex", "replaceString", "trimStrings",
                     "placement", "disabled", "markdownOnly", "promptOnly", "runOnEdit", "substituteRegex",
                     "minDepth", "maxDepth")
-                require((call.arguments.keys - allowed).isEmpty()) { "未知正则字段" }
+                require((call.arguments.keys - allowed).isEmpty()) { UiStrings.get(S.creng_asset_unknown_regex_fields) }
                 listOf("scriptName", "findRegex", "replaceString").forEach { call.arguments.argString(it) }
                 listOf("disabled", "markdownOnly", "promptOnly", "runOnEdit").forEach { call.arguments.argBoolean(it) }
                 for (field in listOf("substituteRegex", "minDepth", "maxDepth")) {
                     val value = call.arguments[field] ?: continue
                     val primitive = value as? JsonPrimitive
-                    require(primitive != null && !primitive.isString && primitive.intOrNull != null) { "$field 必须是整数" }
+                    require(primitive != null && !primitive.isString && primitive.intOrNull != null) { UiStrings.get(S.creng_arg_not_int, field) }
                 }
                 for (field in listOf("trimStrings", "placement")) {
                     val values = call.arguments[field] ?: continue
-                    val array = values as? JsonArray ?: throw IllegalArgumentException("$field 必须是数组")
+                    val array = values as? JsonArray ?: throw IllegalArgumentException(UiStrings.get(S.creng_asset_field_not_array, field))
                     require(array.all { item ->
                         val value = item as? JsonPrimitive
                         if (field == "placement") value != null && !value.isString && value.intOrNull != null
                         else value?.isString == true
-                    }) { "$field 的元素类型无效" }
+                    }) { UiStrings.get(S.creng_asset_field_item_invalid, field) }
                 }
                 val updated = JsonObject((previous ?: buildJsonObject {
                     put("id", id)
@@ -187,13 +189,13 @@ internal object CreationAdvancedAssets {
                     put("minDepth", 0)
                     put("maxDepth", 0)
                 }) + call.arguments + ("id" to JsonPrimitive(id)))
-                require(updated.string("scriptName").orEmpty().isNotBlank()) { "正则需要 scriptName" }
-                require(updated.string("findRegex").orEmpty().isNotBlank()) { "正则需要 findRegex" }
-                require((updated["placement"] as? JsonArray)?.isNotEmpty() == true) { "正则需要 placement 数组" }
+                require(updated.string("scriptName").orEmpty().isNotBlank()) { UiStrings.get(S.creng_asset_regex_name_required) }
+                require(updated.string("findRegex").orEmpty().isNotBlank()) { UiStrings.get(S.creng_asset_regex_find_required) }
+                require((updated["placement"] as? JsonArray)?.isNotEmpty() == true) { UiStrings.get(S.creng_asset_regex_placement_required) }
                 // 试编译（O3）：与 CharacterRegexApplier.runScript 同一条编译管线，
                 // 编译不过的正则入库即静默冻结聊天，必须在工具期就打回重试。
                 require(app.tellev.core.regex.CharacterRegexApplier.isCompilable(updated.string("findRegex").orEmpty())) {
-                    "findRegex 无法编译：请检查正则语法（支持 /pattern/flags 或纯模式）"
+                    UiStrings.get(S.creng_asset_regex_not_compilable)
                 }
                 if (index >= 0) items[index] = updated else items += updated
                 val next = session.withRegexes(JsonArray(items))
@@ -206,44 +208,44 @@ internal object CreationAdvancedAssets {
 
             "read_regex" -> {
                 val id = call.arguments.argString("id")?.takeIf(String::isNotBlank)
-                    ?: throw IllegalArgumentException("id 不能为空")
+                    ?: throw IllegalArgumentException(UiStrings.get(S.creng_asset_id_empty))
                 val regex = session.regexes().mapNotNull { it as? JsonObject }
                     .firstOrNull { it.string("id") == id }
-                    ?: throw IllegalArgumentException("找不到正则 $id")
+                    ?: throw IllegalArgumentException(UiStrings.get(S.creng_asset_regex_not_found, id))
                 session to result(call.name, regex)
             }
 
             "remove_asset" -> {
                 val type = call.arguments.argString("type")
                 val id = call.arguments.argString("id")?.takeIf(String::isNotBlank)
-                    ?: throw IllegalArgumentException("id 不能为空")
+                    ?: throw IllegalArgumentException(UiStrings.get(S.creng_asset_id_empty))
                 val next = when (type) {
                     "script" -> {
                         val items = session.scripts()
-                        require(items.any { (it as? JsonObject)?.string("id") == id }) { "找不到脚本 $id" }
+                        require(items.any { (it as? JsonObject)?.string("id") == id }) { UiStrings.get(S.creng_asset_script_not_found, id) }
                         session.withTavernHelper(buildJsonObject {
                             put("scripts", JsonArray(items.filterNot { (it as? JsonObject)?.string("id") == id }))
                         })
                     }
                     "regex" -> {
                         val items = session.regexes()
-                        require(items.any { (it as? JsonObject)?.string("id") == id }) { "找不到正则 $id" }
+                        require(items.any { (it as? JsonObject)?.string("id") == id }) { UiStrings.get(S.creng_asset_regex_not_found, id) }
                         session.withRegexes(JsonArray(items.filterNot { (it as? JsonObject)?.string("id") == id }))
                     }
                     "variable" -> {
-                        require(id in session.variables()) { "找不到变量 $id" }
+                        require(id in session.variables()) { UiStrings.get(S.creng_asset_variable_not_found, id) }
                         session.withTavernHelper(buildJsonObject {
                             put("variables", JsonObject(session.variables().filterKeys { it != id }))
                         })
                     }
-                    else -> throw IllegalArgumentException("type 只能是 script、regex 或 variable")
+                    else -> throw IllegalArgumentException(UiStrings.get(S.creng_asset_type_invalid))
                 }
                 next to result(call.name, buildJsonObject { put("removed", id); put("type", type) })
             }
 
             "set_variables" -> {
                 val patch = call.arguments["values"] as? JsonObject
-                    ?: throw IllegalArgumentException("values 必须是 JSON 对象")
+                    ?: throw IllegalArgumentException(UiStrings.get(S.creng_asset_values_not_object))
                 val values = JsonObject(session.variables() + patch)
                 val next = session.withTavernHelper(buildJsonObject { put("variables", values) })
                 next to result(call.name, buildJsonObject {
@@ -254,15 +256,15 @@ internal object CreationAdvancedAssets {
 
             "read_variables" -> {
                 val names = (call.arguments["names"] as? JsonArray)?.map {
-                    (it as? JsonPrimitive)?.contentOrNull ?: throw IllegalArgumentException("names 必须是字符串数组")
+                    (it as? JsonPrimitive)?.contentOrNull ?: throw IllegalArgumentException(UiStrings.get(S.creng_asset_names_not_array))
                 } ?: session.variables().keys.take(20)
-                require(names.size <= 30) { "单次最多读取 30 个变量" }
+                require(names.size <= 30) { UiStrings.get(S.creng_asset_too_many_variables) }
                 session to result(call.name, buildJsonObject {
                     put("values", JsonObject(session.variables().filterKeys { it in names }))
                 })
             }
 
-            else -> throw IllegalArgumentException("未知高级资源工具")
+            else -> throw IllegalArgumentException(UiStrings.get(S.creng_asset_unknown_tool))
         }
     }
 }

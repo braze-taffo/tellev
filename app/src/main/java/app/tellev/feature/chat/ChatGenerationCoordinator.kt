@@ -567,7 +567,7 @@ internal class ChatGenerationCoordinator(
             val partialMessage = CharacterRegexApplier.markNormalProcessed(ChatMessage(
                 id = generateMessageId(),
                 role = MessageRole.Character,
-                name = character?.name ?: "助手",
+                name = character?.name ?: UiStrings.get(S.chat_default_assistant_name),
                 content = processedPartial,
                 createdAtMillis = System.currentTimeMillis(),
                 swipes = listOf(processedPartial),

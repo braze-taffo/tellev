@@ -235,7 +235,7 @@ class CreationViewModel(
                 _state.update { it.copy(modelPhase = UiStrings.get(S.crvm_phase_verify_save)) }
                 val next = reply.session.copy(
                     turns = withUser.turns + CreationTurn(
-                        "agent", reply.message.ifBlank { "草稿已更新，请检查右侧内容。" },
+                        "agent", reply.message.ifBlank { UiStrings.get(S.creng_turn_draft_updated) },
                     ),
                     partialTurnSaved = false,
                     updatedAt = System.currentTimeMillis(),
@@ -278,7 +278,7 @@ class CreationViewModel(
             try {
                 val (hash, length) = repository.saveSource(session.id, text)
                 val next = session.copy(
-                    sourceName = name.ifBlank { "粘贴原文" },
+                    sourceName = name.ifBlank { UiStrings.get(S.crs_paste_source_name) },
                     sourceSha256 = hash,
                     sourceCursor = 0,
                     sourceLength = length,
@@ -335,7 +335,7 @@ class CreationViewModel(
                         sourceCursor = chunk.end,
                         turns = current.turns + CreationTurn(
                             "agent",
-                            "已提炼 ${chunk.end}/${source.length} 字符，新增 ${verified.size} 条；${rejected} 条因缺少可定位原文证据而未加入。",
+                            UiStrings.get(S.creng_turn_extract_progress, chunk.end, source.length, verified.size, rejected),
                         ),
                         updatedAt = System.currentTimeMillis(),
                     )

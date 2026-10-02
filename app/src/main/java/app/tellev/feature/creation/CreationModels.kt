@@ -174,7 +174,7 @@ data class CreationSession(
                 id = "creation_${UUID.randomUUID()}",
                 kind = CreationKind.WorldBook,
                 worldName = card.characterBook?.name?.takeIf(String::isNotBlank)
-                    ?: "${card.name}世界书",
+                    ?: UiStrings.get(S.creng_default_worldbook_name, card.name),
                 savedArtifactId = "",
                 sourceName = card.name,
                 // The source card remains available to read_card, while the
@@ -236,7 +236,7 @@ fun CreationSession.toCharacterCard(): CharacterCard {
         put("data", buildJsonObject {
             put("system_prompt", card.systemPrompt)
             put("post_history_instructions", card.postHistoryInstructions)
-            put("creator", "Tellev AI 协作创作")
+            put("creator", UiStrings.get(S.creng_card_creator))
             put("character_version", "1.0")
         })
     }
@@ -299,7 +299,7 @@ private fun mergedCardRaw(
 
 fun CreationSession.toWorldBook(): WorldBook = WorldBook(
     id = savedArtifactId.ifBlank { "wb_${UUID.randomUUID()}" },
-    name = worldName.ifBlank { card.name.ifBlank { "新世界书" } },
+    name = worldName.ifBlank { card.name.ifBlank { UiStrings.get(S.creng_new_worldbook_name) } },
     entries = lore.mapIndexed { index, item ->
         val original = item.originalEntry
         if (original != null) original.copy(

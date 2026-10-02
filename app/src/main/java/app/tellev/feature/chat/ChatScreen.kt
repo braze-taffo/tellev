@@ -89,6 +89,7 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.runtime.withFrameNanos
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -251,8 +252,14 @@ private fun ChatContentScreen(
     }
     // A visible last item can still be many screens tall. Scroll to its bottom,
     // not its top, and never restart a token-level animation over a user's drag.
-    LaunchedEffect(state.currentSession?.id, state.messages.size, state.streamingText, state.streamingReasoning) {
+    // The IME flag is a trigger too: the keyboard changes no message state, so
+    // without it the newest message stayed hidden behind the keyboard.
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    LaunchedEffect(state.currentSession?.id, state.messages.size, state.streamingText, state.streamingReasoning, imeVisible) {
         if (followLatest && !listState.isScrollInProgress) {
+            // The IME padding lands on the next layout pass; wait one frame or
+            // the scroll measures against the pre-keyboard viewport.
+            if (imeVisible) withFrameNanos { }
             val streaming = state.isGenerating && (state.streamingText.isNotEmpty() || state.streamingReasoning.isNotEmpty())
             val target = if (streaming) state.messages.size else state.messages.lastIndex
             if (target >= 0) listState.scrollToItem(target, Int.MAX_VALUE)

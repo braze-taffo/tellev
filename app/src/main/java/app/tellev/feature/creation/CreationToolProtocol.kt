@@ -1,5 +1,7 @@
 package app.tellev.feature.creation
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -15,6 +17,10 @@ import kotlinx.serialization.json.put
 
 internal const val TOOL_CALL_OPEN = "<tool_call>"
 internal const val TOOL_CALL_CLOSE = "</tool_call>"
+
+/** Shown in the unknown-tool error so the model can retry with a valid name. */
+internal const val TOOL_NAMES =
+    "read_card, list_lore, read_lore, set_card_fields, upsert_lore, remove_lore, list_assets, read_script, upsert_script, read_regex, upsert_regex, read_variables, set_variables, remove_asset"
 
 internal data class ToolCallRequest(val name: String, val arguments: JsonObject)
 
@@ -85,7 +91,7 @@ private fun parseDsmlInvoke(match: MatchResult, json: Json): ToolCallBlock {
     val attrs = dsmlAttributes(match.groupValues[1])
     val name = attrs?.get("name")?.takeIf(String::isNotBlank)
     if (name == null || attrs?.keys != setOf("name")) {
-        return ToolCallBlock.Invalid("DSML invoke 缺少合法 name", match.value)
+        return ToolCallBlock.Invalid(UiStrings.get(S.creng_dsml_invalid_name), match.value)
     }
     val inner = match.groupValues[2]
     val arguments = mutableMapOf<String, JsonElement>()
@@ -96,16 +102,16 @@ private fun parseDsmlInvoke(match: MatchResult, json: Json): ToolCallBlock {
         if (key == null || (parameterAttrs?.keys.orEmpty() - setOf("name", "string")).isNotEmpty() ||
             stringFlag !in setOf(null, "true", "false") || key in arguments
         ) {
-            return ToolCallBlock.Invalid("DSML parameter 属性无效或重复", match.value)
+            return ToolCallBlock.Invalid(UiStrings.get(S.creng_dsml_invalid_parameter), match.value)
         }
         val value = if (stringFlag == "false") {
             runCatching { json.parseToJsonElement(parameter.groupValues[2].trim()) }.getOrNull()
-                ?: return ToolCallBlock.Invalid("DSML parameter 不是合法 JSON", match.value)
+                ?: return ToolCallBlock.Invalid(UiStrings.get(S.creng_dsml_parameter_not_json), match.value)
         } else JsonPrimitive(parameter.groupValues[2])
         arguments[key] = value
     }
     if (dsmlParameterRegex.replace(inner, "").isNotBlank()) {
-        return ToolCallBlock.Invalid("DSML invoke 含无法解析的内容", match.value)
+        return ToolCallBlock.Invalid(UiStrings.get(S.creng_dsml_unparseable_content), match.value)
     }
     return ToolCallBlock.Valid(ToolCallRequest(name, JsonObject(arguments)))
 }
@@ -113,10 +119,10 @@ private fun parseDsmlInvoke(match: MatchResult, json: Json): ToolCallBlock {
 private fun parseDsmlWrapper(match: MatchResult, json: Json): List<ToolCallBlock> {
     val inner = match.groupValues[1]
     val invokes = dsmlInvokeRegex.findAll(inner).toList()
-    if (invokes.isEmpty()) return listOf(ToolCallBlock.Invalid("DSML 工具块没有完整 invoke", match.value))
+    if (invokes.isEmpty()) return listOf(ToolCallBlock.Invalid(UiStrings.get(S.creng_dsml_no_invoke), match.value))
     val blocks = invokes.map { parseDsmlInvoke(it, json) }.toMutableList()
     if (dsmlInvokeRegex.replace(inner, "").isNotBlank()) {
-        blocks += ToolCallBlock.Invalid("DSML 工具块含无法解析的内容", match.value)
+        blocks += ToolCallBlock.Invalid(UiStrings.get(S.creng_dsml_wrapper_unparseable), match.value)
     }
     return blocks
 }
@@ -125,16 +131,16 @@ private fun parseDsmlWrapper(match: MatchResult, json: Json): List<ToolCallBlock
 private fun parseBlockBody(raw: String, json: Json, reported: String = raw): ToolCallBlock {
     val inner = raw.trim()
         .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
-    if (inner.isEmpty()) return ToolCallBlock.Invalid("工具块内容为空", reported)
+    if (inner.isEmpty()) return ToolCallBlock.Invalid(UiStrings.get(S.creng_block_empty), reported)
     val root = runCatching { json.parseToJsonElement(inner).jsonObject }.getOrNull()
-        ?: return ToolCallBlock.Invalid("工具块内不是合法 JSON 对象", reported)
+        ?: return ToolCallBlock.Invalid(UiStrings.get(S.creng_block_not_json), reported)
     // jsonPrimitive throws on non-primitive values; a bad block must stay a
     // recoverable Invalid instead of killing the round.
     val name = (root["name"] as? JsonPrimitive)?.contentOrNull
-    if (name.isNullOrBlank()) return ToolCallBlock.Invalid("缺少 name 字段", reported)
+    if (name.isNullOrBlank()) return ToolCallBlock.Invalid(UiStrings.get(S.creng_block_missing_name), reported)
     val arguments = root["arguments"] as? JsonObject
     if (root.containsKey("arguments") && arguments == null) {
-        return ToolCallBlock.Invalid("arguments 必须是 JSON 对象", reported)
+        return ToolCallBlock.Invalid(UiStrings.get(S.creng_block_arguments_not_object), reported)
     }
     return ToolCallBlock.Valid(ToolCallRequest(name, arguments ?: JsonObject(emptyMap())))
 }
@@ -302,15 +308,15 @@ internal fun parseNativeCreationCalls(calls: JsonArray?): List<ToolCallBlock> = 
     val arguments = if (rawValue is JsonObject) rawValue
         else runCatching { Json.parseToJsonElement(rawArguments) as? JsonObject }.getOrNull()
     if (arguments == null) {
-        ToolCallBlock.Invalid("原生工具 $nativeName 的 arguments 不是完整 JSON 对象", rawArguments.take(200))
+        ToolCallBlock.Invalid(UiStrings.get(S.creng_native_arguments_invalid, nativeName), rawArguments.take(200))
     } else if (nativeName == "creation_tool") {
         val name = (arguments["name"] as? JsonPrimitive)?.contentOrNull
         val nested = arguments["arguments"] as? JsonObject
         if (name.isNullOrBlank() || nested == null) {
-            ToolCallBlock.Invalid("creation_tool 缺少 name 或 arguments 对象", rawArguments.take(200))
+            ToolCallBlock.Invalid(UiStrings.get(S.creng_creation_tool_missing_fields), rawArguments.take(200))
         } else ToolCallBlock.Valid(ToolCallRequest(name, nested))
     } else if (nativeName.isBlank()) {
-        ToolCallBlock.Invalid("原生工具缺少名称", rawArguments.take(200))
+        ToolCallBlock.Invalid(UiStrings.get(S.creng_native_missing_name), rawArguments.take(200))
     } else ToolCallBlock.Valid(ToolCallRequest(nativeName, arguments))
 } ?: emptyList()
 
@@ -476,13 +482,13 @@ internal class CreationToolBox(initial: CreationSession) {
             }
             else -> ToolResult(
                 ok = false, name = call.name,
-                payload = errorPayload("未知工具。可用：read_card, list_lore, read_lore, set_card_fields, upsert_lore, remove_lore, list_assets, read_script, upsert_script, read_regex, upsert_regex, read_variables, set_variables, remove_asset"),
+                payload = errorPayload(UiStrings.get(S.creng_unknown_tool, TOOL_NAMES)),
             )
         }
     } catch (e: IllegalArgumentException) {
-        ToolResult(ok = false, name = call.name, payload = errorPayload(e.message ?: "参数无效"))
+        ToolResult(ok = false, name = call.name, payload = errorPayload(e.message ?: UiStrings.get(S.creng_invalid_arguments)))
     } catch (e: Exception) {
-        ToolResult(ok = false, name = call.name, payload = errorPayload("执行失败：${e.message ?: e.javaClass.simpleName}"))
+        ToolResult(ok = false, name = call.name, payload = errorPayload(UiStrings.get(S.creng_execution_failed, e.message ?: e.javaClass.simpleName)))
     }
 
     private fun errorPayload(message: String): JsonObject = buildJsonObject { put("error", message) }
@@ -490,7 +496,7 @@ internal class CreationToolBox(initial: CreationSession) {
     private fun readCard(): ToolResult = ToolResult(
         ok = true, name = "read_card",
         payload = buildJsonObject {
-            put("kind", if (session.kind == CreationKind.Character) "角色卡" else "世界书")
+            put("kind", UiStrings.get(if (session.kind == CreationKind.Character) S.creng_kind_character else S.creng_kind_worldbook))
             val sourceCard = session.originalCard
             if (session.kind == CreationKind.WorldBook && sourceCard != null) {
                 put("source_card_name", sourceCard.name)
@@ -504,23 +510,23 @@ internal class CreationToolBox(initial: CreationSession) {
 
     private fun JsonObject.argInt(name: String, default: Int): Int {
         val value = this[name] ?: return default
-        val primitive = value as? JsonPrimitive ?: throw IllegalArgumentException("$name 必须是整数")
-        return primitive.intOrNull ?: throw IllegalArgumentException("$name 必须是整数，收到：${primitive.content}")
+        val primitive = value as? JsonPrimitive ?: throw IllegalArgumentException(UiStrings.get(S.creng_arg_not_int, name))
+        return primitive.intOrNull ?: throw IllegalArgumentException(UiStrings.get(S.creng_arg_not_int_received, name, primitive.content))
     }
 
     private fun JsonObject.argString(name: String, default: String): String {
         val value = this[name] ?: return default
         return (value as? JsonPrimitive)?.contentOrNull
-            ?: throw IllegalArgumentException("$name 必须是字符串")
+            ?: throw IllegalArgumentException(UiStrings.get(S.creng_arg_not_string, name))
     }
 
     private fun JsonObject.argStringArray(name: String): List<String> {
         val value = this[name] ?: return emptyList()
         val array = value as? JsonArray
-            ?: throw IllegalArgumentException("$name 必须是字符串数组")
+            ?: throw IllegalArgumentException(UiStrings.get(S.creng_arg_not_string_array, name))
         return array.mapIndexed { index, item ->
             val primitive = item as? JsonPrimitive
-            require(primitive != null && primitive.isString) { "$name 第 ${index + 1} 项必须是字符串" }
+            require(primitive != null && primitive.isString) { UiStrings.get(S.creng_arg_array_item_not_string, name, index + 1) }
             primitive.content
         }
     }
@@ -574,8 +580,8 @@ internal class CreationToolBox(initial: CreationSession) {
 
     private fun readLore(arguments: JsonObject): ToolResult {
         val ids = arguments.argStringArray("ids")
-        require(ids.isNotEmpty()) { "ids 不能为空" }
-        require(ids.size <= 20) { "单次最多读取 20 条（收到 ${ids.size} 条）" }
+        require(ids.isNotEmpty()) { UiStrings.get(S.creng_ids_empty) }
+        require(ids.size <= 20) { UiStrings.get(S.creng_read_lore_too_many, ids.size) }
         val found = ids.mapNotNull { id -> session.lore.firstOrNull { it.id == id } }
         val notFound = ids.filter { id -> session.lore.none { it.id == id } }
         return ToolResult(
@@ -590,16 +596,16 @@ internal class CreationToolBox(initial: CreationSession) {
     private fun setCardFields(patch: JsonObject): ToolResult {
         val unknown = patch.keys - CARD_FIELD_WHITELIST
         require(unknown.isEmpty()) {
-            "未知 card 字段：${unknown.sorted().joinToString(", ")}。合法字段：${CARD_FIELD_WHITELIST.sorted().joinToString(", ")}"
+            UiStrings.get(S.creng_unknown_card_fields, unknown.sorted().joinToString(", "), CARD_FIELD_WHITELIST.sorted().joinToString(", "))
         }
         if (session.kind == CreationKind.WorldBook) {
             // 世界书会话没有角色卡：name 重定向到世界书名称，其余 card 字段不可用。
             val unsupported = patch.keys - setOf("name")
             require(unsupported.isEmpty()) {
-                "世界书会话只能用 name 修改世界书名称，不支持：${unsupported.sorted().joinToString(", ")}"
+                UiStrings.get(S.creng_worldbook_only_name, unsupported.sorted().joinToString(", "))
             }
             val name = (patch["name"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
-            require(name.isNotEmpty()) { "name 不能为空" }
+            require(name.isNotEmpty()) { UiStrings.get(S.creng_name_empty) }
             session = session.copy(
                 worldName = name,
                 nextLoreNumber = loreIdCursor,
@@ -641,18 +647,18 @@ internal class CreationToolBox(initial: CreationSession) {
 
     private fun upsertLore(arguments: JsonObject): ToolResult {
         val entries = arguments["entries"] as? JsonArray
-            ?: throw IllegalArgumentException("缺少 entries 数组")
-        require(entries.isNotEmpty()) { "entries 不能为空" }
-        require(entries.size <= 20) { "单次最多处理 20 条（收到 ${entries.size} 条），请分多轮打包" }
+            ?: throw IllegalArgumentException(UiStrings.get(S.creng_entries_missing))
+        require(entries.isNotEmpty()) { UiStrings.get(S.creng_entries_empty) }
+        require(entries.size <= 20) { UiStrings.get(S.creng_upsert_too_many, entries.size) }
         val working = session.lore.toMutableList()
         val outcomes = mutableListOf<JsonObject>()
         val notFound = mutableListOf<JsonPrimitive>()
         for (element in entries) {
             val incoming = element as? JsonObject
-                ?: throw IllegalArgumentException("entries 中的每一项必须是 JSON 对象")
+                ?: throw IllegalArgumentException(UiStrings.get(S.creng_entries_item_not_object))
             val normalized = normalizeLoreKeys(incoming)
             val unknownKeys = normalized.keys - LORE_WRITABLE_FIELDS
-            val unknownWarnings = unknownKeys.sorted().map { "未识别字段被忽略：$it（合法字段见工具说明）" }
+            val unknownWarnings = unknownKeys.sorted().map { UiStrings.get(S.creng_unknown_field_ignored, it) }
             val id = normalized["id"]?.let { (it as? JsonPrimitive)?.contentOrNull }
             if (id.isNullOrBlank()) {
                 val created = decodeJson.decodeFromJsonElement<LoreDraft>(normalized).copy(id = nextLoreId())
@@ -698,21 +704,21 @@ internal class CreationToolBox(initial: CreationSession) {
     })
 
     private fun creationWarnings(entry: LoreDraft): List<String> = buildList {
-        if (entry.title.isBlank()) add("缺少标题")
-        if (entry.content.isBlank()) add("缺少内容")
+        if (entry.title.isBlank()) add(UiStrings.get(S.creng_missing_title))
+        if (entry.content.isBlank()) add(UiStrings.get(S.creng_missing_content))
         if (!entry.constant && entry.keys.none(String::isNotBlank)) {
-            add("非常驻条目缺少触发词 keys，保存前需补齐")
+            add(UiStrings.get(S.creng_missing_keys))
         }
     }
 
     private fun titleConflictWarnings(entry: LoreDraft, id: String, list: List<LoreDraft>): List<String> =
         if (entry.title.isNotBlank() && list.any { it.id != id && it.title.trim().equals(entry.title.trim(), ignoreCase = true) }) {
-            listOf("与其他条目同名：${entry.title.trim()}（同名不冲突，但请确认不是笔误）")
+            listOf(UiStrings.get(S.creng_title_conflict, entry.title.trim()))
         } else emptyList()
 
     private fun removeLore(arguments: JsonObject): ToolResult {
         val ids = arguments.argStringArray("ids")
-        require(ids.isNotEmpty()) { "ids 不能为空" }
+        require(ids.isNotEmpty()) { UiStrings.get(S.creng_ids_empty) }
         val removed = session.lore.filter { it.id in ids }
         val notFound = ids.filter { id -> session.lore.none { it.id == id } }
         session = session.copy(
