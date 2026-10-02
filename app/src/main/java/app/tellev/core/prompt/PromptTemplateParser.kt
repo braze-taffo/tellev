@@ -213,11 +213,23 @@ internal object PromptTemplateParser {
             else -> null
         }
 
+    /**
+     * Strips the `/…/` regex delimiters. JS-style trailing flags are folded
+     * into inline `(?ims)` so [GENERATE:REGEX:/pat/i] keeps its case
+     * sensitivity instead of silently dropping it (P4); the Java-compatible
+     * subset only (i/m/s — `g`/`u`/`y` have no Kotlin counterpart), and
+     * delimiters without flags behave exactly as before.
+     */
     fun String.removeRegexDelimiters(): String {
         val trimmed = trim()
         if (trimmed.length >= 2 && trimmed.first() == '/') {
             val lastSlash = trimmed.lastIndexOf('/')
-            if (lastSlash > 0) return trimmed.substring(1, lastSlash)
+            if (lastSlash > 0) {
+                val body = trimmed.substring(1, lastSlash)
+                val flags = trimmed.substring(lastSlash + 1)
+                val inline = "ims".filter { it in flags }
+                return if (inline.isEmpty()) body else "(?$inline)$body"
+            }
         }
         return trimmed
     }

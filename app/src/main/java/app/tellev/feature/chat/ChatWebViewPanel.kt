@@ -327,6 +327,10 @@ internal fun TavernHtmlPanel(
                                 }
                             }
                             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                // The listener always returns false, so the
+                                // WebView's own touch pipeline owns taps; this
+                                // only satisfies ClickableViewAccessibility.
+                                if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
                                 val bridge = view.tag as? TavernMessageBridge
                                 if (event.actionMasked == MotionEvent.ACTION_UP && forwardedLastMove &&
                                     bridge?.hasNestedScrollGesture() != true) {

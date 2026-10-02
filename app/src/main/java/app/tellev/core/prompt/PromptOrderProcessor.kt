@@ -139,12 +139,18 @@ internal object PromptOrderProcessor {
         val memberNames = PromptMacroContextBuilder.groupMemberNamesList(metadata)
         if (memberNames.size <= 1) return messages
 
-        // For group chats, ensure assistant messages have proper name attribution
-        // and maintain round-robin or metadata-specified ordering
+        // For group chats, ensure assistant messages have proper name
+        // attribution: unnamed drafts rotate through the member list
+        // (round-robin), resuming after the last *named* speaker, instead of
+        // collapsing every message onto the first member.
+        var next = messages.indexOfLast { it.role == MessageRole.Assistant && it.name != null }
+            .takeIf { it >= 0 }
+            ?.let { lastNamed -> memberNames.indexOf(messages[lastNamed].name) }
+            ?: -1
         return messages.map { message ->
             if (message.role == MessageRole.Assistant && message.name == null) {
-                // Try to attribute to the most recent group member who hasn't spoken
-                message.copy(name = memberNames.firstOrNull())
+                next = (next + 1).mod(memberNames.size)
+                message.copy(name = memberNames[next])
             } else {
                 message
             }

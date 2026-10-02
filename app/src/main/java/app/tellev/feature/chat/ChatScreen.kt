@@ -147,7 +147,19 @@ private fun ChatContentScreen(
     chatFontSizeSp: Int,
     modifier: Modifier = Modifier,
 ) {
-    val renderMacroContext = viewModel.messageMacroContext(state)
+    // Q10: this builds a full macro context (variables snapshot, budgets).
+    // Recomputing it on every keystroke recomposition stalled the main thread
+    // while typing; the inputs it reads change per message/session, not per key.
+    val renderMacroContext = remember(
+        state.selectedCharacter,
+        state.currentSession,
+        state.selectedPersona,
+        state.selectedPreset,
+        state.providerConfig?.model,
+    ) { viewModel.messageMacroContext(state) }
+    // Q12: per-item visibleRegexDepth is O(n) per bubble (O(n²) per screen);
+    // one reverse pass per message-list change replaces that.
+    val visibleDepths = remember(state.messages) { visibleRegexDepths(state.messages) }
     val runtimeToken = viewModel.currentRuntimeToken(state.currentSession?.id)
     LaunchedEffect(state.currentSession?.id) { viewModel.refreshMemory() }
     val listState = key(state.currentSession?.id) {
@@ -519,7 +531,7 @@ private fun ChatContentScreen(
                             dataRoot = dataRoot,
                             preset = state.selectedPreset,
                             userName = state.selectedPersona?.name ?: "User",
-                            depth = visibleRegexDepth(state.messages, index),
+                            depth = visibleDepths.getOrElse(index) { 0 },
                             htmlPanelMaxHeight = htmlPanelMaxHeight,
                             bubbleAlpha = bubbleAlpha,
                             chatFontSizeSp = chatFontSizeSp,

@@ -468,7 +468,8 @@
     <string name="creng_entries_missing">缺少 entries 数组</string>
     <string name="creng_entries_empty">entries 不能为空</string>
     <string name="creng_upsert_too_many">单次最多处理 20 条（收到 %1$d 条），请分多轮打包</string>
-    <string name="creng_entries_item_not_object">entries 中的每一项必须是 JSON 对象</string>
+    <string name="creng_entries_item_not_object">entries 第 %1$d 项不是 JSON 对象，本批未应用任何更改</string>
+    <string name="creng_entries_item_invalid">entries 第 %1$d 项无法解析：%2$s，本批未应用任何更改</string>
     <string name="creng_unknown_field_ignored">未识别字段被忽略：%1$s（合法字段见工具说明）</string>
     <string name="creng_missing_title">缺少标题</string>
     <string name="creng_missing_content">缺少内容</string>

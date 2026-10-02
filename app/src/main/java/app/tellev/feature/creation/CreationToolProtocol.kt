@@ -659,15 +659,26 @@ internal class CreationToolBox(initial: CreationSession) {
         val working = session.lore.toMutableList()
         val outcomes = mutableListOf<JsonObject>()
         val notFound = mutableListOf<JsonPrimitive>()
-        for (element in entries) {
+        // O7: per-entry failures must say which entry failed and that the
+        // batch is all-or-nothing (nothing below is committed unless every
+        // entry parses).
+        for ((position, element) in entries.withIndex()) {
+            val entryNumber = position + 1
             val incoming = element as? JsonObject
-                ?: throw IllegalArgumentException(UiStrings.get(S.creng_entries_item_not_object))
+                ?: throw IllegalArgumentException(
+                    UiStrings.get(S.creng_entries_item_not_object, entryNumber),
+                )
             val normalized = normalizeLoreKeys(incoming)
             val unknownKeys = normalized.keys - LORE_WRITABLE_FIELDS
             val unknownWarnings = unknownKeys.sorted().map { UiStrings.get(S.creng_unknown_field_ignored, it) }
             val id = normalized["id"]?.let { (it as? JsonPrimitive)?.contentOrNull }
             if (id.isNullOrBlank()) {
-                val created = decodeJson.decodeFromJsonElement<LoreDraft>(normalized).copy(id = nextLoreId())
+                val created = runCatching { decodeJson.decodeFromJsonElement<LoreDraft>(normalized) }
+                    .getOrElse { error ->
+                        throw IllegalArgumentException(
+                            UiStrings.get(S.creng_entries_item_invalid, entryNumber, error.message ?: ""),
+                        )
+                    }.copy(id = nextLoreId())
                 working += created
                 outcomes += buildJsonObject {
                     put("id", created.id)
@@ -682,7 +693,12 @@ internal class CreationToolBox(initial: CreationSession) {
                     continue
                 }
                 val existing = encodeJson.encodeToJsonElement(working[index]).jsonObject
-                val updated = decodeJson.decodeFromJsonElement<LoreDraft>(JsonObject(existing + normalized))
+                val updated = runCatching { decodeJson.decodeFromJsonElement<LoreDraft>(JsonObject(existing + normalized)) }
+                    .getOrElse { error ->
+                        throw IllegalArgumentException(
+                            UiStrings.get(S.creng_entries_item_invalid, entryNumber, error.message ?: ""),
+                        )
+                    }
                 working[index] = updated
                 outcomes += buildJsonObject {
                     put("id", updated.id)

@@ -462,6 +462,7 @@ object S {
     const val creng_entries_empty = "creng_entries_empty"
     const val creng_upsert_too_many = "creng_upsert_too_many"
     const val creng_entries_item_not_object = "creng_entries_item_not_object"
+    const val creng_entries_item_invalid = "creng_entries_item_invalid"
     const val creng_unknown_field_ignored = "creng_unknown_field_ignored"
     const val creng_missing_title = "creng_missing_title"
     const val creng_missing_content = "creng_missing_content"
@@ -1777,6 +1778,7 @@ object S {
         "creng_entries_empty" to R.string.creng_entries_empty,
         "creng_upsert_too_many" to R.string.creng_upsert_too_many,
         "creng_entries_item_not_object" to R.string.creng_entries_item_not_object,
+        "creng_entries_item_invalid" to R.string.creng_entries_item_invalid,
         "creng_unknown_field_ignored" to R.string.creng_unknown_field_ignored,
         "creng_missing_title" to R.string.creng_missing_title,
         "creng_missing_content" to R.string.creng_missing_content,
@@ -3092,7 +3094,8 @@ object S {
         "creng_entries_missing" to "缺少 entries 数组",
         "creng_entries_empty" to "entries 不能为空",
         "creng_upsert_too_many" to "单次最多处理 20 条（收到 %1\$d 条），请分多轮打包",
-        "creng_entries_item_not_object" to "entries 中的每一项必须是 JSON 对象",
+        "creng_entries_item_not_object" to "entries 第 %1\$d 项不是 JSON 对象，本批未应用任何更改",
+        "creng_entries_item_invalid" to "entries 第 %1\$d 项无法解析：%2\$s，本批未应用任何更改",
         "creng_unknown_field_ignored" to "未识别字段被忽略：%1\$s（合法字段见工具说明）",
         "creng_missing_title" to "缺少标题",
         "creng_missing_content" to "缺少内容",

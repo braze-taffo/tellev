@@ -240,9 +240,19 @@ internal fun editedChatMessage(message: ChatMessage, content: String): ChatMessa
 }
 
 internal fun visibleRegexDepth(messages: List<ChatMessage>, messageIndex: Int): Int =
-    messages.drop(messageIndex + 1).count {
-        !it.isHidden && it.role != MessageRole.System && it.role != MessageRole.Tool
+    visibleRegexDepths(messages).getOrElse(messageIndex) { 0 }
+
+/** One reverse pass replaces [visibleRegexDepth]'s O(n) per item (Q12). */
+internal fun visibleRegexDepths(messages: List<ChatMessage>): IntArray {
+    val depths = IntArray(messages.size)
+    var visibleAfter = 0
+    for (index in messages.indices.reversed()) {
+        depths[index] = visibleAfter
+        val message = messages[index]
+        if (!message.isHidden && message.role != MessageRole.System && message.role != MessageRole.Tool) visibleAfter++
     }
+    return depths
+}
 
 internal fun ChatMessage.withRegeneratedSwipe(newContent: String): ChatMessage {
     val previousSwipes = swipes.ifEmpty { listOf(content) }

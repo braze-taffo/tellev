@@ -468,7 +468,8 @@
     <string name="creng_entries_missing">The entries array is missing</string>
     <string name="creng_entries_empty">entries must not be empty</string>
     <string name="creng_upsert_too_many">At most 20 entries per call (received %1$d); split across several rounds</string>
-    <string name="creng_entries_item_not_object">Every item in entries must be a JSON object</string>
+    <string name="creng_entries_item_not_object">Entry %1$d in entries is not a JSON object; no changes from this batch were applied</string>
+    <string name="creng_entries_item_invalid">Entry %1$d in entries could not be parsed: %2$s; no changes from this batch were applied</string>
     <string name="creng_unknown_field_ignored">Unknown field ignored: %1$s (see the tool description for valid fields)</string>
     <string name="creng_missing_title">Missing a title</string>
     <string name="creng_missing_content">Missing content</string>

@@ -119,6 +119,8 @@ internal class ChatGenerationCoordinator(
             uiState.update { it.copy(error = UiStrings.get(S.chatgenco_regen_input_missing)) }
             return false
         }
+        // Stable-id anchor for the post-flush re-resolution below (G17).
+        val regenerationInputId = regenerationInput?.id
 
         scope.launch(start = CoroutineStart.LAZY) {
             try {
@@ -249,11 +251,22 @@ internal class ChatGenerationCoordinator(
                 } catch (_: Exception) {
                     "" // Memory retrieval cannot prevent a normal chat reply.
                 }
+                // G17: regenerationInputIndex was computed against the
+                // pre-launch UI snapshot; the two flushSessionWrites above can
+                // replay extension chat writes that insert or remove messages.
+                // Re-resolve the input message by stable id in the flushed
+                // view; only fall back to the stale index when the id vanished.
+                val regenerationHistoryCut = if (isRegeneration) {
+                    val byId = regenerationInputId
+                        ?.let { id -> promptMessages.indexOfFirst { it.id == id } }
+                        ?.takeIf { it >= 0 }
+                    byId ?: regenerationInputIndex!!.coerceIn(0, promptMessages.size)
+                } else 0
                 val promptRequest = PromptBuildRequest(
                     character = character,
                     persona = runtime.persona,
                     messages = if (isRegeneration) {
-                        promptMessages.take(regenerationInputIndex!!)
+                        promptMessages.take(regenerationHistoryCut)
                     } else if (messageRole == MessageRole.User) {
                         promptHistoryBeforeCurrentMessage(promptMessages, inputMessage.id)
                     } else {

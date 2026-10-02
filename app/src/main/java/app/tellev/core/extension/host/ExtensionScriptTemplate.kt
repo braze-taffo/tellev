@@ -285,8 +285,14 @@ internal object ExtensionScriptTemplate {
         val safeId = jsEscape(extensionId)
         val safeToken = jsEscape(token)
         val safeScript = sanitizeScriptSource(scriptSource)
-        val safeEjsJson = ejsSettingsJson.replace("\\", "\\\\").replace("'", "\'")
-        val safeThJson = tavernHelperSettingsJson.replace("\\", "\\\\").replace("'", "\'")
+        // Settings JSON is embedded as a bare JS *expression* (see the
+        // `__*_SETTINGS_JSON__` slots in HTML_TEMPLATE), so the JSON text must
+        // pass through verbatim: escaping backslashes (the old
+        // `.replace("\\", "\\\\")`) corrupted every value carrying a JSON
+        // escape sequence, and `.replace("'", "\'")` was a Kotlin no-op. Only
+        // U+2028/2029 and the script-block breakouts need rewriting.
+        val safeEjsJson = jsSettingsExpression(ejsSettingsJson)
+        val safeThJson = jsSettingsExpression(tavernHelperSettingsJson)
         // Detect ES module syntax (import/export at line start) so we can use
         // <script type="module"> and allow external CDN imports.  TavernHelper
         // scripts like MVU/ZOD use `import 'https://...'` which requires module
@@ -354,9 +360,14 @@ internal object ExtensionScriptTemplate {
      * unescaped they turn the whole evaluateJavascript snippet into a
      * SyntaxError, so neither callback ever fires and the Kotlin awaiter stalls
      * to its timeout.
+     *
+     * The search characters MUST stay written as `\u2028`/`\u2029` escapes in
+     * this source file: raw LS/PS characters embedded in the literal are not
+     * lexed as single-character content and the replacement silently never
+     * fires (verified by ExtensionScriptTemplateJsTest).
      */
     internal fun jsExpression(json: String): String =
-        json.replace(" ", "\u2028").replace(" ", "\u2029")
+        json.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
 
     internal fun jsEscape(raw: String): String = raw
         .replace("\\", "\\\\")
@@ -367,6 +378,19 @@ internal object ExtensionScriptTemplate {
         .replace("\u2029", "\\u2029")
 
     /**
+     * JSON text embedded directly as a JS *expression* (settings object
+     * literals). JSON is already valid JS, so backslashes and quotes pass
+     * through untouched; only [jsExpression]'s U+2028/2029 rewriting and the
+     * `</script`/`<!--` breakouts (which in JSON text can only occur inside
+     * string values, where `<\/script` parses back to the same characters)
+     * apply.
+     */
+    internal fun jsSettingsExpression(json: String): String =
+        sanitizeScriptSource(jsExpression(json))
+
+    private val scriptCloser = Regex("</script", RegexOption.IGNORE_CASE)
+
+    /**
      * Sanitize raw script source before embedding it in a <script> element.
      * The HTML parser closes the script block on the first </script
      * (case-insensitive) or HTML-comment-open sequence. Escape those so
@@ -375,8 +399,13 @@ internal object ExtensionScriptTemplate {
      * We intentionally escape only the literal sequences that would terminate
      * the script block; replacing every "</" globally corrupts valid JS such
      * as `a < /b/.test(c)` or `</` inside regex literals.
+     *
+     * The replacement must go through [Regex.escapeReplacement]: Kotlin's
+     * Regex.replace(String) uses Matcher.replaceAll semantics, where `\/`
+     * collapses back to `/` — the escaped form was silently stripped and the
+     * guard never fired.
      */
     internal fun sanitizeScriptSource(src: String): String = src
-        .replace(Regex("</script", RegexOption.IGNORE_CASE), "<\\/script")
+        .replace(scriptCloser, Regex.escapeReplacement("<\\/script"))
         .replace("<!--", "<\\!--")
 }

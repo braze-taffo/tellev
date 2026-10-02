@@ -205,7 +205,7 @@ fun WorldBooksListScreen(
                         Text(
                             text = stringResource(R.string.wblist_empty_hint),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.87f),
                         )
                     }
                 }

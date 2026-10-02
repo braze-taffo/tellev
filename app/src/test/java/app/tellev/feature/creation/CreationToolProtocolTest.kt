@@ -636,5 +636,38 @@ class CreationToolProtocolTest {
         assertTrue(rejected.payload["error"]!!.jsonPrimitive.content.contains("世界书"))
     }
 
+    // O7：批量失败必须指明第几条，且明确本批未应用任何更改。
+    @Test
+    fun upsertLoreFailureNamesTheEntryAndReportsNoChangesApplied() {
+        val box = CreationToolBox(testSession())
+        val result = box.execute(ToolCallRequest("upsert_lore", buildJsonObject {
+            put("entries", buildJsonArray {
+                add(buildJsonObject { put("title", "有效条目") })
+                add(JsonPrimitive("不是对象"))
+            })
+        }))
+        assertFalse(result.ok)
+        val error = result.payload["error"]!!.jsonPrimitive.content
+        assertTrue(error.contains("2"))
+        assertTrue(error.contains("JSON"))
+        // 全有全无：有效条目也不应入库。
+        assertEquals(2, box.session.lore.size)
+    }
+
+    @Test
+    fun upsertLoreInvalidFieldTypeNamesTheEntryAndKeepsSessionUntouched() {
+        val box = CreationToolBox(testSession())
+        val result = box.execute(ToolCallRequest("upsert_lore", buildJsonObject {
+            put("entries", buildJsonArray {
+                add(buildJsonObject { put("title", "有效条目") })
+                add(buildJsonObject { put("title", "键类型错误"); put("keys", 7) })
+            })
+        }))
+        assertFalse(result.ok)
+        val error = result.payload["error"]!!.jsonPrimitive.content
+        assertTrue(error.contains("2"))
+        assertEquals(2, box.session.lore.size)
+    }
+
     private fun box() = CreationToolBox(testSession())
 }

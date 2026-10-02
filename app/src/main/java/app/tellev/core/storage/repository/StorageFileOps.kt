@@ -15,12 +15,23 @@ import kotlin.io.path.readText
 internal object StorageFileOps {
 
     fun durableWriteText(durableFiles: JournaledFileWriter, path: Path, text: String) {
-        durableFiles.write(path, text.toByteArray(Charsets.UTF_8))
+        durableWriteBytes(durableFiles, path, text.toByteArray(Charsets.UTF_8))
     }
 
     /** Same journaled discipline for raw/copy-style writes (preset import, in_use.json). */
     fun durableWriteBytes(durableFiles: JournaledFileWriter, path: Path, bytes: ByteArray) {
-        durableFiles.write(path, bytes)
+        try {
+            durableFiles.write(path, bytes)
+        } catch (error: IllegalStateException) {
+            // A half-committed journal record blocks the target until recover()
+            // replays it. ChatRepository does this in place for sessions; every
+            // other repository gets the same self-heal here instead of staying
+            // blocked until restart (M10). recover() itself still refuses
+            // genuine conflicts, so nothing is guessed away.
+            if (error.message?.contains("Unrecovered write") != true) throw error
+            durableFiles.recover()
+            durableFiles.write(path, bytes)
+        }
     }
 
     fun readJsonFiles(root: Path, json: Json): List<Pair<Path, JsonObject>> {

@@ -468,7 +468,8 @@
     <string name="creng_entries_missing">entries 배열이 없습니다</string>
     <string name="creng_entries_empty">entries는 비어 있을 수 없습니다</string>
     <string name="creng_upsert_too_many">한 번에 최대 20개까지 처리합니다(받은 %1$d개). 여러 라운드로 나누십시오</string>
-    <string name="creng_entries_item_not_object">entries의 모든 항목은 JSON 객체여야 합니다</string>
+    <string name="creng_entries_item_not_object">entries의 %1$d번째 항목은 JSON 객체가 아닙니다. 이 배치의 변경 사항은 적용되지 않았습니다</string>
+    <string name="creng_entries_item_invalid">entries의 %1$d번째 항목을 해석할 수 없습니다: %2$s. 이 배치의 변경 사항은 적용되지 않았습니다</string>
     <string name="creng_unknown_field_ignored">인식되지 않은 필드는 무시됨: %1$s(유효 필드는 도구 설명 참조)</string>
     <string name="creng_missing_title">제목이 없습니다</string>
     <string name="creng_missing_content">내용이 없습니다</string>

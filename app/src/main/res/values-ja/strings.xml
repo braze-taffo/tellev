@@ -468,7 +468,8 @@
     <string name="creng_entries_missing">entries 配列がありません</string>
     <string name="creng_entries_empty">entries は空にできません</string>
     <string name="creng_upsert_too_many">1 回に処理できるのは最大 20 条です（受信 %1$d 条）。複数ラウンドに分けてください</string>
-    <string name="creng_entries_item_not_object">entries の各項は JSON オブジェクトである必要があります</string>
+    <string name="creng_entries_item_not_object">entries の %1$d 番目の項が JSON オブジェクトではありません。このバッチは一切適用されていません</string>
+    <string name="creng_entries_item_invalid">entries の %1$d 番目の項を解析できません：%2$s。このバッチは一切適用されていません</string>
     <string name="creng_unknown_field_ignored">未認識のフィールドは無視されました：%1$s（合法フィールドはツール説明を参照）</string>
     <string name="creng_missing_title">タイトルがありません</string>
     <string name="creng_missing_content">内容がありません</string>
