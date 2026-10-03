@@ -615,7 +615,11 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                     CreationBriefForm(session.kind, busy, viewModel::send)
                 }
             }
-            items(session.turns) { turn ->
+            itemsIndexed(
+                session.turns,
+                key = { index, _ -> "turn-$index" },
+                contentType = { _, _ -> "turn" },
+            ) { _, turn ->
                 val isUser = turn.role == "user"
                 // Chat-style bubbles: user right on primaryContainer, agent left
                 // on surfaceVariant, with selectable text for copy-paste.
@@ -998,14 +1002,21 @@ private fun WorldDraftEditor(
                 }
             }
             Text(stringResource(R.string.crs_lore_count, session.lore.size), style = MaterialTheme.typography.titleMedium)
-            val repeatedTitles = session.lore.groupBy { it.title.trim().lowercase() }
-                .filter { (title, entries) -> title.isNotBlank() && entries.size > 1 }
+            val repeatedTitles = remember(session.lore) {
+                session.lore.groupBy { it.title.trim().lowercase() }
+                    .filter { (title, entries) -> title.isNotBlank() && entries.size > 1 }
+            }
             if (repeatedTitles.isNotEmpty()) {
                 Text(stringResource(R.string.crs_duplicate_titles, repeatedTitles.size), color = MaterialTheme.colorScheme.error)
             }
             }
         }
-        itemsIndexed(session.lore, key = { index, _ -> "lore-$index" }) { index, item ->
+        // Keys follow the stable entry id so deleting an entry does not shift
+        // editor state (focus, selection) onto the wrong card; freshly added
+        // drafts are keyed by index until the id is assigned.
+        itemsIndexed(session.lore, key = { index, item ->
+            if (item.id.isNotBlank()) "lore-${item.id}" else "lore-idx-$index"
+        }) { index, item ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     DraftField(stringResource(R.string.crs_field_lore_title), item.title, busy) { viewModel.editLore(index, item.copy(title = it)) }

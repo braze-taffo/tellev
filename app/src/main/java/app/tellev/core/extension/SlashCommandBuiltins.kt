@@ -459,9 +459,15 @@ internal class SlashCommandBuiltins(
             }
 
             "event-emit" -> {
+                // Tellev-native command (upstream ST has no /event-emit), so the
+                // contract is defined here: the event name comes from the `event`
+                // named arg or the first positional argument; the payload is the
+                // remaining positional args plus an explicit `data=` named arg.
+                // Other named args are options, not payload — treating them as
+                // data made flags like `quiet=true` masquerade as event content.
                 val event = cmd.namedArgs["event"] ?: cmd.textArgs().getOrNull(0) ?: ""
                 val dataArgs = cmd.textArgs().drop(if (cmd.namedArgs["event"] != null) 0 else 1)
-                val dataFromNamed = cmd.namedArgs.filterKeys { it != "event" }.values.toList()
+                val dataFromNamed = cmd.namedArgs["data"]?.let { listOf(it) } ?: emptyList()
                 val allData = dataArgs + dataFromNamed
                 eventEmitter?.invoke(event, allData)
                 Result.ok(event)

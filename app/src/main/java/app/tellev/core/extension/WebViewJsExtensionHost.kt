@@ -25,6 +25,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -1010,6 +1011,15 @@ class WebViewJsExtensionHost(
                         )
                     requests.pendingPermissionEvents[requestId] = event
                     mutableEvents.emit(event)
+                    scope.launch {
+                        delay(PERMISSION_REQUEST_TIMEOUT_MS)
+                        // The UI path (deliverPermissionResult) removes the event
+                        // entry first, so winning this atomic removal means the
+                        // dialog was never answered: deny and release the script.
+                        if (requests.pendingPermissionEvents.remove(requestId, event)) {
+                            deliverPermissionResult(requestId, granted = false)
+                        }
+                    }
                 }
             }
         }
@@ -1280,38 +1290,22 @@ class WebViewJsExtensionHost(
         }
 
         @JavascriptInterface
-        fun stSetChatMessage(index: String, field: String, value: String) {
-            if (!hasStorageBridgeAccess("stSetChatMessage")) return
-            val provider = _contextProvider
-            scope.launch {
-                requireCurrentRuntime()
-                val messageIndex = index.toIntOrNull()
-                if (messageIndex != null && provider?.setChatMessage(messageIndex, field, value) == true) {
-                    return@launch
-                }
-                val body = buildJsonObject {
-                    put("index", index)
-                    put("field", field)
-                    put("value", value)
-                }
-                apiRouter.route(
-                    VirtualApiRequest(
-                        method = "POST",
-                        path = "/api/chats/current/message-field",
-                        body = json.encodeToString(JsonObject.serializer(), body),
-                        headers = mapOf("X-Extension-Id" to extensionId, "X-Capability-Token" to token),
-                    ),
-                )
-            }
-        }
-
-        @JavascriptInterface
         fun executeSlashCommands(requestId: String, scriptText: String) {
             scope.launch {
-                val engineResult = runCatching {
-                    slashCommandEngine.execute(scriptText)
-                }.getOrElse {
-                    SlashCommandEngine.Result.error(it.message ?: "execution error")
+                // Same discipline as executeStScript: the engine is a blocking
+                // interpreter, so keep it off other work and make cancellation
+                // interrupt it — plus a wall-clock cap so the JS-side promise
+                // backing this request always reaches a terminal state.
+                val engineResult = withContext(Dispatchers.Default) {
+                    try {
+                        withTimeoutOrNull(SLASH_SCRIPT_WALL_CLOCK_MS) {
+                            runInterruptible { slashCommandEngine.execute(scriptText) }
+                        } ?: SlashCommandEngine.Result.error("Slash script exceeded its wall-clock budget")
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        SlashCommandEngine.Result.error(e.message ?: "execution error")
+                    }
                 }
 
                 val result = if (engineResult.handled) {
@@ -1412,6 +1406,21 @@ class WebViewJsExtensionHost(
             ExtensionScriptTemplate.EXTENSION_LOAD_GUARDS
 
         internal const val DEFAULT_SCRIPT_READY_TIMEOUT_MS: Long = 30_000L
+
+        /**
+         * Wall-clock bound for the JS-side slash-command promise. `/gen` is a
+         * stub, loop iterations are capped at 1000, and `/delay` tops out at
+         * 30s per call — five minutes is far beyond any honest script, so a
+         * promise still pending then means the engine is wedged and the
+         * awaiting module gets an error result instead of parking forever.
+         */
+        internal const val SLASH_SCRIPT_WALL_CLOCK_MS: Long = 300_000L
+
+        /**
+         * How long an unanswered permission dialog stays pending before the
+         * request is auto-denied and the awaiting script released.
+         */
+        internal const val PERMISSION_REQUEST_TIMEOUT_MS: Long = 60_000L
         internal const val CHARACTER_SCRIPT_READY_TIMEOUT_MS: Long = 90_000L
 
         internal val TAVERN_CONTEXT_TICK_CACHE_JS: String =

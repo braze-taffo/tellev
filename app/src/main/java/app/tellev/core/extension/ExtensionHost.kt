@@ -15,8 +15,6 @@ import kotlinx.serialization.json.buildJsonObject
 interface ExtensionContextProvider {
     fun snapshot(): JsonObject
 
-    suspend fun setChatMessage(index: Int, field: String, value: String): Boolean = false
-
     suspend fun setChatMessages(messages: kotlinx.serialization.json.JsonArray, options: JsonObject): Boolean = false
 
     suspend fun generateText(options: JsonObject): JsonObject? = null

@@ -62,7 +62,6 @@ internal object ChatTavernAdapter {
         extensionHost: ExtensionHost,
         sessionRuntime: ChatSessionRuntime,
         onSessionUpdated: (ChatSession) -> Unit,
-        onSetChatMessage: suspend (index: Int, field: String, value: String) -> Boolean,
         onGenerateText: suspend (options: JsonObject) -> JsonObject?,
         onCompatibilityStorage: suspend (String, JsonObject) -> JsonObject? = { _, _ -> null },
     ): ExtensionContextProvider = object : ExtensionContextProvider {
@@ -74,9 +73,6 @@ internal object ChatTavernAdapter {
                 extensionHost = extensionHost,
             )
         }
-
-        override suspend fun setChatMessage(index: Int, field: String, value: String): Boolean =
-            onSetChatMessage(index, field, value)
 
         override suspend fun setChatMessages(messages: JsonArray, options: JsonObject): Boolean {
             val session = getCurrentState().currentSession ?: return false

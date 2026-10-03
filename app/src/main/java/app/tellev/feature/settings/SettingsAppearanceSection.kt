@@ -138,8 +138,10 @@ internal fun LazyListScope.appearanceSectionItems(
     state: SettingsUiState,
     onSetThemeMode: (ThemeMode) -> Unit,
     onSetThemeAccent: (ThemeAccent) -> Unit,
-    onSetChatBubbleAlpha: (Float) -> Unit,
-    onSetChatFontSizeSp: (Int) -> Unit,
+    onPreviewChatBubbleAlpha: (Float) -> Unit,
+    onPersistChatBubbleAlpha: () -> Unit,
+    onPreviewChatFontSizeSp: (Int) -> Unit,
+    onPersistChatFontSizeSp: () -> Unit,
 ) {
     item(key = "theme_header") {
         SectionHeader(
@@ -205,7 +207,10 @@ internal fun LazyListScope.appearanceSectionItems(
             )
             Slider(
                 value = state.chatBubbleAlpha,
-                onValueChange = onSetChatBubbleAlpha,
+                // Preview on every tick (shared flow drives the live bubble
+                // alpha), persist only when the drag settles.
+                onValueChange = onPreviewChatBubbleAlpha,
+                onValueChangeFinished = onPersistChatBubbleAlpha,
                 valueRange = 0f..1f,
             )
         }
@@ -216,7 +221,8 @@ internal fun LazyListScope.appearanceSectionItems(
             Text(stringResource(R.string.setapp_font_size, state.chatFontSizeSp), style = MaterialTheme.typography.bodyMedium)
             Slider(
                 value = state.chatFontSizeSp.toFloat(),
-                onValueChange = { onSetChatFontSizeSp((it / 2).roundToInt() * 2) },
+                onValueChange = { onPreviewChatFontSizeSp((it / 2).roundToInt() * 2) },
+                onValueChangeFinished = onPersistChatFontSizeSp,
                 valueRange = 14f..20f,
                 steps = 2,
             )

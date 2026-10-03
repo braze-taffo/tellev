@@ -146,67 +146,6 @@ internal class ChatMessageActions(
         sessionRuntime.scheduleMetadataSave(session, updatedSession, onSessionUpdated)
         return true
     }
-
-    suspend fun setChatMessageFromExtension(
-        index: Int,
-        field: String,
-        value: String,
-        state: ChatUiState,
-        onSessionUpdated: (ChatSession) -> Unit,
-    ): Boolean {
-        val session = state.currentSession ?: return false
-        val messages = state.messages.toMutableList()
-        if (index !in messages.indices) return false
-
-        val original = messages[index]
-        val updated = when (field.lowercase()) {
-            "message", "mes" -> original.withContent(value)
-            "name" -> original.copy(name = value)
-            "role" -> {
-                val newRole = when (value.lowercase()) {
-                    "user" -> MessageRole.User
-                    "assistant" -> MessageRole.Assistant
-                    "system" -> MessageRole.System
-                    "character" -> MessageRole.Character
-                    else -> original.role
-                }
-                original.copy(role = newRole)
-            }
-            "is_hidden" -> original.copy(isHidden = value.toBooleanStrictOrNull() ?: original.isHidden)
-            "data" -> {
-                val parsed = runCatching { Json.parseToJsonElement(value) as? JsonObject }.getOrNull()
-                    ?: return false
-                val vars = original.variables.toMutableList()
-                while (vars.size <= original.swipeIndex) vars.add(buildJsonObject { })
-                vars[original.swipeIndex] = parsed
-                original.copy(variables = vars)
-            }
-            "swipe_id" -> {
-                val swipes = original.swipes.ifEmpty { listOf(original.content) }
-                val swipeIndex = value.toIntOrNull()?.coerceIn(0, swipes.lastIndex) ?: original.swipeIndex
-                original.copy(
-                    swipeIndex = swipeIndex,
-                    swipes = swipes,
-                    content = swipes[swipeIndex],
-                )
-            }
-            "extra" -> {
-                val parsed = runCatching { Json.parseToJsonElement(value) as? JsonObject }.getOrNull()
-                original.copy(metadata = parsed ?: original.metadata)
-            }
-            else -> original.copy(
-                metadata = buildJsonObject {
-                    original.metadata.forEach { (key, element) -> put(key, element) }
-                    put(field, value)
-                },
-            )
-        }
-
-        messages[index] = updated
-        val updatedSession = session.copy(messages = messages)
-        sessionRuntime.persistSessionMutation(session, updatedSession, onSessionUpdated)
-        return true
-    }
 }
 
 internal fun ChatMessage.withContent(value: String): ChatMessage {

@@ -316,7 +316,9 @@ class SettingsViewModel(
 
     fun setThemeMode(mode: ThemeMode) = appearanceController.setThemeMode(mode)
     fun setThemeAccent(accent: ThemeAccent) = appearanceController.setThemeAccent(accent)
+    fun previewChatBubbleAlpha(alpha: Float) = appearanceController.previewChatBubbleAlpha(alpha)
     fun setChatBubbleAlpha(alpha: Float) = appearanceController.setChatBubbleAlpha(alpha)
+    fun previewChatFontSizeSp(size: Int) = appearanceController.previewChatFontSizeSp(size)
     fun setChatFontSizeSp(size: Int) = appearanceController.setChatFontSizeSp(size)
     fun setLanguage(tag: String) = appearanceController.setLanguage(tag)
 

@@ -48,6 +48,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -206,14 +207,6 @@ class ChatViewModel(
                     _uiState.update {
                         if (it.currentSession?.id == updated.id) it.copy(currentSession = updated, messages = updated.messages)
                         else it
-                    }
-                },
-                onSetChatMessage = { index, field, value ->
-                    messageActions.setChatMessageFromExtension(index, field, value, _uiState.value) { updated ->
-                        _uiState.update {
-                            if (it.currentSession?.id == updated.id) it.copy(currentSession = updated, messages = updated.messages)
-                            else it
-                        }
                     }
                 },
                 onGenerateText = { options ->
@@ -1229,7 +1222,23 @@ class ChatViewModel(
         }
     }
 
-    private suspend fun reloadCharacterTavernHelperScripts(character: CharacterCard) {
+    /**
+     * Serializes [reloadCharacterTavernHelperScripts]. Concurrent triggers
+     * (session open, preset switch, settings change) used to interleave the
+     * adapter's unload+load: both captured the same currentLoadedId, so the
+     * first load's runtime survived while the second was installed and the
+     * `loadedCharacterScriptExtensionId` callback order was arbitrary — a
+     * stale script runtime could keep running. Queued calls re-check inside
+     * the lock, so a reload that another call already covered becomes a no-op.
+     */
+    private val scriptReloadMutex = Mutex()
+
+    private suspend fun reloadCharacterTavernHelperScripts(character: CharacterCard) =
+        scriptReloadMutex.withLock {
+            reloadCharacterTavernHelperScriptsLocked(character)
+        }
+
+    private suspend fun reloadCharacterTavernHelperScriptsLocked(character: CharacterCard) {
         val scriptSource = CharacterTavernHelperScripts.buildIsolatedScriptSource(character, _uiState.value.selectedPreset)
         if (loadedCharacterScriptExtensionId == ChatTavernAdapter.characterScriptExtensionId(character.id) &&
             loadedCharacterScriptSource == scriptSource) return
