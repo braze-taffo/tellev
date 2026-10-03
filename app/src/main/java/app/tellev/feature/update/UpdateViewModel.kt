@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import app.tellev.core.storage.AppPreferences
+import app.tellev.core.update.UpdateApkVerifier
 import app.tellev.core.update.UpdateChecker
 import app.tellev.core.update.UpdateInfo
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -95,8 +96,9 @@ class UpdateViewModel(
     }
 
     /**
-     * Downloads the pending update's APK (mirror fallback, integrity-checked)
-     * and launches the system installer. The APK is written to the cache dir
+     * Downloads the pending update's APK (mirror fallback, integrity-checked),
+     * verifies its signing certificate against the running build, and only
+     * then launches the system installer. The APK is written to the cache dir
      * and exposed via FileProvider under the `${packageName}.fileprovider`
      * authority.
      */
@@ -105,9 +107,21 @@ class UpdateViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(downloading = true, progress = 0f, error = null) }
             try {
-                val target = File(appContext.cacheDir, "tellev-update.apk")
+                // Must match res/xml/file_paths.xml (cache-path "update_apk").
+                val target = File(File(appContext.cacheDir, "update").apply { mkdirs() }, "tellev-update.apk")
                 checker.downloadApk(info, UpdateChecker.DEFAULT_MIRRORS, target) { p ->
                     _uiState.update { it.copy(progress = p) }
+                }
+                // Last integrity gate before hand-off: a mirror could serve a
+                // re-signed APK whose checksum matches its own fake digest.
+                // A mismatching package is deleted, never shown to the user.
+                when (val verdict = UpdateApkVerifier.verify(appContext, target)) {
+                    is UpdateApkVerifier.Verdict.Valid -> Unit
+                    is UpdateApkVerifier.Verdict.Invalid -> {
+                        target.delete()
+                        android.util.Log.w("tellev-update", "Update APK rejected: ${verdict.reason}")
+                        throw IllegalStateException(UiStrings.get(S.updvm_apk_rejected))
+                    }
                 }
                 val uri = FileProvider.getUriForFile(
                     appContext,

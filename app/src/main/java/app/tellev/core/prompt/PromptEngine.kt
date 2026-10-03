@@ -125,10 +125,15 @@ class DefaultPromptEngine(
         val maxContextTokens = request.preset.maxContextTokens
             ?: PromptMacroContextBuilder.extractMaxContextTokens(request.metadata)
             ?: DEFAULT_MAX_CONTEXT_TOKENS
-        val maxCompletionTokens = request.preset.maxCompletionTokens
+        // The output budget only rides the request when actually configured —
+        // sending the internal default (131072) as max_tokens 400s strict
+        // relays and local servers. The defaulted value still bounds the
+        // internal context math; adapters fall back to provider-appropriate
+        // behavior when it is null (Anthropic's required field → 8192).
+        val configuredMaxCompletionTokens = request.preset.maxCompletionTokens
             ?: request.preset.maxTokens
             ?: PromptMacroContextBuilder.extractMaxResponseTokens(request.metadata)
-            ?: DEFAULT_MAX_COMPLETION_TOKENS
+        val maxCompletionTokens = configuredMaxCompletionTokens ?: DEFAULT_MAX_COMPLETION_TOKENS
         val worldInfoTokenBudget = maxContextTokens
             ?.let { ((it.toLong() * 25L) / 100L).toInt() }
             ?.coerceAtLeast(1)
@@ -372,12 +377,19 @@ class DefaultPromptEngine(
             presetOrder.absoluteInjections + extensionInjections + characterInjections + anInjections + memoryInjection
         val injectionTokens = PromptInjectionProcessor.injectionTokenCost(allInjectionsForBudget)
         val quietTokens = quietPrompt?.let { TokenBudget.estimateTokens(it) + 4 } ?: 0
+        // Outgoing image attachments ride the final user turn (G2) and cost
+        // real context — roughly 800 tokens per image at mainstream
+        // resolutions. Reserving them keeps a with-image request from
+        // overflowing the window after the history was fitted.
+        val imageAttachmentCount = request.messages.lastOrNull { it.role == MessageRole.User }
+            ?.attachments?.count { it.mimeType.startsWith("image/") } ?: 0
+        val attachmentTokens = imageAttachmentCount * IMAGE_ATTACHMENT_TOKENS
         val budgetedRaw = TokenBudget.fitToBudget(
             systemPrompt = if (rawGeneration) "" else templatedSystemPrompt,
             worldInfo = emptyList(),
             characterDescription = "",
             messages = if (rawGeneration) templatedMessages else templatedMessages.drop(1),
-            budget = (maxContextTokens - (maxCompletionTokens ?: 0) - injectionTokens - quietTokens)
+            budget = (maxContextTokens - (maxCompletionTokens ?: 0) - injectionTokens - quietTokens - attachmentTokens)
                 .coerceAtLeast(0),
         )
         val budgetedMessages = if (rawGeneration) budgetedRaw.drop(1) else if (budgetedRaw.isEmpty()) budgetedRaw else {
@@ -424,7 +436,7 @@ class DefaultPromptEngine(
         return PromptBuildResult(
             messages = finalMessages,
             stop = stopSequences,
-            maxTokens = maxCompletionTokens,
+            maxTokens = configuredMaxCompletionTokens,
             providerType = request.providerType,
             diagnostics = PromptDiagnostics(
                 activatedWorldEntryIds = activatedEntries.map { it.id },

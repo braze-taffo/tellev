@@ -46,7 +46,8 @@ class AzureAdapter(
     override suspend fun checkStatus(config: ProviderConfig): ProviderStatus {
         val url = buildChatUrl(config, stream = false)
         val payload = buildJsonObject {
-            put("max_tokens", JsonPrimitive(1))
+            // No max_tokens cap: o-series rejects the field outright and the
+            // ping needs no budget; see OpenAiCompatibleAdapter.buildStatusPayload.
             put("messages", buildJsonArray {
                 add(buildJsonObject {
                     put("role", JsonPrimitive("user"))

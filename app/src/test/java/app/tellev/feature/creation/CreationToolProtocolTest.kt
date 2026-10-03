@@ -636,5 +636,78 @@ class CreationToolProtocolTest {
         assertTrue(rejected.payload["error"]!!.jsonPrimitive.content.contains("世界书"))
     }
 
+    // O7：批量失败必须指明第几条，且明确本批未应用任何更改。
+    @Test
+    fun upsertLoreFailureNamesTheEntryAndReportsNoChangesApplied() {
+        val box = CreationToolBox(testSession())
+        val result = box.execute(ToolCallRequest("upsert_lore", buildJsonObject {
+            put("entries", buildJsonArray {
+                add(buildJsonObject { put("title", "有效条目") })
+                add(JsonPrimitive("不是对象"))
+            })
+        }))
+        assertFalse(result.ok)
+        val error = result.payload["error"]!!.jsonPrimitive.content
+        assertTrue(error.contains("2"))
+        assertTrue(error.contains("JSON"))
+        // 全有全无：有效条目也不应入库。
+        assertEquals(2, box.session.lore.size)
+    }
+
+    @Test
+    fun upsertLoreInvalidFieldTypeNamesTheEntryAndKeepsSessionUntouched() {
+        val box = CreationToolBox(testSession())
+        val result = box.execute(ToolCallRequest("upsert_lore", buildJsonObject {
+            put("entries", buildJsonArray {
+                add(buildJsonObject { put("title", "有效条目") })
+                add(buildJsonObject { put("title", "键类型错误"); put("keys", 7) })
+            })
+        }))
+        assertFalse(result.ok)
+        val error = result.payload["error"]!!.jsonPrimitive.content
+        assertTrue(error.contains("2"))
+        assertEquals(2, box.session.lore.size)
+    }
+
+    // O8：脚本 append 不再无上限（总量 96000 字符）。
+    @Test
+    fun upsertScriptAppendStopsAtTotalSizeCap() {
+        val existing = buildJsonObject {
+            put("type", "script")
+            put("id", "s1")
+            put("name", "脚本")
+            put("enabled", false)
+            put("content", "x".repeat(95_000))
+        }
+        val session = testSession().copy(advancedExtensions = buildJsonObject {
+            put("tavern_helper", buildJsonObject { put("scripts", buildJsonArray { add(existing) }) })
+        })
+        val box = CreationToolBox(session)
+        val result = box.execute(ToolCallRequest("upsert_script", buildJsonObject {
+            put("id", "s1")
+            put("content", "y".repeat(2_000))
+            put("mode", "append")
+        }))
+        assertFalse(result.ok)
+        assertTrue(result.payload["error"]!!.jsonPrimitive.content.contains("上限"))
+        // 全有全无：会话保持原样。
+        val kept = box.session.advancedExtensions["tavern_helper"]!!.jsonObject["scripts"]!!.jsonArray[0]
+        assertEquals(95_000, kept.jsonObject["content"]!!.jsonPrimitive.content.length)
+    }
+
+    // O8：read_card 长字段截断并标注丢弃量，短字段原样。
+    @Test
+    fun readCardTruncatesOverlongFieldsWithDroppedSizeMarker() {
+        val long = "描".repeat(7_000)
+        val box = CreationToolBox(testSession().copy(card = CharacterDraft(name = "旧名", description = long)))
+        val result = box.execute(ToolCallRequest("read_card", buildJsonObject { }))
+        assertTrue(result.ok)
+        val card = result.payload["card"]!!.jsonObject
+        val description = card["description"]!!.jsonPrimitive.content
+        assertTrue(description.length < 7_000)
+        assertTrue(description.endsWith("chars truncated]"))
+        assertEquals("旧名", card["name"]!!.jsonPrimitive.content)
+    }
+
     private fun box() = CreationToolBox(testSession())
 }

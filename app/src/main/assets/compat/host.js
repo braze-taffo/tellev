@@ -743,7 +743,16 @@
     const event = JSON.parse(payload);
     const id = event.args?.[0];
     const chat = context().chat;
-    const expectsMvuWrite = name === 'message_received' && window.Mvu &&
+    // The MVU commit wait stalls the dispatch (and with it the native
+    // generation flow) for up to 15s per message. Only arm it when something
+    // actually listens on the event source — with no subscriber nothing can
+    // commit the write, so the wait would always run to its 15s timeout.
+    const hasMessageListeners = (() => {
+      try {
+        return (eventSource.listenerCount?.(name) ?? eventSource.listeners?.(name)?.length ?? 0) > 0;
+      } catch (e) { return false; }
+    })();
+    const expectsMvuWrite = name === 'message_received' && hasMessageListeners && window.Mvu &&
       chat[id]?.mes?.length >= 5 && chat.slice(0, Math.max(1,id)).some(m => m.variables?.[m.swipe_id || 0]?.stat_data);
     let timer;
     const committed = expectsMvuWrite ? new Promise((resolve,reject) => {

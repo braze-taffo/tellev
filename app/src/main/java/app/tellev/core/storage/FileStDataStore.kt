@@ -68,6 +68,7 @@ class FileStDataStore(
     private val backupCoordinator = BackupCoordinator(
         layout = layout,
         json = json,
+        durableFiles = durableFiles,
     )
 
     // Domain Repositories
@@ -191,8 +192,8 @@ class FileStDataStore(
     override suspend fun readChatSession(id: String): ChatSession =
         chatRepository.readChatSession(id)
 
-    override suspend fun saveChatSession(session: ChatSession) =
-        chatRepository.saveChatSession(session)
+    override suspend fun saveChatSession(session: ChatSession, expectedRevision: Long?) =
+        chatRepository.saveChatSession(session, expectedRevision)
 
     override suspend fun deleteChatSession(id: String): Unit =
         chatRepository.deleteChatSession(id)
@@ -230,6 +231,9 @@ class FileStDataStore(
 
     override suspend fun saveWorldBook(book: WorldBook) =
         worldBookRepository.saveWorldBook(book)
+
+    override suspend fun saveWorldBookRawJson(id: String, data: JsonObject) =
+        worldBookRepository.saveWorldBookRawJson(id, data)
 
     override suspend fun importWorldBook(jsonBytes: ByteArray, sourceFileName: String): WorldBook =
         worldBookRepository.importWorldBook(jsonBytes, sourceFileName)
@@ -318,8 +322,32 @@ class FileStDataStore(
     suspend fun exportBackup(targetZip: Path, includeSecrets: Boolean = false): Unit =
         backupCoordinator.exportBackup(targetZip, includeSecrets)
 
-    override suspend fun importBackup(sourceZip: Path): Unit =
-        backupCoordinator.importBackup(sourceZip)
+    override suspend fun importBackup(sourceZip: Path): Unit {
+        val restored = backupCoordinator.importBackup(sourceZip)
+        // M4: broadcast what came back so open screens re-adopt disk state
+        // instead of keep rendering pre-restore data; the journal revision
+        // bumps make any stale coordinated write fail loudly rather than
+        // clobber the restored file.
+        restored.forEach { relative ->
+            when {
+                (relative.startsWith("chats/") || relative.startsWith("group chats/")) &&
+                    relative.endsWith(".jsonl") ->
+                    mutableChatChanges.tryEmit(relative.substringAfterLast('/').removeSuffix(".jsonl"))
+                relative.startsWith("characters/") && '.' in relative.substringAfterLast('/') ->
+                    mutableCharacterChanges.tryEmit(relative.substringAfterLast('/').substringBeforeLast('.'))
+                relative.startsWith("worlds/") && relative.endsWith(".json") ->
+                    mutableWorldBookChanges.tryEmit(relative.substringAfterLast('/').removeSuffix(".json"))
+                relative.startsWith("user/") && relative.endsWith(".json") &&
+                    '/' !in relative.removePrefix("user/") ->
+                    mutablePersonaChanges.tryEmit(relative.removePrefix("user/").removeSuffix(".json"))
+            }
+        }
+        if (restored.any { it.startsWith("OpenAI Settings/") || it.startsWith("NovelAI Settings/") ||
+                it.startsWith("KoboldAI Settings/") || it.startsWith("TextGen Settings/")
+        }) {
+            PresetCategory.entries.forEach { mutablePresetChanges.tryEmit(it) }
+        }
+    }
 
     companion object {
         val defaultJson: Json = Json {

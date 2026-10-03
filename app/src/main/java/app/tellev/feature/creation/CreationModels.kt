@@ -18,6 +18,25 @@ import java.util.UUID
 enum class CreationKind { Character, WorldBook }
 
 /**
+ * Exported frontend fragments are delimited by this HTML comment (invisible
+ * whenever the message is rendered) so that re-importing an exported card
+ * restores the Frontend editor instead of leaving it blank and stacking a
+ * second copy on the next export (O11). Cards exported before the marker
+ * existed keep the old flat layout: their fragment stays inside
+ * first_message and is simply shown as part of the message.
+ */
+const val FRONTEND_MARKER = "<!-- tellev-frontend -->"
+
+/** Splits an exported message back into body text and frontend fragment (O11). */
+internal fun splitFrontend(message: String): Pair<String, String?> {
+    val index = message.indexOf(FRONTEND_MARKER)
+    if (index < 0) return message to null
+    val body = message.substring(0, index).trimEnd()
+    val fragment = message.substring(index + FRONTEND_MARKER.length).trim()
+    return body to fragment.ifBlank { null }
+}
+
+/**
  * Draft row for the creation home screen. A full CreationSession graph keeps
  * lore bodies, merge bases, and raw JSON trees resident; with several ~7MB
  * drafts on disk that list alone was tens of MB of permanent heap, so the list
@@ -135,6 +154,14 @@ data class CreationSession(
             fun dataString(key: String): String =
                 runCatching { data?.get(key)?.jsonPrimitive?.content }.getOrNull().orEmpty()
             val book = card.characterBook
+            // O11: recover an exported frontend fragment so editing an existing
+            // card shows the Frontend page, and the next export cannot stack a
+            // second copy of the fragment onto the messages.
+            val (firstBody, firstFragment) = splitFrontend(card.firstMessage)
+            val greetings = card.alternateGreetings.map(::splitFrontend)
+            val frontendHtml = firstFragment
+                ?: greetings.firstNotNullOfOrNull { it.second }
+                ?: ""
             return CreationSession(
                 kind = CreationKind.Character,
                 card = CharacterDraft(
@@ -142,13 +169,14 @@ data class CreationSession(
                     description = card.description,
                     personality = card.personality,
                     scenario = card.scenario,
-                    firstMessage = card.firstMessage,
-                    alternateGreetings = card.alternateGreetings,
+                    firstMessage = firstBody,
+                    alternateGreetings = greetings.map { it.first },
                     exampleMessages = card.exampleMessages,
                     systemPrompt = dataString("system_prompt"),
                     postHistoryInstructions = dataString("post_history_instructions"),
                     creatorNotes = card.creatorNotes,
                     tags = card.tags,
+                    frontendHtml = frontendHtml,
                 ),
                 worldName = book?.name.orEmpty(),
                 lore = book?.entries.orEmpty().map(WorldBookEntry::toLoreDraft),
@@ -174,7 +202,7 @@ data class CreationSession(
                 id = "creation_${UUID.randomUUID()}",
                 kind = CreationKind.WorldBook,
                 worldName = card.characterBook?.name?.takeIf(String::isNotBlank)
-                    ?: "${card.name}世界书",
+                    ?: UiStrings.get(S.creng_default_worldbook_name, card.name),
                 savedArtifactId = "",
                 sourceName = card.name,
                 // The source card remains available to read_card, while the
@@ -222,8 +250,14 @@ fun CreationSession.withAssignedLoreIds(): CreationSession {
 /** All generated fields are kept in the standard V2 data object. */
 fun CreationSession.toCharacterCard(): CharacterCard {
     require(kind == CreationKind.Character && card.name.isNotBlank())
-    fun withFrontend(opening: String): String = listOf(opening.trim(), card.frontendHtml.trim())
-        .filter { it.isNotBlank() }.joinToString("\n\n")
+    fun withFrontend(opening: String): String {
+        val message = opening.trim()
+        val fragment = card.frontendHtml.trim()
+        if (fragment.isEmpty()) return message
+        // The marker line (see FRONTEND_MARKER) lets fromCharacter split the
+        // fragment back out on the next import instead of stacking copies.
+        return listOf(message, FRONTEND_MARKER, fragment).joinToString("\n\n")
+    }
     val opening = withFrontend(card.firstMessage)
     // Both the typed card and raw.data must carry the same list: the exporter
     // lets raw.data shadow alternate_greetings, so a divergence would strip
@@ -236,7 +270,7 @@ fun CreationSession.toCharacterCard(): CharacterCard {
         put("data", buildJsonObject {
             put("system_prompt", card.systemPrompt)
             put("post_history_instructions", card.postHistoryInstructions)
-            put("creator", "Tellev AI 协作创作")
+            put("creator", UiStrings.get(S.creng_card_creator))
             put("character_version", "1.0")
         })
     }
@@ -299,7 +333,7 @@ private fun mergedCardRaw(
 
 fun CreationSession.toWorldBook(): WorldBook = WorldBook(
     id = savedArtifactId.ifBlank { "wb_${UUID.randomUUID()}" },
-    name = worldName.ifBlank { card.name.ifBlank { "新世界书" } },
+    name = worldName.ifBlank { card.name.ifBlank { UiStrings.get(S.creng_new_worldbook_name) } },
     entries = lore.mapIndexed { index, item ->
         val original = item.originalEntry
         if (original != null) original.copy(

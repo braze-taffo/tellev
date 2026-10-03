@@ -39,6 +39,19 @@ internal class AppearanceSettingsController(
         }
     }
 
+    /**
+     * Live-preview without persisting: slider drags call this on every tick so
+     * the bubble alpha updates across the app while dragging, and persist the
+     * final value once via [setChatBubbleAlpha] from onValueChangeFinished.
+     */
+    fun previewChatBubbleAlpha(alpha: Float) {
+        val coerced = alpha.coerceIn(0f, 1f)
+        chatBubbleAlphaFlow.value = coerced
+        stateFlow.update {
+            it.copy(chatBubbleAlpha = coerced)
+        }
+    }
+
     fun setChatBubbleAlpha(alpha: Float) {
         val coerced = alpha.coerceIn(0f, 1f)
         appPreferences.chatBubbleAlpha = coerced
@@ -46,6 +59,13 @@ internal class AppearanceSettingsController(
         stateFlow.update {
             it.copy(chatBubbleAlpha = coerced)
         }
+    }
+
+    /** Same preview/persist split as [previewChatBubbleAlpha]. */
+    fun previewChatFontSizeSp(size: Int) {
+        val selected = size.coerceIn(14, 20)
+        chatFontSizeSpFlow.value = selected
+        stateFlow.update { it.copy(chatFontSizeSp = selected) }
     }
 
     fun setChatFontSizeSp(size: Int) {

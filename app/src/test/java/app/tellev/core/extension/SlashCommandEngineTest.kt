@@ -605,4 +605,28 @@ class SlashCommandEngineTest {
     fun `inline comment is stripped`() {
         assertEquals("hi", engine.execute("/echo hi // comment").output)
     }
+
+    // ── event-emit payload contract ─────────────────────────────────────
+
+    @Test
+    fun `event-emit payload is positional args plus an explicit data named arg`() {
+        val emitted = mutableListOf<Pair<String, List<String>>>()
+        val eventEngine = SlashCommandEngine(
+            variableStore = variableStore,
+            eventEmitter = { name, args -> emitted.add(name to args) },
+        )
+        eventEngine.execute("/event-emit myevent hello world data=extra")
+        assertEquals(listOf("myevent" to listOf("hello", "world", "extra")), emitted)
+    }
+
+    @Test
+    fun `event-emit option-like named args are not event data`() {
+        val emitted = mutableListOf<Pair<String, List<String>>>()
+        val eventEngine = SlashCommandEngine(
+            variableStore = variableStore,
+            eventEmitter = { name, args -> emitted.add(name to args) },
+        )
+        eventEngine.execute("/event-emit event=tick quiet=true")
+        assertEquals(listOf("tick" to emptyList<String>()), emitted)
+    }
 }

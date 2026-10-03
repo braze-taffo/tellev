@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,8 +36,8 @@ internal fun ImageGenerationDialog(
     onGenerate: (prompt: String, negativePrompt: String, summarizeScene: Boolean, engine: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var prompt by remember { mutableStateOf(initialPrompt) }
-    var negative by remember { mutableStateOf("") }
+    var prompt by rememberSaveable { mutableStateOf(initialPrompt) }
+    var negative by rememberSaveable { mutableStateOf("") }
     var summarizeScene by remember { mutableStateOf(false) }
     var selectedEngineId by remember(initialEngine) { mutableStateOf(initialEngine) }
     val selectedEngine = selectedEngineId?.let(ChatImageEngine::fromProviderId)

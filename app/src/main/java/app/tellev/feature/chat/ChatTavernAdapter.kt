@@ -1,5 +1,6 @@
 package app.tellev.feature.chat
 
+import app.tellev.core.extension.host.ExtensionScriptTemplate
 import app.tellev.core.extension.CharacterTavernHelperScripts
 import app.tellev.core.extension.ExtensionContextProvider
 import app.tellev.core.extension.ExtensionEvent
@@ -61,7 +62,6 @@ internal object ChatTavernAdapter {
         extensionHost: ExtensionHost,
         sessionRuntime: ChatSessionRuntime,
         onSessionUpdated: (ChatSession) -> Unit,
-        onSetChatMessage: suspend (index: Int, field: String, value: String) -> Boolean,
         onGenerateText: suspend (options: JsonObject) -> JsonObject?,
         onCompatibilityStorage: suspend (String, JsonObject) -> JsonObject? = { _, _ -> null },
     ): ExtensionContextProvider = object : ExtensionContextProvider {
@@ -73,9 +73,6 @@ internal object ChatTavernAdapter {
                 extensionHost = extensionHost,
             )
         }
-
-        override suspend fun setChatMessage(index: Int, field: String, value: String): Boolean =
-            onSetChatMessage(index, field, value)
 
         override suspend fun setChatMessages(messages: JsonArray, options: JsonObject): Boolean {
             val session = getCurrentState().currentSession ?: return false
@@ -425,7 +422,13 @@ internal object ChatTavernAdapter {
             put("name", name)
             put("mes", content)
             put("is_user", user)
-            put("is_system", isHidden)
+            // ST chat-file semantics: is_system marks system/narrator messages
+            // AND /hide-hidden ones (one flag upstream; TavernHelper reads
+            // is_hidden straight off it). Narrator messages previously landed
+            // here with is_system=false and were misread as plain assistant
+            // turns by scripts (R5).
+            put("is_system", role == MessageRole.System || isHidden)
+            put("is_hidden", isHidden)
             put("role", role.name.lowercase())
             put("send_date", createdAtMillis.toString())
             put("send_date_unix", createdAtMillis)
@@ -585,7 +588,10 @@ internal object ChatTavernAdapter {
                         else {
                             val method = payload["method"]?.jsonPrimitive?.content ?: error("Missing MVU method")
                             require(method in setOf("parseMessage", "parseMessages"))
-                            "window.Mvu[" + JsonPrimitive(method) + "](..." + (payload["args"] ?: JsonArray(emptyList())) + ")"
+                            "window.Mvu[" + ExtensionScriptTemplate.jsExpression(JsonPrimitive(method).toString()) +
+                                "](..." + ExtensionScriptTemplate.jsExpression(
+                                    (payload["args"] ?: JsonArray(emptyList())).toString(),
+                                ) + ")"
                         }
                         Json.parseToJsonElement(runtime.evaluateRuntime(owner, expression))
                     }

@@ -7,7 +7,7 @@ object TokenBudget {
     /**
      * Estimates the token count for a given text.
      * Uses a heuristic: ~4 characters per token for Latin scripts,
-     * ~2 characters per token for CJK (Chinese, Japanese, Korean) scripts.
+     * ~1.4 characters per token for CJK (Chinese, Japanese, Korean) scripts.
      */
     fun estimateTokens(text: String): Int {
         if (text.isEmpty()) return 0
@@ -24,10 +24,12 @@ object TokenBudget {
             }
         }
 
-        // CJK: approximately 1.5 tokens per character (conservative estimate)
+        // CJK: ~0.7 tokens per character. Modern chat models (DeepSeek/Qwen/GLM)
+        // encode 1.3-1.7 chars per CJK token; the old 1.5/char figure (cl100k era)
+        // overestimated Chinese context ~2x and over-trimmed chat history.
         // Latin/ASCII: approximately 1 token per 4 characters
         // Other Unicode: approximately 1 token per 3 characters
-        val cjkTokens = (cjkChars * 1.5).toInt()
+        val cjkTokens = (cjkChars * 0.7).toInt()
         val latinTokens = (latinChars + 3) / 4 // ceiling division
         val otherTokens = (otherChars + 2) / 3
 

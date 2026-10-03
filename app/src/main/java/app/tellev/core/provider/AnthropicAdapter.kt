@@ -2,12 +2,14 @@ package app.tellev.core.provider
 
 import app.tellev.core.model.TellevError
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlin.coroutines.coroutineContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -24,6 +26,7 @@ import app.tellev.core.model.MessageRole
 class AnthropicAdapter(
     private val client: OkHttpClient = OkHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
+    private val resolveAttachmentBytes: ((app.tellev.core.model.Attachment) -> ByteArray?)? = null,
 ) : ProviderAdapter {
     override val id: String = ProviderCatalog.ANTHROPIC
     override val displayName: String = "Anthropic"
@@ -63,12 +66,23 @@ class AnthropicAdapter(
     }
 
     override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> = flow {
-        val systemMessage = request.prompt.messages.firstOrNull { it.role == MessageRole.System }?.content
+        // Tellev's prompt pipeline emits MULTIPLE system messages (core memory
+        // injection, character-card jailbreak, at-depth world info, …). Anthropic
+        // accepts a single top-level system field, so merge them all — taking
+        // only the first silently dropped every later injection (parity with
+        // GeminiAdapter, which joins them with a blank line).
+        val systemMessage = request.prompt.messages
+            .filter { it.role == MessageRole.System }
+            .joinToString("\n\n") { it.content }
+            .takeIf { it.isNotBlank() }
         val conversationMessages = request.prompt.messages.filter { it.role != MessageRole.System }
 
         val payload = buildJsonObject {
             put("model", JsonPrimitive(config.model ?: "claude-sonnet-4-20250514"))
-            put("max_tokens", JsonPrimitive(request.preset.maxTokens ?: 8192))
+            // prompt.maxTokens is the engine-resolved output budget
+            // (maxCompletionTokens → maxTokens → default); the preset-only
+            // lookup ignored the maxCompletionTokens setting entirely.
+            put("max_tokens", JsonPrimitive(request.prompt.maxTokens ?: request.preset.maxCompletionTokens ?: request.preset.maxTokens ?: 8192))
             put("stream", JsonPrimitive(request.stream))
             request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
             request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
@@ -79,10 +93,39 @@ class AnthropicAdapter(
                 put("stop_sequences", buildJsonArray { request.preset.stop.forEach { add(JsonPrimitive(it)) } })
             }
             put("messages", buildJsonArray {
-                conversationMessages.forEach { msg ->
+                val lastUserIndex = conversationMessages.indexOfLast { it.role == MessageRole.User }
+                conversationMessages.forEachIndexed { index, msg ->
                     add(buildJsonObject {
                         put("role", JsonPrimitive(if (msg.role == MessageRole.User) "user" else "assistant"))
-                        put("content", JsonPrimitive(msg.content))
+                        // G6: the adapter declared Vision but never sent images —
+                        // attachments went silently missing. Encode them into the
+                        // final user turn, mirroring the OpenAI/Gemini adapters.
+                        val images = if (index == lastUserIndex) {
+                            request.attachments.mapNotNull { attachment ->
+                                val base64 = visionBase64(attachment) ?: return@mapNotNull null
+                                buildJsonObject {
+                                    put("type", JsonPrimitive("image"))
+                                    put("source", buildJsonObject {
+                                        put("type", JsonPrimitive("base64"))
+                                        put("media_type", JsonPrimitive(attachment.mimeType))
+                                        put("data", JsonPrimitive(base64))
+                                    })
+                                }
+                            }
+                        } else emptyList()
+                        if (images.isEmpty()) {
+                            put("content", JsonPrimitive(msg.content))
+                        } else {
+                            put("content", buildJsonArray {
+                                if (msg.content.isNotBlank()) {
+                                    add(buildJsonObject {
+                                        put("type", JsonPrimitive("text"))
+                                        put("text", JsonPrimitive(msg.content))
+                                    })
+                                }
+                                images.forEach { add(it) }
+                            })
+                        }
                     })
                 }
             })
@@ -102,7 +145,8 @@ class AnthropicAdapter(
         // 让阻塞中的 body 读立即抛错，而不是等到读超时（生产配置 5 分钟）。
         val callGuard = Job(coroutineContext[Job])
         callGuard.invokeOnCompletion { if (!call.isCanceled()) call.cancel() }
-        call.execute().use { response ->
+        try {
+            call.execute().use { response ->
             if (!response.isSuccessful) {
                 emit(GenerateChunk.Failed(TellevError(
                     code = "anthropic_http_${response.code}",
@@ -115,40 +159,88 @@ class AnthropicAdapter(
             if (request.stream) {
                 val source = response.body?.source()
                 var fullText = ""
+                var reasoningText = ""
                 while (source != null && !source.exhausted()) {
                     val line = source.readUtf8Line().orEmpty()
                     if (!line.startsWith("data:")) continue
                     val data = line.removePrefix("data:").trim()
                     if (data == "[DONE]") break
-                    val parsed = runCatching {
-                        val obj = json.parseToJsonElement(data).jsonObject
-                        val type = obj["type"]?.jsonPrimitive?.contentOrNull
-                        when (type) {
-                            "content_block_delta" -> {
-                                obj["delta"]?.jsonObject?.get("text")?.jsonPrimitive?.contentOrNull.orEmpty()
-                            }
-                            else -> ""
-                        }
-                    }.getOrDefault("")
-                    if (parsed.isNotEmpty()) {
-                        fullText += parsed
-                        emit(GenerateChunk.Delta(parsed))
+                    val obj = runCatching { json.parseToJsonElement(data).jsonObject }.getOrNull()
+                        ?: continue
+                    // An SSE error frame (overloaded_error etc.) must fail the
+                    // generation — the old path swallowed it and emitted
+                    // Completed with the partial text, surfacing "空回复".
+                    if (obj["type"]?.jsonPrimitive?.contentOrNull == "error") {
+                        val error = obj["error"] as? JsonObject
+                        val errorType = error?.get("type")?.jsonPrimitive?.contentOrNull
+                        emit(GenerateChunk.Failed(TellevError(
+                            code = "anthropic_stream_${errorType ?: "error"}",
+                            message = error?.get("message")?.jsonPrimitive?.contentOrNull
+                                ?.takeIf { it.isNotBlank() }
+                                ?: errorType?.takeIf { it.isNotBlank() }
+                                ?: data.take(500),
+                            retryable = errorType in RETRYABLE_SSE_ERRORS,
+                        )))
+                        return@use
+                    }
+                    if (obj["type"]?.jsonPrimitive?.contentOrNull != "content_block_delta") continue
+                    val delta = obj["delta"]?.jsonObject
+                    val text = delta?.get("text")?.jsonPrimitive?.contentOrNull.orEmpty()
+                    // Extended thinking arrives as thinking_delta — route it to
+                    // the reasoning channel instead of dropping it on the floor.
+                    val thinking = delta?.get("thinking")?.jsonPrimitive?.contentOrNull.orEmpty()
+                    if (text.isNotEmpty() || thinking.isNotEmpty()) {
+                        fullText += text
+                        reasoningText += thinking
+                        emit(GenerateChunk.Delta(text, reasoning = thinking))
                     }
                 }
-                emit(GenerateChunk.Completed(fullText))
+                emit(GenerateChunk.Completed(fullText, reasoning = reasoningText))
             } else {
                 val body = response.body?.string().orEmpty()
                 val text = runCatching {
                     val obj = json.parseToJsonElement(body).jsonObject
-                    obj["content"]?.jsonArray?.firstOrNull()?.jsonObject?.get("text")?.jsonPrimitive?.contentOrNull.orEmpty()
+                    // Content blocks can start with a thinking block when
+                    // extended thinking is on; take the text blocks only.
+                    obj["content"]?.jsonArray
+                        ?.filterIsInstance<JsonObject>()
+                        ?.filter { it["type"]?.jsonPrimitive?.contentOrNull == "text" }
+                        ?.joinToString("") { it["text"]?.jsonPrimitive?.contentOrNull.orEmpty() }
+                        .orEmpty()
                 }.getOrDefault("")
                 emit(GenerateChunk.Completed(text))
             }
         }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A user stop closes the socket mid-read and surfaces as a generic
+            // IOException here. If the coroutine is cancelled this WAS a stop —
+            // rethrow as cancellation instead of flashing a bogus error banner.
+            coroutineContext.ensureActive()
+            emit(
+                GenerateChunk.Failed(
+                    TellevError(
+                        code = "provider_network",
+                        message = e.message ?: "Network error",
+                        retryable = true,
+                        causeType = e::class.simpleName,
+                    ),
+                ),
+            )
+        }
         callGuard.complete()
     }.flowOn(Dispatchers.IO)
 
+    private fun visionBase64(attachment: app.tellev.core.model.Attachment): String? {
+        attachment.metadata["base64"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+        if (attachment.relativePath.isBlank()) return null
+        val bytes = resolveAttachmentBytes?.invoke(attachment) ?: return null
+        return java.util.Base64.getEncoder().encodeToString(bytes)
+    }
+
     private companion object {
         val JSON = "application/json; charset=utf-8".toMediaType()
+        val RETRYABLE_SSE_ERRORS = setOf("overloaded_error", "rate_limit_error", "timeout_error", "api_error")
     }
 }

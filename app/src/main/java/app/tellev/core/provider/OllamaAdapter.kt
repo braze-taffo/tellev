@@ -3,12 +3,14 @@ package app.tellev.core.provider
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.TellevError
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlin.coroutines.coroutineContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -24,6 +26,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 class OllamaAdapter(
     private val client: OkHttpClient = OkHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
+    private val resolveAttachmentBytes: ((app.tellev.core.model.Attachment) -> ByteArray?)? = null,
 ) : ProviderAdapter {
     override val id: String = ProviderCatalog.OLLAMA
     override val displayName: String = "Ollama"
@@ -76,13 +79,19 @@ class OllamaAdapter(
                 request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
                 request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
                 request.preset.topK?.let { put("top_k", JsonPrimitive(it)) }
-                request.preset.maxTokens?.let { put("num_predict", JsonPrimitive(it)) }
+                // Engine-resolved budget: honor maxCompletionTokens, not just maxTokens.
+                (request.prompt.maxTokens ?: request.preset.maxCompletionTokens ?: request.preset.maxTokens)
+                    ?.let { put("num_predict", JsonPrimitive(it)) }
                 if (request.preset.stop.isNotEmpty()) {
                     put("stop", buildJsonArray { request.preset.stop.forEach { add(JsonPrimitive(it)) } })
                 }
             })
             put("messages", buildJsonArray {
-                request.prompt.messages.forEach { msg ->
+                // G6: declared Vision but never sent images. Ollama's chat API
+                // takes base64 strings in a per-message `images` array on the
+                // final user turn.
+                val lastUserIndex = request.prompt.messages.indexOfLast { it.role == MessageRole.User }
+                request.prompt.messages.forEachIndexed { index, msg ->
                     add(buildJsonObject {
                         put("role", JsonPrimitive(when (msg.role) {
                             MessageRole.System -> "system"
@@ -91,6 +100,12 @@ class OllamaAdapter(
                             MessageRole.Tool -> "tool"
                         }))
                         put("content", JsonPrimitive(msg.content))
+                        if (index == lastUserIndex) {
+                            val images = request.attachments.mapNotNull { visionBase64(it) }
+                            if (images.isNotEmpty()) {
+                                put("images", JsonArray(images.map { JsonPrimitive(it) }))
+                            }
+                        }
                     })
                 }
             })
@@ -108,6 +123,7 @@ class OllamaAdapter(
         // 让阻塞中的 body 读立即抛错，而不是等到读超时（生产配置 5 分钟）。
         val callGuard = Job(coroutineContext[Job])
         callGuard.invokeOnCompletion { if (!call.isCanceled()) call.cancel() }
+        try {
         call.execute().use { response ->
             if (!response.isSuccessful) {
                 emit(GenerateChunk.Failed(TellevError(
@@ -121,22 +137,47 @@ class OllamaAdapter(
             if (request.stream) {
                 val source = response.body?.source()
                 var fullText = ""
+                var sawDone = false
                 while (source != null && !source.exhausted()) {
                     val line = source.readUtf8Line().orEmpty()
                     if (line.isBlank()) continue
-                    val parsed = runCatching {
-                        val obj = json.parseToJsonElement(line).jsonObject
-                        val done = obj["done"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
-                        val text = obj["message"]?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull.orEmpty()
-                        if (done) null else text
-                    }.getOrNull()
-                    if (parsed == null) break
-                    if (parsed.isNotEmpty()) {
-                        fullText += parsed
-                        emit(GenerateChunk.Delta(parsed))
+                    val obj = runCatching { json.parseToJsonElement(line).jsonObject }.getOrNull()
+                    // A malformed frame is a skipped line, not the end of the
+                    // stream — treating it as "done" silently truncated replies.
+                    if (obj == null) continue
+                    obj["error"]?.jsonPrimitive?.contentOrNull?.let { err ->
+                        emit(GenerateChunk.Failed(TellevError(
+                            code = "ollama_stream_error",
+                            message = err,
+                            retryable = true,
+                        )))
+                        return@use
+                    }
+                    val done = obj["done"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+                    if (done) {
+                        sawDone = true
+                        break
+                    }
+                    val text = obj["message"]?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull.orEmpty()
+                    if (text.isNotEmpty()) {
+                        fullText += text
+                        emit(GenerateChunk.Delta(text))
                     }
                 }
-                emit(GenerateChunk.Completed(fullText))
+                // Mirror the OpenAI adapter: callers that need a real end-of-
+                // stream marker (creation engine) get a failure instead of a
+                // silently truncated reply when the socket dies mid-stream.
+                if (!sawDone &&
+                    request.metadata["require_stream_terminator"]?.jsonPrimitive?.contentOrNull == "true"
+                ) {
+                    emit(GenerateChunk.Failed(TellevError(
+                        code = "provider_incomplete_stream",
+                        message = "Ollama stream ended without a done frame",
+                        retryable = true,
+                    )))
+                    return@use
+                }
+                emit(GenerateChunk.Completed(fullText, finishReason = if (sawDone) "stop" else null))
             } else {
                 val body = response.body?.string().orEmpty()
                 val text = runCatching {
@@ -146,8 +187,33 @@ class OllamaAdapter(
                 emit(GenerateChunk.Completed(text))
             }
         }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A user stop closes the socket mid-read and surfaces as a generic
+            // IOException here. If the coroutine is cancelled this WAS a stop —
+            // rethrow as cancellation instead of flashing a bogus error banner.
+            coroutineContext.ensureActive()
+            emit(
+                GenerateChunk.Failed(
+                    TellevError(
+                        code = "provider_network",
+                        message = e.message ?: "Network error",
+                        retryable = true,
+                        causeType = e::class.simpleName,
+                    ),
+                ),
+            )
+        }
         callGuard.complete()
     }.flowOn(Dispatchers.IO)
+
+    private fun visionBase64(attachment: app.tellev.core.model.Attachment): String? {
+        attachment.metadata["base64"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
+        if (attachment.relativePath.isBlank()) return null
+        val bytes = resolveAttachmentBytes?.invoke(attachment) ?: return null
+        return java.util.Base64.getEncoder().encodeToString(bytes)
+    }
 
     private companion object {
         val JSON_TYPE = "application/json; charset=utf-8".toMediaType()

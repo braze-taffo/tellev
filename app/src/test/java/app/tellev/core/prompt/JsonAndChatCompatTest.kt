@@ -72,6 +72,25 @@ class JsonAndChatCompatTest {
         }
     }
 
+    @Test
+    fun `parseJSON keeps apostrophes inside double-quoted values beside single-quoted strings`() {
+        // B5: the old regex paired up ANY two apostrophes — the one inside
+        // "it's fine" and the single-quoted 'ok' — mangling the repair.
+        assertEquals(
+            "it's fine|ok",
+            render("<% const parsed = parseJSON('{name: \"it\\'s fine\", note: \\'ok\\'}') %><%= parsed.name %>|<%= parsed.note %>"),
+        )
+    }
+
+    @Test
+    fun `parseJSON escapes double quotes inside single-quoted strings`() {
+        // B5: 'she said "hi"' must survive repair with its inner quotes.
+        assertEquals(
+            "she said \"hi\"",
+            render("<% const parsed = parseJSON('{q: \\'she said \"hi\"\\'}') %><%= parsed.q %>"),
+        )
+    }
+
     // ── jsonPatch ──────────────────────────────────────────────────────
 
     @Test

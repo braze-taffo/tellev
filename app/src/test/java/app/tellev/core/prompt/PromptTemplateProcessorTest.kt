@@ -461,4 +461,29 @@ class PromptTemplateProcessorTest {
         assertTrue(result.warnings.any { it.contains("recursion stopped") })
     }
 
+    @Test
+    fun `process applies generate regex with trailing flags`() {
+        val processor = DefaultPromptTemplateProcessor()
+        val result = processor.process(
+            PromptTemplateRequest(
+                messages = listOf(
+                    PromptMessage(role = MessageRole.System, content = "System"),
+                    PromptMessage(role = MessageRole.User, content = "Ask about ACADEMY."),
+                ),
+                context = MacroContext(),
+                metadata = buildJsonObject { },
+                worldEntries = listOf(
+                    PromptTemplateWorldEntry(
+                        id = "regex",
+                        // P4: the /i flag used to be dropped, so the pattern
+                        // never matched the capitalized message.
+                        content = "[GENERATE:REGEX:/academy/i:BEFORE]\nRegex note.",
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals("Regex note.\nAsk about ACADEMY.", result.messages[1].content)
+    }
+
 }

@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -191,6 +192,7 @@ class OpenAiCompatibleAdapter(
                     val captureDiagnostics = request.metadata["capture_response_diagnostics"]?.jsonPrimitive?.contentOrNull == "true"
                     val responseSample = StringBuilder()
                     var dataFrames = 0
+                    var parseFailures = 0
                     var sawDone = false
                     var fullText = ""
                     var reasoningText = ""
@@ -214,7 +216,13 @@ class OpenAiCompatibleAdapter(
                             responseSample.appendLine(data.take(12000 - responseSample.length))
                         }
 
-                        val parsed = parseStreamChunk(data)
+                        // A frame that fails to parse used to vanish silently
+                        // (relays with `content` as an array of parts hit this
+                        // and lost text); count it for the diagnostics.
+                        val parsed = parseStreamChunk(data) ?: run {
+                            parseFailures++
+                            StreamChunkParsed()
+                        }
 
                         // Parse reasoning content (DeepSeek, OpenAI o1/o3)
                         val reasoningDelta = parsed.reasoningContent
@@ -273,9 +281,10 @@ class OpenAiCompatibleAdapter(
                             usage = lastUsage,
                             toolCalls = serializeToolCalls(toolCallAccumulator),
                             reasoning = reasoningText,
-                            providerDiagnostics = if (captureDiagnostics) buildJsonObject {
+                            providerDiagnostics = if (captureDiagnostics || parseFailures > 0) buildJsonObject {
                                 put("contentType", JsonPrimitive(response.header("Content-Type").orEmpty()))
                                 put("dataFrames", JsonPrimitive(dataFrames))
+                                if (parseFailures > 0) put("parseFailures", JsonPrimitive(parseFailures))
                                 put("responseSample", JsonPrimitive(responseSample.toString()))
                             } else null,
                         ),
@@ -430,9 +439,14 @@ class OpenAiCompatibleAdapter(
         } else {
             emptyList()
         }
+        // Attachments belong to the message the user just sent. Applying them to
+        // EVERY user message in the prompt multiplied the payload by the history
+        // length (50 turns × 1 image ≈ 50 base64 copies) — match GeminiAdapter,
+        // which attaches to the newest user message only.
+        val lastUserIndex = request.prompt.messages.indexOfLast { it.role == MessageRole.User }
 
         return buildJsonArray {
-            request.prompt.messages.forEach { promptMessage ->
+            request.prompt.messages.forEachIndexed { index, promptMessage ->
                 add(
                     buildJsonObject {
                         put("role", JsonPrimitive(mapRole(promptMessage.role)))
@@ -441,7 +455,9 @@ class OpenAiCompatibleAdapter(
                         // Use multipart content if there are image attachments on user messages
                         if (promptMessage.wireFields != null) {
                             promptMessage.wireFields.forEach { (key, value) -> put(key, value) }
-                        } else if (promptMessage.role == MessageRole.User && imageAttachments.isNotEmpty()) {
+                        } else if (promptMessage.role == MessageRole.User &&
+                            imageAttachments.isNotEmpty() && index == lastUserIndex
+                        ) {
                             put("content", buildJsonArray {
                                 add(buildJsonObject {
                                     put("type", JsonPrimitive("text"))
@@ -490,7 +506,8 @@ class OpenAiCompatibleAdapter(
         )
     }
 
-    private fun parseStreamChunk(data: String): StreamChunkParsed {
+    /** Null when the frame could not be parsed (the caller counts it for diagnostics). */
+    private fun parseStreamChunk(data: String): StreamChunkParsed? {
         return runCatching {
             val obj = json.parseToJsonElement(data).jsonObject
 
@@ -508,7 +525,19 @@ class OpenAiCompatibleAdapter(
             val delta = choice["delta"]?.jsonObject
                 ?: return@runCatching StreamChunkParsed(finishReason = finishReason, usage = usage)
 
-            val content = delta["content"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            // Relays commonly ship `content` as an array of parts
+            // ([{"type":"text","text":"…"}]) — treating it as a primitive
+            // threw and silently dropped the whole frame.
+            val content = when (val value = delta["content"]) {
+                null, is JsonNull -> ""
+                is JsonPrimitive -> value.contentOrNull.orEmpty()
+                is JsonArray -> value.mapNotNull { part ->
+                    (part as? JsonObject)?.get("text")?.let { text ->
+                        (text as? JsonPrimitive)?.contentOrNull
+                    }
+                }.joinToString("")
+                else -> ""
+            }
 
             // Reasoning content (DeepSeek R1, OpenAI o-series)
             val reasoningContent = delta["reasoning_content"]?.jsonPrimitive?.contentOrNull.orEmpty()
@@ -523,7 +552,7 @@ class OpenAiCompatibleAdapter(
                 toolCalls = toolCalls,
                 usage = usage,
             )
-        }.getOrDefault(StreamChunkParsed())
+        }.getOrNull()
     }
 
     private fun parseToolCallDeltas(element: JsonElement?): List<ToolCallDelta> {
@@ -610,7 +639,10 @@ class OpenAiCompatibleAdapter(
         buildJsonObject {
             put("model", JsonPrimitive(model))
             put("stream", JsonPrimitive(false))
-            put("max_tokens", JsonPrimitive(1))
+            // OpenAI's o-series / gpt-5-class endpoints reject "max_tokens"
+            // outright (they only accept max_completion_tokens); sending the
+            // capped field made the connection test fail on providers that
+            // generate fine. Omit the cap entirely — a 1-token ping needs it.
             put("messages", buildJsonArray {
                 add(
                     buildJsonObject {

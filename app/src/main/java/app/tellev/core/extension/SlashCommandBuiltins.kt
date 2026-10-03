@@ -275,7 +275,11 @@ internal class SlashCommandBuiltins(
                 val input = cmd.textArgs().getOrNull(0) ?: ""
                 val start = cmd.textArgs().getOrNull(1)?.toIntOrNull() ?: 0
                 val end = cmd.textArgs().getOrNull(2)?.toIntOrNull() ?: input.length
-                Result.ok(input.substring(start.coerceAtLeast(0), end.coerceAtMost(input.length)))
+                val lo = start.coerceIn(0, input.length)
+                // end < start would throw StringIndexOutOfBoundsException; ST
+                // tolerates it, so clamp instead of erroring.
+                val hi = end.coerceIn(lo, input.length)
+                Result.ok(input.substring(lo, hi))
             }
 
             "add" -> {
@@ -455,9 +459,15 @@ internal class SlashCommandBuiltins(
             }
 
             "event-emit" -> {
+                // Tellev-native command (upstream ST has no /event-emit), so the
+                // contract is defined here: the event name comes from the `event`
+                // named arg or the first positional argument; the payload is the
+                // remaining positional args plus an explicit `data=` named arg.
+                // Other named args are options, not payload — treating them as
+                // data made flags like `quiet=true` masquerade as event content.
                 val event = cmd.namedArgs["event"] ?: cmd.textArgs().getOrNull(0) ?: ""
                 val dataArgs = cmd.textArgs().drop(if (cmd.namedArgs["event"] != null) 0 else 1)
-                val dataFromNamed = cmd.namedArgs.filterKeys { it != "event" }.values.toList()
+                val dataFromNamed = cmd.namedArgs["data"]?.let { listOf(it) } ?: emptyList()
                 val allData = dataArgs + dataFromNamed
                 eventEmitter?.invoke(event, allData)
                 Result.ok(event)

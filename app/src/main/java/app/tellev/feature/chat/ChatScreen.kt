@@ -33,8 +33,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import app.tellev.core.model.ChatSessionSummary
@@ -49,6 +49,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -61,6 +62,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.input.pointer.pointerInput
@@ -87,6 +89,7 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.runtime.withFrameNanos
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -144,7 +147,19 @@ private fun ChatContentScreen(
     chatFontSizeSp: Int,
     modifier: Modifier = Modifier,
 ) {
-    val renderMacroContext = viewModel.messageMacroContext(state)
+    // Q10: this builds a full macro context (variables snapshot, budgets).
+    // Recomputing it on every keystroke recomposition stalled the main thread
+    // while typing; the inputs it reads change per message/session, not per key.
+    val renderMacroContext = remember(
+        state.selectedCharacter,
+        state.currentSession,
+        state.selectedPersona,
+        state.selectedPreset,
+        state.providerConfig?.model,
+    ) { viewModel.messageMacroContext(state) }
+    // Q12: per-item visibleRegexDepth is O(n) per bubble (O(n²) per screen);
+    // one reverse pass per message-list change replaces that.
+    val visibleDepths = remember(state.messages) { visibleRegexDepths(state.messages) }
     val runtimeToken = viewModel.currentRuntimeToken(state.currentSession?.id)
     LaunchedEffect(state.currentSession?.id) { viewModel.refreshMemory() }
     val listState = key(state.currentSession?.id) {
@@ -155,7 +170,7 @@ private fun ChatContentScreen(
     val flingBehavior = ScrollableDefaults.flingBehavior()
     var followLatest by remember(state.currentSession?.id) { mutableStateOf(true) }
     val keyboardController = LocalSoftwareKeyboardController.current
-    var inputText by remember { mutableStateOf("") }
+    var inputText by rememberSaveable { mutableStateOf("") }
     var showSessionMenu by remember { mutableStateOf(false) }
     var sessionPendingDelete by remember { mutableStateOf<ChatSessionSummary?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
@@ -165,7 +180,7 @@ private fun ChatContentScreen(
         if (state.characterUiExtensionId == null) showCharacterInterface = false
     }
     var editingMessageIndex by remember { mutableStateOf<Int?>(null) }
-    var editTextField by remember { mutableStateOf("") }
+    var editTextField by rememberSaveable { mutableStateOf("") }
     var pendingAttachments by remember { mutableStateOf(listOf<Attachment>()) }
     var showImageDialog by remember { mutableStateOf(false) }
     var showImageGallery by remember(state.currentSession?.id) { mutableStateOf(false) }
@@ -249,8 +264,14 @@ private fun ChatContentScreen(
     }
     // A visible last item can still be many screens tall. Scroll to its bottom,
     // not its top, and never restart a token-level animation over a user's drag.
-    LaunchedEffect(state.currentSession?.id, state.messages.size, state.streamingText, state.streamingReasoning) {
+    // The IME flag is a trigger too: the keyboard changes no message state, so
+    // without it the newest message stayed hidden behind the keyboard.
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    LaunchedEffect(state.currentSession?.id, state.messages.size, state.streamingText, state.streamingReasoning, imeVisible) {
         if (followLatest && !listState.isScrollInProgress) {
+            // The IME padding lands on the next layout pass; wait one frame or
+            // the scroll measures against the pre-keyboard viewport.
+            if (imeVisible) withFrameNanos { }
             val streaming = state.isGenerating && (state.streamingText.isNotEmpty() || state.streamingReasoning.isNotEmpty())
             val target = if (streaming) state.messages.size else state.messages.lastIndex
             if (target >= 0) listState.scrollToItem(target, Int.MAX_VALUE)
@@ -294,7 +315,7 @@ private fun ChatContentScreen(
             },
             navigationIcon = {
                 IconButton(onClick = { viewModel.deselectCharacter() }) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.chat_back))
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.chat_back))
                 }
             },
             actions = {
@@ -486,6 +507,11 @@ private fun ChatContentScreen(
                 contentPadding = PaddingValues(bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (state.characterScriptsDisabled != null) {
+                    item(key = "character_scripts_disabled") {
+                        CharacterScriptsDisabledBanner(onEnable = viewModel::requestScriptConsentPrompt)
+                    }
+                }
                 itemsIndexed(state.messages, key = { _, msg -> msg.id }) { index, message ->
                     if (editingMessageIndex == index) {
                         EditMessageCard(
@@ -505,7 +531,7 @@ private fun ChatContentScreen(
                             dataRoot = dataRoot,
                             preset = state.selectedPreset,
                             userName = state.selectedPersona?.name ?: "User",
-                            depth = visibleRegexDepth(state.messages, index),
+                            depth = visibleDepths.getOrElse(index) { 0 },
                             htmlPanelMaxHeight = htmlPanelMaxHeight,
                             bubbleAlpha = bubbleAlpha,
                             chatFontSizeSp = chatFontSizeSp,
@@ -658,6 +684,32 @@ private fun ChatContentScreen(
                 },
             )
         }
+        state.pendingScriptConsent?.let { consent ->
+            AlertDialog(
+                onDismissRequest = { viewModel.denyCharacterScripts(persist = false) },
+                title = { Text(stringResource(R.string.chat_script_consent_title)) },
+                text = {
+                    Text(
+                        stringResource(
+                            R.string.chat_script_consent_body,
+                            consent.scriptNames.size,
+                            consent.scriptNames.take(5).joinToString(", ") +
+                                if (consent.scriptNames.size > 5) "…" else "",
+                        ),
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.approveCharacterScripts() }) {
+                        Text(stringResource(R.string.chat_script_consent_approve))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.denyCharacterScripts(persist = true) }) {
+                        Text(stringResource(R.string.chat_script_consent_deny))
+                    }
+                },
+            )
+        }
         if (state.imageGenError != null && state.imageGenDiagnostic == null) {
             AlertDialog(
                 onDismissRequest = viewModel::clearImageError,
@@ -757,4 +809,30 @@ private fun ChatContentScreen(
         }
     }
     MemoryChatDialogs(state, viewModel, showMemoryDialog) { showMemoryDialog = false }
+}
+
+@Composable
+private fun CharacterScriptsDisabledBanner(onEnable: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.chat_script_disabled_banner),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onEnable) {
+                Text(stringResource(R.string.chat_script_consent_enable))
+            }
+        }
+    }
 }

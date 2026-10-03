@@ -486,7 +486,7 @@ class ExtensionsViewModel(
                         ?.let { dir.resolve(it) }
                         ?.takeIf { Files.isRegularFile(it) }
                         ?: manifest.metadata["main"]?.jsonPrimitive?.contentOrNull
-                            ?.let { dir.resolve(it) }
+                            ?.let { containedFile(dir, it) }
                             ?.takeIf { Files.isRegularFile(it) }
                         ?: dir.resolve("dist/index.js").takeIf { Files.isRegularFile(it) }
                         ?: dir.resolve("script.js").takeIf { Files.isRegularFile(it) }
@@ -602,6 +602,17 @@ class ExtensionsViewModel(
 
     private fun List<Int>.padToSize(size: Int, filler: Int): List<Int> =
         if (this.size >= size) this else this + List(size - this.size) { filler }
+
+    /**
+     * Resolves a manifest-declared file path against the extension directory,
+     * rejecting path traversal: `"../../anything"` or absolute paths would
+     * otherwise be read as extension JS and executed with the extension's
+     * declared permissions.
+     */
+    private fun containedFile(dir: Path, declared: String): Path? {
+        val resolved = dir.resolve(declared).normalize()
+        return resolved.takeIf { it.startsWith(dir.normalize()) }
+    }
 }
 
 class ExtensionsViewModelFactory(

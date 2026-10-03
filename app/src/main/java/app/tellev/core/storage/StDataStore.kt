@@ -59,7 +59,14 @@ interface StDataStore {
     suspend fun listChatSessionSummaries(characterId: String? = null, groupId: String? = null): List<ChatSessionSummary> =
         listChatSessions(characterId, groupId).map { it.toSummary() }
     suspend fun readChatSession(id: String): ChatSession
-    suspend fun saveChatSession(session: ChatSession)
+
+    /**
+     * Persist a whole session. When [expectedRevision] is given the write is a
+     * CAS against the journal revision read beforehand (M3): a concurrent writer
+     * that committed in between fails the save with "Stale write" instead of
+     * silently clobbering it.
+     */
+    suspend fun saveChatSession(session: ChatSession, expectedRevision: Long? = null)
 
     // Permanently remove a session: the JSONL, its gallery index, chat image files
     // under user/images, and the per-session background. No-op when the id is unknown.
@@ -92,6 +99,17 @@ interface StDataStore {
 
     suspend fun readWorldBook(id: String): WorldBook
     suspend fun saveWorldBook(book: WorldBook)
+
+    /**
+     * Persists an already-encoded world file verbatim under [id] (extension
+     * bridge saves). Default implementations write through the journaled
+     * path via [saveWorldBook]-equivalent storage; the intent is atomicity —
+     * never expose a raw writeText for user-visible data.
+     */
+    suspend fun saveWorldBookRawJson(id: String, data: kotlinx.serialization.json.JsonObject) {
+        error("当前存储实现不支持按原始 JSON 保存世界书")
+    }
+
     suspend fun importWorldBook(jsonBytes: ByteArray, sourceFileName: String): WorldBook {
         error("当前存储实现不支持导入世界书：$sourceFileName")
     }

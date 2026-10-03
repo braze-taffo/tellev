@@ -74,6 +74,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -203,7 +204,13 @@ fun CreationHomeScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).clickable(enabled = !state.busy) {
+                            // O5: the busy session's row stays clickable so the
+                            // Stop button remains reachable after leaving the
+                            // editor mid-generation; open() no-ops while busy,
+                            // and the editor shows the still-running session.
+                            Column(Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).clickable(
+                                enabled = !state.busy || state.current?.id == session.id,
+                            ) {
                                 viewModel.open(session.id)
                                 onOpenEditor()
                             }.padding(14.dp)) {
@@ -455,7 +462,7 @@ private fun CreationBanner(text: String, isError: Boolean) {
 private fun CreationActivityPanel(state: CreationUiState, session: CreationSession, viewModel: CreationViewModel) {
     var showRawStream by remember(session.id, state.operationStartedAtMillis) { mutableStateOf(false) }
     var showFullStream by remember(session.id, state.operationStartedAtMillis) { mutableStateOf(false) }
-    var clockMillis by remember(state.operationStartedAtMillis) { mutableStateOf(System.currentTimeMillis()) }
+    var clockMillis by remember(state.operationStartedAtMillis) { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(state.busy, state.operationStartedAtMillis) {
         while (state.busy) {
             clockMillis = System.currentTimeMillis()
@@ -608,7 +615,11 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                     CreationBriefForm(session.kind, busy, viewModel::send)
                 }
             }
-            items(session.turns) { turn ->
+            itemsIndexed(
+                session.turns,
+                key = { index, _ -> "turn-$index" },
+                contentType = { _, _ -> "turn" },
+            ) { _, turn ->
                 val isUser = turn.role == "user"
                 // Chat-style bubbles: user right on primaryContainer, agent left
                 // on surfaceVariant, with selectable text for copy-paste.
@@ -644,7 +655,7 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                 item(key = "creation-resume") {
                     if (session.partialTurnSaved) {
                         OutlinedButton(onClick = {
-                            viewModel.send("请从已保存的草稿继续完成上一轮未完成的工作；不要重复创建已经写入的条目。")
+                            viewModel.send(UiStrings.get(S.creng_quick_resume))
                         }) { Text(stringResource(R.string.crs_continue_incomplete)) }
                     } else {
                         OutlinedButton(onClick = viewModel::retry) {
@@ -700,20 +711,19 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
         if (session.turns.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                AssistChip(onClick = { viewModel.send("请继续引导，只问我当前最关键的 1 至 2 个问题，并先整理已有设定。") },
+                AssistChip(onClick = { viewModel.send(UiStrings.get(S.creng_quick_continue_guide)) },
                     enabled = !busy, label = { Text(stringResource(R.string.crs_btn_continue_guide)) })
-                AssistChip(onClick = { viewModel.send("这一部分交给你决定。请结合已确定设定写入草稿，并说明你的选择。") },
+                AssistChip(onClick = { viewModel.send(UiStrings.get(S.creng_quick_ai_decide)) },
                     enabled = !busy, label = { Text(stringResource(R.string.crs_btn_ai_decide)) })
-                AssistChip(onClick = { viewModel.send(if (session.kind == CreationKind.Character)
-                    "请根据目前已有信息立即完成可编辑的角色卡初稿和适用的世界书条目，缺口用合理设定补齐并标明待核对处。"
-                    else "请根据目前已有信息立即完成可编辑的世界书条目初稿，区分已确定事实与待核对设定。") },
+                AssistChip(onClick = { viewModel.send(UiStrings.get(if (session.kind == CreationKind.Character)
+                    S.creng_quick_draft_character else S.creng_quick_draft_worldbook)) },
                     enabled = !busy, label = { Text(stringResource(R.string.crs_btn_generate_draft)) })
                 if (session.kind == CreationKind.WorldBook) {
-                    AssistChip(onClick = { viewModel.send("请从现在起逐条与我讨论世界书条目。先提议一条，等我确认或修改后再写入草稿，然后讨论下一条。") },
+                    AssistChip(onClick = { viewModel.send(UiStrings.get(S.creng_quick_discuss_lore)) },
                         enabled = !busy, label = { Text(stringResource(R.string.crs_btn_discuss_one_by_one)) })
                 }
                 if (session.kind == CreationKind.Character) {
-                    AssistChip(onClick = { viewModel.send("请根据这张卡的设定，实际创建可运行的变量结构和动态状态栏。先检查已有脚本、变量与正则，再分模块写入草稿；不要只输出让玩家复制的提示词。每个模块写完说明作用和待验证点。") },
+                    AssistChip(onClick = { viewModel.send(UiStrings.get(S.creng_quick_status_bar)) },
                         enabled = !busy, label = { Text(stringResource(R.string.crs_btn_status_bar)) })
                 }
             }
@@ -915,7 +925,7 @@ private fun AdvancedAssetsPanel(session: CreationSession, viewModel: CreationVie
             style = MaterialTheme.typography.titleMedium)
         Text(stringResource(R.string.crs_assets_hint),
             style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(onClick = { viewModel.send("请检查并概述当前脚本、正则和变量，列出缺少的运行模块及下一步。") },
+        OutlinedButton(onClick = { viewModel.send(UiStrings.get(S.creng_quick_check_assets)) },
             enabled = !busy) { Text(stringResource(R.string.crs_btn_check_assets)) }
         scripts.forEach { item ->
             val script = item as? JsonObject ?: return@forEach
@@ -955,7 +965,7 @@ private fun WorldDraftEditor(
                         .decode(ByteBuffer.wrap(bytes)).toString().removePrefix("\uFEFF")
                 }.getOrElse { error(context.getString(R.string.crs_error_not_utf8)) }
                 viewModel.setSource(
-                    UriUtils.resolveDisplayName(context, uri) ?: uri.lastPathSegment ?: "导入原文",
+                    UriUtils.resolveDisplayName(context, uri) ?: uri.lastPathSegment ?: UiStrings.get(S.crs_import_source_name),
                     decoded,
                 )
             } catch (e: Exception) {
@@ -980,7 +990,7 @@ private fun WorldDraftEditor(
                 label = { Text(stringResource(R.string.crs_field_paste_source)) }, minLines = 3, maxLines = 6, enabled = !busy,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { viewModel.setSource("粘贴原文", pastedSource); pastedSource = "" },
+                Button(onClick = { viewModel.setSource(UiStrings.get(S.crs_paste_source_name), pastedSource); pastedSource = "" },
                     enabled = !busy && pastedSource.isNotBlank()) { Text(stringResource(R.string.crs_save_source)) }
                 OutlinedButton(onClick = { filePicker.launch(arrayOf("text/plain", "*/*")) }, enabled = !busy) { Text(stringResource(R.string.crs_import_text_file)) }
             }
@@ -992,14 +1002,21 @@ private fun WorldDraftEditor(
                 }
             }
             Text(stringResource(R.string.crs_lore_count, session.lore.size), style = MaterialTheme.typography.titleMedium)
-            val repeatedTitles = session.lore.groupBy { it.title.trim().lowercase() }
-                .filter { (title, entries) -> title.isNotBlank() && entries.size > 1 }
+            val repeatedTitles = remember(session.lore) {
+                session.lore.groupBy { it.title.trim().lowercase() }
+                    .filter { (title, entries) -> title.isNotBlank() && entries.size > 1 }
+            }
             if (repeatedTitles.isNotEmpty()) {
                 Text(stringResource(R.string.crs_duplicate_titles, repeatedTitles.size), color = MaterialTheme.colorScheme.error)
             }
             }
         }
-        itemsIndexed(session.lore, key = { index, _ -> "lore-$index" }) { index, item ->
+        // Keys follow the stable entry id so deleting an entry does not shift
+        // editor state (focus, selection) onto the wrong card; freshly added
+        // drafts are keyed by index until the id is assigned.
+        itemsIndexed(session.lore, key = { index, item ->
+            if (item.id.isNotBlank()) "lore-${item.id}" else "lore-idx-$index"
+        }) { index, item ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     DraftField(stringResource(R.string.crs_field_lore_title), item.title, busy) { viewModel.editLore(index, item.copy(title = it)) }
@@ -1030,7 +1047,7 @@ private fun WorldDraftEditor(
             }
         }
         item(key = "add-entry") {
-            OutlinedButton(onClick = { viewModel.editLore(session.lore.size, LoreDraft("新条目", emptyList(), "")) },
+            OutlinedButton(onClick = { viewModel.editLore(session.lore.size, LoreDraft(UiStrings.get(S.crs_new_entry_name), emptyList(), "")) },
                 enabled = !busy) { Text(stringResource(R.string.crs_add_entry)) }
         }
     }
@@ -1080,8 +1097,14 @@ private fun FrontendPreview(card: CharacterDraft, viewModel: CreationViewModel, 
                         webView.value = this
                     }
                 },
-                update = { it.loadDataWithBaseURL(null, wrapPreviewHtml(card.frontendHtml), "text/html", "UTF-8", null) },
             )
+            // The HTML field recomposes on every keystroke; reloading there tore
+            // the page down per key. Restarting this effect on each change keeps
+            // only the last edit, so the preview reloads once typing pauses.
+            LaunchedEffect(card.frontendHtml) {
+                delay(400)
+                webView.value?.loadDataWithBaseURL(null, wrapPreviewHtml(card.frontendHtml), "text/html", "UTF-8", null)
+            }
         }
         DraftField(stringResource(R.string.crs_field_frontend_html), card.frontendHtml, busy, 8) { value ->
             viewModel.editCard { it.copy(frontendHtml = value) }

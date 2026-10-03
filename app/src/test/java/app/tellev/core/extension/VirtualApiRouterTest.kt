@@ -459,6 +459,39 @@ class VirtualApiRouterTest {
     }
 
     @Test
+    fun `chat save preserves stable message ids`() = runBlocking {
+        // M3 回归：/save 曾按数组下标重造 id，一次脚本保存就会把稳定 id
+        // （_tellev_message_id）永久改写成位置 id，破坏其他 API 的定位不变量。
+        saveSessionFor("ids")
+        val chatId = "chat-ids"
+        val originalIds = store.readChatSession(chatId).messages.map { it.id }
+        assertEquals(listOf("m1"), originalIds)
+
+        val get = router.route(
+            VirtualApiRequest("POST", "/api/chats/get", body = """{"file_name":"$chatId"}"""),
+        )
+        assertEquals(200, get.status)
+        val rows = json.parseToJsonElement(get.body).jsonArray
+        assertTrue("rows must carry _tellev_message_id back to scripts",
+            rows[1].jsonObject.containsKey("_tellev_message_id"))
+        val saveBody = buildString {
+            append("""{"file_name":"$chatId","chat":[""")
+            append(rows[0])
+            append(",")
+            append(rows[1].jsonObject.toMutableMap().let { row ->
+                row["mes"] = kotlinx.serialization.json.JsonPrimitive("edited text")
+                kotlinx.serialization.json.JsonObject(row)
+            })
+            append("]}")
+        }
+        assertEquals(200, router.route(VirtualApiRequest("POST", "/api/chats/save", body = saveBody)).status)
+
+        val reloaded = store.readChatSession(chatId)
+        assertEquals(listOf("m1"), reloaded.messages.map { it.id })
+        assertEquals("edited text", reloaded.messages[0].content)
+    }
+
+    @Test
     fun `POST characters_all returns bare array`() = runBlocking {
         val response = router.route(VirtualApiRequest("POST", "/api/characters/all", body = "{}"))
         assertEquals(200, response.status)

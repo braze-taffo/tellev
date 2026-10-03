@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,7 +37,10 @@ fun CharacterAvatar(
         contentAlignment = Alignment.Center,
     ) {
         val initial = fallbackText.firstOrNull()?.uppercase()?.toString() ?: "?"
-        if (file != null && file.exists()) {
+        // Q11: probe the card file once per file, not on every recomposition
+        // (long lists re-compose their bubbles constantly).
+        val hasFile = remember(file) { file != null && file.exists() }
+        if (hasFile && file != null) {
             SubcomposeAsyncImage(
                 model = file,
                 contentDescription = null,

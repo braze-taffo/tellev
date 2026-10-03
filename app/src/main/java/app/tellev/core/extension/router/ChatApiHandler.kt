@@ -16,6 +16,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import java.nio.file.NoSuchFileException
@@ -86,7 +87,12 @@ internal class ChatApiHandler(
             val session = readExistingSession(sessionId)
                 ?: return errorResponse(404, "Chat not found: $sessionId", json)
             val kept = session.messages.filterNot { it.id in ids }
-            dataStore.saveChatSession(session.copy(messages = kept))
+            try {
+                dataStore.saveChatSession(session.copy(messages = kept), expectedRevision = session.storageRevision)
+            } catch (error: IllegalStateException) {
+                if (error.message?.contains("Stale write") != true) throw error
+                return errorResponse(409, "Chat was modified concurrently: $sessionId", json)
+            }
             return jsonResponse(200, buildJsonObject { put("ok", true); put("deleted", session.messages.size - kept.size) }, json)
         } finally {
             externalChatWrites.notifyWritten(sessionId)
@@ -121,7 +127,15 @@ internal class ChatApiHandler(
                 return errorResponse(409, "Message id already exists", json)
             }
             val at = before.coerceIn(0, session.messages.size)
-            dataStore.saveChatSession(session.copy(messages = session.messages.toMutableList().apply { addAll(at, messages) }))
+            try {
+                dataStore.saveChatSession(
+                    session.copy(messages = session.messages.toMutableList().apply { addAll(at, messages) }),
+                    expectedRevision = session.storageRevision,
+                )
+            } catch (error: IllegalStateException) {
+                if (error.message?.contains("Stale write") != true) throw error
+                return errorResponse(409, "Chat was modified concurrently: $sessionId", json)
+            }
             return jsonResponse(200, buildJsonObject { put("ok", true) }, json)
         } finally {
             externalChatWrites.notifyWritten(sessionId)
@@ -157,9 +171,11 @@ internal class ChatApiHandler(
             ?: return errorResponse(400, "Missing file_name", json)
         val chatArray = bodyObj["chat"]?.let { runCatching { it.jsonArray }.getOrNull() }
             ?: return errorResponse(400, "Missing chat array", json)
-        // This whole-file save bypasses RuntimeWriteCoordinator and overwrites without a
-        // revision check; quiesce BEFORE reading so the rewrite is not built on a snapshot
-        // that a coordinated write is about to replace underneath it.
+        // This whole-file save bypasses RuntimeWriteCoordinator; quiesce BEFORE
+        // reading so the rewrite is not built on a snapshot that a coordinated
+        // write is about to replace underneath it, and the CAS (M3) turns a
+        // writer that commits between read and save into a 409 instead of a
+        // silent clobber.
         externalChatWrites.quiesce(chatId)
         val session = runCatching { dataStore.readChatSession(chatId) }.getOrNull()
             ?: return errorResponse(404, "Chat not found: $chatId", json)
@@ -167,13 +183,19 @@ internal class ChatApiHandler(
         val messages = stChatArrayToMessages(chatArray, chatId)
         val header = chatArray.firstOrNull() as? JsonObject
         val metadata = (header?.get("chat_metadata") as? JsonObject) ?: session.metadata
-        dataStore.saveChatSession(
-            session.copy(
-                messages = messages,
-                metadata = metadata,
-                rawHeader = header ?: session.rawHeader,
-            ),
-        )
+        try {
+            dataStore.saveChatSession(
+                session.copy(
+                    messages = messages,
+                    metadata = metadata,
+                    rawHeader = header ?: session.rawHeader,
+                ),
+                expectedRevision = session.storageRevision,
+            )
+        } catch (error: IllegalStateException) {
+            if (error.message?.contains("Stale write") != true) throw error
+            return errorResponse(409, "Chat was modified concurrently: $chatId", json)
+        }
         externalChatWrites.notifyWritten(chatId)
         return jsonResponse(200, buildJsonObject { put("ok", true) }, json)
     }
@@ -231,7 +253,12 @@ internal class ChatApiHandler(
                 ?: swipes.getOrNull(swipeId)
                 ?: ""
             ChatMessage(
-                id = "$chatId-$index",
+                // M3: the id round-trips through _tellev_message_id (set by the
+                // codec serializer, carried back by sessionToStChatArray's raw
+                // copy). Rebuilding it from the array position broke the stable
+                // message id invariant every other API relies on.
+                id = obj["_tellev_message_id"]?.jsonPrimitive?.content?.takeIf(String::isNotBlank)
+                    ?: "$chatId-$index",
                 role = when {
                     isUser -> MessageRole.User
                     isSystem && !isHidden -> MessageRole.System
@@ -239,7 +266,8 @@ internal class ChatApiHandler(
                 },
                 name = obj["name"]?.jsonPrimitive?.content ?: if (isUser) "You" else "Character",
                 content = content,
-                createdAtMillis = obj["send_date"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L,
+                createdAtMillis = app.tellev.core.storage.codec.ChatJsonlCodec
+                    .parseDateStringToMillis(obj["send_date"]?.jsonPrimitive?.contentOrNull),
                 swipeIndex = swipeId,
                 swipes = swipes,
                 metadata = obj["extra"] as? JsonObject ?: buildJsonObject { },

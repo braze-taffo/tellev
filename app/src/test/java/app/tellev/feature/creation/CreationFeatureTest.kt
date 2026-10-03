@@ -160,6 +160,28 @@ class CreationFeatureTest {
         assertFalse(portableFrontendIssues("<script>run()</script>").isEmpty())
     }
 
+    // O11：marker 让再导入恢复 Frontend 编辑器，而不是正文里堆第二份片段。
+    @Test
+    fun exportedFrontendMarkerRestoresFragmentOnReimportInsteadOfStacking() {
+        val html = "<div class=\"status\">ok</div>"
+        val session = CreationSession(
+            kind = CreationKind.Character,
+            card = CharacterDraft(name = "林月", firstMessage = "你走进茶馆。", frontendHtml = html),
+        )
+        val exported = CharacterExporter().exportToJson(session.toCharacterCard())
+        val imported = CharacterImporter().importFromJson(exported)
+        val reopened = CreationSession.fromCharacter(imported)
+        assertEquals(html, reopened.card.frontendHtml)
+        assertEquals("你走进茶馆。", reopened.card.firstMessage)
+        assertFalse(reopened.card.firstMessage.contains(FRONTEND_MARKER))
+
+        // 再导出同样只携带一份片段：注意 JSON 文本里 first_mes 按导出器设计
+        // 带 legacy 顶层镜像，所以计数要针对逻辑消息而不是导出字符串。
+        val reExportedCard = reopened.toCharacterCard()
+        assertEquals(1, reExportedCard.firstMessage.split(FRONTEND_MARKER).size - 1)
+        assertEquals(1, reExportedCard.firstMessage.split("你走进茶馆。").size - 1)
+    }
+
     @Test
     fun sourceArchiveAndCursorSurviveDraftReload() = runBlocking {
         val root = Files.createTempDirectory("tellev-creation-test").toFile()
@@ -1168,7 +1190,7 @@ class CreationFeatureTest {
         ).ok)
 
         val card = box.session.toCharacterCard()
-        val expected = listOf("新备选\n\n$html")
+        val expected = listOf("新备选\n\n$FRONTEND_MARKER\n\n$html")
         // typed 与 raw.data 必须一致：导出器让 raw 遮蔽 typed，分叉会丢前端片段。
         assertEquals(expected, card.alternateGreetings)
         val exported = CharacterExporter().exportToJson(card)

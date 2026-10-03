@@ -772,13 +772,85 @@ internal object PromptTemplateExpressionEvaluator {
         } catch (_: Exception) {}
         val noTrailing = trimmed.replace(Regex(",\\s*([}\\]])"), "$1")
         val unquotedKeys = noTrailing.replace(Regex("([{,]\\s*)([A-Za-z_$][\\w$]*)\\s*:"), "$1\"$2\":")
-        val singleQuoted = unquotedKeys.replace(Regex("'((?:[^'\"\\\\]|\\\\.)*)'"), "\"$1\"")
-        for (attempt in listOf(noTrailing, unquotedKeys, singleQuoted)) {
+        val singleQuoted = repairSingleQuotedStrings(unquotedKeys)
+        // singleQuoted first: kotlinx's element parser accepts single-quoted
+        // tokens but keeps the quote characters in the primitive content
+        // ('ok' parses to the literal string 'ok'), so the unrepaired forms
+        // must not win. The repaired form parses to the true string values.
+        for (attempt in listOf(singleQuoted, noTrailing, unquotedKeys)) {
             try {
                 return toKotlinValue(Json.parseToJsonElement(attempt))
             } catch (_: Exception) {}
         }
         throw IllegalArgumentException("parseJSON: unable to repair input")
+    }
+
+    /**
+     * Single-quote → double-quote repair, aware of quote state. A global
+     * regex paired up ANY two apostrophes — including inside double-quoted
+     * strings — so {"a": "it's", "b": "that's"} mangled into invalid JSON and
+     * 'they said "hi"' lost its inner quotes. The scanner copies double-quoted
+     * spans verbatim (apostrophes inside stay), pairs only unpaired apostrophes
+     * into strings (JS strings cannot span lines), and escapes inner double
+     * quotes per JSON.
+     */
+    private fun repairSingleQuotedStrings(text: String): String {
+        if (!text.contains('\'')) return text
+        val out = StringBuilder(text.length)
+        var i = 0
+        while (i < text.length) {
+            val ch = text[i]
+            when {
+                ch == '"' -> {
+                    out.append(ch)
+                    i++
+                    while (i < text.length) {
+                        val c = text[i]
+                        out.append(c)
+                        i++
+                        if (c == '\\' && i < text.length) {
+                            out.append(text[i])
+                            i++
+                        } else if (c == '"') break
+                    }
+                }
+                ch == '\'' -> {
+                    val close = findSingleQuoteClose(text, i + 1)
+                    if (close == null) {
+                        out.append(ch)
+                        i++
+                    } else {
+                        out.append('"')
+                        var j = i + 1
+                        while (j < close) {
+                            val c = text[j]
+                            when {
+                                c == '\\' && j + 1 < close -> { out.append(c).append(text[j + 1]); j += 2 }
+                                c == '"' -> { out.append('\\').append('"'); j++ }
+                                else -> { out.append(c); j++ }
+                            }
+                        }
+                        out.append('"')
+                        i = close + 1
+                    }
+                }
+                else -> { out.append(ch); i++ }
+            }
+        }
+        return out.toString()
+    }
+
+    private fun findSingleQuoteClose(text: String, from: Int): Int? {
+        var j = from
+        while (j < text.length) {
+            when (val c = text[j]) {
+                '\\' -> j += 2
+                '\'' -> return j
+                '\n', '\r' -> return null
+                else -> j++
+            }
+        }
+        return null
     }
 
     /** RFC 6902 JSON Patch over Kotlin maps/lists (ST jsonPatch, lodash-backed). */
@@ -790,6 +862,11 @@ internal object PromptTemplateExpressionEvaluator {
             val op = patch["op"] as? String ?: continue
             val path = patch["path"]?.toString() ?: continue
             val fromPath = patch["from"]?.toString()
+            // A malformed patch (pointer without a leading "/", negative list
+            // index) used to throw out of the whole render and fail the
+            // generation. RFC 6902 implementations typically skip bad ops;
+            // do the same rather than losing the entire build.
+            try {
             when (op) {
                 "add", "replace", "set", "assign" -> setPointer(working, path, patch["value"])
                 "remove" -> removePointer(working, path)
@@ -809,6 +886,9 @@ internal object PromptTemplateExpressionEvaluator {
                     // ST: test failure aborts and returns the ORIGINAL document.
                     if (!jsonEquals(getPointer(working, path), patch["value"])) return doc
                 }
+            }
+            } catch (_: Exception) {
+                // Malformed op skipped; earlier ops in the same patch stay applied.
             }
         }
         return working
@@ -845,7 +925,13 @@ internal object PromptTemplateExpressionEvaluator {
         }
         val parent = getPointer(doc, parentPointer(segments)) ?: return
         when (parent) {
-            is MutableMap<*, *> -> @Suppress("UNCHECKED_CAST") (parent as MutableMap<String, Any?>)[segments.last()] = value
+            // No parenthesized assignment LHS here: Kotlin 2.2 turns it into a
+            // compile error.
+            is MutableMap<*, *> -> {
+                @Suppress("UNCHECKED_CAST")
+                val map = parent as MutableMap<String, Any?>
+                map[segments.last()] = value
+            }
             is MutableList<*> -> segments.last().toIntOrNull()?.let { index ->
                 @Suppress("UNCHECKED_CAST")
                 val list = parent as MutableList<Any?>
@@ -1066,10 +1152,19 @@ internal object PromptTemplateExpressionEvaluator {
             is JsonObject -> element.mapValues { toKotlinValue(it.value) }.toMutableMap()
             is JsonArray -> element.map { toKotlinValue(it) }
             is JsonPrimitive -> {
-                element.booleanOrNull
-                    ?: element.longOrNull
-                    ?: element.doubleOrNull
-                    ?: runCatching { element.content }.getOrNull()
+                // kotlinx-serialization's booleanOrNull/longOrNull parse `content`
+                // without an isString check (verified against 1.8.1 bytecode), so a
+                // quoted "007" would collapse to Long 7 and "true" to Boolean true —
+                // silently rewriting variable values on every bridge round-trip.
+                // Quoted JSON strings must stay strings.
+                if (element.isString) {
+                    element.content
+                } else {
+                    element.booleanOrNull
+                        ?: element.longOrNull
+                        ?: element.doubleOrNull
+                        ?: runCatching { element.content }.getOrNull()
+                }
             }
         }
     }
@@ -1178,10 +1273,15 @@ internal object PromptTemplateExpressionEvaluator {
         return ""
     }
 
+    // JS equality semantics: === compares same-typed operands only (1 === "1"
+    // is false — both used to stringify, flipping card branches), == coerces
+    // booleans to numbers and numbers↔strings before comparing.
     private fun compare(left: Any?, right: Any?, operator: String): Boolean {
         return when (operator) {
-            "==", "===" -> stringify(left) == stringify(right)
-            "!=", "!==" -> stringify(left) != stringify(right)
+            "==" -> looseEquals(left, right)
+            "===" -> strictEquals(left, right)
+            "!=" -> !looseEquals(left, right)
+            "!==" -> !strictEquals(left, right)
             ">=" -> numeric(left) >= numeric(right)
             "<=" -> numeric(left) <= numeric(right)
             ">" -> numeric(left) > numeric(right)
@@ -1190,14 +1290,39 @@ internal object PromptTemplateExpressionEvaluator {
         }
     }
 
+    private fun strictEquals(left: Any?, right: Any?): Boolean = when {
+        left == null || right == null -> left == null && right == null
+        left is String && right is String -> left == right
+        left is Boolean && right is Boolean -> left == right
+        left is Number && right is Number -> jsNumber(left) == jsNumber(right)
+        // JS objects (arrays/maps included) compare by reference.
+        left is Collection<*> && right is Collection<*> -> left === right
+        left is Map<*, *> && right is Map<*, *> -> left === right
+        else -> false
+    }
+
+    private fun looseEquals(left: Any?, right: Any?): Boolean {
+        val leftValue = if (left is Boolean) (if (left) 1.0 else 0.0) else left
+        val rightValue = if (right is Boolean) (if (right) 1.0 else 0.0) else right
+        return when {
+            leftValue == null || rightValue == null -> leftValue == null && rightValue == null
+            leftValue is Number && rightValue is Number -> jsNumber(leftValue) == jsNumber(rightValue)
+            leftValue is Number && rightValue is String -> jsNumber(leftValue) == jsNumber(rightValue)
+            leftValue is String && rightValue is Number -> jsNumber(leftValue) == jsNumber(rightValue)
+            leftValue is String && rightValue is String -> leftValue == rightValue
+            else -> stringify(leftValue) == stringify(rightValue)
+        }
+    }
+
     private fun truthy(value: Any?): Boolean {
+        // JS ToBoolean: every non-empty string is truthy ("0", "false", " " —
+        // the previous custom rule flipped `<% if (getvar('x')) %>` branches on
+        // real ST cards), NaN is falsy, empty arrays/objects are truthy.
         return when (value) {
             null, UnsupportedExpression -> false
             is Boolean -> value
-            is Number -> value.toDouble() != 0.0
-            is String -> value.isNotBlank() && value != "false" && value != "0"
-            is Collection<*> -> value.isNotEmpty()
-            is Map<*, *> -> value.isNotEmpty()
+            is Number -> value.toDouble().let { !it.isNaN() && it != 0.0 }
+            is String -> value.isNotEmpty()
             else -> true
         }
     }
@@ -1209,6 +1334,14 @@ internal object PromptTemplateExpressionEvaluator {
             is Boolean -> if (value) 1.0 else 0.0
             else -> 0.0
         }
+    }
+
+    /** JS Number() for equality: unparseable strings are NaN, so 0 == "abc" is false. */
+    private fun jsNumber(value: Any?): Double = when (value) {
+        is Number -> value.toDouble()
+        is Boolean -> if (value) 1.0 else 0.0
+        is String -> value.toDoubleOrNull() ?: Double.NaN
+        else -> Double.NaN
     }
 
     private fun stringify(value: Any?): String {
@@ -1308,14 +1441,70 @@ internal object PromptTemplateExpressionEvaluator {
         if (expression.length < 2) return null
         val quote = expression.first()
         if (quote !in setOf('\'', '"', '`') || expression.last() != quote) return null
-        return expression.substring(1, expression.length - 1)
-            .replace("\\n", "\n")
-            .replace("\\r", "\r")
-            .replace("\\t", "\t")
-            .replace("\\'", "'")
-            .replace("\\\"", "\"")
-            .replace("\\`", "`")
-            .replace("\\\\", "\\")
+        return unescapeStringLiteral(expression.substring(1, expression.length - 1))
+    }
+
+    /**
+     * JS string unescape in a single left-to-right pass. Chained replaces
+     * mis-expanded `\\n` (backslash + literal n became a newline); unknown
+     * escapes and malformed \xNN/\uXXXX degrade to their literal text instead
+     * of failing the whole literal, matching the tolerant parser style here.
+     */
+    private fun unescapeStringLiteral(body: String): String? {
+        if (!body.contains('\\')) return body
+        val out = StringBuilder(body.length)
+        var i = 0
+        while (i < body.length) {
+            val ch = body[i]
+            if (ch != '\\') {
+                out.append(ch)
+                i++
+                continue
+            }
+            if (i + 1 >= body.length) {
+                out.append('\\')
+                break
+            }
+            when (val next = body[i + 1]) {
+                'n' -> { out.append('\n'); i += 2 }
+                'r' -> { out.append('\r'); i += 2 }
+                't' -> { out.append('\t'); i += 2 }
+                'b' -> { out.append('\b'); i += 2 }
+                'f' -> { out.append('\u000C'); i += 2 }
+                'v' -> { out.append('\u000B'); i += 2 }
+                '0' -> { out.append('\u0000'); i += 2 }
+                'x' -> {
+                    val hex = body.substring(i + 2, (i + 4).coerceAtMost(body.length))
+                    val code = hex.toIntOrNull(16)
+                    if (hex.length == 2 && code != null && code != 0) {
+                        out.append(code.toChar())
+                        i += 4
+                    } else {
+                        out.append("\\x")
+                        i += 2
+                    }
+                }
+                'u' -> {
+                    val braceForm = i + 2 < body.length && body[i + 2] == '{'
+                    val close = if (braceForm) body.indexOf('}', i + 3) else -1
+                    val hex = if (braceForm && close in 1..i + 9) {
+                        body.substring(i + 3, close)
+                    } else {
+                        body.substring(i + 2, (i + 6).coerceAtMost(body.length))
+                    }
+                    val code = hex.toIntOrNull(16)
+                    if (hex.isNotEmpty() && code != null && code != 0 && code <= 0x10FFFF) {
+                        out.appendCodePoint(code)
+                        i = if (braceForm && close != -1) close + 1 else i + 2 + hex.length
+                    } else {
+                        out.append("\\u")
+                        i += 2
+                    }
+                }
+                else -> { out.append(next); i += 2 }
+            }
+        }
+        return out.toString()
     }
 
     private fun stripBalancedParens(expression: String): String {

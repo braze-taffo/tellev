@@ -65,6 +65,7 @@ data class SettingsUiState(
     val chatBubbleAlpha: Float = 0.6f,
     val chatFontSizeSp: Int = 16,
     val languageTag: String = "",
+    val allowRemoteCleartext: Boolean = false,
     val isLoading: Boolean = false,
     val error: String? = null,
     val info: String? = null,
@@ -150,6 +151,12 @@ class SettingsViewModel(
         loadInitialData()
     }
 
+    /** 明文 HTTP 放行开关：关闭时仅允许本机（localhost/127.0.0.1）明文连接。 */
+    fun setAllowRemoteCleartext(enabled: Boolean) {
+        appPreferences.allowRemoteCleartext = enabled
+        _uiState.update { it.copy(allowRemoteCleartext = enabled) }
+    }
+
     private fun observePresetChanges() {
         viewModelScope.launch {
             dataStore.presetChanges.collect {
@@ -220,6 +227,7 @@ class SettingsViewModel(
                         chatBubbleAlpha = appPreferences.chatBubbleAlpha,
                         chatFontSizeSp = appPreferences.chatFontSizeSp,
                         languageTag = appPreferences.languageTag,
+                        allowRemoteCleartext = appPreferences.allowRemoteCleartext,
                         baseUrl = fields.baseUrl,
                         apiKey = fields.apiKey,
                         model = fields.model,
@@ -308,7 +316,9 @@ class SettingsViewModel(
 
     fun setThemeMode(mode: ThemeMode) = appearanceController.setThemeMode(mode)
     fun setThemeAccent(accent: ThemeAccent) = appearanceController.setThemeAccent(accent)
+    fun previewChatBubbleAlpha(alpha: Float) = appearanceController.previewChatBubbleAlpha(alpha)
     fun setChatBubbleAlpha(alpha: Float) = appearanceController.setChatBubbleAlpha(alpha)
+    fun previewChatFontSizeSp(size: Int) = appearanceController.previewChatFontSizeSp(size)
     fun setChatFontSizeSp(size: Int) = appearanceController.setChatFontSizeSp(size)
     fun setLanguage(tag: String) = appearanceController.setLanguage(tag)
 

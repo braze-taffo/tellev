@@ -24,11 +24,6 @@ object ContextTemplate {
 
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
 
-    // Matches {{#if field}}...content...{{/if}} blocks
-    private val ifBlockPattern = Regex(
-        """\{\{#if\s+(\w+)\}\}([\s\S]*?)\{\{/if\}\}"""
-    )
-
     fun loadPreset(jsonString: String): ContextPreset {
         val obj = json.parseToJsonElement(jsonString) as JsonObject
         return presetFromJson(obj)
@@ -54,12 +49,17 @@ object ContextTemplate {
         )
     }
 
-    fun buildStoryString(template: String, context: MacroContext): String {
+    fun buildStoryString(
+        template: String,
+        context: MacroContext,
+        macroEngine: MacroEngine? = null,
+    ): String {
         // First, resolve {{#if field}}...{{/if}} conditional blocks
         val withConditionals = resolveConditionals(template, context)
-        // Then expand macros in the result
-        val macroEngine = DefaultMacroEngine()
-        return macroEngine.expand(withConditionals, context).trim()
+        // Reuse the caller's engine so {{getvar}} and custom-registered macros
+        // resolve; a fresh engine silently degraded every custom story_string.
+        val engine = macroEngine ?: DefaultMacroEngine()
+        return engine.expand(withConditionals, context).trim()
     }
 
     /**
@@ -70,21 +70,47 @@ object ContextTemplate {
      * dialogueExamples, charDescription.
      */
     private fun resolveConditionals(template: String, context: MacroContext): String {
-        // We iterate to handle nested or sequential conditionals
+        // Depth-counting walk (non-greedy regex matching stopped at the FIRST
+        // {{/if}}, so a nested {{#if}} truncated its parent's block and leaked
+        // stray {{/if}} markers into the prompt).
+        val openTag = Regex("""\{\{#if\s+(\w+)\}\}""")
         var result = template
-        var iterations = 0
-        while (ifBlockPattern.containsMatchIn(result) && iterations < 20) {
-            result = ifBlockPattern.replace(result) { matchResult ->
-                val fieldName = matchResult.groupValues[1]
-                val blockContent = matchResult.groupValues[2]
-                val fieldValue = resolveFieldValue(fieldName, context)
-                if (fieldValue.isNotEmpty()) {
-                    blockContent
-                } else {
-                    ""
+        var guard = 0
+        while (guard++ < 50) {
+            val open = openTag.find(result) ?: break
+            var depth = 1
+            var cursor = open.range.last + 1
+            var closeStart = -1
+            var closeEnd = -1
+            while (cursor < result.length && depth > 0) {
+                // {{#if must be followed by whitespace (matches the openTag
+                // grammar) so `{{#ifx` lookalikes don't skew the depth count.
+                val nextOpen = result.indexOf("{{#if", cursor)
+                    .takeIf { it + 5 < result.length && result[it + 5].isWhitespace() }
+                val nextClose = result.indexOf("{{/if}}", cursor)
+                when {
+                    nextOpen == null && nextClose == -1 -> break
+                    nextOpen != null && (nextClose == -1 || nextOpen < nextClose) -> {
+                        depth++
+                        cursor = nextOpen + 5
+                    }
+                    else -> {
+                        depth--
+                        if (depth == 0) {
+                            closeStart = nextClose
+                            closeEnd = nextClose + "{{/if}}".length
+                        }
+                        cursor = nextClose + "{{/if}}".length
+                    }
                 }
             }
-            iterations++
+            if (closeStart < 0) break
+            val fieldName = open.groupValues[1]
+            val blockContent = result.substring(open.range.last + 1, closeStart)
+            val fieldValue = resolveFieldValue(fieldName, context)
+            result = result.substring(0, open.range.first) +
+                blockContent.takeIf { fieldValue.isNotEmpty() }.orEmpty() +
+                result.substring(closeEnd)
         }
         return result
     }
@@ -123,6 +149,7 @@ object ContextTemplate {
         context: MacroContext,
         worldInfoBefore: String = "",
         worldInfoAfter: String = "",
+        macroEngine: MacroEngine? = null,
     ): String {
         // Replace wiBefore/wiAfter in the story string manually since they are not in MacroContext
         var storyTemplate = preset.storyString
@@ -142,7 +169,7 @@ object ContextTemplate {
             )
         )
 
-        val story = buildStoryString(storyTemplate, enrichedContext)
+        val story = buildStoryString(storyTemplate, enrichedContext, macroEngine)
 
         return buildString {
             if (preset.systemPromptPrefix.isNotEmpty()) {

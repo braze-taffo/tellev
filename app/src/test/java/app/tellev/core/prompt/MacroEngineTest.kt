@@ -606,6 +606,29 @@ class MacroEngineTest {
     }
 
     @Test
+    fun `roll percent shorthand is d100 like ST`() {
+        // {{roll:d%}} used to render "0" because % is not a digit.
+        repeat(30) {
+            assertTrue(engine.expand("{{roll:d%}}", context).toInt() in 1..100)
+        }
+    }
+
+    @Test
+    fun `equality comparison follows JS numeric semantics for decimal strings`() {
+        engine.variableStore = newStore(mutableMapOf("hp" to "50.0"))
+        assertEquals("true", engine.expand("{{.hp==50}}", context))
+        assertEquals("false", engine.expand("{{.hp==51}}", context))
+    }
+
+    @Test
+    fun `ordered comparison follows JS numeric semantics for decimal strings`() {
+        engine.variableStore = newStore(mutableMapOf("hp" to "49.5"))
+        assertEquals("true", engine.expand("{{.hp<50}}", context))
+        assertEquals("false", engine.expand("{{.hp<49}}", context))
+        assertEquals("true", engine.expand("{{.hp>=49.5}}", context))
+    }
+
+    @Test
     fun `reverse accepts ST legacy single-colon form`() {
         assertEquals("cba", engine.expand("{{reverse:abc}}", context))
     }

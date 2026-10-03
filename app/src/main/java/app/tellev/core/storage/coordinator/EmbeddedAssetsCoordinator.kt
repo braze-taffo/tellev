@@ -7,6 +7,7 @@ import app.tellev.core.storage.JournaledFileWriter
 import app.tellev.core.storage.StDataStore
 import app.tellev.core.storage.StDirectoryLayout
 import app.tellev.core.storage.codec.CharacterCodec
+import app.tellev.core.storage.safeStorageChild
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -65,12 +66,22 @@ internal class EmbeddedAssetsCoordinator(
         card.characterBook
             ?.takeIf { it.entries.isNotEmpty() }
             ?.let { embeddedBook ->
-                saveWorldBook(
-                    embeddedBook.copy(
-                        id = StDataStore.embeddedCharacterBookId(card.id),
-                        name = embeddedBook.name.ifBlank { "${card.name} 角色书" },
-                    ),
-                )
+                val bookId = StDataStore.embeddedCharacterBookId(card.id)
+                // worlds/<id>_character_book.json is the LIVE copy after first
+                // materialization: the world editor writes there and never syncs
+                // back into the card, so re-saving the card (description tweak,
+                // avatar swap) used to clobber user edits with the stale in-card
+                // snapshot. Once materialized, the disk copy wins; the card still
+                // carries its own embedded original for re-export.
+                val materialized = safeStorageChild(layout.worlds, bookId, ".json")
+                if (!materialized.exists()) {
+                    saveWorldBook(
+                        embeddedBook.copy(
+                            id = bookId,
+                            name = embeddedBook.name.ifBlank { "${card.name} 角色书" },
+                        ),
+                    )
+                }
             }
 
         // Cards without an extensions object still get a manifest (with the fingerprint):

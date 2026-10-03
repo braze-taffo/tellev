@@ -455,6 +455,11 @@ class CharacterImporter(
     }
 
     companion object {
+        /** Zip-inflation bounds; see readZipEntries. */
+        private const val MAX_ZIP_ENTRIES = 512
+        private const val MAX_ZIP_ENTRY_BYTES = 64L * 1024 * 1024
+        private const val MAX_ZIP_TOTAL_BYTES = 200L * 1024 * 1024
+
         fun detectFormat(bytes: ByteArray, fileName: String): String? {
             val ext = fileName.substringAfterLast('.', "").lowercase()
             if (ext in setOf("json", "png", "webp", "charx", "byaf")) return ext
@@ -493,13 +498,29 @@ class CharacterImporter(
     }
 
     private fun readZipEntries(bytes: ByteArray): Map<String, ByteArray> {
+        // CHARX/BYAF archives come from untrusted sources (external VIEW/SEND
+        // intents include web pages). A 10MB zip can expand to gigabytes, so
+        // bound both the entry count and the total inflated size instead of
+        // trusting the archive's compressed footprint.
         val entries = linkedMapOf<String, ByteArray>()
+        var totalInflated = 0L
         ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
                 if (!entry.isDirectory) {
+                    require(entries.size < MAX_ZIP_ENTRIES) { "Archive contains too many entries" }
                     val output = ByteArrayOutputStream()
-                    zip.copyTo(output)
+                    val buffer = ByteArray(64 * 1024)
+                    var entrySize = 0L
+                    while (true) {
+                        val read = zip.read(buffer)
+                        if (read < 0) break
+                        entrySize += read
+                        totalInflated += read
+                        require(entrySize <= MAX_ZIP_ENTRY_BYTES) { "Archive entry too large: ${entry.name}" }
+                        require(totalInflated <= MAX_ZIP_TOTAL_BYTES) { "Archive inflates to too much data" }
+                        output.write(buffer, 0, read)
+                    }
                     entries[normalizeZipEntryPath(entry.name)] = output.toByteArray()
                 }
                 zip.closeEntry()

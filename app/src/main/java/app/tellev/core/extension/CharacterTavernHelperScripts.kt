@@ -172,6 +172,12 @@ object CharacterTavernHelperScripts {
 
     fun hasScripts(character: CharacterCard): Boolean = extract(character).isNotEmpty()
 
+    /** Display names of every enabled script (card + preset), for the consent dialog. */
+    fun scriptNames(character: CharacterCard, preset: app.tellev.core.model.GenerationPreset? = null): List<String> {
+        val presetCard = preset?.let { CharacterCard(id = it.id, name = it.name, raw = it.raw) }
+        return (extract(character) + presetCard?.let(::extract).orEmpty()).map { it.name.ifBlank { it.id } }
+    }
+
     private fun collect(
         element: JsonElement?,
         out: MutableList<Script>,

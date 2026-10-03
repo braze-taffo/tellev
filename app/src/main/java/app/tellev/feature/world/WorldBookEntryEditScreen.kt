@@ -33,8 +33,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,28 +65,28 @@ fun WorldBookEntryEditScreen(
     }
     BackHandler { leaveEditor() }
 
-    var keys by remember(entry?.id) { mutableStateOf(entry?.keys?.joinToString(", ") ?: "") }
-    var secondaryKeys by remember(entry?.id) { mutableStateOf(entry?.secondaryKeys?.joinToString(", ") ?: "") }
-    var content by remember(entry?.id) { mutableStateOf(entry?.content ?: "") }
+    var keys by rememberSaveable(entry?.id) { mutableStateOf(entry?.keys?.joinToString(", ") ?: "") }
+    var secondaryKeys by rememberSaveable(entry?.id) { mutableStateOf(entry?.secondaryKeys?.joinToString(", ") ?: "") }
+    var content by rememberSaveable(entry?.id) { mutableStateOf(entry?.content ?: "") }
     var enabled by remember(entry?.id) { mutableStateOf(entry?.enabled ?: true) }
     var selective by remember(entry?.id) { mutableStateOf(entry?.selective ?: false) }
     var constant by remember(entry?.id) { mutableStateOf(entry?.constant ?: false) }
-    var priority by remember(entry?.id) { mutableStateOf(entry?.priority?.toString() ?: "0") }
-    var insertionOrder by remember(entry?.id) { mutableStateOf(entry?.insertionOrder?.toString() ?: "100") }
-    var depth by remember(entry?.id) { mutableStateOf(entry?.depth?.toString() ?: "4") }
-    var position by remember(entry?.id) { mutableStateOf(entry?.position ?: 0) }
-    var selectiveLogic by remember(entry?.id) { mutableStateOf(entry?.selectiveLogic ?: 0) }
+    var priority by rememberSaveable(entry?.id) { mutableStateOf(entry?.priority?.toString() ?: "0") }
+    var insertionOrder by rememberSaveable(entry?.id) { mutableStateOf(entry?.insertionOrder?.toString() ?: "100") }
+    var depth by rememberSaveable(entry?.id) { mutableStateOf(entry?.depth?.toString() ?: "4") }
+    var position by remember(entry?.id) { mutableIntStateOf(entry?.position ?: 0) }
+    var selectiveLogic by remember(entry?.id) { mutableIntStateOf(entry?.selectiveLogic ?: 0) }
     var useProbability by remember(entry?.id) { mutableStateOf(entry?.useProbability ?: false) }
-    var probability by remember(entry?.id) { mutableStateOf(entry?.probability?.toString() ?: "100") }
-    var role by remember(entry?.id) { mutableStateOf(entry?.role ?: 0) }
+    var probability by rememberSaveable(entry?.id) { mutableStateOf(entry?.probability?.toString() ?: "100") }
+    var role by remember(entry?.id) { mutableIntStateOf(entry?.role ?: 0) }
     var matchWholeWords by remember(entry?.id) { mutableStateOf(entry?.matchWholeWords ?: false) }
     var useRegex by remember(entry?.id) { mutableStateOf(entry?.useRegex ?: false) }
     var caseSensitive by remember(entry?.id) { mutableStateOf(entry?.caseSensitive ?: false) }
     var excludeRecursion by remember(entry?.id) { mutableStateOf(entry?.excludeRecursion ?: false) }
     var preventRecursion by remember(entry?.id) { mutableStateOf(entry?.preventRecursion ?: false) }
     var delayUntilRecursion by remember(entry?.id) { mutableStateOf((entry?.delayUntilRecursion ?: 0) > 0) }
-    var delayUntilRecursionLevel by remember(entry?.id) { mutableStateOf((entry?.delayUntilRecursion ?: 1).coerceAtLeast(1).toString()) }
-    var comment by remember(entry?.id) { mutableStateOf(entry?.comment ?: "") }
+    var delayUntilRecursionLevel by rememberSaveable(entry?.id) { mutableStateOf((entry?.delayUntilRecursion ?: 1).coerceAtLeast(1).toString()) }
+    var comment by rememberSaveable(entry?.id) { mutableStateOf(entry?.comment ?: "") }
 
     fun buildUpdatedEntry(base: app.tellev.core.model.WorldBookEntry): app.tellev.core.model.WorldBookEntry {
         val parsedKeys = keys.split(",").map { it.trim() }.filter { it.isNotEmpty() }
@@ -363,10 +365,9 @@ fun WorldBookEntryEditScreen(
                     }
                     FilledTonalButton(
                         enabled = !state.isSaving,
+                        // 此分支仅在 entry/bookId 均非空时组合（外层 else），无需再判空。
                         onClick = {
-                            if (entry != null && bookId != null) {
-                                viewModel.saveEntry(bookId, buildUpdatedEntry(entry), onSaved = { if (editorActive) leaveEditor() })
-                            }
+                            viewModel.saveEntry(bookId, buildUpdatedEntry(entry), onSaved = { if (editorActive) leaveEditor() })
                         },
                         modifier = Modifier.weight(1f),
                     ) {

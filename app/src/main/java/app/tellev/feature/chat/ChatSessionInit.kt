@@ -1,6 +1,8 @@
 package app.tellev.feature.chat
 
 import app.tellev.core.extension.CharacterTavernHelperScripts
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
@@ -57,7 +59,7 @@ internal object ChatSessionInit {
 
         val session = ChatSession(
             id = sessionId,
-            title = "和 ${character.name} 的聊天",
+            title = UiStrings.get(S.chat_session_default_title, character.name),
             characterId = character.id,
             groupId = null,
             messages = firstMessage,

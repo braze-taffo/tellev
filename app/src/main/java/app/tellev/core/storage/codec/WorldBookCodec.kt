@@ -129,6 +129,16 @@ internal object WorldBookCodec {
 
     fun extractStringList(obj: JsonObject, key: String): List<String> {
         val element = obj[key] ?: return emptyList()
+        // Some third-party exporters write a bare string ("key": "魔女") or a
+        // comma-separated form instead of the ST array. Throwing here made the
+        // WHOLE entry vanish in parseWorldBookEntries — and the next save then
+        // deleted it from disk permanently. Accept the string forms.
+        (element as? JsonPrimitive)?.let { primitive ->
+            return listOf(primitive.content)
+                .flatMap { it.split(',') }
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+        }
         return runCatching {
             element.jsonArray.mapNotNull {
                 runCatching { it.jsonPrimitive.content }.getOrNull()

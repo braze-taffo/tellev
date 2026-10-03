@@ -17,8 +17,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -327,6 +327,10 @@ internal fun TavernHtmlPanel(
                                 }
                             }
                             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                // The listener always returns false, so the
+                                // WebView's own touch pipeline owns taps; this
+                                // only satisfies ClickableViewAccessibility.
+                                if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
                                 val bridge = view.tag as? TavernMessageBridge
                                 if (event.actionMasked == MotionEvent.ACTION_UP && forwardedLastMove &&
                                     bridge?.hasNestedScrollGesture() != true) {
@@ -347,11 +351,19 @@ internal fun TavernHtmlPanel(
                     settings.domStorageEnabled = true
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
+                    // Deprecated in API 30 (default false), pinned defensively:
+                    // message HTML must never read local files.
+                    @Suppress("DEPRECATION")
                     settings.allowFileAccessFromFileURLs = false
+                    @Suppress("DEPRECATION")
                     settings.allowUniversalAccessFromFileURLs = false
                     settings.loadWithOverviewMode = false
                     settings.useWideViewPort = false
-                    settings.textZoom = 100
+                    // textZoom 100 ignored the system font size entirely: users
+                    // who enlarge system text got scaled Compose text but
+                    // fixed-size WebView text on the same screen. Follow the
+                    // system scale like the native side does.
+                    settings.textZoom = (100 * resources.configuration.fontScale).toInt().coerceAtLeast(100)
                     tag = bridge
                     bridge.attach(this)
                     addJavascriptInterface(bridge, "TellevBridge")
@@ -582,7 +594,7 @@ internal fun HtmlSwipeControls(
     ) {
         IconButton(onClick = onPrevious, modifier = Modifier.size(36.dp)) {
             Icon(
-                Icons.Default.KeyboardArrowLeft,
+                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                 contentDescription = stringResource(R.string.chat_previous_page),
             )
         }
@@ -594,7 +606,7 @@ internal fun HtmlSwipeControls(
         )
         IconButton(onClick = onNext, modifier = Modifier.size(36.dp)) {
             Icon(
-                Icons.Default.KeyboardArrowRight,
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = stringResource(R.string.chat_next_page),
             )
         }

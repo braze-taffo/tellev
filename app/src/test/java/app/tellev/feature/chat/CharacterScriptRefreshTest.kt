@@ -104,6 +104,14 @@ class CharacterScriptRefreshTest {
             disk.bootstrap()
             if (png == null) disk.saveCharacter(card) else disk.importCharacter(card, png, "fixture.png")
             disk.saveChatSession(ChatSession("history", "History", card.id, null, emptyList()))
+            // A1 门控：预置「已同意」记录（按磁盘上的卡片计算指纹），本测试聚焦装载/刷新语义。
+            CharacterScriptConsentStore(root).write(
+                card.id,
+                approved = true,
+                fingerprint = CharacterScriptConsentStore.fingerprint(
+                    CharacterTavernHelperScripts.buildIsolatedScriptSource(disk.readCharacter(card.id)),
+                ),
+            )
             val store = object : StDataStore by disk {
                 override suspend fun readCharacter(id: String): CharacterCard = disk.readCharacter(id).also { reads.incrementAndGet() }
             }

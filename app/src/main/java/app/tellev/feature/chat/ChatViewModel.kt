@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.tellev.core.extension.ExternalChatWritePort
 import app.tellev.core.extension.ExtensionHost
+import app.tellev.core.extension.CharacterScriptConsentStore
 import app.tellev.core.extension.CharacterTavernHelperScripts
 import app.tellev.core.extension.ExtensionPermissionManager
 import app.tellev.core.extension.MutableExternalChatWritePort
@@ -47,6 +48,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -97,6 +99,17 @@ data class ChatUiState(
     val generatedImages: List<GeneratedImage> = emptyList(),
     /** Last failed scene summary, kept in memory for user inspection; never written to logcat. */
     val imageGenDiagnostic: String? = null,
+    // ── A1 卡内脚本确认：首次装载(或脚本集变化后)须用户确认,持久化于 script-consent.json ──
+    val pendingScriptConsent: CharacterScriptConsent? = null,
+    /** 卡内脚本已停用(拒绝过/本次会话跳过),展示横幅并提供一键重新询问。 */
+    val characterScriptsDisabled: CharacterScriptConsent? = null,
+)
+
+/** 卡内脚本确认请求的数据:脚本源指纹 + 脚本名列表(用于弹窗展示)。 */
+data class CharacterScriptConsent(
+    val characterId: String,
+    val fingerprint: String,
+    val scriptNames: List<String>,
 )
 
 class ChatViewModel(
@@ -155,6 +168,10 @@ class ChatViewModel(
     private var loadedCharacterScriptExtensionId: String? = null
     @Volatile
     private var loadedCharacterScriptSource: String? = null
+    private val scriptConsentStore = CharacterScriptConsentStore(dataStore.layout.root)
+
+    /** 本次进程内已答复「暂不启用」的记录：characterId → fingerprint，避免每次 reload 重复弹窗。 */
+    private val sessionDismissedScripts = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     init {
         // The extension virtual API saves/appends chats straight to storage; these hooks
@@ -190,14 +207,6 @@ class ChatViewModel(
                     _uiState.update {
                         if (it.currentSession?.id == updated.id) it.copy(currentSession = updated, messages = updated.messages)
                         else it
-                    }
-                },
-                onSetChatMessage = { index, field, value ->
-                    messageActions.setChatMessageFromExtension(index, field, value, _uiState.value) { updated ->
-                        _uiState.update {
-                            if (it.currentSession?.id == updated.id) it.copy(currentSession = updated, messages = updated.messages)
-                            else it
-                        }
                     }
                 },
                 onGenerateText = { options ->
@@ -1213,10 +1222,34 @@ class ChatViewModel(
         }
     }
 
-    private suspend fun reloadCharacterTavernHelperScripts(character: CharacterCard) {
+    /**
+     * Serializes [reloadCharacterTavernHelperScripts]. Concurrent triggers
+     * (session open, preset switch, settings change) used to interleave the
+     * adapter's unload+load: both captured the same currentLoadedId, so the
+     * first load's runtime survived while the second was installed and the
+     * `loadedCharacterScriptExtensionId` callback order was arbitrary — a
+     * stale script runtime could keep running. Queued calls re-check inside
+     * the lock, so a reload that another call already covered becomes a no-op.
+     */
+    private val scriptReloadMutex = Mutex()
+
+    private suspend fun reloadCharacterTavernHelperScripts(character: CharacterCard) =
+        scriptReloadMutex.withLock {
+            reloadCharacterTavernHelperScriptsLocked(character)
+        }
+
+    private suspend fun reloadCharacterTavernHelperScriptsLocked(character: CharacterCard) {
         val scriptSource = CharacterTavernHelperScripts.buildIsolatedScriptSource(character, _uiState.value.selectedPreset)
         if (loadedCharacterScriptExtensionId == ChatTavernAdapter.characterScriptExtensionId(character.id) &&
             loadedCharacterScriptSource == scriptSource) return
+
+        if (scriptSource.isBlank()) {
+            // 无脚本的卡片：清掉确认弹窗/停用横幅；已装载的旧脚本仍要经适配器卸载。
+            _uiState.update { it.copy(pendingScriptConsent = null, characterScriptsDisabled = null) }
+        } else if (!isScriptLoadAllowed(character, scriptSource)) {
+            // A1：卡内脚本不再随聊天打开自动执行——首次装载（或脚本集变化后）必须先经确认。
+            return
+        }
 
         ChatTavernAdapter.reloadCharacterTavernHelperScripts(
             character = character,
@@ -1231,6 +1264,70 @@ class ChatViewModel(
             },
             onError = { err -> _uiState.update { it.copy(error = err) } },
         )
+    }
+
+    /** 同意判定。未获同意时在 uiState 上挂出确认弹窗或停用横幅并返回 false。 */
+    private suspend fun isScriptLoadAllowed(character: CharacterCard, scriptSource: String): Boolean {
+        val fingerprint = CharacterScriptConsentStore.fingerprint(scriptSource)
+        val consent = runCatching { scriptConsentStore.read(character.id) }.getOrNull()
+        if (consent?.approved == true && consent.fingerprint == fingerprint) {
+            _uiState.update {
+                it.copy(
+                    pendingScriptConsent = it.pendingScriptConsent?.takeIf { p -> p.characterId != character.id },
+                    characterScriptsDisabled = it.characterScriptsDisabled?.takeIf { d -> d.characterId != character.id },
+                )
+            }
+            return true
+        }
+        val prompt = CharacterScriptConsent(
+            characterId = character.id,
+            fingerprint = fingerprint,
+            scriptNames = CharacterTavernHelperScripts.scriptNames(character, _uiState.value.selectedPreset),
+        )
+        val persistedDeny = consent != null && !consent.approved && consent.fingerprint == fingerprint
+        if (persistedDeny || sessionDismissedScripts[character.id] == fingerprint) {
+            _uiState.update { it.copy(pendingScriptConsent = null, characterScriptsDisabled = prompt) }
+        } else {
+            _uiState.update { it.copy(pendingScriptConsent = prompt, characterScriptsDisabled = null) }
+        }
+        return false
+    }
+
+    /** 弹窗「启用并记住」：持久化同意并按当前指纹装载脚本。 */
+    fun approveCharacterScripts() {
+        val prompt = _uiState.value.pendingScriptConsent ?: return
+        viewModelScope.launch(Dispatchers.Default) {
+            runCatching { scriptConsentStore.write(prompt.characterId, approved = true, fingerprint = prompt.fingerprint) }
+                .onFailure { e ->
+                    _uiState.update { it.copy(error = UiStrings.get(S.chatvm_script_consent_save_failed, e.message)) }
+                }
+            sessionDismissedScripts.remove(prompt.characterId)
+            _uiState.update { it.copy(pendingScriptConsent = null, characterScriptsDisabled = null) }
+            // 只在用户仍停留在该角色时立即装载；否则下次打开聊天时按已记住的同意自动装载。
+            if (_uiState.value.selectedCharacter?.id != prompt.characterId) return@launch
+            val card = runCatching { dataStore.readCharacter(prompt.characterId) }.getOrNull() ?: return@launch
+            characterScriptJob = viewModelScope.launch(Dispatchers.Default) {
+                reloadCharacterTavernHelperScripts(card)
+            }
+        }
+    }
+
+    /** 弹窗「禁用并记住」(persist=true)或「暂不启用」(persist=false)。 */
+    fun denyCharacterScripts(persist: Boolean) {
+        val prompt = _uiState.value.pendingScriptConsent ?: return
+        sessionDismissedScripts[prompt.characterId] = prompt.fingerprint
+        _uiState.update { it.copy(pendingScriptConsent = null, characterScriptsDisabled = prompt) }
+        if (!persist) return
+        viewModelScope.launch(Dispatchers.Default) {
+            runCatching { scriptConsentStore.write(prompt.characterId, approved = false, fingerprint = prompt.fingerprint) }
+        }
+    }
+
+    /** 停用横幅上的「启用」：重新唤起确认弹窗。 */
+    fun requestScriptConsentPrompt() {
+        val disabled = _uiState.value.characterScriptsDisabled ?: return
+        sessionDismissedScripts.remove(disabled.characterId)
+        _uiState.update { it.copy(pendingScriptConsent = disabled, characterScriptsDisabled = null) }
     }
 
     fun currentRuntimeToken(sessionId: String?): RuntimeToken? =

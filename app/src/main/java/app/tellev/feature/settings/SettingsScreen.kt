@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -49,6 +50,7 @@ import app.tellev.ui.AtmosphereIntro
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.FilterChip
@@ -294,6 +296,30 @@ internal fun SettingsScreen(
                         onAddSecret = { showAddSecretDialog = true },
                         onDeleteSecret = { viewModel.deleteSecret(it) },
                     )
+
+                    item(key = "cleartext_setting") {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.setnet_cleartext),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    text = stringResource(R.string.setnet_cleartext_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = state.allowRemoteCleartext,
+                                onCheckedChange = viewModel::setAllowRemoteCleartext,
+                            )
+                        }
+                    }
                     }
 
                     if (settingsSection == 1) {
@@ -316,8 +342,10 @@ internal fun SettingsScreen(
                         state = state,
                         onSetThemeMode = viewModel::setThemeMode,
                         onSetThemeAccent = viewModel::setThemeAccent,
-                        onSetChatBubbleAlpha = viewModel::setChatBubbleAlpha,
-                        onSetChatFontSizeSp = viewModel::setChatFontSizeSp,
+                        onPreviewChatBubbleAlpha = viewModel::previewChatBubbleAlpha,
+                        onPersistChatBubbleAlpha = { viewModel.setChatBubbleAlpha(state.chatBubbleAlpha) },
+                        onPreviewChatFontSizeSp = viewModel::previewChatFontSizeSp,
+                        onPersistChatFontSizeSp = { viewModel.setChatFontSizeSp(state.chatFontSizeSp) },
                     )
 
                     languageSectionItems(

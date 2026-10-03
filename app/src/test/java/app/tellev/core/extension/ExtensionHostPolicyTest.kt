@@ -46,6 +46,31 @@ class ExtensionHostPolicyTest {
     }
 
     @Test
+    fun `subresource fetches stay on-origin unless the network permission is granted`() {
+        val origin = extensionBaseUrl("demo")
+        val otherOrigin = extensionBaseUrl("other")
+        // Same-origin always passes; internal schemes resolve inside the WebView
+        // and never reach the network.
+        assertTrue(isAllowedExtensionSubresource("demo", origin, networkGranted = false))
+        assertTrue(isAllowedExtensionSubresource("demo", "about:blank", networkGranted = false))
+        assertTrue(isAllowedExtensionSubresource("demo", "blob:${origin}x", networkGranted = false))
+        assertTrue(isAllowedExtensionSubresource("demo", "data:text/plain,hi", networkGranted = false))
+        // Pinned compat CDN URLs are served by CompatAssets.intercept before the
+        // policy runs, so the policy itself does not need to know that host:
+        // a non-aliased URL on the compat origin is denied like any other.
+        assertFalse(isAllowedExtensionSubresource("demo", "https://extensions.tellev.local/compat/globals.js", networkGranted = false))
+        // Cross-origin https needs the Network permission — including another
+        // extension's isolated origin, which must not be reachable either.
+        assertFalse(isAllowedExtensionSubresource("demo", "https://example.com/exfil", networkGranted = false))
+        assertFalse(isAllowedExtensionSubresource("demo", otherOrigin, networkGranted = false))
+        assertTrue(isAllowedExtensionSubresource("demo", "https://example.com/api", networkGranted = true))
+        assertFalse(isAllowedExtensionSubresource("demo", "http://example.com/api", networkGranted = true))
+        assertFalse(isAllowedExtensionSubresource("demo", "http://192.168.1.10:8188/upload", networkGranted = true))
+        // A URL that cannot be parsed cannot be judged, so it is denied.
+        assertFalse(isAllowedExtensionSubresource("demo", "https://ex ample.com", networkGranted = false))
+    }
+
+    @Test
     fun `bootstrap installs real load failure guards`() {
         val guards = WebViewJsExtensionHost.EXTENSION_LOAD_GUARDS
         assertTrue(guards.contains("addEventListener('error'"))

@@ -1,5 +1,7 @@
 package app.tellev.core.provider
 
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.TellevError
 import kotlinx.coroutines.Dispatchers
@@ -151,6 +153,7 @@ class GeminiAdapter(
                     var finishReason: String? = null
                     var usage: JsonObject? = null
                     var safetyBlock: String? = null
+                    var dataFrames = 0
                     val toolCalls = mutableListOf<JsonObject>()
                     while (source != null && !source.exhausted()) {
                         coroutineContext.ensureActive()
@@ -158,6 +161,7 @@ class GeminiAdapter(
                         if (!line.startsWith("data:")) continue
                         val data = line.removePrefix("data:").trim()
                         if (data.isEmpty()) continue
+                        dataFrames++
                         val parsed = parseGeminiResponse(data)
                         if (parsed.text.isNotEmpty()) {
                             fullText += parsed.text
@@ -169,6 +173,19 @@ class GeminiAdapter(
                         parsed.usage?.let { usage = it }
                         parsed.safetyBlock?.let { safetyBlock = it }
                         toolCalls += parsed.toolCalls
+                    }
+                    // A stream that ends without a finishReason was truncated
+                    // mid-generation; saving it as a complete turn silently
+                    // loses the rest of the answer. Same guard as the
+                    // OpenAI/Ollama adapters (opt-in via require_stream_terminator).
+                    if (request.metadata["require_stream_terminator"]?.jsonPrimitive?.contentOrNull == "true" &&
+                        dataFrames > 0 && finishReason == null && safetyBlock == null
+                    ) {
+                        emit(GenerateChunk.Failed(TellevError(
+                            code = "provider_incomplete_stream",
+                            message = UiStrings.get(S.oai_error_stream_incomplete, dataFrames),
+                        )))
+                        return@use
                     }
                     if (fullText.isEmpty() && reasoningText.isEmpty() && safetyBlock != null) {
                         emit(GenerateChunk.Failed(TellevError("gemini_safety", safetyBlock!!, retryable = false)))

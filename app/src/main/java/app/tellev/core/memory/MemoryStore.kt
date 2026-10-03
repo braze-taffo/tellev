@@ -7,6 +7,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.nio.file.Path
@@ -26,8 +27,17 @@ class MemoryStore(private val layout: StDirectoryLayout) {
 
     suspend fun read(id: String): MemoryDocument? = withContext(Dispatchers.IO) {
         val file = path(id)
-        if (!Files.isRegularFile(file)) null
-        else json.decodeFromString(MemoryDocument.serializer(), Files.readAllBytes(file).toString(Charsets.UTF_8))
+        if (!Files.isRegularFile(file)) return@withContext null
+        try {
+            json.decodeFromString(MemoryDocument.serializer(), Files.readAllBytes(file).toString(Charsets.UTF_8))
+        } catch (error: IllegalArgumentException) {
+            // Malformed JSON (kotlinx SerializationException is an
+            // IllegalArgumentException): quarantine the document instead of
+            // wedging the memory feature until manual cleanup. The next write
+            // rebuilds it; nothing is deleted.
+            quarantineCorrupt(file)
+            null
+        }
     }
 
     suspend fun write(id: String, document: MemoryDocument) = writes.withLock {
@@ -42,7 +52,10 @@ class MemoryStore(private val layout: StDirectoryLayout) {
             val file = path(id)
             val temp = Files.createTempFile(directory, "memory-", ".tmp")
             try {
-                Files.write(temp, json.encodeToString(MemoryDocument.serializer(), document).toByteArray(Charsets.UTF_8))
+                FileOutputStream(temp.toFile()).use { stream ->
+                    stream.write(json.encodeToString(MemoryDocument.serializer(), document).toByteArray(Charsets.UTF_8))
+                    stream.fd.sync()
+                }
                 try {
                     Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
                 } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
@@ -62,6 +75,18 @@ class MemoryStore(private val layout: StDirectoryLayout) {
 
     suspend fun delete(id: String) = writes.withLock {
         withContext(Dispatchers.IO) { Files.deleteIfExists(path(id)) }
+    }
+
+    /** Mirrors ChatRepository's M8 discipline: rename aside, never delete. */
+    private fun quarantineCorrupt(file: Path) {
+        runCatching {
+            val target = file.resolveSibling("${file.fileName}.corrupt-${System.currentTimeMillis()}")
+            try {
+                Files.move(file, target, StandardCopyOption.ATOMIC_MOVE)
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                Files.move(file, target)
+            }
+        }
     }
 
     companion object { private val writes = Mutex() }

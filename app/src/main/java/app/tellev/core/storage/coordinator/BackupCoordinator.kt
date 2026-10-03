@@ -27,6 +27,7 @@ import kotlin.io.path.walk
 internal class BackupCoordinator(
     private val layout: StDirectoryLayout,
     private val json: Json,
+    private val durableFiles: JournaledFileWriter,
 ) {
     suspend fun exportBackup(targetZip: Path, includeSecrets: Boolean = false): Unit = withContext(Dispatchers.IO) {
         targetZip.parent?.createDirectories()
@@ -71,8 +72,13 @@ internal class BackupCoordinator(
         }
     }
 
-    suspend fun importBackup(sourceZip: Path): Unit = withContext(Dispatchers.IO) {
+    /**
+     * Restores every archive entry and returns the normalized relative paths
+     * that were written, so the caller can broadcast change events (M4).
+     */
+    suspend fun importBackup(sourceZip: Path): List<String> = withContext(Dispatchers.IO) {
         require(sourceZip.exists()) { "Backup file does not exist: $sourceZip" }
+        val restored = mutableListOf<String>()
 
         ZipInputStream(sourceZip.inputStream()).use { zis ->
             var entry = zis.nextEntry
@@ -96,13 +102,19 @@ internal class BackupCoordinator(
                     targetPath.createDirectories()
                 } else {
                     targetPath.parent?.createDirectories()
-                    targetPath.outputStream().use { output ->
-                        zis.copyTo(output)
-                    }
+                    // M4: a plain outputStream() write was not crash-safe — a kill
+                    // mid-restore left a truncated live file, and the untouched
+                    // journal revision desynced caches and CAS afterwards. Going
+                    // through the journal gives each entry tmp+fsync+ATOMIC_MOVE
+                    // plus a revision bump, so post-restore readers and writers
+                    // see a coherent, conflict-detecting state.
+                    durableFiles.write(targetPath, zis.readBytes())
+                    restored += normalizedPath
                 }
 
                 entry = zis.nextEntry
             }
         }
+        restored
     }
 }

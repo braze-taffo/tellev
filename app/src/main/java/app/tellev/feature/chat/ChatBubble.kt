@@ -20,10 +20,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +51,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -141,9 +143,11 @@ internal fun ChatBubble(
             }
             Spacer(modifier = Modifier.weight(1f))
             Box {
+                // 24dp was below the 48dp minimum touch target; keep the icon
+                // visually small but give the button a hittable area.
                 IconButton(
                     onClick = { showActions = true },
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(40.dp),
                 ) {
                     Icon(
                         Icons.Default.MoreVert,
@@ -229,25 +233,24 @@ internal fun ChatBubble(
         }
         val hasFrontend = renderSegments.any { it is TavernRenderSegment.Frontend }
         // 生成图片消息：解析附件里的本地图片文件（生图结果落盘于 st-data/user/images）。
-        // tellev-img 日志用于真机排查生图链路（附件→路径→文件存在性）。
+        // 不打附件名/内部路径日志（logcat 可被同机应用读取，属隐私泄露面）。
         val imageFiles = remember(message.id, message.attachments, dataRoot) {
             message.attachments
                 .filter { it.relativePath.isNotBlank() && it.mimeType.startsWith("image/") }
                 .mapNotNull { attachment ->
-                    val resolved = dataRoot.resolve(attachment.relativePath)
-                    android.util.Log.i(
-                        "tellev-img",
-                        "attachment=${attachment.name} rel=${attachment.relativePath} resolved=${resolved.path} exists=${resolved.isFile}",
-                    )
-                    resolved.takeIf { it.isFile }
+                    dataRoot.resolve(attachment.relativePath).takeIf { it.isFile }
                 }
         }
+        // The swipe threshold is a distance on screen: 80 raw pixels shrank to
+        // ~27dp on 3x-density displays, so a light flick switched the swipe
+        // variant. Convert once in composition so every device gets 80dp.
+        val swipeThresholdPx = with(LocalDensity.current) { 80.dp.toPx() }
         val dragModifier = Modifier.pointerInput(message.id) {
             detectHorizontalDragGestures(
                 onDragEnd = {
                     when {
-                        dragAmount > 80f -> onSwipeRight()
-                        dragAmount < -80f -> onSwipeLeft()
+                        dragAmount > swipeThresholdPx -> onSwipeRight()
+                        dragAmount < -swipeThresholdPx -> onSwipeLeft()
                     }
                     dragAmount = 0f
                 },
@@ -438,7 +441,7 @@ internal fun ReasoningBlock(content: String, highlightDialogue: Boolean, bubbleA
         ) {
             Icon(
                 imageVector = if (expanded) Icons.Default.KeyboardArrowDown
-                else Icons.Default.KeyboardArrowRight,
+                else Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = null,
                 modifier = Modifier.size(16.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -548,7 +551,7 @@ internal fun EditMessageCard(
     onConfirm: (String) -> Unit,
     onCancel: () -> Unit,
 ) {
-    var text by remember { mutableStateOf(initialText) }
+    var text by rememberSaveable(initialText) { mutableStateOf(initialText) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),

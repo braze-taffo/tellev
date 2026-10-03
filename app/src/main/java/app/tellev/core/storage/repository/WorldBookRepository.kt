@@ -80,12 +80,27 @@ internal class WorldBookRepository(
         worldBookChanges.tryEmit(book.id)
     }
 
+    /**
+     * Persists an already-encoded world file verbatim (extension bridge path:
+     * the caller hands us the exact ST-shaped JSON to store, and re-typing it
+     * through [WorldBookCodec] would silently drop fields it does not model).
+     * Must go through the same journaled write as [saveWorldBook] — a plain
+     * `writeText` here was the one hot path that could truncate a world file
+     * on process death and leave it invisible from the list.
+     */
+    suspend fun saveWorldBookRawJson(id: String, data: JsonObject): Unit = withContext(Dispatchers.IO) {
+        val path = safeStorageChild(layout.worlds, id, ".json")
+        layout.worlds.createDirectories()
+        StorageFileOps.durableWriteText(durableFiles, path, json.encodeToString(JsonObject.serializer(), data))
+        worldBookChanges.tryEmit(id)
+    }
+
     suspend fun importWorldBook(
         jsonBytes: ByteArray,
         sourceFileName: String,
     ): WorldBook = withContext(Dispatchers.IO) {
         val raw = runCatching {
-            json.parseToJsonElement(jsonBytes.decodeToString()) as? JsonObject
+            json.parseToJsonElement(jsonBytes.decodeToString().removePrefix("\uFEFF")) as? JsonObject
         }.getOrNull() ?: error(UiStrings.get(S.wbrepo_error_invalid_json, sourceFileName))
 
         if (raw["entries"] !is JsonObject) {

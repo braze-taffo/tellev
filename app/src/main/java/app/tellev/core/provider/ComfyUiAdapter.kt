@@ -360,31 +360,51 @@ class ComfyUiAdapter(
         val completed: Boolean,
     )
 
-    private suspend fun pollHistory(config: ProviderConfig, promptId: String): HistoryResult {
+    /** Returns null when the polling deadline expires (caller maps it to comfy_timeout). */
+    private suspend fun pollHistory(config: ProviderConfig, promptId: String): HistoryResult? {
         val deadline = System.nanoTime() + POLL_TIMEOUT_NANOS
+        // A job that may still be rendering server-side must not be destroyed
+        // by one transient poll failure (5xx/429/IO blip); retry silently and
+        // surface the last failure only after a sustained outage (the deadline
+        // still bounds the total wait as comfy_timeout).
+        var consecutiveFailures = 0
         while (true) {
             coroutineContext.ensureActive()
-            if (System.nanoTime() > deadline) return HistoryResult(output = null, error = null, completed = false)
+            // Deadline: signal as null so the caller's comfy_timeout branch fires.
+            // Returning an empty HistoryResult instead fell into "no images"
+            // (retryable=false) and the timeout branch was unreachable dead code.
+            if (System.nanoTime() > deadline) return null
             delay(POLL_INTERVAL_MS)
 
             val request = Request.Builder()
                 .url(config.endpoint("/history/$promptId"))
                 .get()
                 .build()
-            val entry = client.newCall(request).executeCancellable { response ->
-                if (!response.isSuccessful) {
-                    throw ComfyHttpException(
-                        code = "comfy_http_${response.code}",
-                        message = UiStrings.get(S.comfy_error_history_http, response.code),
-                        retryable = response.code in 429..599,
-                    )
+            val entry = try {
+                client.newCall(request).executeCancellable { response ->
+                    if (!response.isSuccessful) {
+                        throw ComfyHttpException(
+                            code = "comfy_http_${response.code}",
+                            message = UiStrings.get(S.comfy_error_history_http, response.code),
+                            retryable = response.code in 429..599,
+                        )
+                    }
+                    val body = response.body?.string().orEmpty()
+                    val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+                        ?: throw ComfyHttpException("comfy_bad_response", UiStrings.get(S.comfy_error_history_unparseable), retryable = true)
+                    // /history/{id} omits the entry until the job finishes.
+                    root[promptId]?.jsonObject
                 }
-                val body = response.body?.string().orEmpty()
-                val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
-                    ?: throw ComfyHttpException("comfy_bad_response", UiStrings.get(S.comfy_error_history_unparseable), retryable = true)
-                // /history/{id} omits the entry until the job finishes.
-                root[promptId]?.jsonObject
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: ComfyHttpException) {
+                if (!e.retryable || ++consecutiveFailures > MAX_CONSECUTIVE_POLL_FAILURES) throw e
+                continue
+            } catch (e: java.io.IOException) {
+                if (++consecutiveFailures > MAX_CONSECUTIVE_POLL_FAILURES) throw e
+                continue
             } ?: continue
+            consecutiveFailures = 0
 
             val status = entry["status"]?.jsonObject
             if (status?.get("status_str")?.jsonPrimitive?.contentOrNull == "error") {
@@ -473,5 +493,8 @@ class ComfyUiAdapter(
         val JSON = "application/json; charset=utf-8".toMediaType()
         const val POLL_INTERVAL_MS = 500L
         const val POLL_TIMEOUT_NANOS = 10L * 60 * 1_000_000_000
+        // Sustained-outage threshold: 20 failed polls ≈ 10s of consecutive
+        // failures before the transient-retry shield gives up and rethrows.
+        const val MAX_CONSECUTIVE_POLL_FAILURES = 20
     }
 }

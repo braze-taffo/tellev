@@ -103,11 +103,12 @@ internal class WorldBookApiHandler(
         if (data["entries"] !is JsonObject) {
             return errorResponse(400, "Is not a valid world info file", json)
         }
-        val file = safeStorageChild(dataStore.layout.worlds, name, ".json")
-        dataStore.layout.worlds.createDirectories()
-        file.writeText(
-            json.encodeToString(JsonObject.serializer(), data),
-        )
+        // Route through the journaled writer (tmp + fsync + atomic rename) like
+        // every other world-book save; it also creates the worlds directory.
+        // A bare writeText here was the only hot path that could truncate
+        // worlds/<name>.json on process death, after which the file parses as
+        // nothing and vanishes from the list.
+        dataStore.saveWorldBookRawJson(name, data)
         return jsonResponse(200, buildJsonObject { put("name", name) }, json)
     }
 }

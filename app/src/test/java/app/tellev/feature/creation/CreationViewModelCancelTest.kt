@@ -145,6 +145,9 @@ class CreationViewModelCancelTest {
                 vm.send("加一条新城设定")
                 waitUntil { fixture.secondRoundStarted.isCompleted || vm.state.value.error != null }
                 assertTrue("Second round never started: ${vm.state.value.error}", fixture.secondRoundStarted.isCompleted)
+                // Checkpoint（工具写入落盘 + partialTurnSaved 置位）严格先于下一轮模型请求；
+                // 显式等待它，避免全量套件高负载下取消先于 checkpoint 的偶发窗口。
+                waitUntil { vm.state.value.current?.partialTurnSaved == true }
                 vm.cancelGeneration()
                 waitUntil { !vm.state.value.busy }
 
