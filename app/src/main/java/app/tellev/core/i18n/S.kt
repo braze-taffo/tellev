@@ -65,6 +65,7 @@ object S {
     const val chassets_clear_background_failed = "chassets_clear_background_failed"
     const val updvm_check_failed = "updvm_check_failed"
     const val updvm_download_failed = "updvm_download_failed"
+    const val updvm_apk_rejected = "updvm_apk_rejected"
     const val updchk_channel_official = "updchk_channel_official"
     const val updchk_channel_mnn = "updchk_channel_mnn"
     const val updchk_channel_release_missing = "updchk_channel_release_missing"
@@ -1382,6 +1383,7 @@ object S {
         "chassets_clear_background_failed" to R.string.chassets_clear_background_failed,
         "updvm_check_failed" to R.string.updvm_check_failed,
         "updvm_download_failed" to R.string.updvm_download_failed,
+        "updvm_apk_rejected" to R.string.updvm_apk_rejected,
         "updchk_channel_official" to R.string.updchk_channel_official,
         "updchk_channel_mnn" to R.string.updchk_channel_mnn,
         "updchk_channel_release_missing" to R.string.updchk_channel_release_missing,
@@ -2700,6 +2702,7 @@ object S {
         "chassets_clear_background_failed" to "清除聊天背景失败：%1\$s",
         "updvm_check_failed" to "检查更新失败",
         "updvm_download_failed" to "下载失败：%1\$s",
+        "updvm_apk_rejected" to "更新包校验未通过，已取消安装",
         "updchk_channel_official" to "正式版",
         "updchk_channel_mnn" to "生图版",
         "updchk_channel_release_missing" to "未找到 %1\$s 渠道的发行",

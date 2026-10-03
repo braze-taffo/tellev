@@ -514,7 +514,6 @@ internal class CreationToolBox(initial: CreationSession) {
             if (element.isString && element.content.length > ECHO_FIELD_CAP) {
                 JsonPrimitive(element.content.take(ECHO_FIELD_CAP) + "…[+" + (element.content.length - ECHO_FIELD_CAP) + " chars truncated]")
             } else element
-        else -> element
     }
 
     private fun readCard(): ToolResult = ToolResult(

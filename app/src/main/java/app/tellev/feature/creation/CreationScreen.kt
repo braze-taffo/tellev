@@ -74,6 +74,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -461,7 +462,7 @@ private fun CreationBanner(text: String, isError: Boolean) {
 private fun CreationActivityPanel(state: CreationUiState, session: CreationSession, viewModel: CreationViewModel) {
     var showRawStream by remember(session.id, state.operationStartedAtMillis) { mutableStateOf(false) }
     var showFullStream by remember(session.id, state.operationStartedAtMillis) { mutableStateOf(false) }
-    var clockMillis by remember(state.operationStartedAtMillis) { mutableStateOf(System.currentTimeMillis()) }
+    var clockMillis by remember(state.operationStartedAtMillis) { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(state.busy, state.operationStartedAtMillis) {
         while (state.busy) {
             clockMillis = System.currentTimeMillis()

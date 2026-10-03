@@ -45,6 +45,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import java.io.ByteArrayInputStream
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -95,6 +96,16 @@ class WebViewJsExtensionHost(
     }
     private val capabilityTokens = ConcurrentHashMap<String, String>()
     private val declaredPermissions = ConcurrentHashMap<String, Set<ExtensionPermission>>()
+
+    /**
+     * Snapshot of [ExtensionPermissionManager.hasPermission] for Network, taken
+     * while the extension loads. [WebViewClient.shouldInterceptRequest] runs on
+     * a WebView thread and cannot suspend into the permission manager, so the
+     * WebView consults this snapshot instead; a grant/revoke made mid-session
+     * takes effect on the extension's next (re)load, which also rebuilds the
+     * runtime WebView.
+     */
+    private val networkFetchGranted = ConcurrentHashMap<String, Boolean>()
     private val slashCommands = ConcurrentHashMap<String, RegisteredCommand>()
     private val virtualRoutes = ConcurrentHashMap<String, RegisteredRoute>()
 
@@ -238,6 +249,8 @@ class WebViewJsExtensionHost(
 
                     capabilityTokens[manifest.id] = token
                     declaredPermissions[manifest.id] = manifest.permissions
+                    networkFetchGranted[manifest.id] =
+                        permissionManager.hasPermission(manifest.id, ExtensionPermission.Network)
                     requests.pendingLoads[manifest.id] = readySignal
 
                     // A previous saveSettings failure used to poison this id for
@@ -265,18 +278,39 @@ class WebViewJsExtensionHost(
                         settings.javaScriptEnabled = true
                         settings.allowFileAccess = false
                         settings.allowContentAccess = false
+                        // Deprecated in API 30 (default false), pinned defensively:
+                        // card module pages must never read local files.
+                        @Suppress("DEPRECATION")
                         settings.allowFileAccessFromFileURLs = false
+                        @Suppress("DEPRECATION")
                         settings.allowUniversalAccessFromFileURLs = false
                         // Character modules use localStorage at module evaluation time.
                         // Each extension has a distinct HTTPS origin (see extensionBaseUrl).
                         settings.domStorageEnabled = true
-                        settings.databaseEnabled = false
                         settings.javaScriptCanOpenWindowsAutomatically = false
                         settings.setSupportMultipleWindows(false)
 
                         webViewClient = object : WebViewClient() {
-                            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-                                CompatAssets.intercept(context, request.url.toString())
+                            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                                val url = request.url.toString()
+                                CompatAssets.intercept(context, url)?.let { return it }
+                                // Subresources bypass shouldOverrideUrlLoading, so the
+                                // navigation origin-lock alone never sees fetch/XHR.
+                                // Cross-origin requests need the Network permission.
+                                if (!isAllowedExtensionSubresource(manifest.id, url, networkFetchGranted[manifest.id] == true)) {
+                                    reportExtensionLog(
+                                        manifest.id,
+                                        "warning",
+                                        "Blocked module request to $url",
+                                    )
+                                    return WebResourceResponse(
+                                        "text/plain", "UTF-8", 403, "Blocked",
+                                        emptyMap<String, String>(),
+                                        ByteArrayInputStream(ByteArray(0)),
+                                    )
+                                }
+                                return null
+                            }
 
                             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                                 // Renderer crash (typically OOM inside the WebView
@@ -395,6 +429,7 @@ class WebViewJsExtensionHost(
                 if (capabilityTokens.remove(manifest.id, token)) {
                     webViews.remove(manifest.id)?.let(::destroyRuntimeWebView)
                     declaredPermissions.remove(manifest.id)
+                    networkFetchGranted.remove(manifest.id)
                     settingsCache.remove(manifest.id)
                     slashCommands.entries.removeIf { it.value.extensionId == manifest.id }
                     virtualRoutes.entries.removeIf { it.value.extensionId == manifest.id }
@@ -411,6 +446,7 @@ class WebViewJsExtensionHost(
             // resuming off-main here used to let an old unload clear a new load.
             capabilityTokens.remove(extensionId)
             declaredPermissions.remove(extensionId)
+            networkFetchGranted.remove(extensionId)
             settingsCache.remove(extensionId)
             slashCommands.entries.removeIf { it.value.extensionId == extensionId }
             virtualRoutes.entries.removeIf { it.value.extensionId == extensionId }

@@ -33,6 +33,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -73,11 +74,11 @@ fun WorldBookEntryEditScreen(
     var priority by rememberSaveable(entry?.id) { mutableStateOf(entry?.priority?.toString() ?: "0") }
     var insertionOrder by rememberSaveable(entry?.id) { mutableStateOf(entry?.insertionOrder?.toString() ?: "100") }
     var depth by rememberSaveable(entry?.id) { mutableStateOf(entry?.depth?.toString() ?: "4") }
-    var position by remember(entry?.id) { mutableStateOf(entry?.position ?: 0) }
-    var selectiveLogic by remember(entry?.id) { mutableStateOf(entry?.selectiveLogic ?: 0) }
+    var position by remember(entry?.id) { mutableIntStateOf(entry?.position ?: 0) }
+    var selectiveLogic by remember(entry?.id) { mutableIntStateOf(entry?.selectiveLogic ?: 0) }
     var useProbability by remember(entry?.id) { mutableStateOf(entry?.useProbability ?: false) }
     var probability by rememberSaveable(entry?.id) { mutableStateOf(entry?.probability?.toString() ?: "100") }
-    var role by remember(entry?.id) { mutableStateOf(entry?.role ?: 0) }
+    var role by remember(entry?.id) { mutableIntStateOf(entry?.role ?: 0) }
     var matchWholeWords by remember(entry?.id) { mutableStateOf(entry?.matchWholeWords ?: false) }
     var useRegex by remember(entry?.id) { mutableStateOf(entry?.useRegex ?: false) }
     var caseSensitive by remember(entry?.id) { mutableStateOf(entry?.caseSensitive ?: false) }

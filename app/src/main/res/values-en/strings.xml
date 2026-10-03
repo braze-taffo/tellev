@@ -62,6 +62,7 @@
     <string name="chassets_clear_background_failed">Failed to clear chat background: %1$s</string>
     <string name="updvm_check_failed">Update check failed</string>
     <string name="updvm_download_failed">Download failed: %1$s</string>
+    <string name="updvm_apk_rejected">Update package failed verification; installation cancelled</string>
     <string name="updchk_channel_official">Standard</string>
     <string name="updchk_channel_mnn">Image Gen (MNN)</string>
     <string name="updchk_channel_release_missing">No release found for the %1$s channel</string>

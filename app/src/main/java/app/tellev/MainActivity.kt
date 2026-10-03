@@ -114,8 +114,14 @@ class MainActivity : ComponentActivity() {
 
     private fun Intent.importUri(): Uri? = when (action) {
         Intent.ACTION_VIEW -> data
-        @Suppress("DEPRECATION")
-        Intent.ACTION_SEND -> getParcelableExtra(Intent.EXTRA_STREAM)
+        // Type-safe overload arrived in API 33; minSdk 31 keeps the legacy path.
+        Intent.ACTION_SEND ->
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                getParcelableExtra(Intent.EXTRA_STREAM)
+            }
         else -> null
     }
 }

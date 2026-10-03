@@ -51,6 +51,44 @@ internal fun isAllowedExtensionFrameNavigation(extensionId: String, rawUrl: Stri
     return isAllowedExtensionNavigation(extensionId, rawUrl)
 }
 
+/**
+ * Subresource policy for module WebViews (fetch/XHR/WebSocket handshake attempts).
+ * Navigation is origin-locked by [isAllowedExtensionNavigation], but
+ * subresource loads bypass [android.webkit.WebViewClient.shouldOverrideUrlLoading]
+ * entirely — without this check a loaded script could POST chat data to any
+ * host regardless of the permission model.
+ *
+ * Allowed without the Network permission: the module's own isolated
+ * `e-<hash>.extensions.tellev.local` origin (relative URLs resolve against it
+ * and arrive with that host), schemes WebView resolves internally or that
+ * never reach the network (`data:`, `blob:`, `about:`), and the pinned compat
+ * CDN aliases, which [CompatAssets.intercept] serves before this check runs.
+ * Everything else — any cross-origin fetch — requires [ExtensionPermission.Network];
+ * plain `http://` is denied even then (remote backends go through the native
+ * provider route, and cleartext stays behind the app-level CleartextGuard).
+ */
+internal fun isAllowedExtensionSubresource(
+    extensionId: String,
+    rawUrl: String,
+    networkGranted: Boolean,
+): Boolean {
+    val uri = runCatching { URI(rawUrl).normalize() }.getOrNull() ?: return false
+    return when (val scheme = uri.scheme?.lowercase()) {
+        // request.url is always absolute, but a scheme-less defensive default
+        // resolves against the module's own origin anyway.
+        null -> true
+        "data", "blob", "about" -> true
+        "http" -> false
+        "https" -> {
+            val host = uri.host?.lowercase() ?: return false
+            host == URI(extensionBaseUrl(extensionId)).host || networkGranted
+        }
+        // content:/javascript:/file: never carry remote exfil; file/content are
+        // additionally disabled in WebView settings.
+        else -> true
+    }
+}
+
 private val STORAGE_API_PREFIXES = listOf(
     "/api/characters",
     "/api/chats",

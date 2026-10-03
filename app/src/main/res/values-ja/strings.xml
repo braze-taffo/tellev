@@ -62,6 +62,7 @@
     <string name="chassets_clear_background_failed">チャット背景のクリアに失敗しました：%1$s</string>
     <string name="updvm_check_failed">更新の確認に失敗しました</string>
     <string name="updvm_download_failed">ダウンロードに失敗しました：%1$s</string>
+    <string name="updvm_apk_rejected">更新パッケージの検証に失敗したため、インストールを中止しました</string>
     <string name="updchk_channel_official">正式版</string>
     <string name="updchk_channel_mnn">画像生成版</string>
     <string name="updchk_channel_release_missing">%1$sチャンネルのリリースが見つかりません</string>
