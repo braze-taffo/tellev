@@ -51,6 +51,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -240,12 +241,16 @@ internal fun ChatBubble(
                     dataRoot.resolve(attachment.relativePath).takeIf { it.isFile }
                 }
         }
+        // The swipe threshold is a distance on screen: 80 raw pixels shrank to
+        // ~27dp on 3x-density displays, so a light flick switched the swipe
+        // variant. Convert once in composition so every device gets 80dp.
+        val swipeThresholdPx = with(LocalDensity.current) { 80.dp.toPx() }
         val dragModifier = Modifier.pointerInput(message.id) {
             detectHorizontalDragGestures(
                 onDragEnd = {
                     when {
-                        dragAmount > 80f -> onSwipeRight()
-                        dragAmount < -80f -> onSwipeLeft()
+                        dragAmount > swipeThresholdPx -> onSwipeRight()
+                        dragAmount < -swipeThresholdPx -> onSwipeLeft()
                     }
                     dragAmount = 0f
                 },
