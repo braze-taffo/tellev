@@ -485,7 +485,7 @@
     <string name="creng_asset_mode_invalid">mode는 replace 또는 append여야 합니다</string>
     <string name="creng_asset_name_required">스크립트에는 name이 필요합니다</string>
     <string name="creng_asset_content_too_long">한 번의 스크립트 내용이 너무 깁니다. 나눠서 추가하십시오</string>
-    <string name="creng_asset_unknown_regex_fields">알 수 없는 정규식 필드입니다</string>
+    <string name="creng_asset_content_total_too_long">스크립트 총 길이가 상한(%1$d자)에 도달하여 추가할 수 없습니다. 교체 모드로 전환하거나 내용을 줄이십시오</string>    <string name="creng_asset_unknown_regex_fields">알 수 없는 정규식 필드입니다</string>
     <string name="creng_asset_field_not_array">%1$s는 배열이어야 합니다</string>
     <string name="creng_asset_field_item_invalid">%1$s의 요소 타입이 잘못되었습니다</string>
     <string name="creng_asset_regex_name_required">정규식에는 scriptName이 필요합니다</string>

@@ -16,6 +16,9 @@ import java.util.UUID
 
 /** Edits the card's native extension tree without flattening unknown fields. */
 internal object CreationAdvancedAssets {
+    /** Four full 24k chunks: generous for real card scripts, bounded for runaway loops (O8). */
+    private const val MAX_SCRIPT_TOTAL_CHARS = 96_000
+
     private fun JsonObject.string(key: String): String? =
         (this[key] as? JsonPrimitive)?.contentOrNull
 
@@ -132,6 +135,12 @@ internal object CreationAdvancedAssets {
                 require(chunk.length <= 24_000) { UiStrings.get(S.creng_asset_content_too_long) }
                 val content = if (mode == "append") previous?.string("content").orEmpty() + chunk
                     else if (call.arguments.containsKey("content")) chunk else previous?.string("content").orEmpty()
+                // O8: appends used to grow without bound — a looping model
+                // could inflate the card script until the session JSON and
+                // every later prompt drown in it.
+                require(content.length <= MAX_SCRIPT_TOTAL_CHARS) {
+                    UiStrings.get(S.creng_asset_content_total_too_long, content.length)
+                }
                 val updated = JsonObject((previous ?: JsonObject(emptyMap())) + buildMap<String, JsonElement> {
                     put("type", JsonPrimitive("script"))
                     put("id", JsonPrimitive(id))

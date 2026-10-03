@@ -485,6 +485,7 @@
     <string name="creng_asset_mode_invalid">mode must be replace or append</string>
     <string name="creng_asset_name_required">The script needs a name</string>
     <string name="creng_asset_content_too_long">The script content is too long for one call; append in chunks</string>
+    <string name="creng_asset_content_total_too_long">The script has reached its total size limit (%1$d characters) and cannot grow; switch to replace mode or shorten it</string>
     <string name="creng_asset_unknown_regex_fields">Unknown regex fields</string>
     <string name="creng_asset_field_not_array">%1$s must be an array</string>
     <string name="creng_asset_field_item_invalid">An element of %1$s has an invalid type</string>

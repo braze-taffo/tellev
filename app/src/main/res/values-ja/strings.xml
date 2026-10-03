@@ -485,6 +485,7 @@
     <string name="creng_asset_mode_invalid">mode は replace または append のみです</string>
     <string name="creng_asset_name_required">スクリプトには name が必要です</string>
     <string name="creng_asset_content_too_long">1 回のスクリプト内容が長すぎます。分割して追記してください</string>
+    <string name="creng_asset_content_total_too_long">スクリプトの合計長が上限（%1$d 文字）に達したため追記できません。置換モードに切り替えるか内容を短くしてください</string>
     <string name="creng_asset_unknown_regex_fields">未知の正規表現フィールドです</string>
     <string name="creng_asset_field_not_array">%1$s は配列である必要があります</string>
     <string name="creng_asset_field_item_invalid">%1$s の要素の型が無効です</string>

@@ -478,6 +478,7 @@ object S {
     const val creng_asset_mode_invalid = "creng_asset_mode_invalid"
     const val creng_asset_name_required = "creng_asset_name_required"
     const val creng_asset_content_too_long = "creng_asset_content_too_long"
+    const val creng_asset_content_total_too_long = "creng_asset_content_total_too_long"
     const val creng_asset_unknown_regex_fields = "creng_asset_unknown_regex_fields"
     const val creng_asset_field_not_array = "creng_asset_field_not_array"
     const val creng_asset_field_item_invalid = "creng_asset_field_item_invalid"
@@ -1794,6 +1795,7 @@ object S {
         "creng_asset_mode_invalid" to R.string.creng_asset_mode_invalid,
         "creng_asset_name_required" to R.string.creng_asset_name_required,
         "creng_asset_content_too_long" to R.string.creng_asset_content_too_long,
+        "creng_asset_content_total_too_long" to R.string.creng_asset_content_total_too_long,
         "creng_asset_unknown_regex_fields" to R.string.creng_asset_unknown_regex_fields,
         "creng_asset_field_not_array" to R.string.creng_asset_field_not_array,
         "creng_asset_field_item_invalid" to R.string.creng_asset_field_item_invalid,
@@ -3111,6 +3113,7 @@ object S {
         "creng_asset_mode_invalid" to "mode 只能是 replace 或 append",
         "creng_asset_name_required" to "脚本需要 name",
         "creng_asset_content_too_long" to "单次脚本内容过长，请分块追加",
+        "creng_asset_content_total_too_long" to "脚本总长度已达上限（%1\$d 字符），无法继续追加。请改用替换模式或缩短内容",
         "creng_asset_unknown_regex_fields" to "未知正则字段",
         "creng_asset_field_not_array" to "%1\$s 必须是数组",
         "creng_asset_field_item_invalid" to "%1\$s 的元素类型无效",

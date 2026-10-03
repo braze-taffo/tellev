@@ -499,6 +499,24 @@ internal class CreationToolBox(initial: CreationSession) {
 
     private fun errorPayload(message: String): JsonObject = buildJsonObject { put("error", message) }
 
+    /**
+     * O8: read_card echoes the whole draft every call; long fields
+     * (description, greetings, example messages, …) repeated per round can
+     * fill the context window on their own. Each string over [ECHO_FIELD_CAP]
+     * is clipped with a language-neutral marker naming the dropped size.
+     */
+    private val ECHO_FIELD_CAP = 6_000
+
+    private fun truncateEcho(element: JsonElement): JsonElement = when (element) {
+        is JsonObject -> JsonObject(element.mapValues { (_, value) -> truncateEcho(value) })
+        is JsonArray -> JsonArray(element.map { truncateEcho(it) })
+        is JsonPrimitive ->
+            if (element.isString && element.content.length > ECHO_FIELD_CAP) {
+                JsonPrimitive(element.content.take(ECHO_FIELD_CAP) + "…[+" + (element.content.length - ECHO_FIELD_CAP) + " chars truncated]")
+            } else element
+        else -> element
+    }
+
     private fun readCard(): ToolResult = ToolResult(
         ok = true, name = "read_card",
         payload = buildJsonObject {
@@ -508,7 +526,7 @@ internal class CreationToolBox(initial: CreationSession) {
                 put("source_card_name", sourceCard.name)
                 put("source_card_is_reference_only", true)
             }
-            put("card", encodeJson.encodeToJsonElement(session.card))
+            put("card", truncateEcho(encodeJson.encodeToJsonElement(session.card)))
             put("world_name", session.worldName)
             put("lore_count", session.lore.size)
         },

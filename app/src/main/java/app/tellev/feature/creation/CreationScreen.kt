@@ -203,7 +203,13 @@ fun CreationHomeScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).clickable(enabled = !state.busy) {
+                            // O5: the busy session's row stays clickable so the
+                            // Stop button remains reachable after leaving the
+                            // editor mid-generation; open() no-ops while busy,
+                            // and the editor shows the still-running session.
+                            Column(Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).clickable(
+                                enabled = !state.busy || state.current?.id == session.id,
+                            ) {
                                 viewModel.open(session.id)
                                 onOpenEditor()
                             }.padding(14.dp)) {
