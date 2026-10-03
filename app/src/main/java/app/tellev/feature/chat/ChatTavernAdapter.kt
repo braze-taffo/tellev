@@ -422,7 +422,13 @@ internal object ChatTavernAdapter {
             put("name", name)
             put("mes", content)
             put("is_user", user)
-            put("is_system", isHidden)
+            // ST chat-file semantics: is_system marks system/narrator messages
+            // AND /hide-hidden ones (one flag upstream; TavernHelper reads
+            // is_hidden straight off it). Narrator messages previously landed
+            // here with is_system=false and were misread as plain assistant
+            // turns by scripts (R5).
+            put("is_system", role == MessageRole.System || isHidden)
+            put("is_hidden", isHidden)
             put("role", role.name.lowercase())
             put("send_date", createdAtMillis.toString())
             put("send_date_unix", createdAtMillis)

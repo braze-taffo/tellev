@@ -38,6 +38,8 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 
 internal data class ActiveRegeneration(
@@ -67,6 +69,20 @@ internal class ChatGenerationCoordinator(
     var activeRegeneration: ActiveRegeneration? = null
         private set
 
+    /**
+     * True while an extension-triggered generation ([generateTextFromExtension])
+     * is streaming. Unlike [generationJob] this is not user-cancellable and does
+     * not flip the chat UI into its generating state, but it gates new main-line
+     * sends the same way so the two streams cannot interleave their variable
+     * and message writes.
+     */
+    @Volatile
+    var extensionGenerationActive = false
+        private set
+
+    /** Serializes extension-triggered generations among themselves. */
+    private val extensionGenerationMutex = Mutex()
+
     val isGenerating: Boolean
         get() = generationJob?.isActive == true
 
@@ -88,7 +104,7 @@ internal class ChatGenerationCoordinator(
         if (regenerationMessageId == null && messageText.isBlank() && attachments.isEmpty()) return false
 
         val state = uiState.value
-        if (state.isGenerating || isGenerating) return false
+        if (state.isGenerating || isGenerating || extensionGenerationActive) return false
         val character = state.selectedCharacter
         if (character == null) {
             uiState.update { it.copy(error = UiStrings.get(S.chatgenco_select_character_first)) }
@@ -646,6 +662,23 @@ internal class ChatGenerationCoordinator(
     }
 
     suspend fun generateTextFromExtension(
+        options: JsonObject,
+        uiState: MutableStateFlow<ChatUiState>,
+    ): JsonObject = extensionGenerationMutex.withLock {
+        // Queue behind an in-flight main-line generation instead of streaming
+        // concurrently: both paths write variables and messages, and interleaved
+        // writes were the race the audit flagged. The await happens in the
+        // script's async promise, so nothing deadlocks.
+        generationJob?.join()
+        extensionGenerationActive = true
+        try {
+            generateTextFromExtensionLocked(options, uiState)
+        } finally {
+            extensionGenerationActive = false
+        }
+    }
+
+    private suspend fun generateTextFromExtensionLocked(
         options: JsonObject,
         uiState: MutableStateFlow<ChatUiState>,
     ): JsonObject {
