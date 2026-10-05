@@ -18,7 +18,7 @@ import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.CharacterSummary
 import app.tellev.core.storage.CharacterImporter
 import app.tellev.util.UriUtils
-import app.tellev.ui.TellevRoot
+import app.tellev.ui.dsh.DshRoot
 import app.tellev.ui.theme.TellevTheme
 import app.tellev.ui.theme.isDarkTheme
 import kotlinx.coroutines.Dispatchers
@@ -52,7 +52,7 @@ class MainActivity : ComponentActivity() {
                     darkTheme = themeMode.isDarkTheme(isSystemInDarkTheme()),
                     accent = themeAccent,
                 ) {
-                    TellevRoot()
+                    DshRoot()
                 }
             }
         }

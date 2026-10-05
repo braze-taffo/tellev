@@ -74,24 +74,20 @@ class ChatSendGateTest {
         assertTrue(chatSendEnabled(hasDraft = true, isGenerating = false, isLoading = false))
     }
 
-    @Test fun `input bar and screen wire the loading gate`() {
-        val bar = sourceOf("ChatInputBar.kt")
+    @Test fun `composer and screen wire the loading gate`() {
+        // 旧 UI 已整体重制：闸门现在由 ui/dsh 的 DshChatScreen 统一计算后传给 DshComposer。
+        val screen = sourceOf("ui/dsh/DshChatScreen.kt")
         assertTrue(
-            "ChatInputBar must declare an isLoading parameter",
-            Regex("""isLoading:\s*Boolean\s*=\s*false""").containsMatchIn(bar),
+            "DshChatScreen must consult the loading gate for canSend",
+            screen.contains("chatSendEnabled("),
         )
         assertTrue(
-            "the send control must consult the loading gate",
-            bar.contains("canSend = chatSendEnabled("),
+            "the gate must consume the loading state",
+            screen.contains("isLoading = state.isLoading"),
         )
-        val screen = sourceOf("ChatScreen.kt")
-        val start = screen.indexOf("ChatInputBar(")
-        assertTrue("ChatScreen.kt must still call ChatInputBar", start >= 0)
-        val end = screen.indexOf("\n        )", startIndex = start)
-        val call = screen.substring(start, if (end < 0) screen.length else end)
         assertTrue(
-            "ChatScreen must forward the loading state to the input bar",
-            call.contains("isLoading = state.isLoading"),
+            "the gate must consume the generating state",
+            screen.contains("isGenerating = state.isGenerating"),
         )
     }
 
@@ -174,7 +170,7 @@ class ChatSendGateTest {
     private fun sourceOf(name: String): String {
         var dir = File(System.getProperty("user.dir") ?: ".").absoluteFile
         while (true) {
-            val candidate = File(dir, "app/src/main/java/app/tellev/feature/chat/$name")
+            val candidate = File(dir, "app/src/main/java/app/tellev/$name")
             if (candidate.isFile) return candidate.readText()
             dir = dir.parentFile ?: error("cannot locate $name from ${System.getProperty("user.dir")}")
         }
