@@ -2,13 +2,16 @@ package app.tellev.ui
 
 /** Leaf routes, rather than their containing graph routes, own the bottom bar. */
 internal fun isTopLevelScreen(route: String?): Boolean = route in setOf(
-    "characters/list", "creation/home", "community", "settings",
+    "chat", "characters/list", "world/list", "extensions", "settings",
 )
 
-/**
- * Only the four root tabs can lose nothing by being exited, so only they
- * confirm app exit. Sub-pages (chat, world book list/editors, character detail,
- * settings sub-screens, creation editor, ...) fall back to normal NavHost pop so
- * system back keeps its navigate-up meaning there.
- */
-internal fun shouldConfirmAppExit(route: String?): Boolean = isTopLevelScreen(route)
+internal enum class AppBackAction { None, Parent, ChatHome, CloseConversation, ConfirmExit }
+
+/** The conversation and character picker share the chat route. */
+internal fun appBackAction(route: String?, conversationOpen: Boolean): AppBackAction = when {
+    route.isNullOrBlank() -> AppBackAction.None
+    route == "chat" && conversationOpen -> AppBackAction.CloseConversation
+    route == "chat" -> AppBackAction.ConfirmExit
+    isTopLevelScreen(route) -> AppBackAction.ChatHome
+    else -> AppBackAction.Parent
+}

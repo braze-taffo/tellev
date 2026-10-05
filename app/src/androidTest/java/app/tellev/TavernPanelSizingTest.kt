@@ -59,6 +59,13 @@ class TavernPanelSizingTest {
                 waitUntil { height() in 62f..68f }
             }
             assertTrue(height() < 70f)
+        } catch (error: Throwable) {
+            val view = withContext(Dispatchers.Main) { frames(activity.window.decorView).singleOrNull() }
+            if (view != null) {
+                android.util.Log.e("TavernSizingDiagnostic", evaluate(view, "JSON.stringify({url:location.href,id:window.__tellevDocumentId,resize:window.__tellevResizeInstalled,viewport:window.__tellevNativeViewportHeight,body:document.body.offsetHeight,content:document.getElementById('content')?.offsetHeight,expanded:document.getElementById('card')?.className})"))
+                android.util.Log.e("TavernSizingDiagnostic", withContext(Dispatchers.Main) { "nativeHeight=${view.height},density=${view.resources.displayMetrics.density}" })
+            }
+            throw error
         } finally {
             withContext(Dispatchers.Main) { activity.finish() }
         }

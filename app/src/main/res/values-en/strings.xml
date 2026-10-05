@@ -1887,4 +1887,5 @@
     <string name="wblist_search_hint">搜索世界书名称</string>
     <string name="settings_language">Language</string>
     <string name="settings_language_system">Follow system</string>
+    <string name="chat_render_pending">Processing message…</string>
 </resources>

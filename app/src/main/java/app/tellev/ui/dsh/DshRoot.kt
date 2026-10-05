@@ -94,6 +94,8 @@ import app.tellev.feature.world.WorldBookEntryEditScreen
 import app.tellev.feature.world.WorldBooksListScreen
 import app.tellev.feature.world.WorldViewModel
 import app.tellev.feature.world.WorldViewModelFactory
+import app.tellev.ui.AppBackAction
+import app.tellev.ui.appBackAction
 import app.tellev.ui.theme.isDarkTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.json.JsonObject
@@ -107,11 +109,11 @@ private enum class DshTab(val route: String, val labelRes: Int, val icon: ImageV
 }
 
 /** 顶层路由（保底提交 c9f4ad1 的语义：这些叶子保留底栏）。 */
+/** dsh 外壳的底栏路由（four tabs + chat）。与 upstream isTopLevelScreen 不同：
+ *  本外壳的 tab 是 工坊/类脑/角色卡/设置，world/list 不是 tab。 */
 internal fun isDshTopLevel(route: String?): Boolean = route in setOf(
     "characters/list", "creation/home", "community", "settings", "chat",
 )
-
-internal fun shouldConfirmDshExit(route: String?): Boolean = isDshTopLevel(route)
 
 /**
  * dsh 外壳：底部四 tab（角色工坊/类脑/角色卡/设置），聊天不再是 tab——
@@ -217,12 +219,19 @@ private fun DshRootContent() {
     var showExitConfirmation by rememberSaveable { mutableStateOf(false) }
     // 聊天式创建屏的 JSON 导出中转（SAF 选完 Uri 再写）。
     var pendingCreationExport by remember { mutableStateOf<ByteArray?>(null) }
-    // 层级化返回：只有导航栈到栈底（当前页无上级可 pop）时，系统返回才
-    // 是「退出应用」语义，弹确认；栈里还有页面时返回键交给 NavController
-    // 正常回退，不确认。
+    // 层级化返回（upstream 1.7.1.3 AppBackAction 语义）：二级页返回上一级；
+    // 四个首页 tab 在栈底时返回聊天首页；只有聊天首页在栈底才弹退出确认。
     val canPopBackStack = navController.previousBackStackEntry != null
+    val conversationOpen = chatViewModel.uiState.value.currentSession != null
+    val backAction = appBackAction(currentRoute, conversationOpen)
+    // 首页 tab 在栈底：返回 = 回聊天首页（非退出）。
+    LaunchedEffect(backAction, canPopBackStack) {
+        if (!canPopBackStack && backAction == AppBackAction.ChatHome) {
+            navController.navigate("chat") { launchSingleTop = true }
+        }
+    }
     val exitConfirmationEnabled = !canPopBackStack &&
-        shouldConfirmDshExit(currentRoute) &&
+        backAction == AppBackAction.ConfirmExit &&
         startupGuide == null && manualGuide == null &&
         !showPresetLimitUpgradeNotice && !showQqGroupNotice
     LaunchedEffect(Unit) { updateViewModel.checkOnLaunch() }

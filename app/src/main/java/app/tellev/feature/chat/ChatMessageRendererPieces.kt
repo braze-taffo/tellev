@@ -242,7 +242,7 @@ internal fun StreamingBubble(
             macroContext = macroContext,
         )
     }
-    val segments = rememberRenderedSegments(streamingInputs, "streaming") {
+    val renderState = rememberRenderedSegments(streamingInputs, "streaming") {
         renderMessageParts(
             MessageReasoning.fromResponse(text, reasoning), MessageRole.Character,
             character, preset, userName, 0, includeNormal = true,
@@ -260,7 +260,7 @@ internal fun StreamingBubble(
             modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
         )
         TavernMessageContent(
-            segments = segments,
+            segments = renderState.segments,
             availableMaxHeight = availableMaxHeight,
             isUser = false,
             highlightDialogue = true,

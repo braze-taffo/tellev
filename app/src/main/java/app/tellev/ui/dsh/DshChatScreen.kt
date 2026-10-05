@@ -1170,7 +1170,7 @@ private fun DshMessageRow(
                     macroContext = macroContext,
                 )
             }
-            val segments = rememberRenderedSegments(renderInputs, message.id) {
+            val renderState = rememberRenderedSegments(renderInputs, message.id) {
                 renderMessageParts(
                     parts, message.role, state.selectedCharacter, state.selectedPreset,
                     state.selectedPersona?.name ?: "User", depth,
@@ -1178,7 +1178,10 @@ private fun DshMessageRow(
                     macroContext = macroContext,
                 )
             }.value
+            val segments = renderState.segments
             val hasFrontend = segments.any { it is app.tellev.feature.chat.TavernRenderSegment.Frontend }
+            // 等待渲染（预算内）时用原生占位，避免 WebView 反复重建（upstream 1.7.1.3）。
+            val renderPending = renderState.phase == app.tellev.feature.chat.MessageRenderPhase.Pending && segments.isEmpty()
 
             // QQ 式：左侧角色头像+名标，右侧内容列（正文/滑动/操作行都随列缩进）。
             Row(verticalAlignment = Alignment.Top) {

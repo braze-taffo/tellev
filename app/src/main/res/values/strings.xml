@@ -1645,6 +1645,7 @@
     <string name="chat_import_hint">请先在“角色卡”页导入角色卡。</string>
     <string name="chat_character_card_interface">角色卡界面</string>
     <string name="chat_close_character_card_interface">关闭角色卡界面</string>
+    <string name="chat_render_pending">正在处理消息…</string>
     <string name="chat_previous_page">上一页</string>
     <string name="chat_next_page">下一页</string>
     <string name="nav_tab_chat">聊天</string>

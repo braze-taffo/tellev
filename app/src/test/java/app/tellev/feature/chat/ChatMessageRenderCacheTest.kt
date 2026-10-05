@@ -10,8 +10,53 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.UUID
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 
 class ChatMessageRenderCacheTest {
+
+    @Test fun `pending state contains no executable frontend or markdown`() {
+        for (body in listOf("<html><body><script>sideEffect()</script></body></html>", "**markdown**")) {
+            val pending = MessageRenderState(inputs(body), MessageRenderPhase.Pending)
+            assertTrue(pending.segments.isEmpty())
+            assertTrue(!pending.hasDisplay)
+        }
+    }
+
+    @Test fun `timeout is final and late completion cannot overwrite degraded cache`() = runBlocking {
+        val input = inputs("late-${UUID.randomUUID()}")
+        val result = ChatMessageRenderCache.computeStateAndAwait(input, input.parts.body) {
+            Thread.sleep(1250)
+            listOf(TavernRenderSegment.Frontend("late"))
+        }
+        assertEquals(MessageRenderPhase.Degraded, result.phase)
+        delay(400)
+        assertEquals(result, ChatMessageRenderCache.cachedState(input))
+    }
+
+    @Test fun `superseded work cannot publish a fallback or late frontend`() = runBlocking {
+        val group = "replace-${UUID.randomUUID()}"
+        val old = inputs("old-$group")
+        val fresh = inputs("new-$group")
+        val started = java.util.concurrent.CountDownLatch(1)
+        val first = async {
+            try {
+                ChatMessageRenderCache.computeStateAndAwait(old, group) {
+                    started.countDown()
+                    Thread.sleep(300)
+                    listOf(TavernRenderSegment.Frontend("old"))
+                }
+            } catch (_: CancellationException) { null }
+        }
+        while (started.count > 0) delay(10)
+        val result = ChatMessageRenderCache.computeStateAndAwait(fresh, group) { listOf(TavernRenderSegment.Text("fresh")) }
+        assertEquals(MessageRenderPhase.Ready, result.phase)
+        assertEquals(null, first.await())
+        delay(350)
+        assertEquals(null, ChatMessageRenderCache.cachedState(old))
+        assertEquals(result, ChatMessageRenderCache.cachedState(fresh))
+    }
 
     private fun inputs(body: String = "正文") = RenderInputs(
         MessageReasoning.Parts(reasoning = "", body = body),

@@ -94,6 +94,8 @@ class DefaultPromptEngine(
     }
 
     override fun build(request: PromptBuildRequest): PromptBuildResult {
+        // 群像（1.7.1.4）：附属角色设定注入主请求；raw 直通模式不注入。
+        val request = CharacterCastPrompt.enrich(request, macroEngine)
         val rawGeneration = request.metadata["tavernRawGeneration"]?.jsonPrimitive?.booleanOrNull == true
         // 1. Build MacroContext from request data
         val macroContext = PromptMacroContextBuilder.buildMacroContext(request)

@@ -38,6 +38,8 @@ internal val EXAMPLE_CHAT_SPLIT = Regex("<START>", RegexOption.IGNORE_CASE)
 @Serializable
 data class PromptBuildRequest(
     val character: CharacterCard,
+    /** 附属角色（群像）：主卡统一叙事，这些卡提供人物设定（1.7.1.4 角色卡演员绑定）。 */
+    val supportingCharacters: List<CharacterCard> = emptyList(),
     val persona: Persona?,
     val messages: List<ChatMessage>,
     val worldBooks: List<WorldBook>,

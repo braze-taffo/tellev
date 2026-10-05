@@ -24,6 +24,7 @@ import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.provider.ModelReasoningProfile
 import app.tellev.core.provider.ModelReasoningProfiles
 import app.tellev.core.provider.ReasoningKnowledgeBase
+import app.tellev.core.provider.resolveCharacterCast
 import app.tellev.core.provider.ReasoningSupport
 import app.tellev.core.provider.json
 import app.tellev.core.regex.CharacterRegexApplier
@@ -348,8 +349,14 @@ internal class ChatGenerationCoordinator(
                         ?.takeIf { it >= 0 }
                     byId ?: regenerationInputIndex!!.coerceIn(0, promptMessages.size)
                 } else 0
+                // 群像（1.7.1.4）：附属角色设定进主请求；其世界书一并激活。
+                val supportingCast = resolveCharacterCast(character, dataStore)
+                val supportingBooks = supportingCast.flatMap { member ->
+                    ChatTavernStorage.activeWorldBooks(emptyList(), runtime.worldBooks, member, null)
+                }
                 val promptRequest = PromptBuildRequest(
                     character = character,
+                    supportingCharacters = supportingCast,
                     persona = runtime.persona,
                     messages = when {
                         isRegeneration -> promptMessages.take(regenerationHistoryCut)
@@ -359,7 +366,7 @@ internal class ChatGenerationCoordinator(
                             promptHistoryBeforeCurrentMessage(promptMessages, inputMessage?.id.orEmpty())
                         else -> promptMessages
                     },
-                    worldBooks = ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession),
+                    worldBooks = (ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession) + supportingBooks).distinctBy { it.id },
                     preset = preset,
                     userInput = when {
                         isRegeneration -> inputMessage?.content.orEmpty()
@@ -991,11 +998,16 @@ internal class ChatGenerationCoordinator(
         return try {
             ChatTavernAdapter.emitStEvent(extensionHost, "js_generation_started", generationId)
 
+            val supportingCast = resolveCharacterCast(character, dataStore)
+            val supportingBooks = supportingCast.flatMap { member ->
+                ChatTavernStorage.activeWorldBooks(emptyList(), runtime.worldBooks, member, null)
+            }
             val promptRequest = ExtensionGenerationOptions.promptRequest(options, PromptBuildRequest(
                 character = character,
+                supportingCharacters = supportingCast,
                 persona = runtime.persona,
                 messages = state.messages,
-                worldBooks = ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession),
+                worldBooks = (ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession) + supportingBooks).distinctBy { it.id },
                 preset = preset,
                 userInput = userInput,
                 providerType = config.providerType,

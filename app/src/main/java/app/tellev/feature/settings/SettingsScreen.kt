@@ -54,7 +54,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Row
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.FilterChip
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -170,8 +169,8 @@ internal fun SettingsScreen(
     LaunchedEffect(presetFocusRequest, state.isLoading, providerDetailsOnly) {
         if (presetFocusRequest > 0 && !state.isLoading && !providerDetailsOnly && !imageGenDetailsOnly) {
             settingsSection = 0
-            // Intro, provider card/divider, image card/divider, preset divider.
-            listState.animateScrollToItem(6)
+            // Provider card/divider, image card/divider, preset divider.
+            listState.animateScrollToItem(5)
         }
     }
 

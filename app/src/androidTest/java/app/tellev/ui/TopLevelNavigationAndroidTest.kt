@@ -70,17 +70,19 @@ class TopLevelNavigationAndroidTest {
     }
 
     @Test
-    fun libraryBackConfirmsBeforeNavigationAndRespectsNoAndYes() {
+    fun libraryBackReturnsToChatAndOnlyChatConfirmsExit() {
         tap(R.string.nav_tab_characters)
         waitUntil { characterHeaderVisible() }
         shell("input keyevent 4")
-        waitUntil { matches(R.string.ui_exit_title).isNotEmpty() }
-        tap(R.string.ui_exit_no)
-        waitUntil { matches(R.string.ui_exit_title).isEmpty() && characterHeaderVisible() }
+        waitUntil { chatPickerVisible() }
+        assertTrue(matches(R.string.ui_exit_title).isEmpty())
         assertTrue(tabsVisible())
         assertFalse(activity.isFinishing)
 
-        // No leaves the library in place, so a second back still asks to exit.
+        shell("input keyevent 4")
+        waitUntil { matches(R.string.ui_exit_title).isNotEmpty() }
+        tap(R.string.ui_exit_no)
+        waitUntil { matches(R.string.ui_exit_title).isEmpty() && chatPickerVisible() }
         shell("input keyevent 4")
         waitUntil { matches(R.string.ui_exit_title).isNotEmpty() }
         tap(R.string.ui_exit_yes)
@@ -105,13 +107,11 @@ class TopLevelNavigationAndroidTest {
     }
 
     @Test
-    fun conversationBackKeepsTheChatOnNoAndExitsOnYes() {
+    fun conversationBackReturnsToPickerWithoutExitConfirmation() {
         openConversation()
         shell("input keyevent 4")
-        waitUntil { matches(R.string.ui_exit_title).isNotEmpty() }
-        tap(R.string.ui_exit_no)
-        waitUntil { matches(R.string.ui_exit_title).isEmpty() && matches(greeting).isNotEmpty() }
-        assertTrue(matches(R.string.chat_back).isNotEmpty())
+        waitUntil { chatPickerVisible() }
+        assertTrue(matches(R.string.ui_exit_title).isEmpty())
         assertFalse(activity.isFinishing)
 
         shell("input keyevent 4")
@@ -121,18 +121,18 @@ class TopLevelNavigationAndroidTest {
     }
 
     @Test
-    fun conversationEdgeBackConfirmsWhileToolbarBackOpensThePicker() {
-        openConversation()
+    fun conversationEdgeAndToolbarBackBothOpenThePicker() {
         val display = activity.resources.displayMetrics
         val y = display.heightPixels / 2
         for ((from, to) in listOf(1 to display.widthPixels * 3 / 5,
                 display.widthPixels - 2 to display.widthPixels * 2 / 5)) {
+            openConversation()
             shell("input swipe $from $y $to $y 450")
-            waitUntil { matches(R.string.ui_exit_title).isNotEmpty() }
-            tap(R.string.ui_exit_no)
-            waitUntil { matches(R.string.ui_exit_title).isEmpty() && matches(greeting).isNotEmpty() }
+            waitUntil { chatPickerVisible() }
+            assertTrue(matches(R.string.ui_exit_title).isEmpty())
             assertFalse(activity.isFinishing)
         }
+        openConversation()
         tap(R.string.chat_back)
         waitUntil { matches(R.string.chat_back).isEmpty() && matches(characterName).isNotEmpty() }
         assertTrue(matches(R.string.ui_exit_title).isEmpty())
@@ -140,14 +140,13 @@ class TopLevelNavigationAndroidTest {
     }
 
     @Test
-    fun everyMainPageAndCharacterDetailConfirmsSystemBack() {
-        for (tab in listOf(R.string.nav_tab_chat, R.string.nav_tab_characters,
+    fun otherMainPagesReturnToChatAndCharacterDetailReturnsToLibrary() {
+        for (tab in listOf(R.string.nav_tab_characters,
                 R.string.nav_tab_world, R.string.nav_tab_extensions, R.string.nav_tab_settings)) {
             tap(tab)
             shell("input keyevent 4")
-            waitUntil { matches(R.string.ui_exit_title).isNotEmpty() }
-            tap(R.string.ui_exit_no)
-            waitUntil { matches(R.string.ui_exit_title).isEmpty() && tabsVisible() }
+            waitUntil { chatPickerVisible() }
+            assertTrue(matches(R.string.ui_exit_title).isEmpty())
             assertFalse(activity.isFinishing)
         }
         tap(R.string.nav_tab_characters)
@@ -155,14 +154,23 @@ class TopLevelNavigationAndroidTest {
         tap(characterName)
         waitUntil { !tabsVisible() }
         shell("input keyevent 4")
-        waitUntil { matches(R.string.ui_exit_title).isNotEmpty() }
-        tap(R.string.ui_exit_no)
-        waitUntil { matches(R.string.ui_exit_title).isEmpty() }
-        assertFalse(tabsVisible())
+        waitUntil { tabsVisible() && characterHeaderVisible() }
+        assertTrue(matches(R.string.ui_exit_title).isEmpty())
+        tap(characterName)
+        waitUntil { !tabsVisible() }
         tap(R.string.chars_back_cd)
         waitUntil { tabsVisible() && characterHeaderVisible() }
         assertTrue(matches(R.string.ui_exit_title).isEmpty())
         assertFalse(activity.isFinishing)
+    }
+
+    @Test
+    fun mainPageBackClearsRetainedConversationBeforeReturningToChatHome() {
+        openConversation()
+        tap(R.string.nav_tab_settings)
+        shell("input keyevent 4")
+        waitUntil { chatPickerVisible() }
+        assertTrue(matches(R.string.ui_exit_title).isEmpty())
     }
 
     private fun openConversation() {
@@ -173,6 +181,10 @@ class TopLevelNavigationAndroidTest {
     private fun tabsVisible(): Boolean = listOf(R.string.nav_tab_chat, R.string.nav_tab_characters,
         R.string.nav_tab_world, R.string.nav_tab_extensions, R.string.nav_tab_settings)
         .all { matches(it).isNotEmpty() }
+
+    private fun chatPickerVisible(): Boolean = tabsVisible() &&
+        matches(characterName).isNotEmpty() && matches(R.string.chat_back).isEmpty() &&
+        matches(R.string.chars_import_cd).isEmpty() && matches(R.string.chars_new_character).isEmpty()
 
     private fun characterHeaderVisible(): Boolean = matches(R.string.chars_title).any { node ->
         val rect = Rect()
