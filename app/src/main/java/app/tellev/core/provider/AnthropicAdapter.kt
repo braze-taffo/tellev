@@ -77,15 +77,37 @@ class AnthropicAdapter(
             .takeIf { it.isNotBlank() }
         val conversationMessages = request.prompt.messages.filter { it.role != MessageRole.System }
 
+        // Engine-resolved output budget; extended-thinking budgets must stay
+        // below it, so resolve the unified reasoning injection up front.
+        val outputTokens = request.prompt.maxTokens
+            ?: request.preset.maxCompletionTokens
+            ?: request.preset.maxTokens
+            ?: 8192
+        val reasoningInjection = ReasoningSupport.inject(
+            family = ReasoningFamily.Anthropic,
+            effort = ReasoningSupport.effortFor(request),
+            raw = request.preset.raw,
+            maxTokens = outputTokens,
+        )
+
         val payload = buildJsonObject {
             put("model", JsonPrimitive(config.model ?: "claude-sonnet-4-20250514"))
             // prompt.maxTokens is the engine-resolved output budget
             // (maxCompletionTokens → maxTokens → default); the preset-only
             // lookup ignored the maxCompletionTokens setting entirely.
-            put("max_tokens", JsonPrimitive(request.prompt.maxTokens ?: request.preset.maxCompletionTokens ?: request.preset.maxTokens ?: 8192))
+            put("max_tokens", JsonPrimitive(outputTokens))
             put("stream", JsonPrimitive(request.stream))
-            request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
-            request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
+            // Extended thinking requires temperature == 1; the injection's
+            // temperature override takes precedence over the preset value.
+            val reasoningTemperature = reasoningInjection.fields["temperature"]
+            when {
+                reasoningTemperature != null -> put("temperature", reasoningTemperature)
+                request.preset.temperature != null -> put("temperature", JsonPrimitive(request.preset.temperature))
+            }
+            if ("top_p" !in reasoningInjection.suppress) {
+                request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
+            }
+            reasoningInjection.fields["thinking"]?.let { put("thinking", it) }
             if (systemMessage != null) {
                 put("system", JsonPrimitive(systemMessage))
             }
@@ -160,6 +182,7 @@ class AnthropicAdapter(
                 val source = response.body?.source()
                 var fullText = ""
                 var reasoningText = ""
+                var usage: JsonObject? = null
                 while (source != null && !source.exhausted()) {
                     val line = source.readUtf8Line().orEmpty()
                     if (!line.startsWith("data:")) continue
@@ -183,7 +206,25 @@ class AnthropicAdapter(
                         )))
                         return@use
                     }
-                    if (obj["type"]?.jsonPrimitive?.contentOrNull != "content_block_delta") continue
+                    when (obj["type"]?.jsonPrimitive?.contentOrNull) {
+                        "message_start" -> {
+                            usage = (obj["message"] as? JsonObject)?.get("usage") as? JsonObject
+                            continue
+                        }
+                        "message_delta" -> {
+                            val deltaUsage = obj["usage"] as? JsonObject
+                            if (deltaUsage != null) {
+                                val merged = buildJsonObject {
+                                    usage?.forEach { (key, value) -> put(key, value) }
+                                    deltaUsage.forEach { (key, value) -> put(key, value) }
+                                }
+                                usage = merged
+                            }
+                            continue
+                        }
+                        "content_block_delta" -> Unit
+                        else -> continue
+                    }
                     val delta = obj["delta"]?.jsonObject
                     val text = delta?.get("text")?.jsonPrimitive?.contentOrNull.orEmpty()
                     // Extended thinking arrives as thinking_delta — route it to
@@ -195,20 +236,17 @@ class AnthropicAdapter(
                         emit(GenerateChunk.Delta(text, reasoning = thinking))
                     }
                 }
-                emit(GenerateChunk.Completed(fullText, reasoning = reasoningText))
+                emit(GenerateChunk.Completed(fullText, usage = usage, reasoning = reasoningText))
             } else {
                 val body = response.body?.string().orEmpty()
-                val text = runCatching {
-                    val obj = json.parseToJsonElement(body).jsonObject
-                    // Content blocks can start with a thinking block when
-                    // extended thinking is on; take the text blocks only.
-                    obj["content"]?.jsonArray
-                        ?.filterIsInstance<JsonObject>()
-                        ?.filter { it["type"]?.jsonPrimitive?.contentOrNull == "text" }
-                        ?.joinToString("") { it["text"]?.jsonPrimitive?.contentOrNull.orEmpty() }
-                        .orEmpty()
-                }.getOrDefault("")
-                emit(GenerateChunk.Completed(text))
+                val parsed = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+                val text = parsed
+                    ?.get("content")?.jsonArray
+                    ?.filterIsInstance<JsonObject>()
+                    ?.filter { it["type"]?.jsonPrimitive?.contentOrNull == "text" }
+                    ?.joinToString("") { it["text"]?.jsonPrimitive?.contentOrNull.orEmpty() }
+                    .orEmpty()
+                emit(GenerateChunk.Completed(text, usage = parsed?.get("usage") as? JsonObject))
             }
         }
         } catch (e: kotlinx.coroutines.CancellationException) {

@@ -59,6 +59,47 @@ class AnthropicAdapterTest {
     }
 
     @Test
+    fun `stream usage from message start and delta reaches completed chunk`() = runBlocking {
+        val adapter = AnthropicAdapter(client = client { chain ->
+            response(
+                chain,
+                200,
+                """
+                data: {"type":"message_start","message":{"usage":{"input_tokens":80,"cache_read_input_tokens":30,"cache_creation_input_tokens":10}}}
+
+                data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}
+
+                data: {"type":"message_delta","usage":{"output_tokens":20}}
+
+                data: [DONE]
+
+                """.trimIndent(),
+                mediaType = "text/event-stream",
+            )
+        })
+        val chunks = adapter.streamGenerate(config(), GenerateRequest(
+            prompt = prompt(),
+            preset = GenerationPreset("p", "p", ProviderCatalog.ANTHROPIC),
+        )).toList()
+        val completed = chunks.filterIsInstance<GenerateChunk.Completed>().single()
+        assertEquals(80, completed.usage?.get("input_tokens")?.jsonPrimitive?.content?.toInt())
+        assertEquals(20, completed.usage?.get("output_tokens")?.jsonPrimitive?.content?.toInt())
+        assertEquals(30, completed.usage?.get("cache_read_input_tokens")?.jsonPrimitive?.content?.toInt())
+    }
+
+    @Test
+    fun `non streaming usage reaches completed chunk`() = runBlocking {
+        val adapter = AnthropicAdapter(client = client { chain ->
+            response(chain, 200, """{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":3,"output_tokens":2}}""")
+        })
+        val completed = adapter.streamGenerate(
+            config(), GenerateRequest(prompt = prompt(), preset = GenerationPreset("p", "p", ProviderCatalog.ANTHROPIC), stream = false),
+        ).toList().filterIsInstance<GenerateChunk.Completed>().single()
+        assertEquals(3, completed.usage?.get("input_tokens")?.jsonPrimitive?.content?.toInt())
+        assertEquals(2, completed.usage?.get("output_tokens")?.jsonPrimitive?.content?.toInt())
+    }
+
+    @Test
     fun `attachments become image blocks on the final user turn only`() = runBlocking {
         var capturedBody = ""
         val adapter = AnthropicAdapter(
@@ -108,6 +149,14 @@ class AnthropicAdapterTest {
         )
         assertTrue(capturedBody.contains("\"max_tokens\":77"))
     }
+
+    private fun prompt() = PromptBuildResult(
+        messages = listOf(PromptMessage(MessageRole.User, content = "hello")),
+        stop = emptyList(),
+        maxTokens = 77,
+        providerType = ProviderCatalog.ANTHROPIC,
+        diagnostics = PromptDiagnostics(activatedWorldEntryIds = emptyList()),
+    )
 
     private fun config() = ProviderConfig(
         providerType = ProviderCatalog.ANTHROPIC,

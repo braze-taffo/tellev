@@ -64,6 +64,8 @@ class TellevGraph private constructor(
     val extensionSettingsStore: ExtensionSettingsStore,
     val appPreferences: AppPreferences,
     val updateChecker: UpdateChecker,
+    /** Size-capped image download for URL-returning image engines (shared client policy). */
+    val imageDownloader: suspend (String) -> ByteArray?,
 ) {
     val importedCardSignal = MutableStateFlow(0L)
 
@@ -281,6 +283,9 @@ class TellevGraph private constructor(
                 extensionSettingsStore = extensionSettingsStore,
                 appPreferences = appPreferences,
                 updateChecker = updateChecker,
+                imageDownloader = { url ->
+                    app.tellev.core.provider.ImageResultNormalizer.defaultUrlDownloader(providerClient, url)
+                },
             )
         }
     }

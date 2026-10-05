@@ -1,3 +1,5 @@
+ext_entry_title	扩展功能
+ext_entry_hint	脚本、正则替换、长期记忆与兼容模块都在这里管理
 extcompat_ejs_title	EJS 提示词模板设置
 extcompat_ejs_subtitle	控制 EJS 模板（<%= ... %>）在提示词生成和消息渲染中的行为。
 extcompat_section_basic	基础
@@ -170,3 +172,19 @@ extmem_custom_entry	单独填写
 extdbg_loaded	扩展已加载
 extdbg_unloaded	扩展已卸载
 extdbg_load_failed	扩展加载失败
+extmem_output_limit_hint	1024–65536，默认 16384。推理模型的思考也可能占用此额度；请按模型支持的上限设置。
+extmem_output_limit_label	记忆整理输出上限（token）
+extdbg_errors_title	脚本错误（%1$d）
+extdbg_error_meta	出现 %1$d 次 · 最近 %2$s
+extdbg_stats_title	API 统计（次数 / 平均 ms / 最大 ms / 错误）
+extdbg_stats_row	%1$d / %2$s / %3$s / %4$d
+extdbg_recent_calls	最近调用
+extdbg_recent_call_row	%1$s  %2$s  %3$s ms
+extdbg_permissions_title	权限清单
+extdbg_permission_not_declared	（未声明）
+extdbg_perm_network	网络访问
+extdbg_perm_storage	存储读写
+extdbg_perm_secrets	密钥访问
+extdbg_perm_ui_panel	界面面板
+extdbg_perm_provider	Provider 请求
+extdbg_perm_clipboard	剪贴板

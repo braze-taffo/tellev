@@ -8,7 +8,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContentScope
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -16,12 +18,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChatBubble
-import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.People
-import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
@@ -29,6 +31,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -79,6 +84,7 @@ import app.tellev.feature.characters.CharacterDetailScreen
 import app.tellev.feature.characters.CharactersListScreen
 import app.tellev.feature.characters.CharactersViewModel
 import app.tellev.feature.characters.CharactersViewModelFactory
+import app.tellev.feature.community.CommunityScreen
 import app.tellev.feature.creation.CreationEditorScreen
 import app.tellev.feature.creation.CreationHomeScreen
 import app.tellev.feature.creation.CreationViewModel
@@ -93,6 +99,7 @@ import app.tellev.feature.guide.GuideOverlay
 import app.tellev.feature.settings.SettingsScreen
 import app.tellev.feature.settings.SettingsViewModel
 import app.tellev.feature.settings.SettingsViewModelFactory
+import app.tellev.feature.metrics.UsageStatsRoute
 import app.tellev.feature.update.UpdateViewModel
 import app.tellev.feature.update.UpdateViewModelFactory
 import app.tellev.feature.world.WorldBookDetailScreen
@@ -111,15 +118,13 @@ private tailrec fun Context.hostActivity(): Activity? = when (this) {
 
 private enum class TellevTab(
     val route: String,
-    val label: String,
+    val labelRes: Int,
     val icon: ImageVector,
-    val contentDescription: String = label,
 ) {
-    Chat("chat", "聊天", Icons.Default.ChatBubble),
-    Characters("characters", "角色", Icons.Default.People),
-    World("world", "世界书", Icons.Default.Public),
-    Extensions("extensions", "扩展", Icons.Default.Extension),
-    Settings("settings", "设置", Icons.Default.Settings),
+    Workshop("creation/home", R.string.nav_tab_workshop, Icons.Default.AutoFixHigh),
+    Community("community", R.string.nav_tab_community, Icons.Default.Forum),
+    Characters("characters", R.string.nav_tab_characters, Icons.Default.PlayCircle),
+    Settings("settings", R.string.nav_tab_settings, Icons.Default.Settings),
 }
 
 @Composable
@@ -137,6 +142,7 @@ fun TellevRoot() {
             extensionHost = graph.extensionHost,
             permissionManager = graph.permissionManager,
             externalChatWritePort = graph.apiRouter.externalChatWrites,
+            imageDownloader = graph.imageDownloader,
         ),
     )
 
@@ -159,6 +165,7 @@ fun TellevRoot() {
             store = graph.dataStore,
             secrets = graph.secretStore,
             providers = graph.providerRegistry,
+            imageDownloader = graph.imageDownloader,
         ),
     )
 
@@ -237,10 +244,14 @@ fun TellevRoot() {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
-    // Determine which bottom tab is selected based on current destination
+    // Determine which bottom tab is selected based on current destination.
+    // Sub-routes inherit their tab: "characters/detail/..." lights up 角色卡,
+    // but the bottom bar itself is hidden on non-top-level routes anyway.
     val currentTab = TellevTab.entries.find { tab ->
-        currentDestination?.hierarchy?.any { it.route?.startsWith(tab.route) == true } == true
-    } ?: TellevTab.Chat
+        currentDestination?.hierarchy?.any {
+            it.route == tab.route || it.route?.startsWith("${tab.route}/") == true
+        } == true
+    } ?: TellevTab.Characters
 
     // Hide bottom bar on detail/edit screens.
     val showBottomBar = isTopLevelScreen(currentDestination?.route)
@@ -249,14 +260,63 @@ fun TellevRoot() {
         startupGuide == null && manualGuide == null &&
         !showPresetLimitUpgradeNotice && !showQqGroupNotice
 
+    // 中等/加宽窗口（平板、折叠屏展开、分屏、桌面窗口）改用左侧导航栏，
+    // 让内容区拿回整块底部空间。紧凑窗口保持原来的底部栏。
+    // 只改外壳布局，route、ViewModel 创建与返回策略都不动。
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    val useRail = maxWidth >= 600.dp
+    val navigateToTab: (TellevTab) -> Unit = { tab ->
+        navController.navigate(tab.route) {
+            // Pop up to the graph's start destination to avoid
+            // building up a large stack of destinations
+            popUpTo(navController.graph.findStartDestination().id) {
+                saveState = true
+            }
+            // Avoid multiple copies of the same destination
+            launchSingleTop = true
+            // Restore state when re-selecting a previously selected item
+            restoreState = true
+        }
+    }
+
     // 指引覆盖层的宿主：它是一个应用窗口内的全屏层，不是独立窗口——全屏 Dialog 的窗口
     // 几何会让底部按钮被切掉（见 GuideOverlay 的注释）。Box 里唯一需要留意的是顺序：
     // 覆盖层写在 Scaffold 之后才会盖在页面之上。
     Box(modifier = Modifier.fillMaxSize()) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            if (useRail && showBottomBar) {
+                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    NavigationRail(
+                        containerColor = Color.Transparent,
+                        modifier = Modifier.widthIn(min = 88.dp),
+                    ) {
+                        TellevTab.entries.forEach { tab ->
+                            NavigationRailItem(
+                                selected = currentTab == tab,
+                                colors = NavigationRailItemDefaults.colors(
+                                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                ),
+                                onClick = { navigateToTab(tab) },
+                                icon = { Icon(tab.icon, contentDescription = stringResource(tab.labelRes)) },
+                                label = {
+                                    Text(
+                                        text = stringResource(tab.labelRes),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        fontSize = 11.sp,
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+            }
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
-            if (showBottomBar) {
+            if (showBottomBar && !useRail) {
                 Surface(
                     shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -264,13 +324,6 @@ fun TellevRoot() {
                 ) {
                 NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp) {
                     TellevTab.entries.forEach { tab ->
-                        val tabLabelRes = when (tab) {
-                            TellevTab.Chat -> R.string.nav_tab_chat
-                            TellevTab.Characters -> R.string.nav_tab_characters
-                            TellevTab.World -> R.string.nav_tab_world
-                            TellevTab.Extensions -> R.string.nav_tab_extensions
-                            TellevTab.Settings -> R.string.nav_tab_settings
-                        }
                         NavigationBarItem(
                             selected = currentTab == tab,
                             colors = NavigationBarItemDefaults.colors(
@@ -278,23 +331,11 @@ fun TellevRoot() {
                                 selectedTextColor = MaterialTheme.colorScheme.primary,
                                 indicatorColor = MaterialTheme.colorScheme.primaryContainer,
                             ),
-                            onClick = {
-                                navController.navigate(tab.route) {
-                                    // Pop up to the graph's start destination to avoid
-                                    // building up a large stack of destinations
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    // Avoid multiple copies of the same destination
-                                    launchSingleTop = true
-                                    // Restore state when re-selecting a previously selected item
-                                    restoreState = true
-                                }
-                            },
-                            icon = { Icon(tab.icon, contentDescription = stringResource(tabLabelRes)) },
+                            onClick = { navigateToTab(tab) },
+                            icon = { Icon(tab.icon, contentDescription = stringResource(tab.labelRes)) },
                             label = {
                                 Text(
-                                    text = stringResource(tabLabelRes),
+                                    text = stringResource(tab.labelRes),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     fontSize = 11.sp,
@@ -307,9 +348,10 @@ fun TellevRoot() {
             }
         },
     ) { innerPadding ->
+
         NavHost(
             navController = navController,
-            startDestination = TellevTab.Chat.route,
+            startDestination = TellevTab.Characters.route,
             modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
         ) {
             fun NavGraphBuilder.appPage(
@@ -327,8 +369,9 @@ fun TellevRoot() {
                 }
             }
 
-            // Chat tab - single screen
-            appPage(TellevTab.Chat.route) {
+            // Chat — 聊天并入角色卡：从角色列表点卡片进入，不再占底部 tab。
+            // 顶栏返回的是角色列表，世界书从这里进（并入聊天界面）。
+            appPage("chat") {
                 val bubbleAlpha by graph.chatBubbleAlphaFlow.collectAsState()
                 val chatFontSizeSp by graph.chatFontSizeSpFlow.collectAsState()
                 ChatScreen(
@@ -336,6 +379,11 @@ fun TellevRoot() {
                     bottomBarReserve = innerPadding.calculateBottomPadding(),
                     bubbleAlpha = bubbleAlpha,
                     chatFontSizeSp = chatFontSizeSp,
+                    onBack = { navController.popBackStack() },
+                    onOpenWorldBooks = { navController.navigate("world/list") },
+                    onOpenPlugins = { navController.navigate("extensions") },
+                    onOpenImageGenSettings = { navController.navigate("settings/imagegen") },
+                    onOpenUsageStats = { navController.navigate("settings/usage") },
                 )
             }
 
@@ -347,17 +395,20 @@ fun TellevRoot() {
                 appPage("characters/list") {
                     CharactersListScreen(
                         viewModel = charactersViewModel,
-                        onCreateWithAi = { navController.navigate("creation/home") },
                         onCreateClick = { navController.navigate("characters/create") },
+                        onCharacterClick = { characterId ->
+                            // 点击角色卡直接进入与该角色的聊天。
+                            charactersViewModel.selectCharacter(characterId)
+                            navController.navigate("chat")
+                        },
+                        onEditClick = { characterId ->
+                            navController.navigate("characters/detail/$characterId")
+                        },
                         onEditWithAi = { characterId ->
                             navController.navigate("creation/edit/character/$characterId")
                         },
                         onCreateWorldBookWithAi = { characterId ->
                             navController.navigate("creation/from-character/world/$characterId")
-                        },
-                        onCharacterClick = { characterId ->
-                            charactersViewModel.selectCharacter(characterId)
-                            navController.navigate("characters/detail/$characterId")
                         },
                     )
                 }
@@ -390,10 +441,10 @@ fun TellevRoot() {
                 }
             }
 
-            // World tab with sub-navigation
+            // 世界书并入聊天界面：从聊天的「更多」菜单进入，不再是顶层 tab。
             navigation(
                 startDestination = "world/list",
-                route = TellevTab.World.route,
+                route = "world",
             ) {
                 appPage("world/list") {
                     WorldBooksListScreen(
@@ -527,26 +578,47 @@ fun TellevRoot() {
                 )
             }
 
-            // Extensions tab - single screen
-            appPage(TellevTab.Extensions.route) {
-                ExtensionsScreen(viewModel = extensionsViewModel)
+            // 拓展并入设置：不再是顶层 tab，从「设置 → 扩展功能」进入。
+            appPage("extensions") {
+                ExtensionsScreen(
+                    viewModel = extensionsViewModel,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            // 类脑社区套壳：浏览角色卡社区并直接下载导入。
+            appPage("community") {
+                CommunityScreen(
+                    dataStore = graph.dataStore,
+                    onImported = { charactersViewModel.loadCharacters() },
+                )
             }
 
             // Settings tab - single screen
             appPage(TellevTab.Settings.route) {
-                SettingsScreen(
-                    viewModel = settingsViewModel,
-                    updateViewModel = updateViewModel,
-                    presetFocusRequest = presetFocusRequest,
-                    onOpenGuide = { manualGuide = it },
-                    onOpenProviderSettings = {
-                        navController.navigate("settings/providers")
-                    },
-                    onOpenImageGenSettings = {
-                        navController.navigate("settings/imagegen")
-                    },
-                )
-            }
+                    SettingsScreen(
+                        viewModel = settingsViewModel,
+                        updateViewModel = updateViewModel,
+                        presetFocusRequest = presetFocusRequest,
+                        onOpenGuide = { manualGuide = it },
+                        onOpenProviderSettings = {
+                            navController.navigate("settings/providers")
+                        },
+                        onOpenImageGenSettings = {
+                            navController.navigate("settings/imagegen")
+                        },
+                        onOpenUsageStats = {
+                            navController.navigate("settings/usage")
+                        },
+                        onOpenExtensions = {
+                            navController.navigate("extensions")
+                        },
+                    )
+                }
+                appPage("settings/usage") {
+                    UsageStatsRoute(onBack = { navController.popBackStack() })
+                }
+
             appPage("settings/imagegen") {
                 SettingsScreen(
                     viewModel = settingsViewModel,
@@ -592,6 +664,8 @@ fun TellevRoot() {
     // 内容区盖不住底栏，所以那边只发请求，不自己渲染。
     manualGuide?.let { kind ->
         GuideOverlay(kind = kind, onDismiss = { manualGuide = null })
+    }
+        }
     }
     }
 

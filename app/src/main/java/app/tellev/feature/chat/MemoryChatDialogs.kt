@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -64,6 +65,7 @@ internal fun MemoryChatDialogs(state: ChatUiState, viewModel: ChatViewModel, sho
     var confirmRebuild by remember(session.id) { mutableStateOf(false) }
     var confirmVectors by remember(session.id) { mutableStateOf(false) }
     var showInactive by remember(session.id) { mutableStateOf(false) }
+    var historyFor by remember(session.id) { mutableStateOf<MemoryRecord?>(null) }
     val replyCount = session.messages.count { it.role == MessageRole.Character || it.role == MessageRole.Assistant }
     AlertDialog(
         onDismissRequest = onClose,
@@ -95,6 +97,9 @@ internal fun MemoryChatDialogs(state: ChatUiState, viewModel: ChatViewModel, sho
                             Text(stringResource(R.string.chat_memory_source_label, source.joinToString(" / ").ifBlank { stringResource(R.string.chat_memory_source_manual) }))
                             Row {
                                 TextButton(onClick = { editing = record; editText = record.text }) { Text(stringResource(R.string.chat_correct)) }
+                                if (record.history.isNotEmpty()) {
+                                    TextButton(onClick = { historyFor = record }) { Text(stringResource(R.string.chat_memory_history)) }
+                                }
                                 TextButton(onClick = { viewModel.correctMemory(record.id, null) }) { Text(stringResource(R.string.chat_memory_delete)) }
                             }
                         }
@@ -142,6 +147,41 @@ internal fun MemoryChatDialogs(state: ChatUiState, viewModel: ChatViewModel, sho
                 TextButton(onClick = { viewModel.correctMemory(record.id, editText); editing = null }, enabled = editText.isNotBlank()) { Text(stringResource(R.string.chat_memory_save)) }
             },
             dismissButton = { TextButton(onClick = { editing = null }) { Text(stringResource(R.string.chat_memory_cancel)) } },
+        )
+    }
+    historyFor?.let { record ->
+        // Re-read from state so a restore refreshes the list in place.
+        val current = state.memoryRecords.firstOrNull { it.id == record.id } ?: record
+        AlertDialog(
+            onDismissRequest = { historyFor = null },
+            title = { Text(stringResource(R.string.chat_memory_history_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (current.history.isEmpty()) {
+                        Text(stringResource(R.string.chat_memory_history_empty))
+                    }
+                    current.history.forEachIndexed { index, correction ->
+                        Column(Modifier.fillMaxWidth()) {
+                            Text(
+                                correction.text,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.heightIn(max = 120.dp).verticalScroll(rememberScrollState()),
+                            )
+                            TextButton(onClick = {
+                                viewModel.rollbackMemoryCorrection(record.id, index)
+                                historyFor = null
+                            }) { Text(stringResource(R.string.chat_memory_restore)) }
+                        }
+                    }
+                    Text(
+                        stringResource(R.string.chat_memory_history_current),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(current.text, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = { TextButton(onClick = { historyFor = null }) { Text(stringResource(R.string.chat_memory_close)) } },
         )
     }
 }

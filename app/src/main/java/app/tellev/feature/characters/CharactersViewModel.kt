@@ -7,8 +7,12 @@ import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterSummary
 import app.tellev.core.model.WorldBookSummary
 import app.tellev.core.storage.CharacterExporter
-import app.tellev.core.storage.CharacterImporter
+import app.tellev.core.storage.BatchImportReport
+import app.tellev.core.storage.BatchImportSource
+import app.tellev.core.storage.CharacterBatchImporter
 import app.tellev.core.storage.StDataStore
+import app.tellev.core.i18n.S
+import app.tellev.core.i18n.UiStrings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +41,9 @@ data class CharactersUiState(
     val selectionError: String? = null,
     val error: String? = null,
     val info: String? = null,
+    // Multi-file import outcome; the list screen renders it as a summary
+    // dialog. Null after the user dismisses it (clearBatchImportReport).
+    val batchImportReport: BatchImportReport? = null,
 )
 
 class CharactersViewModel(
@@ -47,7 +54,7 @@ class CharactersViewModel(
     private val _uiState = MutableStateFlow(CharactersUiState())
     val uiState: StateFlow<CharactersUiState> = _uiState.asStateFlow()
 
-    private val importer = CharacterImporter()
+    private val batchImporter = CharacterBatchImporter()
     private val exporter = CharacterExporter()
 
     init {
@@ -276,40 +283,57 @@ class CharactersViewModel(
     }
 
     fun importCharacter(bytes: ByteArray, fileName: String) {
+        importCharacters(listOf(BatchImportSource(fileName, bytes)))
+    }
+
+    /**
+     * Batch import: every file is isolated — one malformed card never aborts
+     * the rest. A single-file batch reports through the existing info/error
+     * snackbars; a multi-file batch surfaces the full per-file report dialog.
+     */
+    fun importCharacters(sources: List<BatchImportSource>) {
+        if (sources.isEmpty()) return
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
+            _uiState.update { it.copy(isLoading = true, error = null, batchImportReport = null) }
             try {
-                val card = importer.importFromBytes(bytes, fileName)
-                val importedCard = if (card.id.isBlank() || card.id == "imported_character") {
-                    card.copy(id = "char_${UUID.randomUUID()}")
-                } else {
-                    card
-                }
-                val uniqueCard = ensureUniqueImportedId(importedCard)
-                dataStore.importCharacter(uniqueCard, bytes, fileName)
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        info = "角色“${importedCard.name}”已导入。",
-                    )
-                }
+                val existingIds = _uiState.value.characters.map { it.id }.toSet()
+                val report = batchImporter.importAll(sources, existingIds, dataStore)
                 loadCharacters()
                 importedCardSignal.value = importedCardSignal.value + 1L
+                _uiState.update { state ->
+                    when {
+                        report.results.size == 1 -> {
+                            val result = report.results.first()
+                            if (result.isSuccess) {
+                                state.copy(
+                                    isLoading = false,
+                                    info = UiStrings.get(
+                                        S.chars_import_one_ok,
+                                        result.characterName ?: result.fileName,
+                                    ),
+                                )
+                            } else {
+                                state.copy(
+                                    isLoading = false,
+                                    error = UiStrings.get(S.chars_import_failed, result.error ?: ""),
+                                )
+                            }
+                        }
+                        else -> state.copy(isLoading = false, batchImportReport = report)
+                    }
+                }
             } catch (e: Exception) {
+                // Per-item failures are already isolated above; reaching here
+                // means the store itself rejected the batch-level flow.
                 _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        error = "导入角色失败：${e.message}",
-                    )
+                    it.copy(isLoading = false, error = UiStrings.get(S.chars_import_failed, e.message))
                 }
             }
         }
     }
 
-    private fun ensureUniqueImportedId(card: CharacterCard): CharacterCard {
-        val existingIds = _uiState.value.characters.map { it.id }.toSet()
-        if (card.id !in existingIds) return card
-        return card.copy(id = "${card.id}_${UUID.randomUUID().toString().take(8)}")
+    fun clearBatchImportReport() {
+        _uiState.update { it.copy(batchImportReport = null) }
     }
 
     suspend fun exportCharacterToJson(id: String): String? {

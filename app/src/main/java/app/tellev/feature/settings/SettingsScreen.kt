@@ -41,6 +41,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.tellev.R
 import app.tellev.core.guide.GuideKind
+import app.tellev.core.provider.ProviderCatalog
+import app.tellev.core.tts.TtsSettings
+import app.tellev.core.tts.TtsSettingsValues
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.Persona
 import app.tellev.core.model.PresetCategory
@@ -67,6 +70,8 @@ internal fun SettingsScreen(
     onOpenProviderSettings: () -> Unit,
     providerDetailsOnly: Boolean = false,
     onOpenImageGenSettings: () -> Unit = {},
+    onOpenUsageStats: () -> Unit = {},
+    onOpenExtensions: () -> Unit = {},
     imageGenDetailsOnly: Boolean = false,
     presetFocusRequest: Int = 0,
     onOpenGuide: (GuideKind) -> Unit = {},
@@ -80,6 +85,10 @@ internal fun SettingsScreen(
     val scope = rememberCoroutineScope()
     var settingsSection by rememberSaveable { mutableIntStateOf(0) }
     val context = LocalContext.current
+    val ttsSettings = remember(context) { TtsSettings(context) }
+    var ttsValues by remember { mutableStateOf(ttsSettings.load()) }
+    val ttsProviderConfigured = (state.selectedProviderId == ProviderCatalog.OPENAI_COMPATIBLE ||
+        state.selectedProviderId.startsWith("custom:")) && state.apiKey.isNotBlank()
     val versionUnknown = stringResource(R.string.setscreen_version_unknown)
     val versionName = remember(context, versionUnknown) {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: versionUnknown
@@ -100,6 +109,7 @@ internal fun SettingsScreen(
     var showComfyWorkflowDialog by remember { mutableStateOf(false) }
     var showComfyParamsDialog by remember { mutableStateOf(false) }
     var showNovelAiParamsDialog by remember { mutableStateOf(false) }
+    var editingImageProfile by remember { mutableStateOf<app.tellev.core.provider.ImageProviderProfile?>(null) }
     var novelAiTokenVisible by remember { mutableStateOf(false) }
     var pendingDeleteConfigId by remember { mutableStateOf<String?>(null) }
 
@@ -235,6 +245,10 @@ internal fun SettingsScreen(
                         onOpenNovelAiParamsDialog = { showNovelAiParamsDialog = true },
                         novelAiTokenVisible = novelAiTokenVisible,
                         onToggleNovelAiTokenVisible = { novelAiTokenVisible = !novelAiTokenVisible },
+                        onEditImageProfile = {
+                            viewModel.clearImageProfileStatus()
+                            editingImageProfile = it
+                        },
                     )
                 } else if (providerDetailsOnly) {
                     providerDetailsItems(
@@ -254,6 +268,10 @@ internal fun SettingsScreen(
                         )
                     }
                     if (settingsSection == 0) {
+                    item(key = "usage_stats_entry") {
+                        UsageStatsEntryCard(onClick = onOpenUsageStats)
+                    }
+
                     item(key = "provider_quick_switch") {
                         ProviderQuickSwitchCard(
                             state = state,
@@ -355,9 +373,26 @@ internal fun SettingsScreen(
                             (context as? android.app.Activity)?.recreate()
                         },
                     )
+
+                    item(key = "tts_settings") {
+                        TtsSettingsSection(
+                            context = context,
+                            initial = ttsValues,
+                            providerConfigured = ttsProviderConfigured,
+                            onSave = {
+                                ttsValues = it.validated()
+                                ttsSettings.save(ttsValues)
+                            },
+                        )
+                    }
                     }
 
                     if (settingsSection == 3) {
+                    // 拓展并入设置：脚本、正则、记忆等扩展能力统一从这里进。
+                    item(key = "extensions_entry") {
+                        ExtensionsEntryCard(onClick = onOpenExtensions)
+                    }
+
                     backupSectionItems(
                         onExportClick = { showExportDialog = true },
                         onImportClick = { showImportDialog = true },
@@ -506,6 +541,20 @@ internal fun SettingsScreen(
             state = state,
             viewModel = viewModel,
             onDismiss = { showNovelAiParamsDialog = false },
+        )
+    }
+
+    editingImageProfile?.let { profileTarget ->
+        ImageProfileEditDialog(
+            initial = profileTarget,
+            isTesting = state.isTestingImageProfile,
+            testStatus = state.imageProfileStatus,
+            onTest = viewModel::testImageProfile,
+            onSave = { profile ->
+                editingImageProfile = null
+                viewModel.saveImageProfile(profile)
+            },
+            onDismiss = { editingImageProfile = null },
         )
     }
 

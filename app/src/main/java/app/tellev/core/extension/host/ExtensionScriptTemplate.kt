@@ -174,6 +174,30 @@ internal object ExtensionScriptTemplate {
                 "function _ctxTickAdvance(){_ctxTickToken++;if(_ctxTickToken>1000000){_ctxTickToken=0;_ctxTickCache=null;}}" +
                 "if(!window.__tellevCtxTickAdvancer){window.__tellevCtxTickAdvancer=true;var _origSetTimeout=window.setTimeout;window.setTimeout=function(fn,ms){var args=[].slice.call(arguments,2);return _origSetTimeout(function(){_ctxTickAdvance();try{return fn.apply(this,args);}catch(e){throw e;}},ms);};}"
 
+        /**
+         * Wraps every bridge method (except the skip-listed high-frequency noise
+         * and the async apiCall, whose handler time the host records natively)
+         * with a timing probe reporting through [tellevNative.traceCall]. Runs
+         * before the shim IIFE, so every bare `tellevNative.` reference in the
+         * shim and in card scripts resolves to the wrapper. Pure telemetry.
+         */
+        internal const val BRIDGE_TRACE_WRAPPER_JS: String =
+            "(function(){" +
+                "var raw=window.tellevNative;if(!raw||raw.__tellevTraced)return;" +
+                "var skip={emit:1,emitFromEventSource:1,log:1,traceCall:1,apiCall:1,extensionReady:1};" +
+                "var names=['commandResult','evaluationDone','executeSlashCommands','extensionFailed','getCapabilityToken','getSettings','hasPermission','registerCommand','requestPermission','requestPermissionAsync','saveSettings','stCompatStorage','stGetAllVariables','stGetContext','stGetInjectedPrompts','stGetLocalVariables','stGetMessageVariables','stGetVariables','stGetVariablesForScope','stInjectPrompt','stInjectPromptWithOptions','stPresetCall','stReplaceVariables','stSetChatMessages','stSetLocalVariables','stSetMessageVariables','stSetVariables','stSetVariablesForScope','stUninjectPrompt','virtualApiResult'];" +
+                "var wrapped={};var traced=0;" +
+                "for(var i=0;i<names.length;i++){var n=names[i];var f=raw[n];if(typeof f!=='function'){continue;}" +
+                "if(skip[n]){wrapped[n]=(function(fn){return function(){return fn.apply(raw,arguments);};})(f);continue;}" +
+                "wrapped[n]=(function(name,fn){return function(){" +
+                "var t0=performance.now();" +
+                "try{var r=fn.apply(raw,arguments);raw.traceCall(name,performance.now()-t0,false);return r;}" +
+                "catch(e){try{raw.traceCall(name,performance.now()-t0,true);}catch(_e){}throw e;}" +
+                "};})(n,f);traced++;" +
+                "}" +
+                "if(traced>0){wrapped.__tellevTraced=true;window.tellevNative=wrapped;}" +
+                "})();"
+
         // The HTML is stored as a plain string (not a raw """...""") so
         // that the JS /* ... */ comments inside cannot be mistaken for
         // Kotlin block comments by the compiler.
@@ -185,6 +209,7 @@ internal object ExtensionScriptTemplate {
             "<script src=\"https://extensions.tellev.local/compat/globals.js\"></script>" +
             "</head><body><script>\n" +
             "__SHOWDOWN_SOURCE__\n" +
+            BRIDGE_TRACE_WRAPPER_JS +
             "(function(){" +
             "'use strict';" +
             "var _extensionId='__EXTENSION_ID__';" +

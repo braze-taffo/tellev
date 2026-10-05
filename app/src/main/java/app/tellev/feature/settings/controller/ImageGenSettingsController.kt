@@ -4,6 +4,7 @@ import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import app.tellev.core.provider.ComfyUiSettings
 import app.tellev.core.provider.ComfyWorkflowTemplate
+import app.tellev.core.provider.ImageProviderProfile
 import app.tellev.core.provider.NovelAiImageSettings
 import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.ProviderConfig
@@ -161,6 +162,80 @@ internal class ImageGenSettingsController(
             } catch (e: Exception) {
                 stateFlow.update {
                     it.copy(isLoading = false, error = UiStrings.get(S.imgctl_novelai_save_failed, e.message))
+                }
+            }
+        }
+    }
+
+    // ── 自定义生图端口（OpenAI Images 兼容的多配置 profile）──
+
+    /** Refreshes the profile list from encrypted storage into the UI state. */
+    suspend fun loadImageProfiles() {
+        val profiles = ProviderConfigPersistence.listImageProviderProfiles(secretStore)
+        stateFlow.update { it.copy(imageProfiles = profiles) }
+    }
+
+    fun saveImageProfile(profile: ImageProviderProfile) {
+        scope.launch {
+            stateFlow.update { it.copy(isLoading = true, error = null) }
+            try {
+                ProviderConfigPersistence.upsertImageProviderProfile(secretStore, profile)
+                val profiles = ProviderConfigPersistence.listImageProviderProfiles(secretStore)
+                stateFlow.update {
+                    it.copy(
+                        isLoading = false,
+                        imageProfiles = profiles,
+                        info = UiStrings.get(S.imgctl_profile_saved, profile.name),
+                    )
+                }
+            } catch (e: Exception) {
+                stateFlow.update {
+                    it.copy(isLoading = false, error = UiStrings.get(S.imgctl_profile_save_failed, e.message))
+                }
+            }
+        }
+    }
+
+    fun deleteImageProfile(profileId: String) {
+        scope.launch {
+            stateFlow.update { it.copy(isLoading = true, error = null) }
+            try {
+                ProviderConfigPersistence.deleteImageProviderProfile(secretStore, profileId)
+                val profiles = ProviderConfigPersistence.listImageProviderProfiles(secretStore)
+                stateFlow.update { state ->
+                    // The active engine falls back to ComfyUI when it pointed at the deleted profile.
+                    val engine = state.imageEngine.takeIf {
+                        ProviderConfigPersistence.imageProfileIdFrom(it) != profileId
+                    } ?: ProviderCatalog.COMFYUI
+                    state.copy(
+                        isLoading = false, imageProfiles = profiles, imageEngine = engine,
+                        info = UiStrings.get(S.imgctl_profile_deleted),
+                    )
+                }
+            } catch (e: Exception) {
+                stateFlow.update {
+                    it.copy(isLoading = false, error = UiStrings.get(S.imgctl_profile_delete_failed, e.message))
+                }
+            }
+        }
+    }
+
+    /** Stale results must not preface a different endpoint's dialog. */
+    fun clearImageProfileStatus() {
+        stateFlow.update { it.copy(imageProfileStatus = null, error = null) }
+    }
+
+    /** Connectivity test from the edit dialog: GET {modelsPath} through the adapter. */
+    fun testImageProfile(profile: ImageProviderProfile) {
+        scope.launch {
+            stateFlow.update { it.copy(isTestingImageProfile = true, imageProfileStatus = null, error = null) }
+            try {
+                val adapter = providerRegistry.require(ProviderCatalog.OPENAI_IMAGE)
+                val status = withContext(Dispatchers.IO) { adapter.checkStatus(profile.toProviderConfig()) }
+                stateFlow.update { it.copy(isTestingImageProfile = false, imageProfileStatus = status) }
+            } catch (e: Exception) {
+                stateFlow.update {
+                    it.copy(isTestingImageProfile = false, error = UiStrings.get(S.imgctl_profile_test_failed, e.message))
                 }
             }
         }

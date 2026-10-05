@@ -31,6 +31,7 @@ class WorldInfoScannerTest {
         priority: Int = 0,
         insertionOrder: Int = 100,
         enabled: Boolean = true,
+        group: String = "",
     ) = WorldBookEntry(
         id = id,
         keys = keys,
@@ -54,6 +55,7 @@ class WorldInfoScannerTest {
         priority = priority,
         insertionOrder = insertionOrder,
         enabled = enabled,
+        group = group,
     )
 
     private fun scan(
@@ -387,5 +389,96 @@ class WorldInfoScannerTest {
         // `big` (order 3, scanned first) crosses the 50-token budget: dropped,
         // and `smallLater` is dropped with it despite fitting on its own.
         assertEquals(setOf("forcedLater"), ids(result.allActivated))
+    }
+
+    // ── scan diagnostics collector ────────────────────────────────────────
+
+    private fun scanWithDiagnostics(
+        entries: List<WorldBookEntry>,
+        text: String,
+        random: () -> Double = { 0.0 },
+        maxRecursion: Int = 5,
+        maxContentTokens: Int? = null,
+    ): Pair<WorldInfoScanner.ScanResult, WorldInfoScanner.ScanDiagnostics> {
+        val diagnostics = WorldInfoScanner.ScanDiagnostics()
+        val result = WorldInfoScanner(random = random, maxRecursionSteps = maxRecursion, maxContentTokens = maxContentTokens)
+            .scan(entries, text, expand = { _, content -> content }, diagnostics = diagnostics)
+        return result to diagnostics
+    }
+
+    @Test
+    fun `diagnostics records disabled entries and keyword misses`() {
+        val disabled = entry("disabled", keys = listOf("dragon"), enabled = false)
+        val unmatched = entry("unmatched", keys = listOf("unicorn"))
+        val (_, diag) = scanWithDiagnostics(listOf(disabled, unmatched), "a dragon tale")
+        val byId = diag.rejections.associateBy { it.entry.id }
+        assertEquals(WorldInfoScanner.REJECT_DISABLED, byId.getValue("disabled").reason)
+        assertEquals(WorldInfoScanner.REJECT_KEYWORD_MISS, byId.getValue("unmatched").reason)
+    }
+
+    @Test
+    fun `diagnostics records hits with matched keys and unconditional flag`() {
+        val constant = entry("constant", keys = emptyList(), constant = true, content = "always here")
+        val keyword = entry("keyword", keys = listOf("dragon", "wyrm"), content = "dragon lore")
+        val (result, diag) = scanWithDiagnostics(listOf(constant, keyword), "a dragon tale")
+        assertEquals(setOf("constant", "keyword"), ids(result.allActivated))
+        val hits = diag.hits.associateBy { it.entry.id }
+        val constantHit = hits.getValue("constant")
+        assertTrue(constantHit.unconditional)
+        val keywordHit = hits.getValue("keyword")
+        assertFalse(keywordHit.unconditional)
+        assertEquals(listOf("dragon"), keywordHit.matchedKeys)
+        assertTrue(keywordHit.matchedSecondaryKeys.isEmpty())
+        assertEquals(0, keywordHit.recursionLevel)
+        assertTrue(keywordHit.tokens > 0)
+    }
+
+    @Test
+    fun `diagnostics records probability rejections`() {
+        val flaky = entry("flaky", keys = listOf("dragon"), probability = 50, useProbability = true)
+        val (_, diag) = scanWithDiagnostics(listOf(flaky), "a dragon tale", random = { 0.99 })
+        assertEquals(WorldInfoScanner.REJECT_PROBABILITY, diag.rejections.single { it.entry.id == "flaky" }.reason)
+    }
+
+    @Test
+    fun `diagnostics records inclusion group losers`() {
+        val alpha = entry("alpha", keys = listOf("dragon"), group = "dragons")
+        val beta = entry("beta", keys = listOf("dragon"), group = "dragons")
+        val (result, diag) = scanWithDiagnostics(listOf(alpha, beta), "a dragon tale")
+        // Deterministic weight roll with random()=0 picks the first alive entry.
+        val activatedId = ids(result.allActivated).single()
+        val loser = if (activatedId == "alpha") "beta" else "alpha"
+        assertEquals(WorldInfoScanner.REJECT_INCLUSION_GROUP, diag.rejections.single { it.entry.id == loser }.reason)
+    }
+
+    @Test
+    fun `diagnostics records budget overflow rejections`() {
+        val big = entry("big", keys = emptyList(), constant = true, insertionOrder = 3, content = "long lore ".repeat(40))
+        val small = entry("small", keys = emptyList(), constant = true, insertionOrder = 1, content = "tiny")
+        val (result, diag) = scanWithDiagnostics(listOf(big, small), "", maxContentTokens = 50)
+        // Overflow latches: `big` crosses the budget and `small` is skipped with it.
+        assertTrue(result.allActivated.isEmpty())
+        val budgetRejects = diag.rejections.filter { it.reason == WorldInfoScanner.REJECT_BUDGET }.map { it.entry.id }
+        assertEquals(setOf("big", "small"), budgetRejects.toSet())
+    }
+
+    @Test
+    fun `diagnostics records delayed entries when recursion is off`() {
+        val delayed = entry("delayed", keys = listOf("dragon"), delayUntilRecursion = 2)
+        val (_, diag) = scanWithDiagnostics(listOf(delayed), "a dragon tale", maxRecursion = 0)
+        assertEquals(WorldInfoScanner.REJECT_DELAYED, diag.rejections.single().reason)
+        assertTrue(diag.hits.isEmpty())
+    }
+
+    @Test
+    fun `diagnostics records secondary key matches for selective entries`() {
+        val selective = entry(
+            "selective", keys = listOf("dragon"), secondaryKeys = listOf("fire"),
+            selective = true, selectiveLogic = 0, content = "fire drake",
+        )
+        val (_, diag) = scanWithDiagnostics(listOf(selective), "a dragon breathing fire")
+        val hit = diag.hits.single()
+        assertEquals(listOf("dragon"), hit.matchedKeys)
+        assertEquals(listOf("fire"), hit.matchedSecondaryKeys)
     }
 }

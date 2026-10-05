@@ -1,10 +1,10 @@
 package app.tellev.core.security
 
-import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 
 object SensitiveFieldScanner {
@@ -71,26 +71,40 @@ object SensitiveFieldScanner {
                 }
             } else if (value is JsonObject) {
                 findSensitiveFieldsRecursive(value, path, result)
+            } else if (value is JsonArray) {
+                value.forEachIndexed { index, element ->
+                    findSensitiveElements(element, "$path[$index]", result)
+                }
             }
         }
     }
 
-    private fun sanitizeRecursive(obj: JsonObject): JsonObject {
-        return buildJsonObject {
-            for ((key, value) in obj) {
-                if (value is JsonPrimitive && value.isString) {
-                    val stringValue = value.content
-                    if (looksLikeSecret(key, stringValue)) {
-                        put(key, JsonPrimitive("[REDACTED]"))
-                    } else {
-                        put(key, value)
-                    }
-                } else if (value is JsonObject) {
-                    put(key, sanitizeRecursive(value))
+    private fun findSensitiveElements(element: JsonElement, path: String, result: MutableList<String>) {
+        when (element) {
+            is JsonObject -> findSensitiveFieldsRecursive(element, path, result)
+            is JsonArray -> element.forEachIndexed { index, child ->
+                findSensitiveElements(child, "$path[$index]", result)
+            }
+            else -> Unit
+        }
+    }
+
+    private fun sanitizeRecursive(obj: JsonObject): JsonObject =
+        sanitizeElement(obj, "") as JsonObject
+
+    private fun sanitizeElement(element: JsonElement, key: String): JsonElement = when (element) {
+        is JsonObject -> buildJsonObject {
+            for ((childKey, child) in element) {
+                put(childKey, if (child is JsonPrimitive && child.isString && looksLikeSecret(childKey, child.content)) {
+                    JsonPrimitive("[REDACTED]")
                 } else {
-                    put(key, value)
-                }
+                    sanitizeElement(child, childKey)
+                })
             }
         }
+        is JsonArray -> buildJsonArray {
+            element.forEach { add(sanitizeElement(it, key)) }
+        }
+        else -> element
     }
 }

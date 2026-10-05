@@ -7,7 +7,12 @@ import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.WorldBook
+import app.tellev.core.provider.ImageProviderProfile
+import app.tellev.core.provider.ProviderCatalog
+import app.tellev.core.provider.ProviderConfigPersistence
+import app.tellev.core.provider.ProviderDefaults
 import app.tellev.core.provider.ProviderRegistry
+import app.tellev.core.provider.supportsChatGeneration
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.CharacterExporter
 import app.tellev.core.storage.CharacterImporter
@@ -50,6 +55,12 @@ data class CreationUiState(
     val providerLabel: String = "",
     val toolEvents: List<CreationToolEvent> = emptyList(),
     val pendingQuestion: CreationAgentQuestion? = null,
+    /** Next-step suggestions from the last agent reply; tapping fills the input, never sends. */
+    val suggestions: List<String> = emptyList(),
+    /** Configured image engines (`imgprof:` ids included) for AI cover generation. */
+    val imageEngines: Set<String> = emptySet(),
+    val imageProfiles: List<ImageProviderProfile> = emptyList(),
+    val isGeneratingCover: Boolean = false,
     val error: String? = null,
     val info: String? = null,
 )
@@ -70,10 +81,16 @@ internal fun worldBookExportBytes(book: WorldBook): ByteArray {
 class CreationViewModel(
     private val repository: CreationRepository,
     private val store: StDataStore,
-    secrets: SecretStore,
-    providers: ProviderRegistry,
+    private val secrets: SecretStore,
+    private val providers: ProviderRegistry,
+    /** Size-capped remote download for engines that return URLs (OpenAI Images). */
+    private val imageDownloader: (suspend (String) -> ByteArray?)? = null,
 ) : ViewModel() {
-    private val engine = CreationEngine(secrets, providers)
+    private val engine = CreationEngine(secrets, providers, store)
+    private val coverGenerator = CreationCoverGenerator(secrets, providers, imageDownloader)
+    private val promptOptimizer = app.tellev.core.prompt.PromptOptimizer()
+    private var promptOptimizationJob: Job? = null
+    private var coverJob: Job? = null
     private val writeMutex = Mutex()
     private val _state = MutableStateFlow(CreationUiState())
     val state: StateFlow<CreationUiState> = _state.asStateFlow()
@@ -198,7 +215,7 @@ class CreationViewModel(
                 updatedAt = System.currentTimeMillis(),
             )
             _state.update { it.copy(
-                current = withUser, busy = true, error = null,
+                current = withUser, busy = true, error = null, suggestions = emptyList(),
                 extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_converse), modelPhase = UiStrings.get(S.crvm_phase_preparing), liveReasoning = "", liveOutput = "",
                 liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(),
                 modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "",
@@ -241,7 +258,7 @@ class CreationViewModel(
                     updatedAt = System.currentTimeMillis(),
                 )
                 write(next)
-                _state.update { it.copy(current = next, info = null, modelPhase = UiStrings.get(S.crvm_phase_turn_done)) }
+                _state.update { it.copy(current = next, info = null, modelPhase = UiStrings.get(S.crvm_phase_turn_done), suggestions = reply.suggestions) }
                 refresh()
             } catch (e: CancellationException) {
                 _state.update { it.copy(modelPhase = if (it.current?.partialTurnSaved == true)
@@ -383,12 +400,7 @@ class CreationViewModel(
         viewModelScope.launch {
             _state.update { it.copy(busy = true, error = null) }
             try {
-                val hash = repository.saveCover(session.id, pngBytes)
-                val next = session.copy(coverSha256 = hash, updatedAt = System.currentTimeMillis())
-                write(next)
-                repository.pruneCovers(session.id, hash)
-                _state.update { it.copy(current = next, coverPreviewPng = pngBytes, info = UiStrings.get(S.crvm_cover_saved)) }
-                refresh()
+                persistCover(session, pngBytes)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -397,6 +409,57 @@ class CreationViewModel(
                 _state.update { it.copy(busy = false) }
             }
         }
+    }
+
+    /** Loads configured image engines for the AI cover dialog. */
+    fun refreshCoverEngines() {
+        viewModelScope.launch {
+            runCatching {
+                val engines = coverGenerator.configuredEngines()
+                val profiles = coverGenerator.profiles()
+                _state.update { it.copy(imageEngines = engines, imageProfiles = profiles) }
+            }
+        }
+    }
+
+    /**
+     * AI-generated cover: generates one image through the selected engine and
+     * stores it as the draft cover. Independent of the conversation busy state
+     * (own job and flag), but the write itself goes through the same mutex.
+     */
+    fun generateCover(prompt: String, negativePrompt: String, engineId: String) {
+        val session = _state.value.current ?: return
+        if (session.kind != CreationKind.Character || _state.value.isGeneratingCover) return
+        val trimmed = prompt.trim()
+        if (trimmed.isBlank()) return
+        coverJob = viewModelScope.launch {
+            _state.update { it.copy(isGeneratingCover = true, error = null) }
+            try {
+                val bytes = coverGenerator.generatePng(engineId, trimmed, negativePrompt)
+                _state.update { it.copy(info = UiStrings.get(S.crvm_cover_generated)) }
+                persistCover(_state.value.current ?: return@launch, bytes)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail(e)
+            } finally {
+                _state.update { it.copy(isGeneratingCover = false) }
+            }
+        }
+    }
+
+    fun cancelCoverGeneration() {
+        coverJob?.cancel()
+        coverJob = null
+    }
+
+    private suspend fun persistCover(session: CreationSession, pngBytes: ByteArray) {
+        val hash = repository.saveCover(session.id, pngBytes)
+        val next = session.copy(coverSha256 = hash, updatedAt = System.currentTimeMillis())
+        write(next)
+        repository.pruneCovers(session.id, hash)
+        _state.update { it.copy(current = next, coverPreviewPng = pngBytes, info = UiStrings.get(S.crvm_cover_saved)) }
+        refresh()
     }
 
     suspend fun exportCharacter(format: CharacterExportFormat): ByteArray = withContext(Dispatchers.IO) {
@@ -506,6 +569,49 @@ class CreationViewModel(
 
     fun clearNotice() { _state.update { it.copy(error = null, info = null) } }
 
+    /**
+     * Draft optimization for the creation conversation input. Uses the same
+     * selected provider as the creation agent but is side-effect-free: it
+     * never writes drafts, turns or tool results. The caller keeps the
+     * original text unless the user applies the result.
+     */
+    fun optimizeDraft(
+        text: String,
+        options: app.tellev.core.prompt.PromptOptimizationOptions,
+        onPreview: (String) -> Unit,
+        onDone: (app.tellev.core.prompt.PromptOptimizationResult) -> Unit,
+    ): Boolean {
+        promptOptimizationJob?.cancel()
+        promptOptimizationJob = viewModelScope.launch {
+            try {
+                val selectedId = secrets.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
+                    ?: ProviderCatalog.OPENAI_COMPATIBLE
+                val adapterId = ProviderConfigPersistence.adapterIdFor(selectedId)
+                val adapter = providers.find(adapterId)?.takeIf { it.supportsChatGeneration }
+                if (adapter == null) {
+                    onDone(app.tellev.core.prompt.PromptOptimizationResult.failed(
+                        listOf(UiStrings.get(S.chat_optimize_unavailable)),
+                    ))
+                    return@launch
+                }
+                val config = ProviderConfigPersistence.loadProviderConfig(secrets, selectedId)
+                onDone(promptOptimizer.optimize(text, options, config, adapter, onPreview = onPreview))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                onDone(app.tellev.core.prompt.PromptOptimizationResult.failed(
+                    listOf(error.message ?: UiStrings.get(S.chat_optimize_failed_generic)),
+                ))
+            }
+        }
+        return true
+    }
+
+    fun cancelPromptOptimization() {
+        promptOptimizationJob?.cancel()
+        promptOptimizationJob = null
+    }
+
     fun showError(message: String) { _state.update { it.copy(error = message) } }
 
     fun showInfo(message: String) { _state.update { it.copy(info = message, error = null) } }
@@ -570,6 +676,7 @@ class CreationViewModelFactory(
     private val store: StDataStore,
     private val secrets: SecretStore,
     private val providers: ProviderRegistry,
+    private val imageDownloader: (suspend (String) -> ByteArray?)? = null,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T = CreationViewModel(
@@ -577,5 +684,6 @@ class CreationViewModelFactory(
         store = store,
         secrets = secrets,
         providers = providers,
+        imageDownloader = imageDownloader,
     ) as T
 }

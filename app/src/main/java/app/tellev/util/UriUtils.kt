@@ -32,6 +32,29 @@ object UriUtils {
         runCatching { context.contentResolver.getType(uri) }.getOrNull()
 
     /**
+     * Read [uri] fully into memory with a hard [maxBytes] cap. Mirrors the
+     * external VIEW/SEND import path: a picked document can still be huge,
+     * and reading it unbounded turns "import" into an OOM kill switch.
+     */
+    fun readBounded(context: Context, uri: Uri, maxBytes: Long): ByteArray {
+        val input = context.contentResolver.openInputStream(uri)
+            ?: error("cannot open $uri")
+        input.use { stream ->
+            val out = ByteArrayOutputStream()
+            val buffer = ByteArray(64 * 1024)
+            var total = 0L
+            while (true) {
+                val read = stream.read(buffer)
+                if (read < 0) break
+                total += read
+                check(total <= maxBytes) { "file exceeds ${maxBytes / (1024 * 1024)}MB limit" }
+                out.write(buffer, 0, read)
+            }
+            return out.toByteArray()
+        }
+    }
+
+    /**
      * Read the image at [uri], downsample so the longest edge is <= [maxDim] px, and
      * re-encode as JPEG at [quality]. Returns null if the image cannot be decoded.
      *

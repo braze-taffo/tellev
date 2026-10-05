@@ -171,6 +171,55 @@ object ProviderConfigPersistence {
     /** Secret id holding the encrypted [NovelAiImageSettings] JSON. */
     private const val NOVELAI_IMAGE_SETTINGS_SECRET_ID = "provider-novelai-image-settings"
 
+    /** Secret id holding the JSON list of user-defined [ImageProviderProfile]s. */
+    private const val IMAGE_PROFILES_SECRET_ID = "image-provider-profiles"
+
+    /** Engine-id prefix marking a selected image engine that is an [ImageProviderProfile]. */
+    const val IMAGE_PROFILE_PREFIX = "imgprof:"
+
+    /** True if [engineId] selects a user-defined image profile. */
+    fun isImageProfileEngineId(engineId: String): Boolean = engineId.startsWith(IMAGE_PROFILE_PREFIX)
+
+    /** The profile id inside an `imgprof:` engine id. */
+    fun imageProfileIdFrom(engineId: String): String = engineId.removePrefix(IMAGE_PROFILE_PREFIX)
+
+    /** The engine id selecting [profileId]. */
+    fun imageProfileEngineId(profileId: String): String = IMAGE_PROFILE_PREFIX + profileId
+
+    suspend fun listImageProviderProfiles(secretStore: SecretStore): List<ImageProviderProfile> {
+        val stored = secretStore.readSecret(IMAGE_PROFILES_SECRET_ID) ?: return emptyList()
+        return runCatching { json.decodeFromString<List<ImageProviderProfile>>(stored) }
+            .getOrElse { emptyList() }
+    }
+
+    suspend fun saveImageProviderProfiles(secretStore: SecretStore, profiles: List<ImageProviderProfile>) {
+        secretStore.putSecret(IMAGE_PROFILES_SECRET_ID, json.encodeToString(profiles))
+    }
+
+    suspend fun findImageProviderProfile(secretStore: SecretStore, profileId: String): ImageProviderProfile? =
+        listImageProviderProfiles(secretStore).firstOrNull { it.id == profileId }
+
+    /** Inserts or replaces by id, keeping list order stable (new profiles go last). */
+    suspend fun upsertImageProviderProfile(secretStore: SecretStore, profile: ImageProviderProfile) {
+        val profiles = listImageProviderProfiles(secretStore).toMutableList()
+        val index = profiles.indexOfFirst { it.id == profile.id }
+        if (index >= 0) profiles[index] = profile else profiles += profile
+        saveImageProviderProfiles(secretStore, profiles)
+    }
+
+    suspend fun deleteImageProviderProfile(secretStore: SecretStore, profileId: String) {
+        val profiles = listImageProviderProfiles(secretStore).filterNot { it.id == profileId }
+        saveImageProviderProfiles(secretStore, profiles)
+        // The deleted profile can no longer be the active engine.
+        if (loadImageEngine(secretStore) == imageProfileEngineId(profileId)) {
+            saveImageEngine(secretStore, ProviderCatalog.COMFYUI)
+        }
+    }
+
+    /** New profiles get a stable random id; 8 hex chars keep engine ids short. */
+    fun newImageProviderProfileId(): String =
+        "imgp_" + java.util.UUID.randomUUID().toString().replace("-", "").take(8)
+
     /** True when a NovelAI access token has been saved; model/parameters all carry valid defaults. */
     suspend fun isNovelAiImageConfigured(secretStore: SecretStore): Boolean {
         return !secretStore.readSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey").isNullOrBlank()
@@ -198,6 +247,9 @@ object ProviderConfigPersistence {
     suspend fun configuredImageEngines(secretStore: SecretStore): Set<String> = buildSet {
         if (isComfyImageGenerationConfigured(secretStore)) add(ProviderCatalog.COMFYUI)
         if (isNovelAiImageConfigured(secretStore)) add(ProviderCatalog.NOVELAI_IMAGE)
+        listImageProviderProfiles(secretStore)
+            .filter { it.isConfigured }
+            .forEach { add(imageProfileEngineId(it.id)) }
     }
 
     suspend fun availableImageEngine(secretStore: SecretStore, configured: Set<String>): String? {
@@ -205,13 +257,20 @@ object ProviderConfigPersistence {
         return saved.takeIf { it in configured } ?: imageEngines.firstOrNull { it in configured }
     }
 
+    /** Stored engine ids are built-ins or `imgprof:` profile references. */
+    private fun isValidImageEngineId(engine: String): Boolean =
+        engine in imageEngines || isImageProfileEngineId(engine)
+
     suspend fun loadImageEngine(secretStore: SecretStore): String {
         val stored = secretStore.readSecret(IMAGE_ENGINE_SECRET_ID) ?: return ProviderCatalog.COMFYUI
-        return if (stored in imageEngines) stored else ProviderCatalog.COMFYUI
+        return if (isValidImageEngineId(stored)) stored else ProviderCatalog.COMFYUI
     }
 
     suspend fun saveImageEngine(secretStore: SecretStore, engine: String) {
-        secretStore.putSecret(IMAGE_ENGINE_SECRET_ID, if (engine in imageEngines) engine else ProviderCatalog.COMFYUI)
+        val valid = engine in imageEngines ||
+            (isImageProfileEngineId(engine) &&
+                findImageProviderProfile(secretStore, imageProfileIdFrom(engine))?.isConfigured == true)
+        secretStore.putSecret(IMAGE_ENGINE_SECRET_ID, if (valid) engine else ProviderCatalog.COMFYUI)
     }
 
     suspend fun loadProviderConfig(secretStore: SecretStore, providerId: String): ProviderConfig {

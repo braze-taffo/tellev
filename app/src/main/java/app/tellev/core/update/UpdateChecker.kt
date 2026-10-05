@@ -60,37 +60,66 @@ enum class UpdateChannel(val tagSuffix: String, val displayName: String) {
     ;
 
     /**
-     * True when version [tag] belongs to this channel: the channel suffix is
-     * stripped off and what remains must be a plain `vX.Y.Z`-style version.
-     * The suffix requirement also rejects unrelated tags such as `nightly`.
+     * The version this channel accepts for [tag]: the channel [tagSuffix] is
+     * stripped off and what remains must be a plain `vX.Y.Z`-style version
+     * (optional `v`, 2-4 numeric dot-groups, nothing else). Returns null for
+     * tags from the other channel (`v1.6.3-mnn` on the official stream) and for
+     * unrelated tags such as `nightly` or `v1.6.3-beta`.
      */
-    fun matchesTag(tag: String): Boolean {
+    fun versionOf(tag: String): String? {
         val trimmed = tag.trim()
         val core = when {
             tagSuffix.isEmpty() -> trimmed
             trimmed.endsWith(tagSuffix) -> trimmed.dropLast(tagSuffix.length)
-            else -> return false
+            else -> return null
         }
-        return PLAIN_VERSION_TAG.matches(core)
+        if (!PLAIN_VERSION_TAG.matches(core)) return null
+        return core.removePrefix("v")
     }
 
+    /** True when version [tag] belongs to this channel. */
+    fun matchesTag(tag: String): Boolean = versionOf(tag) != null
+
     /**
-     * True when APK asset [name] belongs to this channel. The `-mnn` marker
-     * decides an asset's channel, so an official build never picks up an MNN
-     * APK even if both were attached to one release.
+     * The exact APK asset name this channel accepts for [version]:
+     * `tellev-X.Y.Z.apk` for the official channel,
+     * `tellev-X.Y.Z-mnn.apk` for MNN. Everything else — `app-release.apk`,
+     * another channel's asset, another version's asset, a non-APK suffix —
+     * is rejected, so a release can only be updated from the asset that was
+     * built for its own tag and channel.
      */
-    fun matchesApkAsset(name: String): Boolean {
-        if (!name.endsWith(".apk", ignoreCase = true)) return false
-        val assetIsMnn = name.contains(MNN_MARKER, ignoreCase = true)
-        return assetIsMnn == (this == Mnn)
+    fun expectedApkName(version: String): String = "tellev-$version$tagSuffix.apk"
+
+    /**
+     * True when APK asset [name] belongs to this channel *and* is the one
+     * canonical name shape (`tellev-<version>[-mnn].apk`). The `-mnn` marker
+     * decides an asset's channel, so an official build never picks up an MNN
+     * APK even if both were attached to one release, and a hand-named
+     * `app-release.apk` never counts as a channel asset at all.
+     */
+    fun matchesApkAsset(name: String): Boolean = apkAssetVersion(name) != null
+
+    /**
+     * The version embedded in a channel-correct APK asset [name], or null when
+     * the name is not exactly `tellev-<version><channel suffix>.apk`. Parsing
+     * compares this against the release tag's version, which is what enforces
+     * the exact tag ↔ asset pairing.
+     *
+     * [matchEntire] (not [Regex.find]) so a trailing newline — a `$` anchor
+     * matches before a final line terminator in Java regexes — cannot make a
+     * crafted name such as `tellev-1.4.1.apk\n` count as the real asset.
+     */
+    fun apkAssetVersion(name: String): String? =
+        APK_NAME.matchEntire(name)?.groupValues?.get(1)
+
+    /** `tellev-<version><channel suffix>.apk`, built from this channel's suffix. */
+    private val APK_NAME: Regex by lazy {
+        Regex("""^tellev-(\d+(\.\d+){1,3})""" + Regex.escape(tagSuffix) + """\.apk$""")
     }
 
     private companion object {
         /** `v` optional, 2-4 numeric dot-groups, no channel suffix. */
         val PLAIN_VERSION_TAG = Regex("""^v?\d+(\.\d+){1,3}$""")
-
-        /** Marks the MNN image-gen channel in release asset names. */
-        const val MNN_MARKER = "-mnn"
     }
 }
 
@@ -172,17 +201,20 @@ class UpdateChecker(
     }
 
     /**
-     * True when [entry] is a release on [channel] carrying a [channel] APK. Both
-     * halves are required: a matching tag with only the other channel's APK is
-     * not publishable evidence that this channel has a build.
+     * True when [entry] is a release on [channel] carrying a [channel] APK whose
+     * name carries exactly the tag's version (`tellev-<version><suffix>.apk`).
+     * All three halves are required: a tag from the other channel, a matching
+     * tag with only the other channel's APK, and a matching tag whose asset
+     * version differs from the tag are all non-publishable, so none of them may
+     * be offered as evidence that this channel has a build.
      */
     private fun isChannelRelease(entry: JsonObject?): Boolean {
         if (entry == null) return false
         val tag = entry["tag_name"]?.jsonPrimitive?.contentOrNull ?: return false
-        if (!channel.matchesTag(tag)) return false
+        val version = channel.versionOf(tag) ?: return false
         return entry["assets"]?.jsonArray?.any { asset ->
             val name = asset.jsonObject["name"]?.jsonPrimitive?.contentOrNull
-            name != null && channel.matchesApkAsset(name)
+            name != null && channel.apkAssetVersion(name) == version
         } == true
     }
 
@@ -191,22 +223,29 @@ class UpdateChecker(
         parseReleaseObject(json.parseToJsonElement(body).jsonObject)
 
     /**
-     * Parses a single GitHub release JSON object. Throws if it lacks a tag or an
-     * APK asset belonging to this build's [channel].
+     * Parses a single GitHub release JSON object. Throws when the tag does not
+     * belong to this build's [channel] or when the release carries no APK asset
+     * named `tellev-<tag version><channel suffix>.apk`. The tag/asset pairing is
+     * checked here as well as in [parseLatestChannelRelease], so
+     * [parseReleaseJson] cannot be used to smuggle in the other channel's APK,
+     * an `app-release.apk`, an asset whose version differs from the tag, or a
+     * non-`.apk` suffix.
      */
     fun parseReleaseObject(root: JsonObject): UpdateInfo {
         val tag = root["tag_name"]?.jsonPrimitive?.contentOrNull
             ?: error("缺少 tag_name")
+        val version = channel.versionOf(tag)
+            ?: error(UiStrings.get(S.updchk_channel_release_missing, channel.localizedDisplayName()))
         val assets = root["assets"]?.jsonArray
             ?: error("缺少 assets")
         val apk = assets.firstOrNull { entry ->
             val name = entry.jsonObject["name"]?.jsonPrimitive?.contentOrNull
-            name != null && channel.matchesApkAsset(name)
+            name != null && channel.apkAssetVersion(name) == version
         } ?: error(UiStrings.get(S.updchk_channel_apk_missing, channel.localizedDisplayName()))
         val apkObj = apk.jsonObject
         return UpdateInfo(
             tagName = tag,
-            version = tag.removePrefix("v").trim(),
+            version = version,
             title = root["name"]?.jsonPrimitive?.contentOrNull ?: tag,
             releaseNotes = root["body"]?.jsonPrimitive?.contentOrNull ?: "",
             htmlUrl = root["html_url"]?.jsonPrimitive?.contentOrNull

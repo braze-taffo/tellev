@@ -58,3 +58,7 @@ main_error_read_file	无法读取文件
 memmod_mode_none	无记忆
 memmod_mode_archive	柏宝书式
 memmod_mode_episodic	STARmem 式
+app_name	tellev
+cregex_diag_regex_timeout	正则执行超时（疑似灾难性回溯），已跳过该规则
+main_error_too_large	文件过大（上限 100 MB）
+net_cleartext_blocked	已拦截到 %1$s 的明文 HTTP 请求：未加密连接默认仅限本机。如需连接局域网后端，请在「设置 → 模型」中开启「允许明文 HTTP」。

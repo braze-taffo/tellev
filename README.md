@@ -196,8 +196,11 @@ tellev 的扩展运行环境是 SillyTavern / 酒馆助手兼容层的一个**�
 
 ```powershell
 .\gradlew.bat test
-.\gradlew.bat assembleRelease
+.\gradlew.bat assembleMini
+.\gradlew.bat assembleRelease   # 需要 release 签名凭据，缺失时非零失败，见下文
 ```
+
+`assembleRelease` 是唯一会产生正式签名的命令；没有 signing 凭据时它会失败（不会产出未签名包），本地验收请改用 `.\gradlew.bat assembleMini` 或 `assembleDebug`。
 
 构建环境：
 
@@ -208,7 +211,23 @@ tellev 的扩展运行环境是 SillyTavern / 酒馆助手兼容层的一个**�
 
 Release 构建启用 R8 代码/资源缩减（APK 约 15–25 MB），需要 `proguard-rules.pro` 中的 kotlinx-serialization keep 规则，否则 R8 会剥离 `serializer()` 导致运行时崩溃。
 
-签名凭据从 `local.properties`（gitignored）读取：
+### Signed release 与 unsigned / debug / mini 的区别
+
+| 变体 | 签名 | applicationId | 用途 |
+| --- | --- | --- | --- |
+| `release`：`assembleRelease` / `packageRelease` / `packageReleaseBundle` / `packageReleaseUniversalApk` | release keystore，四项签名属性缺一不可 | `app.tellev` | 唯一可以发布到 GitHub Releases 的正式包 |
+| `mini`：`assembleMini` / `packageMini` | debug keystore | `app.tellev.mini` | 本地体积/功能验收：与 release 相同的 R8 与资源压缩，可与正式版并存安装，不是发布渠道 |
+| `debug` / `mvuValidation` | debug keystore | `app.tellev.debug` / `app.tellev.mvuvalidation` | 开发调试（`mvuValidation` 同时是 `testBuildType`，`.\gradlew.bat test` 跑的就是它） |
+
+正式 release 打包在下列情况下会**明确以非零退出码失败**，不会静默产出未签名包，也不会回退到 debug 签名：
+
+- 四项签名属性（`tellevStoreFile`、`tellevStorePassword`、`tellevKeyAlias`、`tellevKeyPassword`）有任一缺失或为空；
+- `tellevStoreFile` 指向的 keystore 不存在或不可读；
+- 因此 `release` 构建类型拿不到可用的 signingConfig。
+
+失败信息只列出缺失的属性名，不打印任何凭据值。构建脚本只读取这四个属性，不创建、导出或写入密钥；keystore 文件放在 `.keystore/`（gitignored）。没有签名凭据时的本地验收请用 `assembleMini` 或 `assembleDebug`，不要为了让 `assembleRelease` 跑过去而把 debug keystore 填进签名属性。
+
+签名凭据按优先级从 Gradle 项目属性（`-P` / `~/.gradle/gradle.properties`）→ `local.properties`（gitignored）读取：
 
 ```properties
 tellevStoreFile=.keystore/tellev-release.jks
@@ -217,11 +236,21 @@ tellevKeyAlias=...
 tellevKeyPassword=...
 ```
 
-Release APK 输出路径：
+Release 产物输出路径：
 
 ```text
 app/build/outputs/apk/release/app-release.apk
+app/build/outputs/bundle/release/app-release.aab
 ```
+
+### 更新检查的渠道与包名配对
+
+应用内更新只接受本渠道、且 tag 与 APK 资产版本一致的发行：
+
+- 正式版：tag `vX.Y.Z` ↔ 资产 `tellev-X.Y.Z.apk`；
+- 生图版：tag `vX.Y.Z-mnn` ↔ 资产 `tellev-X.Y.Z-mnn.apk`。
+
+`app-release.apk`、版本与 tag 不一致的资产、另一渠道的资产、非 `.apk` 后缀都会被拒绝；单发行接口（`parseReleaseJson`）同样做渠道与资产校验，不会绕过。
 
 生成依赖/许可证报告：
 

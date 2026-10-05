@@ -163,7 +163,9 @@ class RefactorAcceptanceTest {
                 override fun streamGenerate(config: ProviderConfig, request: GenerateRequest) = flow<GenerateChunk> {
                     f.imageStarted.complete(Unit)
                     f.imageGate.await()
-                    emit(GenerateChunk.Completed("AQID"))
+                    // 归一化要求真实图片字节（magic 嗅探）：最小 PNG。
+                    emit(GenerateChunk.Completed(java.util.Base64.getEncoder()
+                        .encodeToString(app.tellev.core.storage.PngCardParser.createMinimalPng())))
                 }
             }
             val textAdapter = object : Adapter(ProviderCatalog.OPENAI_COMPATIBLE) {

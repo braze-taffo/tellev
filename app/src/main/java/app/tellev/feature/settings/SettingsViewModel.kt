@@ -12,6 +12,7 @@ import app.tellev.core.model.Persona
 import app.tellev.core.model.PresetCategory
 import app.tellev.core.provider.ComfyUiSettings
 import app.tellev.core.provider.CustomProviderConfig
+import app.tellev.core.provider.ImageProviderProfile
 import app.tellev.core.provider.NovelAiImageSettings
 import app.tellev.core.provider.OpenAiCompatibilitySettings
 import app.tellev.core.provider.ProviderAdapter
@@ -83,6 +84,10 @@ data class SettingsUiState(
     val novelAiSettings: NovelAiImageSettings = NovelAiImageSettings(),
     val novelAiStatus: ProviderStatus? = null,
     val isTestingNovelAi: Boolean = false,
+    // ── 自定义生图端口（OpenAI Images 兼容的多配置 profile）──
+    val imageProfiles: List<ImageProviderProfile> = emptyList(),
+    val isTestingImageProfile: Boolean = false,
+    val imageProfileStatus: ProviderStatus? = null,
 )
 
 class SettingsViewModel(
@@ -208,6 +213,7 @@ class SettingsViewModel(
                 val comfyModel = secretStore.readSecret("provider-${ProviderCatalog.COMFYUI}-model") ?: ""
 
                 val imageEngine = ProviderConfigPersistence.loadImageEngine(secretStore)
+                val imageProfiles = ProviderConfigPersistence.listImageProviderProfiles(secretStore)
                 val novelAiSettings = ProviderConfigPersistence.loadNovelAiImageSettings(secretStore)
                 val novelAiToken =
                     secretStore.readSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey") ?: ""
@@ -239,6 +245,7 @@ class SettingsViewModel(
                         comfyModel = comfyModel,
                         comfySettings = comfySettings,
                         imageEngine = imageEngine,
+                        imageProfiles = imageProfiles,
                         novelAiToken = novelAiToken,
                         novelAiSettings = novelAiSettings,
                     )
@@ -292,6 +299,10 @@ class SettingsViewModel(
     fun updateNovelAiSettings(transform: (NovelAiImageSettings) -> NovelAiImageSettings) = imageGenController.updateNovelAiSettings(transform)
     fun testNovelAiImage() = imageGenController.testNovelAiImage()
     fun saveNovelAiImageConfig() = imageGenController.saveNovelAiImageConfig()
+    fun saveImageProfile(profile: ImageProviderProfile) = imageGenController.saveImageProfile(profile)
+    fun deleteImageProfile(profileId: String) = imageGenController.deleteImageProfile(profileId)
+    fun testImageProfile(profile: ImageProviderProfile) = imageGenController.testImageProfile(profile)
+    fun clearImageProfileStatus() = imageGenController.clearImageProfileStatus()
 
     // ── Preset Actions ──
 

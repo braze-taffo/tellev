@@ -68,3 +68,8 @@ setscreen_delete_config_title	删除自定义配置
 setscreen_delete_config_message	确定删除“%1$s”吗？该配置的接口地址与密钥将被清除，且无法撤销。
 setscreen_delete	删除
 setscreen_cancel	取消
+imgctl_profile_saved	已保存端口「%1$s」。
+imgctl_profile_save_failed	保存端口失败：%1$s
+imgctl_profile_deleted	已删除端口。
+imgctl_profile_delete_failed	删除端口失败：%1$s
+imgctl_profile_test_failed	测试失败：%1$s

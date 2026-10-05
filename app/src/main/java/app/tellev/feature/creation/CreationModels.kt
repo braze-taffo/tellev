@@ -10,6 +10,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.util.UUID
@@ -87,6 +88,11 @@ data class CharacterDraft(
     val tags: List<String> = emptyList(),
     /** Portable HTML/CSS fragment placed in the opening message after review. */
     val frontendHtml: String = "",
+    /**
+     * English tag-style image prompt for the AI cover generator; written by the
+     * agent through write_blueprint and exported inside the standard profile.
+     */
+    val coverPrompt: String = "",
 )
 
 @Serializable
@@ -162,6 +168,12 @@ data class CreationSession(
             val frontendHtml = firstFragment
                 ?: greetings.firstNotNullOfOrNull { it.second }
                 ?: ""
+            // The AI cover prompt lives inside the exported standard profile;
+            // recover it so cover generation can prefill on the next edit.
+            val extensions = data?.get("extensions") as? JsonObject
+            val profileJson = extensions?.get(CharacterBlueprintCompiler.EXTENSION_KEY) as? JsonObject
+            val coverPromptValue = profileJson?.get("cover_prompt") as? JsonPrimitive
+            val coverPrompt = coverPromptValue?.contentOrNull.orEmpty()
             return CreationSession(
                 kind = CreationKind.Character,
                 card = CharacterDraft(
@@ -177,6 +189,7 @@ data class CreationSession(
                     creatorNotes = card.creatorNotes,
                     tags = card.tags,
                     frontendHtml = frontendHtml,
+                    coverPrompt = coverPrompt,
                 ),
                 worldName = book?.name.orEmpty(),
                 lore = book?.entries.orEmpty().map(WorldBookEntry::toLoreDraft),
@@ -275,8 +288,11 @@ fun CreationSession.toCharacterCard(): CharacterCard {
         })
     }
     val rawData = rawBeforeExtensions["data"] as? JsonObject ?: JsonObject(emptyMap())
-    val extensions = advancedExtensions.takeIf { it.isNotEmpty() }
-        ?: rawData["extensions"] as? JsonObject ?: JsonObject(emptyMap())
+    // The standard profile is regenerated from the final draft on every export,
+    // so it can never go stale against later edits; third-party extension keys
+    // in advancedExtensions pass through untouched.
+    val extensions = JsonObject(advancedExtensions +
+        (CharacterBlueprintCompiler.EXTENSION_KEY to CharacterBlueprintCompiler.compile(this)))
     val raw = JsonObject(rawBeforeExtensions + ("data" to JsonObject(rawData +
         ("extensions" to extensions))))
     return CharacterCard(

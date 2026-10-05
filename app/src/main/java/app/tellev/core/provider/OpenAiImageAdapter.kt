@@ -37,8 +37,11 @@ class OpenAiImageAdapter(
     )
 
     override suspend fun checkStatus(config: ProviderConfig): ProviderStatus {
+        // Profile tests may point at relays without /v1; the profile carries its own path.
+        val modelsPath = config.options["models_path"]?.jsonPrimitive?.contentOrNull
+            ?.takeIf(String::isNotBlank) ?: "/v1/models"
         val request = Request.Builder()
-            .url(config.endpoint("/v1/models"))
+            .url(config.endpoint(modelsPath))
             .applyHeaders(config)
             .get()
             .build()
@@ -61,34 +64,14 @@ class OpenAiImageAdapter(
     )
 
     override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> = flow {
-        // Extract the prompt from the last user message
-        val promptText = request.prompt.messages
-            .filter { it.role != app.tellev.core.model.MessageRole.System }
-            .joinToString(" ") { it.content }
-
-        val model = config.model ?: "dall-e-3"
-        val size = request.metadata["size"]?.jsonPrimitive?.contentOrNull ?: "1024x1024"
-        val quality = request.metadata["quality"]?.jsonPrimitive?.contentOrNull ?: "standard"
-        val style = request.metadata["style"]?.jsonPrimitive?.contentOrNull
-        val responseFormat = request.metadata["response_format"]?.jsonPrimitive?.contentOrNull ?: "url"
-        val n = request.metadata["n"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 1
-
-        val payload = buildJsonObject {
-            put("model", JsonPrimitive(model))
-            put("prompt", JsonPrimitive(promptText))
-            put("n", JsonPrimitive(n))
-            put("size", JsonPrimitive(size))
-            put("response_format", JsonPrimitive(responseFormat))
-            if (model == "dall-e-3") {
-                put("quality", JsonPrimitive(quality))
-                style?.let { put("style", JsonPrimitive(it)) }
-            }
-        }
+        val metadata = request.metadata
+        val path = metadata["images_path"]?.jsonPrimitive?.contentOrNull
+            ?.takeIf(String::isNotBlank) ?: "/v1/images/generations"
 
         val httpRequest = Request.Builder()
-            .url(config.endpoint("/v1/images/generations"))
+            .url(config.endpoint(path))
             .applyHeaders(config)
-            .post(payload.toString().toRequestBody(JSON))
+            .post(imageGenerationPayload(config, request).toString().toRequestBody(JSON))
             .build()
 
         val call = client.newCall(httpRequest)
@@ -177,4 +160,32 @@ class OpenAiImageAdapter(
     private companion object {
         val JSON = "application/json; charset=utf-8".toMediaType()
     }
+}
+
+/**
+ * The OpenAI Images request body for [request], resolved from the provider
+ * config plus request metadata (see [ImageProviderProfile.requestMetadata]).
+ * Blank/absent size, quality, style and response_format are omitted so strict
+ * compatible upstreams never see DALL·E-only fields they reject; `extra_body`
+ * (if any) is merged in last so a profile can override anything. Pure so the
+ * exact wire body stays unit-testable without a server.
+ */
+internal fun imageGenerationPayload(config: ProviderConfig, request: GenerateRequest): JsonObject {
+    val metadata = request.metadata
+    fun text(key: String): String? = metadata[key]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
+    val promptText = request.prompt.messages
+        .filter { it.role != app.tellev.core.model.MessageRole.System }
+        .joinToString(" ") { it.content }
+    val payload = buildJsonObject {
+        put("model", JsonPrimitive(config.model?.takeIf(String::isNotBlank) ?: "dall-e-3"))
+        put("prompt", JsonPrimitive(promptText))
+        put("n", JsonPrimitive(text("n")?.toIntOrNull() ?: 1))
+        text("size")?.let { put("size", JsonPrimitive(it)) }
+        text("quality")?.let { put("quality", JsonPrimitive(it)) }
+        text("style")?.let { put("style", JsonPrimitive(it)) }
+        text("response_format")?.let { put("response_format", JsonPrimitive(it)) }
+        text("negative_prompt")?.let { put("negative_prompt", JsonPrimitive(it)) }
+    }
+    val extra = metadata["extra_body"] as? JsonObject
+    return if (extra.isNullOrEmpty()) payload else JsonObject(payload + extra)
 }

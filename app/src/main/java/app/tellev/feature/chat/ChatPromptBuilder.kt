@@ -157,6 +157,34 @@ internal object ChatPromptBuilder {
                     putJsonArray("warnings") {
                         result.diagnostics.warnings.forEach { add(JsonPrimitive(it)) }
                     }
+                    putJsonArray("worldBookHits") {
+                        result.diagnostics.worldBookHits.forEach { hit ->
+                            add(
+                                buildJsonObject {
+                                    put("entryId", hit.entryId)
+                                    put("title", hit.title?.let { JsonPrimitive(it) } ?: JsonNull)
+                                    put("bookName", hit.bookName?.let { JsonPrimitive(it) } ?: JsonNull)
+                                    putJsonArray("matchedKeys") { hit.matchedKeys.forEach { add(JsonPrimitive(it)) } }
+                                    putJsonArray("matchedSecondaryKeys") { hit.matchedSecondaryKeys.forEach { add(JsonPrimitive(it)) } }
+                                    put("unconditional", hit.unconditional)
+                                    put("recursionLevel", hit.recursionLevel)
+                                    hit.tokens?.let { put("tokens", it) }
+                                },
+                            )
+                        }
+                    }
+                    putJsonArray("rejectedWorldEntries") {
+                        result.diagnostics.rejectedWorldEntries.forEach { rejection ->
+                            add(
+                                buildJsonObject {
+                                    put("entryId", rejection.entryId)
+                                    put("title", rejection.title?.let { JsonPrimitive(it) } ?: JsonNull)
+                                    put("bookName", rejection.bookName?.let { JsonPrimitive(it) } ?: JsonNull)
+                                    put("reason", rejection.reason)
+                                },
+                            )
+                        }
+                    }
                     putJsonArray("messages") {
                         result.messages.forEach { message ->
                             add(

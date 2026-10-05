@@ -112,7 +112,18 @@ class GeminiAdapter(
                 }
                 request.preset.raw["responseMimeType"]?.let { put("responseMimeType", it) }
                 request.preset.raw["responseSchema"]?.let { put("responseSchema", it) }
-                request.preset.raw["thinkingConfig"]?.let { put("thinkingConfig", it) }
+                // Unified reasoning strength: Auto keeps the preset's own
+                // thinkingConfig verbatim; explicit levels map to a thinkingBudget.
+                val reasoningInjection = ReasoningSupport.inject(
+                    family = ReasoningFamily.Gemini,
+                    effort = ReasoningSupport.effortFor(request),
+                    raw = request.preset.raw,
+                )
+                if (reasoningInjection.resolved == app.tellev.core.model.ReasoningEffort.Auto) {
+                    request.preset.raw["thinkingConfig"]?.let { put("thinkingConfig", it) }
+                } else {
+                    reasoningInjection.fields["thinkingConfig"]?.let { put("thinkingConfig", it) }
+                }
                 (request.preset.raw["generationConfigExtra"] as? JsonObject)?.forEach { (key, value) -> put(key, value) }
             })
             request.preset.raw["safetySettings"]?.let { put("safetySettings", it) }

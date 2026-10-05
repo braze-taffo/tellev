@@ -17,7 +17,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Tune
@@ -60,13 +62,19 @@ import app.tellev.R
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import app.tellev.core.provider.ComfyWorkflowTemplate
+import app.tellev.core.provider.ImageProviderProfile
 import app.tellev.core.provider.NovelAiImageSettings
 import app.tellev.core.provider.ProviderCatalog
+import app.tellev.core.provider.ProviderConfigPersistence
 
 /** 主设置页生图入口卡片的摘要行：当前引擎与各引擎配置状态。 */
 internal fun imageGenSummary(state: SettingsUiState): String {
-    val engineName = when (state.imageEngine) {
-        ProviderCatalog.NOVELAI_IMAGE -> "NovelAI"
+    val engineName = when {
+        state.imageEngine == ProviderCatalog.NOVELAI_IMAGE -> "NovelAI"
+        ProviderConfigPersistence.isImageProfileEngineId(state.imageEngine) ->
+            state.imageProfiles.firstOrNull {
+                ProviderConfigPersistence.imageProfileEngineId(it.id) == state.imageEngine
+            }?.name ?: UiStrings.get(S.setimg_profile_generic_name)
         else -> "ComfyUI"
     }
     val configured = UiStrings.get(S.setimg_state_configured)
@@ -75,7 +83,10 @@ internal fun imageGenSummary(state: SettingsUiState): String {
         "ComfyUI " + if (state.comfySettings.workflowJson.isNotBlank()) configured else unconfigured,
         "NovelAI " + if (state.novelAiToken.isNotBlank()) configured else unconfigured,
     )
-    return UiStrings.get(S.setimg_entry_summary, engineName, parts.joinToString(" · "))
+    val extra = state.imageProfiles.count { it.isConfigured }
+    return UiStrings.get(S.setimg_entry_summary, engineName,
+        (parts + if (extra > 0) listOf(UiStrings.get(S.setimg_entry_profiles, extra)) else emptyList())
+            .joinToString(" · "))
 }
 
 @Composable
@@ -129,6 +140,7 @@ internal fun LazyListScope.imageGenDetailsItems(
     onOpenNovelAiParamsDialog: () -> Unit,
     novelAiTokenVisible: Boolean,
     onToggleNovelAiTokenVisible: () -> Unit,
+    onEditImageProfile: (ImageProviderProfile?) -> Unit,
 ) {
     // ── 生图引擎：聊天「生成图片」按钮走哪个引擎，各引擎配置见下方对应区块 ──
     item(key = "image_engine_header") {
@@ -453,6 +465,96 @@ internal fun LazyListScope.imageGenDetailsItems(
     }
     item(key = "novelai_divider") {
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+    }
+
+    // ── 自定义生图端口：任意多个 OpenAI Images 兼容端点，可切换为当前引擎 ──
+    item(key = "imgprofile_header") {
+        SectionHeader(
+            icon = Icons.Default.Dns,
+            title = stringResource(R.string.setimg_profile_header),
+        )
+    }
+    item(key = "imgprofile_desc") {
+        Text(
+            stringResource(R.string.setimg_profile_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    if (state.imageProfiles.isEmpty()) {
+        item(key = "imgprofile_empty") {
+            Text(
+                stringResource(R.string.setimg_profile_empty_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    state.imageProfiles.forEach { profile ->
+        val engineId = ProviderConfigPersistence.imageProfileEngineId(profile.id)
+        item(key = "imgprofile_row_${profile.id}") {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(profile.name, style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                profile.summary(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (state.imageEngine == engineId) {
+                            Text(
+                                stringResource(R.string.setimg_profile_in_use),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilledTonalButton(
+                            onClick = { viewModel.selectImageEngine(engineId) },
+                            modifier = Modifier.weight(1f),
+                            enabled = profile.isConfigured,
+                        ) {
+                            Text(stringResource(R.string.setimg_profile_use_engine))
+                        }
+                        OutlinedButton(
+                            onClick = { onEditImageProfile(profile) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(stringResource(R.string.setimg_profile_edit))
+                        }
+                        OutlinedButton(
+                            onClick = { viewModel.deleteImageProfile(profile.id) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(
+                                stringResource(R.string.setimg_profile_delete),
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+    item(key = "imgprofile_add") {
+        OutlinedButton(
+            onClick = { onEditImageProfile(null) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(stringResource(R.string.setimg_profile_add))
+        }
     }
 }
 
@@ -891,6 +993,259 @@ internal fun NovelAiImageParamsDialog(
                 },
             ) {
                 Text(stringResource(R.string.setimg_ok))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.setimg_cancel))
+            }
+        },
+    )
+}
+
+/**
+ * Edit dialog for one custom image endpoint profile. [initial] null creates a
+ * new profile; all request fields are free-form so non-OpenAI relays stay
+ * reachable, and blank optional fields are omitted from request bodies.
+ */
+@Composable
+internal fun ImageProfileEditDialog(
+    initial: ImageProviderProfile?,
+    isTesting: Boolean,
+    testStatus: app.tellev.core.provider.ProviderStatus?,
+    onTest: (ImageProviderProfile) -> Unit,
+    onSave: (ImageProviderProfile) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf(initial?.name ?: "") }
+    var baseUrl by remember { mutableStateOf(initial?.baseUrl ?: "") }
+    var apiKey by remember { mutableStateOf(initial?.apiKey ?: "") }
+    var apiKeyVisible by remember { mutableStateOf(false) }
+    var model by remember { mutableStateOf(initial?.model ?: "") }
+    var path by remember { mutableStateOf(initial?.path ?: ImageProviderProfile.DEFAULT_PATH) }
+    var modelsPath by remember { mutableStateOf(initial?.modelsPath ?: ImageProviderProfile.DEFAULT_MODELS_PATH) }
+    var size by remember { mutableStateOf(initial?.size ?: "1024x1024") }
+    var quality by remember { mutableStateOf(initial?.quality ?: "") }
+    var style by remember { mutableStateOf(initial?.style ?: "") }
+    var responseFormat by remember { mutableStateOf(initial?.responseFormat ?: "") }
+    var sendNegativePrompt by remember { mutableStateOf(initial?.sendNegativePrompt ?: false) }
+    var extraBody by remember { mutableStateOf(initial?.extraBody?.toString() ?: "") }
+    var extraBodyError by remember { mutableStateOf(false) }
+    var showValidation by remember { mutableStateOf(false) }
+
+    val nameError = showValidation && name.isBlank()
+    val baseUrlError = showValidation && baseUrl.isBlank()
+
+    fun buildProfile(): ImageProviderProfile? {
+        val extra = if (extraBody.isBlank()) {
+            kotlinx.serialization.json.JsonObject(emptyMap())
+        } else {
+            ImageProviderProfile.parseExtraBody(extraBody) ?: return null
+        }
+        return ImageProviderProfile(
+            id = initial?.id ?: ProviderConfigPersistence.newImageProviderProfileId(),
+            name = name.trim(),
+            baseUrl = baseUrl.trim(),
+            apiKey = apiKey.trim(),
+            model = model.trim(),
+            path = path.trim().ifBlank { ImageProviderProfile.DEFAULT_PATH },
+            modelsPath = modelsPath.trim().ifBlank { ImageProviderProfile.DEFAULT_MODELS_PATH },
+            size = size.trim(),
+            quality = quality.trim(),
+            style = style.trim(),
+            responseFormat = responseFormat.trim(),
+            sendNegativePrompt = sendNegativePrompt,
+            extraBody = extra,
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(stringResource(
+                if (initial == null) R.string.setimg_profile_add else R.string.setimg_profile_edit,
+            ))
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(stringResource(R.string.setimg_profile_name)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    isError = nameError,
+                    supportingText = { if (nameError) Text(stringResource(R.string.setimg_profile_required)) },
+                )
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = { baseUrl = it },
+                    label = { Text(stringResource(R.string.setimg_profile_baseurl)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("https://api.example.com") },
+                    isError = baseUrlError,
+                    supportingText = { if (baseUrlError) Text(stringResource(R.string.setimg_profile_required)) },
+                )
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it },
+                    label = { Text(stringResource(R.string.setimg_profile_apikey)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = if (apiKeyVisible) VisualTransformation.None
+                    else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                            Icon(
+                                if (apiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = null,
+                            )
+                        }
+                    },
+                )
+                OutlinedTextField(
+                    value = model,
+                    onValueChange = { model = it },
+                    label = { Text(stringResource(R.string.setimg_profile_model)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("dall-e-3") },
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = path,
+                        onValueChange = { path = it },
+                        label = { Text(stringResource(R.string.setimg_profile_path)) },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = modelsPath,
+                        onValueChange = { modelsPath = it },
+                        label = { Text(stringResource(R.string.setimg_profile_models_path)) },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = size,
+                        onValueChange = { size = it },
+                        label = { Text(stringResource(R.string.setimg_profile_size)) },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = quality,
+                        onValueChange = { quality = it },
+                        label = { Text(stringResource(R.string.setimg_profile_quality)) },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = style,
+                        onValueChange = { style = it },
+                        label = { Text(stringResource(R.string.setimg_profile_style)) },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = responseFormat,
+                        onValueChange = { responseFormat = it },
+                        label = { Text(stringResource(R.string.setimg_profile_response_format)) },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        placeholder = { Text("url / b64_json") },
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(stringResource(R.string.setimg_profile_send_negative), modifier = Modifier.weight(1f))
+                    Switch(checked = sendNegativePrompt, onCheckedChange = { sendNegativePrompt = it })
+                }
+                OutlinedTextField(
+                    value = extraBody,
+                    onValueChange = {
+                        extraBody = it
+                        extraBodyError = false
+                    },
+                    label = { Text(stringResource(R.string.setimg_profile_extra_body)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    isError = extraBodyError,
+                    supportingText = {
+                        Text(
+                            stringResource(
+                                if (extraBodyError) R.string.setimg_profile_extra_body_invalid
+                                else R.string.setimg_profile_extra_body_help,
+                            ),
+                        )
+                    },
+                )
+                if (testStatus != null) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (testStatus.available) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.errorContainer,
+                        ),
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = if (testStatus.available) stringResource(R.string.setimg_status_connected)
+                                else stringResource(R.string.setimg_status_failed),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = if (testStatus.available) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Text(
+                                text = testStatus.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (testStatus.available) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row {
+                TextButton(
+                    onClick = {
+                        buildProfile()?.let(onTest) ?: run { extraBodyError = true }
+                    },
+                    enabled = !isTesting,
+                ) {
+                    if (isTesting) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Text(stringResource(R.string.setimg_test_connection))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                TextButton(
+                    onClick = {
+                        showValidation = true
+                        val profile = buildProfile()
+                        if (profile != null && name.isNotBlank() && baseUrl.isNotBlank()) {
+                            onSave(profile)
+                        } else if (profile == null) {
+                            extraBodyError = true
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.setimg_save))
+                }
             }
         },
         dismissButton = {

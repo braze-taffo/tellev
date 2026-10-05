@@ -1,0 +1,22 @@
+comm_title	类脑
+comm_subtitle	角色扮演酒馆社区
+comm_desc	类脑（ΟΔΥΣΣΕΙΑ）是中文 SillyTavern 酒馆生态最大的 Discord 社区，分享角色卡、预设、世界书与教程。
+comm_main_entry	社区主入口
+comm_main_entry_desc	discord.gg/odysseia
+comm_guide	新手入门指南
+comm_guide_desc	如何加入社区、答题与解锁角色卡下载区
+comm_hint	在社区里下载的角色卡文件会自动导入 tellev，无需手动操作。
+comm_hint_network	加入与浏览社区需要可以访问 Discord 的网络环境。
+comm_reload	刷新
+comm_open_external	在 Discord 中打开
+comm_fallback_title	暂时无法打开社区页面
+comm_fallback_body	当前网络无法连接 Discord，请稍后重试，或切换到可访问 Discord 的网络后再打开。
+comm_retry	重试
+comm_import_title	导入下载的角色卡
+comm_import_body	文件 %1$s 已下载，是否导入到 tellev 角色卡库？
+comm_import_confirm	导入
+comm_import_success	角色卡“%1$s”已导入
+comm_import_failed	导入失败：%1$s
+comm_unsupported	该文件不是角色卡，已跳过自动导入：%1$s
+comm_external_link	链接已在外部浏览器中打开
+comm_webview_disabled	当前设备的 WebView 不可用，只能在外部浏览器中打开社区。

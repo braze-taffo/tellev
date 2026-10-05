@@ -12,6 +12,10 @@ import android.webkit.WebResourceResponse
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import app.tellev.core.extension.ExtensionErrorRecord
+import app.tellev.core.extension.host.ExtensionApiStat
+import app.tellev.core.extension.host.ExtensionRecentCall
+import app.tellev.core.extension.host.ExtensionStatsCollector
 import app.tellev.core.extension.host.ExtensionDiagnostics
 import app.tellev.core.extension.host.ExtensionPromptStore
 import app.tellev.core.extension.host.ExtensionRequestManager
@@ -112,6 +116,7 @@ class WebViewJsExtensionHost(
 
     private val requests = ExtensionRequestManager()
     private val diagnostics = ExtensionDiagnostics()
+    private val statsCollector = ExtensionStatsCollector()
     private val promptStore = ExtensionPromptStore()
 
     private val settingsCache = ConcurrentHashMap<String, String>()
@@ -322,9 +327,8 @@ class WebViewJsExtensionHost(
                                     webViews.remove(manifest.id)
                                     destroyRuntimeWebView(view)
                                     requests.cancelPendingForExtension(manifest.id)
-                                    reportExtensionLog(
+                                    reportExtensionError(
                                         manifest.id,
-                                        "error",
                                         if (detail.didCrash()) "WebView renderer crashed" else "WebView renderer killed by system",
                                     )
                                 }
@@ -363,7 +367,9 @@ class WebViewJsExtensionHost(
                         webChromeClient = object : WebChromeClient() {
                             override fun onConsoleMessage(message: ConsoleMessage): Boolean {
                                 val level = if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) "error" else "debug"
-                                reportExtensionLog(manifest.id, level, "${message.message()} (${message.sourceId()}:${message.lineNumber()})")
+                                val text = "${message.message()} (${message.sourceId()}:${message.lineNumber()})"
+                                if (level == "error") reportExtensionError(manifest.id, text)
+                                else reportExtensionLog(manifest.id, level, text)
                                 return true
                             }
                         }
@@ -557,6 +563,22 @@ class WebViewJsExtensionHost(
 
     override fun clearHostPromptDiagnostics() {
         diagnostics.clearHostPromptDiagnostics()
+    }
+
+    override fun snapshotExtensionStats(): Map<String, List<ExtensionApiStat>> =
+        webViews.keys.associateWith { statsCollector.stats(it) }.filterValues { it.isNotEmpty() }
+
+    override fun snapshotExtensionRecentCalls(): Map<String, List<ExtensionRecentCall>> =
+        webViews.keys.associateWith { statsCollector.recentCalls(it) }.filterValues { it.isNotEmpty() }
+
+    override fun snapshotExtensionErrors(): List<ExtensionErrorRecord> = diagnostics.snapshotExtensionErrors()
+
+    override fun declaredExtensionPermissions(): Map<String, Set<ExtensionPermission>> =
+        declaredPermissions.toMap()
+
+    override fun clearExtensionStats(extensionId: String?) {
+        statsCollector.clear(extensionId)
+        diagnostics.clearExtensionErrors(extensionId)
     }
 
     private suspend fun publishLocalEvent(event: ExtensionEvent) {
@@ -871,8 +893,11 @@ class WebViewJsExtensionHost(
                     headers = mapOf("X-Extension-Id" to extensionId, "X-Capability-Token" to token),
                 )
                 if (!checkApiPermissions(path, requestId)) return@launch
-                val response = runCatching {
-                    routeApiRequestForExtension(request)
+                // Handler-side timing for the async virtual API (the JS-side
+                // hop only measures the handoff, not the work).
+                val handlerStart = System.nanoTime()
+                val (response, failed) = runCatching {
+                    routeApiRequestForExtension(request) to false
                 }.getOrElse { error ->
                     VirtualApiResponse(
                         status = 500,
@@ -884,8 +909,14 @@ class WebViewJsExtensionHost(
                                 put("status", 500)
                             },
                         ),
-                    )
+                    ) to true
                 }
+                statsCollector.record(
+                    extensionId,
+                    "api ${method.uppercase()} ${path.substringBefore('?')}",
+                    (System.nanoTime() - handlerStart) / 1_000_000.0,
+                    failed,
+                )
                 deliverApiResponseToJs(requestId, response)
             }
         }
@@ -1041,7 +1072,17 @@ class WebViewJsExtensionHost(
                 requests.pendingLoadFailures.putIfAbsent(extensionId, detail)
                 requests.pendingLoads[extensionId]?.complete(Unit)
             }
-            reportExtensionLog(extensionId, "error", detail)
+            reportExtensionError(extensionId, detail)
+        }
+
+        /**
+         * Timing probe from the JS shim's tellevNative wrapper (all bridge
+         * methods except the skip-listed emit/log family). Pure telemetry —
+         * never affects the call it reports.
+         */
+        @JavascriptInterface
+        fun traceCall(name: String, millis: Double, failed: Boolean) {
+            statsCollector.record(extensionId, name, millis, failed)
         }
 
         // ── SillyTavern / 酒馆助手 shim bridge methods ──────────────────
@@ -1388,6 +1429,21 @@ class WebViewJsExtensionHost(
                 ),
             )
         }
+    }
+
+    /**
+     * Structured script error for the debug panel: keeps the full stack (when
+     * the caller has one) alongside the event log. A multi-line [message]
+     * from the load guards is split — first line as the summary, rest as stack.
+     */
+    private fun reportExtensionError(extensionId: String, message: String, stack: String? = null) {
+        val (summary, frames) = if (stack == null && message.contains('\n')) {
+            message.trim().let { it.substringBefore('\n') to it.substringAfter('\n').trim().takeIf(String::isNotEmpty) }
+        } else {
+            message.trim() to stack?.takeIf(String::isNotBlank)
+        }
+        diagnostics.rememberExtensionError(extensionId, summary.ifBlank { "Unknown script error" }, frames)
+        reportExtensionLog(extensionId, "error", message)
     }
 
     private data class RegisteredCommand(val extensionId: String, val command: SlashCommand)

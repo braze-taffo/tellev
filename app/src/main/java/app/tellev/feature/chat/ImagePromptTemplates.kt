@@ -69,26 +69,26 @@ No Chinese, explanation, headings, Markdown, JSON, positive/negative sections or
 
     /** All engines retry invalid output once; no untranslated or partially stripped fallback. */
     suspend fun summarize(
-        engine: ChatImageEngine,
+        usesEnglishTags: Boolean,
         onRejected: (response: String, reason: String) -> Unit = { _, _ -> },
         generate: suspend (instruction: String) -> String?,
     ): String? {
-        val template = if (engine.usesEnglishTags) ENGLISH_TAGS else COMFY_SCENE
-        val validate = if (engine.usesEnglishTags) ::processEnglishTags else ::processComfyScene
+        val template = if (usesEnglishTags) ENGLISH_TAGS else COMFY_SCENE
+        val validate = if (usesEnglishTags) ::processEnglishTags else ::processComfyScene
         val first = generate(template) ?: return null
         validate(first)?.let { return it }
-        onRejected(first, rejectionReason(engine, first))
-        val retry = if (engine.usesEnglishTags) TAG_RETRY else SCENE_RETRY
+        onRejected(first, rejectionReason(usesEnglishTags, first))
+        val retry = if (usesEnglishTags) TAG_RETRY else SCENE_RETRY
         val retried = generate("$template\n\n$retry") ?: return null
-        return validate(retried).also { if (it == null) onRejected(retried, rejectionReason(engine, retried)) }
+        return validate(retried).also { if (it == null) onRejected(retried, rejectionReason(usesEnglishTags, retried)) }
     }
 
-    private fun rejectionReason(engine: ChatImageEngine, input: String): String = when {
+    private fun rejectionReason(usesEnglishTags: Boolean, input: String): String = when {
         input.isBlank() -> "回复为空"
         !Regex("[a-zA-Z]{2,}").containsMatchIn(input) -> "回复没有英文画面描述"
         input.any { it.code > 127 } -> "回复含非 ASCII 字符，当前格式校验未通过"
         input.length > 2000 || input.split(Regex("\\s+")).size > 200 -> "回复超过当前长度限制"
-        engine.usesEnglishTags -> "回复不是所要求的短英文标签"
+        usesEnglishTags -> "回复不是所要求的短英文标签"
         else -> "回复带有标题、说明或结构化格式，当前格式校验未通过"
     }
 

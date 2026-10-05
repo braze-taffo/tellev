@@ -154,9 +154,14 @@ class DefaultPromptEngine(
             },
             maxContentTokens = worldInfoTokenBudget,
         )
+        val worldBookNamesByEntryId = request.worldBooks
+            .flatMap { book -> book.entries.map { entry -> entry.id to book.name } }
+            .toMap()
+        val worldScanDiagnostics = WorldInfoScanner.ScanDiagnostics()
         val worldScan = worldScanner.scan(
             entries = request.worldBooks.flatMap { it.entries },
             searchText = searchText,
+            diagnostics = worldScanDiagnostics,
             expand = { entry, content ->
                 promptTemplateProcessor.systemPromptContentFor(
                     PromptTemplateWorldEntry(
@@ -433,6 +438,10 @@ class DefaultPromptEngine(
         // 12. Estimate token count for diagnostics
         val estimatedTokens = TokenBudget.estimateTotalTokens(finalMessages)
 
+        fun worldEntryTitle(entry: app.tellev.core.model.WorldBookEntry): String? = entry.comment.takeIf { it.isNotBlank() }
+        fun worldEntryBookName(entry: app.tellev.core.model.WorldBookEntry): String? =
+            worldBookNamesByEntryId[entry.id]?.takeIf { it.isNotBlank() }
+
         return PromptBuildResult(
             messages = finalMessages,
             stop = stopSequences,
@@ -442,6 +451,26 @@ class DefaultPromptEngine(
                 activatedWorldEntryIds = activatedEntries.map { it.id },
                 estimatedTokenCount = estimatedTokens,
                 warnings = PromptPostProcessor.compatibilityWarnings(request) + promptTemplateResult.warnings,
+                worldBookHits = worldScanDiagnostics.hits.map { hit ->
+                    WorldEntryHit(
+                        entryId = hit.entry.id,
+                        title = worldEntryTitle(hit.entry),
+                        bookName = worldEntryBookName(hit.entry),
+                        matchedKeys = hit.matchedKeys,
+                        matchedSecondaryKeys = hit.matchedSecondaryKeys,
+                        unconditional = hit.unconditional,
+                        recursionLevel = hit.recursionLevel,
+                        tokens = hit.tokens,
+                    )
+                },
+                rejectedWorldEntries = worldScanDiagnostics.rejections.map { rejection ->
+                    WorldEntryRejection(
+                        entryId = rejection.entry.id,
+                        title = worldEntryTitle(rejection.entry),
+                        bookName = worldEntryBookName(rejection.entry),
+                        reason = rejection.reason,
+                    )
+                },
             ),
             promptTemplateVariableUpdates = promptTemplateResult.variableUpdates,
         )

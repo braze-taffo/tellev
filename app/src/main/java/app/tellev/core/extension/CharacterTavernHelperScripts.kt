@@ -4,6 +4,7 @@ import app.tellev.core.model.CharacterCard
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -285,4 +286,139 @@ object CharacterTavernHelperScripts {
             runCatching { element.jsonPrimitive.booleanOrNull }.getOrNull()
                 ?: runCatching { element.jsonPrimitive.content.toBooleanStrictOrNull() }.getOrNull()
         }
+
+    // ── per-script enable toggle (script manager UI) ─────────────────────
+
+    /** One toggleable card script with its position in the raw JSON tree. */
+    data class ScriptEntry(
+        val id: String,
+        val name: String,
+        /** Path of the executable script node relative to `data.extensions`. */
+        val path: String,
+        val enabled: Boolean,
+        val contentLength: Int,
+    )
+
+    /**
+     * Every script node in the card (regardless of enabled state), for the
+     * script manager. Unlike [extract] this lists disabled scripts too and
+     * records where each one lives so [withScriptEnabledAt] can patch it.
+     */
+    fun listScriptEntries(character: CharacterCard): List<ScriptEntry> {
+        val extensions = character.extensionObject()
+        val roots = sequence {
+            val tavernHelper = extensions["tavern_helper"]
+            val nested = tavernHelper.asObjectOrNull()?.get("scripts")
+            if (nested != null) yield("tavern_helper.scripts" to nested)
+            else if (tavernHelper != null) yield("tavern_helper" to tavernHelper)
+            extensions["TavernHelper_scripts"]?.let { yield("TavernHelper_scripts" to it) }
+        }
+        val out = mutableListOf<ScriptEntry>()
+        roots.forEach { (rootPath, element) -> listNodes(element, rootPath, out) }
+        return out
+    }
+
+    private fun listNodes(
+        element: JsonElement?,
+        path: String,
+        out: MutableList<ScriptEntry>,
+    ) {
+        val array = element?.asArrayOrNull()
+        if (array != null) {
+            array.forEachIndexed { index, child -> listNodes(child, "$path.$index", out) }
+            return
+        }
+        val obj = element.asObjectOrNull() ?: return
+        val type = obj.stringField("type")
+        if (type == "script") {
+            val legacy = obj["value"]?.asObjectOrNull()
+            if (legacy != null) {
+                listNodes(legacy, "$path.value", out)
+                return
+            }
+        }
+        if (type == "folder") {
+            (obj["scripts"] ?: obj["value"])?.let { listNodes(it, "$path.scripts", out) }
+            return
+        }
+        if (type != null && type != "script") return
+        val content = obj.scriptContent() ?: return
+        if (content.isBlank()) return
+        val id = obj.stringField("id") ?: path.replace(Regex("[^A-Za-z0-9_.-]"), "_")
+        out += ScriptEntry(
+            id = id,
+            name = obj.stringField("name")?.ifBlank { id } ?: id,
+            path = path,
+            enabled = obj.isEnabled(),
+            contentLength = content.length,
+        )
+    }
+
+    /**
+     * Flip the `enabled` flag of the script at [path] (as produced by
+     * [listScriptEntries]) and return the patched card. For a legacy
+     * `{ type:'script', value:{…} }` wrapper the flag lands on the nested
+     * ScriptData, mirroring how [collect] reads it. Returns null when the
+     * path no longer resolves (card changed underneath us).
+     */
+    fun withScriptEnabledAt(character: CharacterCard, path: String, enabled: Boolean): CharacterCard? {
+        val data = character.raw["data"].asObjectOrNull() ?: return null
+        val extensions = data["extensions"].asObjectOrNull() ?: return null
+        val segments = path.split('.')
+        val target = navigate(extensions, segments) ?: return null
+        val holder = target["value"]?.asObjectOrNull()?.takeIf { target.stringField("type") == "script" } ?: target
+        val patchedHolder = JsonObject(holder + ("enabled" to JsonPrimitive(enabled)))
+        val newExtensions = replaceAtPath(extensions, segments, if (holder === target) patchedHolder else JsonObject(target + ("value" to patchedHolder)))
+            ?: return null
+        val newData = JsonObject(data + ("extensions" to newExtensions))
+        val newRaw = if (character.raw.containsKey("data")) {
+            JsonObject(character.raw + ("data" to newData))
+        } else {
+            // Non-standard card without a data envelope: extensions lived at the root.
+            JsonObject(character.raw + ("extensions" to newExtensions))
+        }
+        return character.copy(raw = newRaw)
+    }
+
+    private fun navigate(element: JsonObject, segments: List<String>): JsonObject? {
+        var current: JsonElement = element
+        for (segment in segments) {
+            current = when {
+                current.asObjectOrNull()?.get(segment) != null -> current.jsonObject[segment]!!
+                current.asArrayOrNull()?.getOrNull(segment.toIntOrNull() ?: return null) != null ->
+                    current.jsonArray[segment.toInt()]
+                else -> return null
+            }
+        }
+        return current.asObjectOrNull()
+    }
+
+    private fun replaceAtPath(
+        element: JsonObject,
+        segments: List<String>,
+        replacement: JsonObject,
+    ): JsonObject? {
+        val head = segments.first()
+        if (segments.size == 1) {
+            if (element[head] == null) return null
+            return JsonObject(element + (head to replacement))
+        }
+        val child = element[head] ?: return null
+        val childObj = child.asObjectOrNull()
+        if (childObj != null) {
+            val patched = replaceAtPath(childObj, segments.drop(1), replacement) ?: return null
+            return JsonObject(element + (head to patched))
+        }
+        val array = child.asArrayOrNull() ?: return null
+        val index = segments[1].toIntOrNull() ?: return null
+        val target = array.getOrNull(index) ?: return null
+        val targetObj = target.asObjectOrNull() ?: return null
+        val patched = if (segments.size == 2) {
+            replacement
+        } else {
+            replaceAtPath(targetObj, segments.drop(2), replacement) ?: return null
+        }
+        val newArray = JsonArray(array.mapIndexed { i, item -> if (i == index) patched else item })
+        return JsonObject(element + (head to newArray))
+    }
 }

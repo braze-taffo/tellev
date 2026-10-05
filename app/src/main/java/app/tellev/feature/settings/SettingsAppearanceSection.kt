@@ -196,6 +196,12 @@ internal fun LazyListScope.appearanceSectionItems(
                 selected = state.themeAccent == ThemeAccent.Classic,
                 onClick = { onSetThemeAccent(ThemeAccent.Classic) },
             )
+            AccentOption(
+                accent = ThemeAccent.Ink,
+                label = stringResource(R.string.setapp_accent_ink),
+                selected = state.themeAccent == ThemeAccent.Ink,
+                onClick = { onSetThemeAccent(ThemeAccent.Ink) },
+            )
         }
     }
 

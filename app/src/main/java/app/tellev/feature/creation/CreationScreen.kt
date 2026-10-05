@@ -40,6 +40,7 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Preview
@@ -47,6 +48,7 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
@@ -62,6 +64,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -87,13 +90,18 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.tellev.R
 import app.tellev.ui.AtmosphereIntro
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
+import app.tellev.core.provider.ImageProviderProfile
+import app.tellev.core.provider.ProviderCatalog
+import app.tellev.core.provider.ProviderConfigPersistence
 import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -357,7 +365,11 @@ fun CreationEditorScreen(
         }
     }
     var tab by remember { mutableIntStateOf(0) }
-    LaunchedEffect(session?.id) { tab = 0 }
+    var showCoverDialog by remember { mutableStateOf(false) }
+    LaunchedEffect(session?.id) {
+        tab = 0
+        if (session?.kind == CreationKind.Character) viewModel.refreshCoverEngines()
+    }
     Scaffold(
         topBar = {
             TopAppBar(title = { Text(stringResource(if (session?.kind == CreationKind.WorldBook) R.string.crs_editor_title_worldbook else R.string.crs_editor_title_character)) },
@@ -393,16 +405,34 @@ fun CreationEditorScreen(
             when (tab) {
                 0 -> CreationConversation(session, state, viewModel)
                 1 -> CharacterDraftEditor(
-                    session.card, state.coverPreviewPng, viewModel, state.busy,
+                    session, state.coverPreviewPng, viewModel, state.busy,
+                    coverEngines = state.imageEngines,
+                    isGeneratingCover = state.isGeneratingCover,
                     onPickCover = { coverPicker.launch("image/*") },
                     onExportJson = { prepareExport(CharacterExportFormat.Json) },
                     onExportPng = { prepareExport(CharacterExportFormat.Png) },
+                    onGenerateCover = { showCoverDialog = true },
                 )
                 2 -> WorldDraftEditor(session, viewModel, state.busy, onExportJson = { prepareWorldBookExport() })
                 3 -> FrontendPreview(session.card, viewModel, state.busy)
                 4 -> AdvancedAssetsPanel(session, viewModel, state.busy)
             }
         }
+    }
+    if (showCoverDialog && session != null) {
+        CoverGenerationDialog(
+            engines = state.imageEngines,
+            profiles = state.imageProfiles,
+            initialPrompt = session.card.coverPrompt.ifBlank {
+                listOf(session.card.name, session.card.personality)
+                    .map(String::trim).filter(String::isNotBlank).joinToString(", ")
+            },
+            isGenerating = state.isGeneratingCover,
+            onGenerate = { prompt, negative, engineId ->
+                viewModel.generateCover(prompt, negative, engineId)
+            },
+            onDismiss = { showCoverDialog = false },
+        )
     }
 }
 
@@ -708,6 +738,19 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                 }
             }
         }
+        // Agent 提供的引导建议：点击只填入输入框，发送永远由用户按下。
+        if (!busy && state.suggestions.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                state.suggestions.forEach { suggestion ->
+                    AssistChip(
+                        onClick = { input = suggestion },
+                        enabled = !busy,
+                        label = { Text(suggestion, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    )
+                }
+            }
+        }
         if (session.turns.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -728,6 +771,7 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                 }
             }
         }
+        var optimizeOpen by remember { mutableStateOf(false) }
         Row(Modifier.fillMaxWidth().padding(top = 6.dp),
             verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
@@ -735,6 +779,12 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                 label = { Text(stringResource(R.string.crs_input_label)) }, minLines = 1, maxLines = 6,
                 shape = RoundedCornerShape(24.dp),
             )
+            // 与聊天输入框一致：优化只改草稿，发送仍由用户按下发送键。
+            if (input.isNotBlank()) {
+                IconButton(onClick = { optimizeOpen = true }, enabled = !busy) {
+                    Icon(Icons.Filled.AutoFixHigh, contentDescription = stringResource(R.string.chat_optimize_title))
+                }
+            }
             FilledIconButton(
                 onClick = { viewModel.send(input); input = "" },
                 enabled = !busy && input.isNotBlank(),
@@ -742,6 +792,18 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
             ) {
                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.crs_send))
             }
+        }
+        if (optimizeOpen) {
+            app.tellev.ui.PromptOptimizationDialog(
+                providerLabel = null,
+                onRun = { options, onPreview, onDone -> viewModel.optimizeDraft(input, options, onPreview, onDone) },
+                onCancelRun = { viewModel.cancelPromptOptimization() },
+                onApply = { optimized ->
+                    input = optimized
+                    optimizeOpen = false
+                },
+                onDismiss = { optimizeOpen = false },
+            )
         }
     }
 }
@@ -859,14 +921,19 @@ private fun DraftSection(title: String, initiallyExpanded: Boolean = false, cont
 
 @Composable
 private fun CharacterDraftEditor(
-    card: CharacterDraft,
+    session: CreationSession,
     coverPng: ByteArray?,
     viewModel: CreationViewModel,
     busy: Boolean,
+    coverEngines: Set<String>,
+    isGeneratingCover: Boolean,
     onPickCover: () -> Unit,
     onExportJson: () -> Unit,
     onExportPng: () -> Unit,
+    onGenerateCover: () -> Unit,
 ) {
+    val card = session.card
+    val clipboard = LocalClipboardManager.current
     val coverBitmap = remember(coverPng) {
         coverPng?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
     }
@@ -879,6 +946,15 @@ private fun CharacterDraftEditor(
             } else Text(stringResource(R.string.crs_cover_missing_hint), style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = onPickCover, enabled = !busy) {
                 Text(if (coverPng == null) stringResource(R.string.crs_cover_pick) else stringResource(R.string.crs_cover_change))
+            }
+            if (coverEngines.isNotEmpty()) {
+                OutlinedButton(onClick = onGenerateCover, enabled = !busy && !isGeneratingCover) {
+                    Text(if (isGeneratingCover) {
+                        stringResource(R.string.crs_cover_generating)
+                    } else {
+                        stringResource(R.string.crs_cover_generate)
+                    })
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onExportJson, enabled = !busy) { Text(stringResource(R.string.crs_export_json)) }
@@ -906,7 +982,119 @@ private fun CharacterDraftEditor(
                 viewModel.editCard { c -> c.copy(tags = value.split(',', '，').map(String::trim).filter(String::isNotBlank)) }
             }
         }
+        DraftSection(stringResource(R.string.crs_section_blueprint)) {
+            // The standard profile is regenerated from the draft on every
+            // export; this section only shows its current compiled shape and
+            // offers the one-shot generation request.
+            val hasContent = card.name.isNotBlank() || card.description.isNotBlank()
+            Text(
+                if (hasContent) stringResource(R.string.crs_blueprint_summary, session.lore.size)
+                else stringResource(R.string.crs_blueprint_empty_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (card.coverPrompt.isNotBlank()) {
+                Text(
+                    stringResource(R.string.crs_blueprint_cover_prompt_line, card.coverPrompt),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { viewModel.send(blueprintRequestPrompt()) },
+                    enabled = !busy,
+                ) { Text(stringResource(R.string.crs_blueprint_generate)) }
+                OutlinedButton(
+                    onClick = {
+                        clipboard.setText(AnnotatedString(CharacterBlueprintCompiler.compileToJson(session)))
+                    },
+                    enabled = true,
+                ) { Text(stringResource(R.string.crs_blueprint_copy_json)) }
+            }
+        }
     }
+}
+
+/**
+ * AI cover generation: engine choice across built-ins and configured custom
+ * profiles, prompt prefilled from the blueprint's cover_prompt when present.
+ */
+@Composable
+private fun CoverGenerationDialog(
+    engines: Set<String>,
+    profiles: List<ImageProviderProfile>,
+    initialPrompt: String,
+    isGenerating: Boolean,
+    onGenerate: (prompt: String, negativePrompt: String, engineId: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var prompt by rememberSaveable(initialPrompt) { mutableStateOf(initialPrompt) }
+    var negative by rememberSaveable { mutableStateOf("") }
+    val defaultEngine = engines.firstOrNull() ?: ""
+    var selectedEngineId by remember { mutableStateOf(defaultEngine) }
+    AlertDialog(
+        onDismissRequest = { if (!isGenerating) onDismiss() },
+        title = { Text(stringResource(R.string.crs_cover_generate_title)) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(stringResource(R.string.chat_engine_label), style = MaterialTheme.typography.titleSmall)
+                engines.forEach { engineId ->
+                    val label = when (engineId) {
+                        ProviderCatalog.COMFYUI -> "ComfyUI"
+                        ProviderCatalog.NOVELAI_IMAGE -> "NovelAI"
+                        else -> profiles.firstOrNull {
+                            it.id == engineId.removePrefix(ProviderConfigPersistence.IMAGE_PROFILE_PREFIX)
+                        }?.name ?: engineId
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        RadioButton(
+                            selected = selectedEngineId == engineId,
+                            onClick = { selectedEngineId = engineId },
+                        )
+                        Text(label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                OutlinedTextField(
+                    value = prompt,
+                    onValueChange = { prompt = it },
+                    label = { Text(stringResource(R.string.crs_cover_generate_prompt_label)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    maxLines = 8,
+                    placeholder = { Text("1girl, solo, masterpiece, best quality...") },
+                )
+                OutlinedTextField(
+                    value = negative,
+                    onValueChange = { negative = it },
+                    label = { Text(stringResource(R.string.chat_negative_prompt)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 1,
+                    maxLines = 4,
+                    placeholder = { Text("lowres, bad anatomy, bad hands...") },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onGenerate(prompt.trim(), negative.trim(), selectedEngineId) },
+                enabled = !isGenerating && prompt.isNotBlank() && selectedEngineId.isNotEmpty(),
+            ) {
+                Text(stringResource(R.string.crs_cover_generate_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isGenerating) {
+                Text(stringResource(R.string.chat_image_gen_cancel))
+            }
+        },
+    )
 }
 
 @Composable

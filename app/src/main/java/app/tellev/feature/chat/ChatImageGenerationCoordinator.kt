@@ -51,6 +51,8 @@ internal class ChatImageGenerationCoordinator(
     private val providerRegistry: ProviderRegistry,
     private val secretStore: SecretStore,
     private val generatedImageStore: GeneratedImageStore,
+    /** Size-capped remote download for engines that return URLs (OpenAI Images). */
+    private val downloadUrl: (suspend (String) -> ByteArray?)? = null,
 ) {
     private var imageGenerationJob: Job? = null
 
@@ -68,11 +70,14 @@ internal class ChatImageGenerationCoordinator(
     fun activeImageSessionId(): String? = activeImageSessionId
 
     suspend fun refreshImageGenAvailability(
-        onAvailabilityUpdated: (available: Boolean, configured: Set<String>, engine: String?) -> Unit,
+        onAvailabilityUpdated: (available: Boolean, configured: Set<String>, engine: String?, profiles: List<ChatImageProfileOption>) -> Unit,
     ) {
         val configured = ProviderConfigPersistence.configuredImageEngines(secretStore)
         val engine = ProviderConfigPersistence.availableImageEngine(secretStore, configured)
-        onAvailabilityUpdated(configured.isNotEmpty(), configured, engine)
+        val profiles = ProviderConfigPersistence.listImageProviderProfiles(secretStore)
+            .filter { it.isConfigured }
+            .map { ChatImageProfileOption(ProviderConfigPersistence.imageProfileEngineId(it.id), it.name) }
+        onAvailabilityUpdated(configured.isNotEmpty(), configured, engine, profiles)
     }
 
     suspend fun refreshGeneratedImages(
@@ -140,15 +145,28 @@ internal class ChatImageGenerationCoordinator(
             try {
                 onStatusUpdated(true, UiStrings.get(S.chatimgco_status_preparing), null, null)
 
-                val engine = (selectedEngine ?: state.imageEngine)?.let(ChatImageEngine::fromProviderId)
+                val engineId = selectedEngine ?: state.imageEngine
                     ?: error(UiStrings.get(S.chatimgco_select_engine))
-                val engineId = engine.providerId
                 val configured = ProviderConfigPersistence.configuredImageEngines(secretStore)
-                check(engine.providerId in configured) { UiStrings.get(S.chatimgco_engine_unconfigured_detail, engine.label) }
-                ProviderConfigPersistence.saveImageEngine(secretStore, engine.providerId)
-                onEngineUpdated(engine.providerId, configured)
+                // `imgprof:` ids resolve to a user-defined OpenAI-compatible image profile.
+                val profile = if (ProviderConfigPersistence.isImageProfileEngineId(engineId)) {
+                    ProviderConfigPersistence
+                        .findImageProviderProfile(secretStore, ProviderConfigPersistence.imageProfileIdFrom(engineId))
+                        ?.takeIf { it.isConfigured }
+                } else null
+                val engineLabel = profile?.name
+                    ?: ChatImageEngine.fromProviderId(engineId)?.label
+                    ?: engineId
+                // Unknown ids that are neither built-ins nor profiles keep the
+                // legacy "select an engine" error (stale callers, removed engines).
+                if (profile == null && ChatImageEngine.fromProviderId(engineId) == null) {
+                    error(UiStrings.get(S.chatimgco_select_engine))
+                }
+                check(engineId in configured) { UiStrings.get(S.chatimgco_engine_unconfigured_detail, engineLabel) }
+                ProviderConfigPersistence.saveImageEngine(secretStore, engineId)
+                onEngineUpdated(engineId, configured)
 
-                val useNovelAiEngine = engine == ChatImageEngine.NovelAi
+                val usesEnglishTags = engineId == ProviderCatalog.NOVELAI_IMAGE
 
                 val finalPrompt = if (summarizeScene) {
                     onStatusUpdated(true, UiStrings.get(S.chatimgco_status_summarizing), null, null)
@@ -157,7 +175,7 @@ internal class ChatImageGenerationCoordinator(
                         session = session,
                         persona = state.selectedPersona,
                         selectedProvider = state.selectedProvider,
-                        engine = engine,
+                        usesEnglishTags = usesEnglishTags,
                         onDiagnosticRecorded = onDiagnosticRecorded,
                     )
                 } else {
@@ -166,36 +184,45 @@ internal class ChatImageGenerationCoordinator(
 
                 onStatusUpdated(
                     true,
-                    if (useNovelAiEngine) UiStrings.get(S.chatimgco_status_novelai_generating) else UiStrings.get(S.chatimgco_status_generating),
+                    if (usesEnglishTags) UiStrings.get(S.chatimgco_status_novelai_generating) else UiStrings.get(S.chatimgco_status_generating),
                     null,
                     null,
                 )
 
-                val adapter: ProviderAdapter = providerRegistry.require(engineId)
+                val adapter: ProviderAdapter = providerRegistry.require(
+                    if (profile != null) ProviderCatalog.OPENAI_IMAGE else engineId,
+                )
                 val config: ProviderConfig
                 val metadata: kotlinx.serialization.json.JsonObject
-                if (useNovelAiEngine) {
-                    val novelSettings = ProviderConfigPersistence.loadNovelAiImageSettings(secretStore)
-                    config = ProviderConfigPersistence.loadProviderConfig(secretStore, ProviderCatalog.NOVELAI_IMAGE)
-                    val personaName = state.selectedPersona?.name
-                    metadata = buildJsonObject {
-                        put("negative_prompt", negativePrompt.trim())
-                        put(
-                            "novelai_settings",
-                            Json.encodeToJsonElement(NovelAiImageSettings.serializer(), novelSettings),
-                        )
-                        if (!personaName.isNullOrBlank()) put("macro_user", personaName)
-                        if (character.name.isNotBlank()) put("macro_char", character.name)
+                when {
+                    profile != null -> {
+                        config = profile.toProviderConfig()
+                        metadata = profile.requestMetadata(negativePrompt.trim())
                     }
-                } else {
-                    val comfySettings = ProviderConfigPersistence.loadComfySettings(secretStore)
-                    config = ProviderConfigPersistence.loadProviderConfig(secretStore, ProviderCatalog.COMFYUI)
-                    metadata = buildJsonObject {
-                        put("negative_prompt", negativePrompt.trim())
-                        put(
-                            "comfy_settings",
-                            Json.encodeToJsonElement(ComfyUiSettings.serializer(), comfySettings),
-                        )
+                    usesEnglishTags -> {
+                        val novelSettings = ProviderConfigPersistence.loadNovelAiImageSettings(secretStore)
+                        config = ProviderConfigPersistence.loadProviderConfig(secretStore, ProviderCatalog.NOVELAI_IMAGE)
+                        val personaName = state.selectedPersona?.name
+                        metadata = buildJsonObject {
+                            put("negative_prompt", negativePrompt.trim())
+                            put(
+                                "novelai_settings",
+                                Json.encodeToJsonElement(NovelAiImageSettings.serializer(), novelSettings),
+                            )
+                            if (!personaName.isNullOrBlank()) put("macro_user", personaName)
+                            if (character.name.isNotBlank()) put("macro_char", character.name)
+                        }
+                    }
+                    else -> {
+                        val comfySettings = ProviderConfigPersistence.loadComfySettings(secretStore)
+                        config = ProviderConfigPersistence.loadProviderConfig(secretStore, ProviderCatalog.COMFYUI)
+                        metadata = buildJsonObject {
+                            put("negative_prompt", negativePrompt.trim())
+                            put(
+                                "comfy_settings",
+                                Json.encodeToJsonElement(ComfyUiSettings.serializer(), comfySettings),
+                            )
+                        }
                     }
                 }
 
@@ -236,8 +263,22 @@ internal class ChatImageGenerationCoordinator(
                 val imageFileId = UUID.randomUUID().toString().substring(0, 8)
                 val imageFileName = "img-${System.currentTimeMillis()}-$imageFileId.png"
                 val relativePath = "user/images/$imageFileName"
-                val bytes = withContext(Dispatchers.IO) {
-                    java.util.Base64.getDecoder().decode(base64)
+                // 结果形态因引擎而异（裸 base64 / data URI / https URL）：
+                // 统一归一化并校验 magic，避免把 URL 当 base64 解码。
+                val normalized = app.tellev.core.provider.ImageResultNormalizer.toBytes(base64, downloadUrl)
+                if (normalized == null) {
+                    onStatusUpdated(false, null, null, UiStrings.get(S.chatimgco_generate_failed_no_data))
+                    return@launch
+                }
+                val bytes = if (normalized.mimeType == "image/png") {
+                    normalized.bytes
+                } else {
+                    // 非 PNG 返回（JPEG/WebP）转成 PNG：与 .png 扩展名和画廊
+                    // 展示不再错位；解码失败时报错而不是落盘损坏文件。
+                    withContext(Dispatchers.IO) { app.tellev.util.decodeImageAsPng(normalized.bytes) } ?: run {
+                        onStatusUpdated(false, null, null, UiStrings.get(S.chatimgco_invalid_image_data))
+                        return@launch
+                    }
                 }
                 // 会话可能在生成期间被删除并取消了本 job：取消后不再落盘，
                 // 避免为已删除会话重建图片与画廊（级联清理会被撤销）。
@@ -263,7 +304,7 @@ internal class ChatImageGenerationCoordinator(
                     )),
                     prompt = finalPrompt,
                     negativePrompt = negativePrompt.trim(),
-                    engine = engine.providerId,
+                    engine = engineId,
                 )
                 currentCoroutineContext().ensureActive()
                 withContext(Dispatchers.IO) { generatedImageStore.append(session.id, listOf(record)) }
@@ -285,7 +326,7 @@ internal class ChatImageGenerationCoordinator(
         session: ChatSession,
         persona: Persona?,
         selectedProvider: String,
-        engine: ChatImageEngine,
+        usesEnglishTags: Boolean,
         onDiagnosticRecorded: (String) -> Unit,
     ): String {
         val diagnostic = StringBuilder()
@@ -300,7 +341,7 @@ internal class ChatImageGenerationCoordinator(
             check(sceneHistory.any { it.reasoningParts().body.isNotBlank() }) { "当前会话没有可供总结的剧情正文" }
             var attempt = 0
             var rejectedReason = "模型未返回有效正文"
-            val summary = ImagePromptTemplates.summarize(engine, onRejected = { _, reason ->
+            val summary = ImagePromptTemplates.summarize(usesEnglishTags, onRejected = { _, reason ->
                 rejectedReason = reason
                 diagnostic.appendLine("校验结果：$reason")
             }) { instruction ->

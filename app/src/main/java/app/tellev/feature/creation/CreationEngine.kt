@@ -19,10 +19,12 @@ import app.tellev.core.provider.ProviderDefaults
 import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.provider.presetCategoryForProvider
 import app.tellev.core.provider.supportsChatGeneration
+import app.tellev.core.storage.StDataStore
 import app.tellev.core.security.SecretStore
 import kotlinx.coroutines.flow.collect
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -93,7 +95,91 @@ internal data class ConverseResult(
     val session: CreationSession,
     val rounds: Int,
     val capped: Boolean,
+    /** Optional next-step suggestions extracted from the reply; clicking fills the input, never sends. */
+    val suggestions: List<String> = emptyList(),
 )
+
+/** Asks the model to append an invisible next-step suggestions block it can offer. */
+internal const val SUGGESTIONS_DIRECTIVE =
+    "You may end your reply with an HTML comment listing 2-4 short next-step suggestions " +
+        "in the user's language, formatted exactly: <!-- suggestions: [\"…\", \"…\"] -->. " +
+        "It stays invisible to the user; omit it when suggestions would not help."
+
+/**
+ * Standard-profile protocol (character sessions only). The blueprint is a
+ * single create-or-update bulk write; the exported card always regenerates
+ * `data.extensions.tellev_standard_profile` from the draft, so the tool call
+ * is the agent's one structured hand-off point, not a persistence target.
+ */
+internal const val BLUEPRINT_DIRECTIVE =
+    "Standard profile protocol: when the character fields have settled, or the user asks for a complete " +
+        "card / standard blueprint, call the creation_tool once with name \"write_blueprint\" and pass the " +
+        "full blueprint as the arguments object, using snake_case keys: name (required), description, " +
+        "personality, scenario, first_mes, alternate_greetings (array), mes_example, system_prompt, " +
+        "post_history_instructions, creator_notes, tags (array), cover_prompt (a short English " +
+        "comma-separated image-tag prompt for an AI-generated cover illustration of this character, or an " +
+        "empty string), and lore (array of {title, keys, secondary_keys, content, constant, selective, " +
+        "insertion_order, depth, position, probability, match_whole_words}). Applying the blueprint " +
+        "overwrites the card fields with your values and upserts lore entries by title (it never deletes " +
+        "existing entries). Do not repeat the call unless the user asks for another change."
+
+private const val SUGGESTIONS_COMMENT_OPEN = "<!--"
+private const val SUGGESTIONS_COMMENT_CLOSE = "-->"
+private const val SUGGESTIONS_BODY_PREFIX = "suggestions"
+
+/**
+ * Strips the trailing suggestions block from a reply and parses it.
+ * Returns (cleanMessage, suggestions). Deterministic comment scanning (no
+ * regex) so malformed or truncated blocks — including a suggestion comment
+ * whose closing "-->" never arrived — are stripped or ignored silently and
+ * never pollute the user-visible text.
+ */
+internal fun splitReplySuggestions(message: String): Pair<String, List<String>> {
+    var searchFrom = 0
+    while (true) {
+        val open = message.indexOf(SUGGESTIONS_COMMENT_OPEN, searchFrom)
+        if (open < 0) return message.trim() to emptyList()
+        val bodyStart = skipHorizontalSpace(message, open + SUGGESTIONS_COMMENT_OPEN.length)
+        val isSuggestions = message.regionMatches(
+            bodyStart, SUGGESTIONS_BODY_PREFIX, 0, SUGGESTIONS_BODY_PREFIX.length,
+        )
+        if (!isSuggestions) {
+            searchFrom = open + SUGGESTIONS_COMMENT_OPEN.length
+            continue
+        }
+        // The suggestions comment is a reply-tail convention: close at the
+        // LAST "-->" so JSON-string content containing "-->" cannot leak the
+        // remainder into the user-visible message.
+        val close = message.lastIndexOf(SUGGESTIONS_COMMENT_CLOSE)
+        // Truncated tail: the comment never closed — strip everything after it.
+        val cleaned = if (close < open) {
+            message.substring(0, open).trimEnd()
+        } else {
+            (message.substring(0, open).trimEnd() + " " +
+                message.substring(close + SUGGESTIONS_COMMENT_CLOSE.length).trimStart()).trim()
+        }
+        if (close < open) return cleaned to emptyList()
+        var body = message.substring(bodyStart + SUGGESTIONS_BODY_PREFIX.length, close).trim()
+        if (body.startsWith(":")) body = body.substring(1).trim()
+        val suggestions = if (!body.startsWith("[")) emptyList() else runCatching {
+            val end = body.indexOf(']')
+            if (end < 0) return@runCatching emptyList<String>()
+            val raw = kotlinx.serialization.json.Json.parseToJsonElement(body.substring(0, end + 1))
+            (raw as? kotlinx.serialization.json.JsonArray)
+                ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull }
+                ?.map(String::trim)
+                ?.filter(String::isNotEmpty)
+                .orEmpty()
+        }.getOrDefault(emptyList())
+        return cleaned to suggestions.distinct().take(4)
+    }
+}
+
+private fun skipHorizontalSpace(text: String, from: Int): Int {
+    var index = from
+    while (index < text.length && (text[index] == ' ' || text[index] == '\t')) index++
+    return index
+}
 
 /** One native function keeps the transport contract small across compatible relays. */
 internal fun creationNativeTools(): JsonArray = JsonArray(listOf(buildJsonObject {
@@ -104,14 +190,15 @@ internal fun creationNativeTools(): JsonArray = JsonArray(listOf(buildJsonObject
         put("parameters", buildJsonObject {
             put("type", "object")
             put("properties", buildJsonObject {
-                put("name", buildJsonObject {
-                    put("type", "string")
-                    put("enum", JsonArray(listOf(
-                        "read_card", "list_lore", "read_lore", "set_card_fields", "upsert_lore", "remove_lore",
-                        "list_assets", "read_script", "upsert_script", "read_regex", "upsert_regex",
-                        "read_variables", "set_variables", "remove_asset", "ask_user",
-                    ).map(::JsonPrimitive)))
-                })
+                    put("name", buildJsonObject {
+                        put("type", "string")
+                        put("enum", JsonArray(listOf(
+                            "read_card", "list_lore", "read_lore", "set_card_fields", "upsert_lore", "remove_lore",
+                            "write_blueprint",
+                            "list_assets", "read_script", "upsert_script", "read_regex", "upsert_regex",
+                            "read_variables", "set_variables", "remove_asset", "ask_user",
+                        ).map(::JsonPrimitive)))
+                    })
                 put("arguments", buildJsonObject {
                     put("type", "object")
                     put("additionalProperties", true)
@@ -230,6 +317,15 @@ internal fun verifiedLoreFromChunk(
 internal class CreationEngine(
     private val secrets: SecretStore,
     private val providers: ProviderRegistry,
+    /**
+     * When provided, generation follows the CURRENT chat selection: the
+     * selected provider plus the chat-selected preset for its category
+     * (sampling, budgets, stop sequences and provider-specific raw fields).
+     * The creation system instructions always stay authoritative; a chat
+     * preset never injects prompts into the authoring loop. Null (tests)
+     * keeps the legacy built-in agent preset.
+     */
+    private val store: StDataStore? = null,
 ) {
     private val json = Json { encodeDefaults = true }
 
@@ -270,10 +366,9 @@ internal class CreationEngine(
         onToolEvent: (CreationToolEvent) -> Unit = {},
         onAskUser: (suspend (CreationAgentQuestion) -> String)? = null,
     ): ConverseResult {
-        val kind = UiStrings.get(if (session.kind == CreationKind.Character) S.creng_kind_character else S.creng_kind_worldbook)
         val opener = creationConversationContext(session)
         val history = mutableListOf(
-            PromptMessage(MessageRole.System, content = conversationSystemPrompt(kind, session.kind == CreationKind.WorldBook && session.originalCard != null)),
+            PromptMessage(MessageRole.System, content = conversationSystemPrompt(session.kind, session.kind == CreationKind.WorldBook && session.originalCard != null)),
             PromptMessage(MessageRole.User, content = opener + UiStrings.get(S.creng_context_user_round, userText)),
         )
         val toolbox = CreationToolBox(session)
@@ -282,7 +377,7 @@ internal class CreationEngine(
         var round = 0
         while (true) {
             round++
-            val generation = generate(history, temperature = if (consecutiveBadRounds > 0) 0.0 else 0.7,
+            val generation = generate(history, temperatureOverride = if (consecutiveBadRounds > 0) 0.0 else null,
                 onProgress = onProgress,
                 phasePrefix = UiStrings.get(S.creng_round_prefix, round))
             val nativeBlocks = parseNativeCreationCalls(generation.toolCalls)
@@ -313,11 +408,14 @@ internal class CreationEngine(
                     !parsed.hasUnclosedBlock && parsed.prose.isNotBlank()
                 ) {
                     // No tool calls: this round's prose is the reply to the user.
+                    // The optional trailing suggestions comment never reaches the UI.
+                    val (cleanMessage, suggestions) = splitReplySuggestions(parsed.prose)
                     return ConverseResult(
-                        message = parsed.prose.trim(),
+                        message = cleanMessage,
                         session = toolbox.session,
                         rounds = round,
                         capped = false,
+                        suggestions = suggestions,
                     )
                 }
                 val truncated = generation.finishReason == "length"
@@ -447,9 +545,14 @@ internal class CreationEngine(
         }
     }
 
-    private fun conversationSystemPrompt(kind: String, hasSourceCard: Boolean = false): String {
-        val base = UiStrings.get(S.creng_system_prompt, kind)
-        return if (hasSourceCard) base + "\n" + UiStrings.get(S.creng_system_prompt_source_card) else base
+    private fun conversationSystemPrompt(kind: CreationKind, hasSourceCard: Boolean = false): String {
+        val base = UiStrings.get(S.creng_system_prompt,
+            UiStrings.get(if (kind == CreationKind.Character) S.creng_kind_character else S.creng_kind_worldbook))
+        val withSource = if (hasSourceCard) base + "\n" + UiStrings.get(S.creng_system_prompt_source_card) else base
+        val withBlueprint = if (kind == CreationKind.Character) withSource + "\n" + BLUEPRINT_DIRECTIVE else withSource
+        // Suggestions ride as an invisible HTML comment: degrade gracefully when
+        // the model omits it, and strip it before the user sees the reply.
+        return withBlueprint + "\n" + SUGGESTIONS_DIRECTIVE
     }
 
 
@@ -464,7 +567,7 @@ internal class CreationEngine(
         val first = generate(listOf(
             PromptMessage(MessageRole.System, content = system),
             PromptMessage(MessageRole.User, content = prompt),
-        ), temperature = 0.2, onProgress = onProgress)
+        ), temperatureOverride = 0.2, onProgress = onProgress)
         try {
             return CreationReplyParser.parse(first.text)
         } catch (_: AgentReplyFormatException) {
@@ -480,7 +583,7 @@ internal class CreationEngine(
                 PromptMessage(MessageRole.System, content = repairSystem),
                 PromptMessage(MessageRole.User, content = UiStrings.get(S.creng_repair_input, json.encodeToString(first.text))),
             ),
-            temperature = 0.0, onProgress = onProgress, phasePrefix = UiStrings.get(S.creng_repair_prefix),
+            temperatureOverride = 0.0, onProgress = onProgress, phasePrefix = UiStrings.get(S.creng_repair_prefix),
         )
         try {
             return CreationReplyParser.parse(repaired.text)
@@ -501,7 +604,7 @@ internal class CreationEngine(
                 PromptMessage(MessageRole.System, content = condensed),
                 PromptMessage(MessageRole.User, content = prompt),
             ),
-            temperature = 0.0, onProgress = onProgress, phasePrefix = UiStrings.get(S.creng_condensed_prefix),
+            temperatureOverride = 0.0, onProgress = onProgress, phasePrefix = UiStrings.get(S.creng_condensed_prefix),
         )
         return try {
             CreationReplyParser.parse(retried.text)
@@ -512,9 +615,35 @@ internal class CreationEngine(
         }
     }
 
+    /**
+     * [temperatureOverride] null = follow the chat preset's temperature (or
+     * 0.7 when absent); explicit overrides win for repair/deterministic rounds.
+     */
+    /**
+     * The chat-selected preset for [config]'s provider category, aligned to
+     * the authoring request (agent id, provider type/category). Null when no
+     * preset storage is wired or none exists — callers fall back to the
+     * built-in agent defaults. Read failures degrade to null instead of
+     * failing the turn: an authoring request must not die on preset I/O.
+     */
+    private suspend fun resolveChatPreset(store: StDataStore, config: app.tellev.core.provider.ProviderConfig): GenerationPreset? =
+        runCatching {
+            val category = presetCategoryForProvider(config.providerType)
+            val candidates = store.listPresets().filter { it.category == category }
+            val selectedName = store.readSelectedPresetName(category)
+            val named = candidates.firstOrNull { it.id == selectedName } ?: candidates.firstOrNull() ?: return@runCatching null
+            val working = if (named.id == selectedName) store.readPreset(category, "in_use") else null
+            (working ?: named).copy(
+                id = "ai-creation-agent",
+                name = named.name,
+                providerType = config.providerType,
+                category = category,
+            )
+        }.getOrNull()
+
     private suspend fun generate(
         messages: List<PromptMessage>,
-        temperature: Double,
+        temperatureOverride: Double?,
         onProgress: (CreationStreamUpdate) -> Unit,
         phasePrefix: String = "",
     ): RawGeneration {
@@ -529,20 +658,37 @@ internal class CreationEngine(
             selectedAdapter is OpenAiCompatibleAdapter
         ) compatibleCreationAdapter else selectedAdapter
         val config = ProviderConfigPersistence.loadProviderConfig(secrets, selectedId)
+        // Authoring follows the CURRENT chat selection: the chat-selected
+        // preset for this provider category owns sampling, budgets, stop
+        // sequences and provider-specific raw fields (reasoning etc.). The
+        // authoring instructions in [messages] stay authoritative — a chat
+        // preset never injects prompt content here.
+        val chatPreset = store?.let { resolveChatPreset(it, config) }
+        val temperature = temperatureOverride ?: chatPreset?.temperature ?: 0.7
+        val outputBudgetField = (chatPreset?.maxCompletionTokens ?: chatPreset?.maxTokens)
+            ?.coerceIn(1_024, MAX_OUTPUT_TOKENS)
+            ?: MAX_OUTPUT_TOKENS
         onProgress(CreationStreamUpdate(
             phase = phasePrefix + UiStrings.get(S.creng_phase_connecting),
-            providerLabel = "${adapter.displayName} · ${config.model?.takeIf(String::isNotBlank) ?: UiStrings.get(S.creng_default_model_label)}",
+            providerLabel = buildString {
+                append(adapter.displayName)
+                append(" · ")
+                append(config.model?.takeIf(String::isNotBlank) ?: UiStrings.get(S.creng_default_model_label))
+                chatPreset?.let { append(" · ").append(it.name) }
+            },
         ))
-        // This preset is owned by the creation agent. User chat presets and the
-        // chat prompt engine must never alter authoring instructions or sampling.
-        val agentPreset = GenerationPreset(
+        val agentPreset = (chatPreset ?: GenerationPreset(
             id = "ai-creation-agent",
             name = "AI 协作创作",
             providerType = config.providerType,
             category = presetCategoryForProvider(config.providerType),
-            temperature = temperature,
             maxContextTokens = 1_000_000,
             maxCompletionTokens = MAX_OUTPUT_TOKENS,
+        )).copy(
+            id = "ai-creation-agent",
+            providerType = config.providerType,
+            category = presetCategoryForProvider(config.providerType),
+            temperature = temperature,
         )
         val prompt = PromptBuildResult(
             // Defensive copy: the loop keeps mutating its history list; a request
@@ -585,7 +731,7 @@ internal class CreationEngine(
         onProgress(CreationStreamUpdate(phasePrefix + UiStrings.get(S.creng_phase_waiting_model)))
         var retriedConnect = false
         var budgetRetries = 0
-        var outputBudget = MAX_OUTPUT_TOKENS
+        var outputBudget = outputBudgetField
         do {
             var retryConnect = false
             adapter.streamGenerate(

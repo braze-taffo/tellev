@@ -38,6 +38,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +55,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -61,7 +65,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.tellev.R
+import app.tellev.LocalTellevGraph
 import app.tellev.core.model.CharacterCard
+import app.tellev.core.tts.TtsPlaybackState
+import app.tellev.core.tts.TtsRuntime
+import app.tellev.core.tts.ttsUserMessage
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageReasoning
@@ -96,13 +104,36 @@ internal fun ChatBubble(
     onSwipeLeft: () -> Unit,
     onSwipeRight: () -> Unit,
     canRegenerate: Boolean,
+    canContinue: Boolean = false,
+    messageIndex: Int = -1,
     onRegenerate: () -> Unit,
+    onContinue: () -> Unit = {},
+    onFeedback: (Int, String) -> Unit = { _, _ -> },
+    onOpenContext: () -> Unit = {},
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     macroContext: app.tellev.core.prompt.MacroContext? = null,
 ) {
     val context = LocalContext.current
+    val graph = LocalTellevGraph.current
+    val tts = remember(dataRoot, graph.providerRegistry, graph.secretStore) {
+        TtsRuntime.get(context, dataRoot, graph.providerRegistry, graph.secretStore, graph.extensionHost.events)
+    }
+    val pageOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    val sessionId = tavernRuntime.token?.sessionId
+    val playbackId = remember(sessionId, message.id, message.swipeIndex, message.content) {
+        app.tellev.core.tts.TtsSpeechService.messagePlaybackId(sessionId, message.id, message.swipeIndex, message.content)
+    }
+    LaunchedEffect(tts, pageOwner, sessionId) { TtsRuntime.bindPage(pageOwner, sessionId) }
+    val ttsState by tts.state.collectAsState()
+    val requestingId by tts.requestingId.collectAsState()
+    val ttsEnabled = app.tellev.core.tts.TtsSettings(context).load().enabled
+    val isReading = requestingId == playbackId ||
+        (ttsState as? TtsPlaybackState.Loading)?.item?.id == playbackId ||
+        (ttsState as? TtsPlaybackState.Playing)?.item?.id == playbackId ||
+        (ttsState as? TtsPlaybackState.Paused)?.item?.id == playbackId
     val exportScope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
     var pendingDiagnosticExport by remember { mutableStateOf("") }
     val diagnosticExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         val payload = pendingDiagnosticExport
@@ -118,6 +149,88 @@ internal fun ChatBubble(
     val isUser = message.role == MessageRole.User
     var dragAmount by remember { mutableFloatStateOf(0f) }
     var showActions by remember { mutableStateOf(false) }
+
+    // 溢出菜单（编辑/删除/导出诊断等）抽成 lambda：操作行与顶栏行共用同一份。
+    val overflowMenu: @Composable () -> Unit = {
+        Box {
+            // 24dp was below the 48dp minimum touch target; keep the icon
+            // visually small but give the button a hittable area.
+            IconButton(
+                onClick = { showActions = true },
+                modifier = Modifier.size(40.dp),
+            ) {
+                Icon(
+                    Icons.Default.MoreVert,
+                    contentDescription = stringResource(R.string.chat_actions),
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            DropdownMenu(
+                expanded = showActions,
+                onDismissRequest = { showActions = false },
+            ) {
+                // 复制放在首位：消息操作栏最高频的操作（操作行也有独立复制键）。
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.chat_copy_message)) },
+                    leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
+                    onClick = {
+                        clipboard.setText(AnnotatedString(message.content))
+                        showActions = false
+                    },
+                )
+                if (canRegenerate) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.chat_regenerate)) },
+                        leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                        onClick = {
+                            onRegenerate()
+                            showActions = false
+                        },
+                    )
+                }
+                if (message.generationDiagnostics() != null) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.chat_export_generation_diagnostics)) },
+                        onClick = {
+                            pendingDiagnosticExport = message.generationDiagnostics().toString()
+                            showActions = false
+                            diagnosticExport.launch("generation-diagnostics.json")
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.chat_export_raw_response)) },
+                        onClick = {
+                            pendingDiagnosticExport = message.generationDiagnostics(includeResponse = true).toString()
+                            showActions = false
+                            diagnosticExport.launch("generation-response.json")
+                        },
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.chat_edit)) },
+                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                    onClick = {
+                        onEdit()
+                        showActions = false
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.chat_bubble_delete)) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    },
+                    onClick = {
+                        onDelete()
+                        showActions = false
+                    },
+                )
+            }
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -142,69 +255,30 @@ internal fun ChatBubble(
                 )
             }
             Spacer(modifier = Modifier.weight(1f))
-            Box {
-                // 24dp was below the 48dp minimum touch target; keep the icon
-                // visually small but give the button a hittable area.
-                IconButton(
-                    onClick = { showActions = true },
-                    modifier = Modifier.size(40.dp),
-                ) {
-                    Icon(
-                        Icons.Default.MoreVert,
-                        contentDescription = stringResource(R.string.chat_actions),
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-                DropdownMenu(
-                    expanded = showActions,
-                    onDismissRequest = { showActions = false },
-                ) {
-                    if (canRegenerate) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.chat_regenerate)) },
-                            leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
-                            onClick = {
-                                onRegenerate()
-                                showActions = false
-                            },
-                        )
-                    }
-                    if (message.generationDiagnostics() != null) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.chat_export_generation_diagnostics)) },
-                            onClick = {
-                                pendingDiagnosticExport = message.generationDiagnostics().toString()
-                                showActions = false
-                                diagnosticExport.launch("generation-diagnostics.json")
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.chat_export_raw_response)) },
-                            onClick = {
-                                pendingDiagnosticExport = message.generationDiagnostics(includeResponse = true).toString()
-                                showActions = false
-                                diagnosticExport.launch("generation-response.json")
-                            },
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.chat_edit)) },
-                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                        onClick = {
-                            onEdit()
-                            showActions = false
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.chat_bubble_delete)) },
-                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
-                        onClick = {
-                            onDelete()
-                            showActions = false
-                        },
-                    )
-                }
+            if (message.createdAtMillis > 0) {
+                Text(
+                    text = java.time.Instant.ofEpochMilli(message.createdAtMillis)
+                        .atZone(java.time.ZoneId.systemDefault())
+                        .toLocalTime()
+                        .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(end = 2.dp),
+                )
             }
+            // dsh 图二/三：时间右侧的小复制键。
+            IconButton(
+                onClick = { clipboard.setText(AnnotatedString(message.content)) },
+                modifier = Modifier.size(30.dp),
+            ) {
+                Icon(
+                    Icons.Default.ContentCopy,
+                    contentDescription = stringResource(R.string.chat_copy_message),
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                )
+            }
+            overflowMenu()
         }
 
         val parts = remember(message) { message.reasoningParts() }
@@ -346,6 +420,49 @@ internal fun ChatBubble(
                 totalSwipes = message.swipes.size,
                 onPrevious = onSwipeRight,
                 onNext = onSwipeLeft,
+            )
+        }
+
+        // 回复下方操作行：复制 / 点赞 / 点踩 / 分享 / 语音播放 / 重新生成 /
+        // 继续生成（参考图一）。用户消息不进这里——它的高频操作（复制/编辑/删除）
+        // 都在溢出菜单里。
+        if (!isUser) {
+            MessageActionRow(
+                isSpeaking = isReading,
+                speakEnabled = ttsEnabled || isReading,
+                canRegenerate = canRegenerate,
+                canContinue = canContinue,
+                feedback = (message.metadata["feedback"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull,
+                onSpeak = {
+                    if (isReading) {
+                        tts.stopIfOwner(playbackId)
+                    } else {
+                        exportScope.launch {
+                            tts.speak(message.reasoningParts().body, playbackId, sessionId).onFailure {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    context.getString(R.string.tts_error, it.ttsUserMessage()),
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
+                    }
+                },
+                onRegenerate = onRegenerate,
+                onContinue = onContinue,
+                onCopy = { clipboard.setText(AnnotatedString(message.content)) },
+                onFeedback = { value -> onFeedback(messageIndex, value) },
+                onOpenContext = onOpenContext,
+                onShare = {
+                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(android.content.Intent.EXTRA_TEXT, message.content)
+                    }
+                    runCatching {
+                        context.startActivity(android.content.Intent.createChooser(intent, null))
+                    }
+                },
+                overflow = {},
             )
         }
     }

@@ -11,3 +11,6 @@ enum class ChatImageEngine(val providerId: String, val label: String, val usesEn
         fun fromProviderId(id: String): ChatImageEngine? = entries.firstOrNull { it.providerId == id }
     }
 }
+
+/** Dialog row for a configured custom image endpoint (`imgprof:` engine id). */
+data class ChatImageProfileOption(val engineId: String, val label: String)

@@ -93,5 +93,6 @@ internal class AppearanceSettingsController(
     private fun ThemeAccent.displayName(): String = when (this) {
         ThemeAccent.Warm -> UiStrings.get(S.setappctl_accent_warm)
         ThemeAccent.Classic -> UiStrings.get(S.setappctl_accent_classic)
+        ThemeAccent.Ink -> UiStrings.get(S.setappctl_accent_ink)
     }
 }

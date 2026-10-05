@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 聊天输入栏长按语音输入：SpeechRecognizer 需要录音权限，使用时才动态申请。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Allows the in-app update checker to hand the downloaded APK to the
          system PackageInstaller. tellev is distributed via GitHub Releases
          (sideloaded), so this is the standard self-update permission. -->

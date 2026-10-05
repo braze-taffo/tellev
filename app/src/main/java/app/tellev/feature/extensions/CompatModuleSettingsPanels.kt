@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -256,8 +257,15 @@ fun ExtensionDebugPanel(
     logs: List<ExtensionRuntimeLog>,
     promptSnapshot: PromptDebugSnapshot?,
     showPromptDiagnostics: Boolean,
+    apiStats: List<app.tellev.core.extension.host.ExtensionApiStat>,
+    recentCalls: List<app.tellev.core.extension.host.ExtensionRecentCall>,
+    errors: List<app.tellev.core.extension.ExtensionErrorRecord>,
+    declaredPermissions: Set<app.tellev.core.extension.ExtensionPermission>,
+    grantedPermissions: Set<app.tellev.core.extension.ExtensionPermission>,
+    onTogglePermission: (app.tellev.core.extension.ExtensionPermission, Boolean) -> Unit,
     onClearLogs: () -> Unit,
     onClearPromptSnapshot: () -> Unit,
+    onClearStats: () -> Unit,
     onClose: () -> Unit,
 ) {
     val timeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
@@ -283,6 +291,116 @@ fun ExtensionDebugPanel(
         }
         status?.lastError?.let {
             Text(stringResource(R.string.extcompat_last_error, it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+
+        if (errors.isNotEmpty()) {
+            HorizontalDivider()
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(R.string.extdbg_errors_title, errors.size),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedButton(onClick = onClearStats) { Text(stringResource(R.string.extcompat_clear)) }
+            }
+            errors.forEach { error ->
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            stringResource(
+                                R.string.extdbg_error_meta,
+                                error.occurrences,
+                                SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(error.lastSeenAtMillis)),
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        SelectionContainer {
+                            Text(error.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                        }
+                        error.stack?.let { stack ->
+                            SelectionContainer {
+                                Text(
+                                    stack,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f),
+                                    modifier = Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState()),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (declaredPermissions.isNotEmpty()) {
+            HorizontalDivider()
+            Text(stringResource(R.string.extdbg_permissions_title), style = MaterialTheme.typography.titleMedium)
+            app.tellev.core.extension.ExtensionPermission.entries.forEach { permission ->
+                val declared = permission in declaredPermissions
+                val granted = permission in grantedPermissions
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        permissionLabel(permission) + if (declared) "" else stringResource(R.string.extdbg_permission_not_declared),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                        color = if (declared) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Switch(
+                        checked = granted,
+                        onCheckedChange = { onTogglePermission(permission, it) },
+                    )
+                }
+            }
+        }
+
+        if (apiStats.isNotEmpty()) {
+            HorizontalDivider()
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.extdbg_stats_title), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                OutlinedButton(onClick = onClearStats) { Text(stringResource(R.string.extcompat_clear)) }
+            }
+            apiStats.take(30).forEach { stat ->
+                val average = if (stat.count > 0) stat.totalMillis / stat.count else 0.0
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(stat.name, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                    Text(
+                        stringResource(
+                            R.string.extdbg_stats_row,
+                            stat.count,
+                            String.format(java.util.Locale.ROOT, "%.1f", average),
+                            String.format(java.util.Locale.ROOT, "%.1f", stat.maxMillis),
+                            stat.errorCount,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (recentCalls.isNotEmpty()) {
+                Text(
+                    stringResource(R.string.extdbg_recent_calls),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                recentCalls.take(15).forEach { call ->
+                    Text(
+                        stringResource(
+                            R.string.extdbg_recent_call_row,
+                            timeFormatter.format(Date(call.atMillis)),
+                            call.name,
+                            String.format(java.util.Locale.ROOT, "%.1f", call.millis),
+                        ) + if (call.failed) " ✕" else "",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (call.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
 
         if (showPromptDiagnostics) {
@@ -412,4 +530,14 @@ private fun SettingsToggleRow(
         }
         Switch(checked = checked, onCheckedChange = onChange)
     }
+}
+
+@Composable
+private fun permissionLabel(permission: app.tellev.core.extension.ExtensionPermission): String = when (permission) {
+    app.tellev.core.extension.ExtensionPermission.Network -> stringResource(R.string.extdbg_perm_network)
+    app.tellev.core.extension.ExtensionPermission.Storage -> stringResource(R.string.extdbg_perm_storage)
+    app.tellev.core.extension.ExtensionPermission.Secrets -> stringResource(R.string.extdbg_perm_secrets)
+    app.tellev.core.extension.ExtensionPermission.UiPanel -> stringResource(R.string.extdbg_perm_ui_panel)
+    app.tellev.core.extension.ExtensionPermission.ProviderRequest -> stringResource(R.string.extdbg_perm_provider)
+    app.tellev.core.extension.ExtensionPermission.Clipboard -> stringResource(R.string.extdbg_perm_clipboard)
 }

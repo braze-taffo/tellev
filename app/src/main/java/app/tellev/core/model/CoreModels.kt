@@ -175,6 +175,12 @@ data class GenerationPreset(
     val presencePenalty: Double? = null,
     val frequencyPenalty: Double? = null,
     val seed: Long? = null,
+    /**
+     * Unified reasoning strength set by the UI. Null = Auto: adapters keep
+     * their legacy raw-field passthrough and send nothing new. Only explicit
+     * choices (Off/Low..Max) take over the provider reasoning fields.
+     */
+    val reasoningEffort: ReasoningEffort? = null,
     val prompts: List<PresetPrompt> = emptyList(),
     val promptsUnused: List<PresetPrompt> = emptyList(),
     val extensions: JsonObject = buildJsonObject { },

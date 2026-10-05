@@ -100,7 +100,20 @@ data class MemoryRecord(
     val active: Boolean = true,
     val manual: Boolean = false,
     val vector: List<Float> = emptyList(),
-)
+    /** Previous texts pushed by corrections/rollbacks; newest first, capped. */
+    val history: List<MemoryCorrection> = emptyList(),
+) {
+    /** Keeps the stored document bounded; [MAX_HISTORY] oldest entries are dropped. */
+    fun withHistoryEntry(previousText: String, atMillis: Long = System.currentTimeMillis()): MemoryRecord =
+        copy(history = (listOf(MemoryCorrection(previousText, atMillis)) + history).take(MAX_HISTORY))
+
+    companion object {
+        const val MAX_HISTORY = 5
+    }
+}
+
+@Serializable
+data class MemoryCorrection(val text: String, val atMillis: Long)
 
 @Serializable
 data class MemoryDocument(
@@ -116,3 +129,19 @@ data class MemoryDocument(
 ) {
     companion object { fun empty(mode: MemoryMode) = MemoryDocument(mode = mode.name) }
 }
+
+/** One memory record injected into this turn's prompt, with retrieval provenance. */
+data class InjectedMemoryRecord(
+    val recordId: String,
+    val kind: String,
+    val text: String,
+    /** Retrieval score; null for non-retrieved pins (state lines, story summaries). */
+    val score: Double?,
+    val sourceIds: List<String> = emptyList(),
+)
+
+/** [MemoryService.context] result plus the structured provenance behind its text. */
+data class MemoryContextDetail(
+    val text: String,
+    val injected: List<InjectedMemoryRecord> = emptyList(),
+)

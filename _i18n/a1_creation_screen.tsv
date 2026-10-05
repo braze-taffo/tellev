@@ -139,3 +139,26 @@ crs_view_full_stream	查看完整流式内容
 crs_view_progress	查看本轮进度 · %1$s
 crs_waiting_first_chunk	仍在等待首个流式片段。
 crs_waiting_provider_text	等待供应商返回可显示的文字…
+crs_agent_asking	等待你的选择
+crs_import_source_name	导入原文
+crs_new_character_desc	与 AI 协作创作完整角色卡
+crs_new_entry_name	新条目
+crs_new_worldbook_desc	从设定或原文整理世界书
+crs_paste_source_name	粘贴原文
+crs_section_advanced	高级设定
+crs_section_basic	基本信息
+crs_section_cover	封面与导出
+crs_section_opening	开场与示例
+crs_tool_events_title	工具活动（%1$d）
+crs_tool_round	第 %1$d 轮
+crs_cover_generate	AI 生成封面
+crs_cover_generating	正在生成封面…
+crs_cover_generate_title	AI 生成封面
+crs_cover_generate_prompt_label	画面提示词
+crs_cover_generate_confirm	生成
+crs_section_blueprint	标准蓝图
+crs_blueprint_summary	导出时将自动嵌入标准蓝图（%1$d 个世界书条目），可随时让 AI 重新整理成卡。
+crs_blueprint_empty_hint	尚未生成内容。可让 AI 一次性完成标准角色卡：正文、世界书条目与封面提示词。
+crs_blueprint_cover_prompt_line	封面提示词：%1$s
+crs_blueprint_generate	让 AI 生成标准蓝图
+crs_blueprint_copy_json	复制蓝图 JSON

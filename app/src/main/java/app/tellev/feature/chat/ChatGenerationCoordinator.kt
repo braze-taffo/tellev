@@ -11,6 +11,8 @@ import app.tellev.core.model.MessageReasoning
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.withGenerationReasoning
 import app.tellev.core.memory.MemoryService
+import app.tellev.core.metrics.GenerationMetricsCalculator
+import app.tellev.core.metrics.GenerationMetricsStore
 import app.tellev.core.prompt.PromptBuildRequest
 import app.tellev.core.prompt.PromptEngine
 import app.tellev.core.prompt.TokenBudget
@@ -19,6 +21,7 @@ import app.tellev.core.provider.GenerateChunk
 import app.tellev.core.provider.GenerateRequest
 import app.tellev.core.provider.GenerationRuntimeResolver
 import app.tellev.core.provider.ProviderRegistry
+import app.tellev.core.provider.ReasoningSupport
 import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.prompt.ChatTextProcessing
 import app.tellev.core.storage.StDataStore
@@ -59,6 +62,7 @@ internal class ChatGenerationCoordinator(
     private val sessionRuntime: ChatSessionRuntime,
     private val runtimeResolver: GenerationRuntimeResolver,
     private val memoryService: MemoryService,
+    private val metricsStore: GenerationMetricsStore? = null,
 ) {
     var generationJob: Job? = null
         private set
@@ -67,6 +71,10 @@ internal class ChatGenerationCoordinator(
         private set
 
     var activeRegeneration: ActiveRegeneration? = null
+        private set
+
+    /** 继续生成中的目标消息 id：流式结果按「追加」写回该消息，而不是新开一条。 */
+    var activeContinue: String? = null
         private set
 
     /**
@@ -95,13 +103,14 @@ internal class ChatGenerationCoordinator(
         attachments: List<Attachment>,
         messageRole: MessageRole,
         regenerationMessageId: String? = null,
+        continueMessageId: String? = null,
         regexIsEdit: Boolean = false,
         uiState: MutableStateFlow<ChatUiState>,
         scope: CoroutineScope,
         characterScriptJob: Job?,
     ): Boolean {
         val messageText = text.trim()
-        if (regenerationMessageId == null && messageText.isBlank() && attachments.isEmpty()) return false
+        if (regenerationMessageId == null && continueMessageId == null && messageText.isBlank() && attachments.isEmpty()) return false
 
         val state = uiState.value
         if (state.isGenerating || isGenerating || extensionGenerationActive) return false
@@ -122,6 +131,19 @@ internal class ChatGenerationCoordinator(
             (regenerationIndex == null || !canRegenerateResponse(state.messages, regenerationIndex))
         ) {
             uiState.update { it.copy(error = UiStrings.get(S.chatgenco_regen_last_only)) }
+            return false
+        }
+        // 继续生成：目标必须是最后一条角色/助手回复（开场白之后也能继续）；
+        // 不像重新生成那样强制前文有用户消息。
+        val continueIndex = continueMessageId?.let { messageId ->
+            state.messages.indexOfFirst { it.id == messageId }.takeIf { index ->
+                index >= 0 && index == state.messages.lastIndex &&
+                    (state.messages[index].role == MessageRole.Character ||
+                        state.messages[index].role == MessageRole.Assistant)
+            }
+        }
+        if (continueMessageId != null && continueIndex == null) {
+            uiState.update { it.copy(error = UiStrings.get(S.chat_continue_empty)) }
             return false
         }
 
@@ -180,32 +202,58 @@ internal class ChatGenerationCoordinator(
                     }
                 }
 
-                val processedInput = if (regenerationInput == null) promptEngine.processChatText(
+                val isContinue = continueMessageId != null
+                // 继续生成不产生新消息：目标回复留在列表末尾，即模型的续写上文。
+                val processedInput = if (regenerationInput == null && !isContinue) promptEngine.processChatText(
                     messageText, messageRole, character, preset,
                     ChatTextProcessing.context(character, initializedSession, runtime.persona?.name ?: "User", runtime.persona),
                     isEdit = regexIsEdit,
                 ) else null
-                val inputMessage = regenerationInput ?: CharacterRegexApplier.markNormalProcessed(ChatMessage(
-                    id = generateMessageId(),
-                    role = messageRole,
-                    name = if (messageRole == MessageRole.System) "System" else runtime.persona?.name ?: "你",
-                    content = requireNotNull(processedInput).text,
-                    createdAtMillis = System.currentTimeMillis(),
-                    attachments = attachments,
-                ))
+                // 文本附件（选取时提取的 textContent）拼进本轮 userInput：模型能直接
+                // 读到文档内容；气泡里的消息正文保持原样，不受拼接影响。
+                val attachmentContext = attachments.mapNotNull { attachment ->
+                    val content = attachment.metadata["textContent"]
+                        ?.let { it as? JsonPrimitive }?.content
+                        ?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    StringBuilder().apply {
+                        append("[附件 ").append(attachment.name).append(']')
+                        append('\n')
+                        append(content)
+                    }.toString()
+                }.joinToString("\n\n")
+                val promptUserInputSuffix = attachmentContext.take(16_000)
+                val inputMessage = when {
+                    isContinue -> null
+                    regenerationInput != null -> regenerationInput
+                    else -> CharacterRegexApplier.markNormalProcessed(ChatMessage(
+                        id = generateMessageId(),
+                        role = messageRole,
+                        name = if (messageRole == MessageRole.System) "System" else runtime.persona?.name ?: "你",
+                        content = requireNotNull(processedInput).text,
+                        createdAtMillis = System.currentTimeMillis(),
+                        attachments = attachments,
+                    ))
+                }
 
                 val isRegeneration = regenerationMessageId != null
                 val baseSessionMessages = initializedSession.messages
-                val updatedMessages = if (isRegeneration) baseSessionMessages else baseSessionMessages + inputMessage
+                val updatedMessages = when {
+                    isRegeneration -> baseSessionMessages
+                    isContinue -> baseSessionMessages
+                    // requireNotNull 把列表元素类型收窄成 ChatMessage：可空元素会顺着
+                    // baseMessages 一路污染后续的消息写入路径。
+                    else -> baseSessionMessages + requireNotNull(inputMessage)
+                }
                 val updatedSession = initializedSession.copy(messages = updatedMessages,
                     metadata = processedInput?.let { JsonObject(initializedSession.metadata + ("variables" to it.localVariables)) } ?: initializedSession.metadata)
 
-                if (!isRegeneration) {
+                if (!isRegeneration && !isContinue) {
                     sessionRuntime.persistSessionMutation(initializedSession, updatedSession) { updated ->
                         uiState.update { if (it.currentSession?.id == updated.id) it.copy(currentSession = updated, messages = updated.messages) else it }
                     }
                 }
                 activeRegeneration = regenerationMessageId?.let(::ActiveRegeneration)
+                activeContinue = continueMessageId
 
                 uiState.update {
                     it.copy(
@@ -257,16 +305,17 @@ internal class ChatGenerationCoordinator(
                     rawTokens += TokenBudget.estimateTokens(message.content) + 4
                     if (rawTokens > rawBudget) break
                 }
-                val memoryContext = try {
-                    memoryService.context(
-                        promptSession, inputMessage.content,
+                val memoryDetail = try {
+                    memoryService.contextDetail(
+                        promptSession, inputMessage?.content.orEmpty(),
                         possibleRawIds,
                     )
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
-                    "" // Memory retrieval cannot prevent a normal chat reply.
+                    app.tellev.core.memory.MemoryContextDetail("", emptyList()) // Memory retrieval cannot prevent a normal chat reply.
                 }
+                val memoryContext = memoryDetail.text
                 // G17: regenerationInputIndex was computed against the
                 // pre-launch UI snapshot; the two flushSessionWrites above can
                 // replay extension chat writes that insert or remove messages.
@@ -281,18 +330,22 @@ internal class ChatGenerationCoordinator(
                 val promptRequest = PromptBuildRequest(
                     character = character,
                     persona = runtime.persona,
-                    messages = if (isRegeneration) {
-                        promptMessages.take(regenerationHistoryCut)
-                    } else if (messageRole == MessageRole.User) {
-                        promptHistoryBeforeCurrentMessage(promptMessages, inputMessage.id)
-                    } else {
-                        promptMessages
+                    messages = when {
+                        isRegeneration -> promptMessages.take(regenerationHistoryCut)
+                        // 继续生成：目标回复留在提示词末尾，模型据此续写。
+                        isContinue -> promptMessages
+                        messageRole == MessageRole.User ->
+                            promptHistoryBeforeCurrentMessage(promptMessages, inputMessage?.id.orEmpty())
+                        else -> promptMessages
                     },
                     worldBooks = ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession),
                     preset = preset,
                     userInput = when {
-                        isRegeneration -> inputMessage.content
-                        messageRole == MessageRole.User -> inputMessage.content
+                        isRegeneration -> inputMessage?.content.orEmpty()
+                        // 继续生成没有新输入：续写上文由目标回复承担。
+                        isContinue -> ""
+                        messageRole == MessageRole.User ->
+                            (inputMessage?.content.orEmpty()) + promptUserInputSuffix
                         else -> ""
                     },
                     providerType = config.providerType,
@@ -306,12 +359,43 @@ internal class ChatGenerationCoordinator(
                             dataStore = dataStore,
                             promptEngine = promptEngine,
                         ) + ("userInputNormalProcessed" to JsonPrimitive(
-                            CharacterRegexApplier.isNormalProcessed(inputMessage),
+                            inputMessage?.let { CharacterRegexApplier.isNormalProcessed(it) } ?: true,
                         )) + ("tellevMemoryContext" to JsonPrimitive(memoryContext)),
                     ),
                 )
 
                 val promptResult = ChatPromptBuilder.buildPromptWithSessionScope(promptRequest, promptSession, promptEngine)
+                // Context viewer snapshot: what this turn actually sends. In-memory
+                // only; the viewer ignores it once another session is opened.
+                uiState.update {
+                    it.copy(
+                        contextSnapshot = ContextSnapshot(
+                            sessionId = promptSession.id,
+                            capturedAtMillis = System.currentTimeMillis(),
+                            messages = promptResult.messages.map { message ->
+                                ContextMessageSnapshot(
+                                    role = message.role.name.lowercase(),
+                                    name = message.name,
+                                    content = message.content,
+                                )
+                            },
+                            estimatedTokenCount = promptResult.diagnostics.estimatedTokenCount,
+                            contextTokenLimit = preset.maxContextTokens ?: DEFAULT_MAX_CONTEXT_TOKENS,
+                            warnings = promptResult.diagnostics.warnings,
+                            worldBookHits = promptResult.diagnostics.worldBookHits,
+                            rejectedWorldEntries = promptResult.diagnostics.rejectedWorldEntries,
+                            memoryInjections = memoryDetail.injected.map { injected ->
+                                ContextMemoryInjection(
+                                    recordId = injected.recordId,
+                                    kind = injected.kind,
+                                    text = injected.text,
+                                    score = injected.score,
+                                    sourceMessageIds = injected.sourceIds,
+                                )
+                            },
+                        ),
+                    )
+                }
                 ChatPromptBuilder.persistPromptTemplateVariableUpdates(
                     updates = promptResult.promptTemplateVariableUpdates,
                     targetSessionId = updatedSession.id,
@@ -328,22 +412,43 @@ internal class ChatGenerationCoordinator(
                 val prepared = ChatCompletionEvents.prepare(extensionHost, config, GenerateRequest(
                     prompt = promptResult,
                     preset = preset,
-                    attachments = if (isRegeneration) inputMessage.attachments else attachments,
+                    attachments = if (isRegeneration) inputMessage?.attachments ?: emptyList() else attachments,
                     stream = true,
+                    // Per-session reasoning effort override rides on request
+                    // metadata; adapters resolve it ahead of the preset field.
+                    metadata = ReasoningSupport.sessionOverrideMetadata(promptSession),
                 ), adapter)
                 val flow = adapter.streamGenerate(prepared.config, prepared.request)
-
+                val generationStartedAtMs = System.currentTimeMillis()
+                var firstDeltaAtMs: Long? = null
                 var accumulatedText = ""
                 var accumulatedReasoning = ""
 
                 flow.collect { chunk ->
                     when (chunk) {
                         is GenerateChunk.Delta -> {
+                            if (firstDeltaAtMs == null && (chunk.text.isNotEmpty() || chunk.reasoning.isNotEmpty())) {
+                                firstDeltaAtMs = System.currentTimeMillis()
+                            }
                             accumulatedText += chunk.text
                             accumulatedReasoning += chunk.reasoning
                             uiState.update { it.copy(streamingText = accumulatedText, streamingReasoning = accumulatedReasoning) }
                         }
                         is GenerateChunk.Completed -> {
+                            metricsStore?.let { store ->
+                                val completedAtMs = System.currentTimeMillis()
+                                val metrics = GenerationMetricsCalculator.fromCompletion(
+                                    providerType = config.providerType,
+                                    model = config.model,
+                                    usage = chunk.usage,
+                                    estimatedPromptTokens = promptResult.diagnostics.estimatedTokenCount,
+                                    deltaText = accumulatedText.ifEmpty { chunk.text },
+                                    startedAtMs = generationStartedAtMs,
+                                    firstDeltaAtMs = firstDeltaAtMs,
+                                    completedAtMs = completedAtMs,
+                                )
+                                scope.launch { runCatching { store.record(metrics) } }
+                            }
                             // 服务商 HTTP 200 但响应体为空（网关/中转站错误帧被适配器吞掉、
                             // 内容拦截等）：显式报错，不再把空气泡持久化进会话。
                             val rawFinalText = chunk.text
@@ -355,6 +460,7 @@ internal class ChatGenerationCoordinator(
                             val finalText = processedFinal.text
                             if (finalText.isBlank()) {
                                 activeRegeneration = null
+                                activeContinue = null
                                 uiState.update {
                                     it.copy(
                                         isGenerating = false,
@@ -377,16 +483,32 @@ internal class ChatGenerationCoordinator(
                             val regeneratedIndex = regeneration?.let { active ->
                                 baseMessages.indexOfFirst { it.id == active.messageId }
                             } ?: -1
-                            val finalMessages = if (regeneration != null && regeneratedIndex >= 0) {
-                                baseMessages.toMutableList().also { messages ->
-                                    messages[regeneratedIndex] = CharacterRegexApplier.markNormalProcessed(
-                                        messages[regeneratedIndex].withRegeneratedSwipe(finalText).withGenerationReasoning(
-                                            parts, rawFinalText, chunk.reasoning, chunk.finishReason, true,
-                                        ),
-                                    )
+                            val continueTarget = activeContinue
+                            val continueIndex = continueTarget?.let { id ->
+                                baseMessages.indexOfFirst { it.id == id }
+                            } ?: -1
+                            val finalMessages = when {
+                                regeneration != null && regeneratedIndex >= 0 -> {
+                                    baseMessages.toMutableList().also { messages ->
+                                        messages[regeneratedIndex] = CharacterRegexApplier.markNormalProcessed(
+                                            messages[regeneratedIndex].withRegeneratedSwipe(finalText).withGenerationReasoning(
+                                                parts, rawFinalText, chunk.reasoning, chunk.finishReason, true,
+                                            ),
+                                        )
+                                    }
                                 }
-                            } else {
-                                baseMessages + CharacterRegexApplier.markNormalProcessed(ChatMessage(
+                                // 继续生成：把新文本追加到目标回复当前 swipe 的内容后面，
+                                // 不新开消息、不产生新 swipe。
+                                continueTarget != null && continueIndex >= 0 -> {
+                                    baseMessages.toMutableList().also { messages ->
+                                        messages[continueIndex] = CharacterRegexApplier.markNormalProcessed(
+                                            messages[continueIndex].withContinuedText(finalText).withGenerationReasoning(
+                                                parts, rawFinalText, chunk.reasoning, chunk.finishReason, true,
+                                            ),
+                                        )
+                                    }
+                                }
+                                else -> baseMessages + CharacterRegexApplier.markNormalProcessed(ChatMessage(
                                     id = generateMessageId(),
                                     role = MessageRole.Character,
                                     name = character.name,
@@ -411,6 +533,8 @@ internal class ChatGenerationCoordinator(
                                 uiState.update { if (it.currentSession?.id == updated.id) it.copy(currentSession = updated, messages = updated.messages) else it }
                             }
                             activeRegeneration = null
+                            activeContinue = null
+                            activeContinue = null
 
                             uiState.update {
                                 it.copy(
@@ -419,10 +543,14 @@ internal class ChatGenerationCoordinator(
                                     streamingReasoning = "",
                                 )
                             }
-                            val assistantMessageIndex = if (regeneratedIndex >= 0) regeneratedIndex else finalMessages.lastIndex
-                            val eventType = if (regeneratedIndex >= 0) "swipe" else "normal"
+                            val assistantMessageIndex = when {
+                                regeneratedIndex >= 0 -> regeneratedIndex
+                                continueIndex >= 0 -> continueIndex
+                                else -> finalMessages.lastIndex
+                            }
+                            val eventType = if (regeneratedIndex >= 0 || continueIndex >= 0) "swipe" else "normal"
                             ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.MESSAGE_RECEIVED, assistantMessageIndex, eventType)
-                            if (regeneratedIndex >= 0) {
+                            if (regeneratedIndex >= 0 || continueIndex >= 0) {
                                 ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.MESSAGE_SWIPED, assistantMessageIndex)
                             }
                             ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.CHARACTER_MESSAGE_RENDERED, assistantMessageIndex, eventType)
@@ -465,6 +593,7 @@ internal class ChatGenerationCoordinator(
                         }
                         is GenerateChunk.Failed -> {
                             activeRegeneration = null
+                            activeContinue = null
                             uiState.update {
                                 it.copy(
                                     isGenerating = false,
@@ -481,6 +610,7 @@ internal class ChatGenerationCoordinator(
                 // stopGeneration owns the interrupted-message state update.
             } catch (e: Exception) {
                 activeRegeneration = null
+                activeContinue = null
                 uiState.update {
                     it.copy(
                         isGenerating = false,
@@ -496,6 +626,7 @@ internal class ChatGenerationCoordinator(
                 if (generationJob === coroutineContext[Job]) {
                     generationJob = null
                     activeRegeneration = null
+                    activeContinue = null
                     uiState.update {
                         it.copy(isGenerating = false, streamingText = "", streamingReasoning = "")
                     }
@@ -528,6 +659,35 @@ internal class ChatGenerationCoordinator(
         )
     }
 
+    /**
+     * 继续生成：以最后一条角色/助手回复为上文续写，流式结果按追加写回该消息。
+     */
+    fun continueGeneration(
+        messageId: String,
+        uiState: MutableStateFlow<ChatUiState>,
+        scope: CoroutineScope,
+        characterScriptJob: Job?,
+    ): Boolean {
+        val state = uiState.value
+        if (state.isGenerating || isGenerating || extensionGenerationActive) return false
+        val last = state.messages.lastOrNull()
+        if (last == null || last.id != messageId ||
+            (last.role != MessageRole.Character && last.role != MessageRole.Assistant)
+        ) {
+            uiState.update { it.copy(error = UiStrings.get(S.chat_continue_empty)) }
+            return false
+        }
+        return sendMessageWithRole(
+            text = "",
+            attachments = emptyList(),
+            messageRole = MessageRole.User,
+            continueMessageId = messageId,
+            uiState = uiState,
+            scope = scope,
+            characterScriptJob = characterScriptJob,
+        )
+    }
+
     fun stopGeneration(
         uiState: MutableStateFlow<ChatUiState>,
         scope: CoroutineScope,
@@ -537,7 +697,9 @@ internal class ChatGenerationCoordinator(
 
         val state = uiState.value
         val regeneration = activeRegeneration
+        val continueTarget = activeContinue
         activeRegeneration = null
+        activeContinue = null
         if (state.streamingText.isNotEmpty() || state.streamingReasoning.isNotEmpty()) {
             val parts = MessageReasoning.fromResponse(state.streamingText, state.streamingReasoning)
             val processedPartial = CharacterRegexApplier.applyNormal(
@@ -554,6 +716,51 @@ internal class ChatGenerationCoordinator(
                     val updatedMessages = state.messages.toMutableList().also { messages ->
                         messages[targetIndex] = CharacterRegexApplier.markNormalProcessed(
                             messages[targetIndex].withRegeneratedSwipe(processedPartial).withGenerationReasoning(
+                                parts, state.streamingText, state.streamingReasoning, "interrupted", true,
+                            ),
+                        )
+                    }
+                    val session = state.currentSession
+                    if (session != null) {
+                        val updatedSession = session.copy(messages = updatedMessages)
+                        uiState.update {
+                            it.copy(
+                                messages = updatedMessages,
+                                currentSession = updatedSession,
+                                isGenerating = false,
+                                streamingText = "",
+                                streamingReasoning = "",
+                            )
+                        }
+                        val commit = sessionRuntime.scheduleUiMutation(
+                            base = session,
+                            desired = updatedSession,
+                            onSessionUpdated = { updated ->
+                                uiState.update { if (it.currentSession?.id == updated.id) it.copy(currentSession = updated, messages = updated.messages) else it }
+                            },
+                            onError = { err -> uiState.update { it.copy(error = err) } },
+                        ) ?: return
+                        interruptionJob = sessionRuntime.launchAfterCommit(
+                            scope = scope,
+                            commit = commit,
+                            onError = { err -> uiState.update { it.copy(error = err) } },
+                        ) {
+                            ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.MESSAGE_RECEIVED, targetIndex, "interrupted")
+                            ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.MESSAGE_SWIPED, targetIndex)
+                            ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.CHARACTER_MESSAGE_RENDERED, targetIndex, "interrupted")
+                            ChatTavernAdapter.emitStEvent(extensionHost, StEventCatalog.GENERATION_STOPPED)
+                        }
+                        return
+                    }
+                }
+            }
+            // 继续生成被中断：已流出的部分文本同样按追加写回目标回复。
+            if (continueTarget != null) {
+                val targetIndex = state.messages.indexOfFirst { it.id == continueTarget }
+                if (targetIndex >= 0) {
+                    val updatedMessages = state.messages.toMutableList().also { messages ->
+                        messages[targetIndex] = CharacterRegexApplier.markNormalProcessed(
+                            messages[targetIndex].withContinuedText(processedPartial).withGenerationReasoning(
                                 parts, state.streamingText, state.streamingReasoning, "interrupted", true,
                             ),
                         )

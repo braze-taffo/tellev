@@ -136,3 +136,30 @@ setprov_status_connected	已连接
 setprov_status_failed	连接失败
 setprov_test_connection	测试连接
 setprov_testing	测试中...
+setnet_cleartext	允许明文 HTTP（局域网后端）
+setnet_cleartext_desc	关闭时仅允许本机（localhost）使用未加密连接；开启后才允许向其他地址发送明文 HTTP。仅建议在自建后端位于局域网且无法启用 HTTPS 时开启。
+setimg_profile_header	自定义生图端口
+setimg_profile_desc	添加任意多个 OpenAI Images 兼容端点（中转或自建服务），聊天生图与封面生成均可切换使用。
+setimg_profile_empty_hint	尚未添加自定义端口。
+setimg_profile_add	添加端口
+setimg_profile_edit	编辑端口
+setimg_profile_name	名称
+setimg_profile_baseurl	接口地址（Base URL）
+setimg_profile_apikey	API 密钥（可留空）
+setimg_profile_model	模型
+setimg_profile_path	生成路径
+setimg_profile_models_path	测试路径
+setimg_profile_size	尺寸（留空用服务端默认）
+setimg_profile_quality	质量（留空不发送）
+setimg_profile_style	风格（留空不发送）
+setimg_profile_response_format	返回格式（留空用服务端默认）
+setimg_profile_send_negative	发送反向提示词字段
+setimg_profile_extra_body	额外请求字段（JSON，可选）
+setimg_profile_extra_body_help	合并进请求体的高级字段，如 {"background":"transparent"}
+setimg_profile_extra_body_invalid	不是有效的 JSON 对象。
+setimg_profile_required	必填
+setimg_profile_use_engine	设为当前引擎
+setimg_profile_in_use	当前引擎
+setimg_profile_delete	删除
+setimg_profile_generic_name	自定义端口
+setimg_entry_profiles	自定义端口 ×%1$d

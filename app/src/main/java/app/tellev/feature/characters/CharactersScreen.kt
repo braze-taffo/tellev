@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -48,6 +49,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -106,6 +108,8 @@ import app.tellev.R
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterWorldBinding
 import app.tellev.core.model.WorldBook
+import app.tellev.core.storage.BatchImportSource
+import app.tellev.core.storage.CharacterBatchImporter
 import app.tellev.ui.CharacterAvatar
 import app.tellev.util.UriUtils
 import kotlinx.coroutines.Dispatchers
@@ -121,7 +125,7 @@ fun CharactersListScreen(
     viewModel: CharactersViewModel,
     onCreateClick: () -> Unit,
     onCharacterClick: (String) -> Unit,
-    onCreateWithAi: () -> Unit = {},
+    onEditClick: (String) -> Unit = {},
     onEditWithAi: (String) -> Unit = {},
     onCreateWorldBookWithAi: (String) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -157,24 +161,28 @@ fun CharactersListScreen(
     }
 
     val importLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent(),
-    ) { uri: Uri? ->
-        uri?.let {
-            scope.launch {
-                try {
-                    val bytes = withContext(Dispatchers.IO) {
-                        context.contentResolver.openInputStream(it)?.readBytes()
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris: List<Uri> ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch {
+            val sources = withContext(Dispatchers.IO) {
+                uris.map { uri ->
+                    val fileName = UriUtils.resolveDisplayName(context, uri)
+                        ?: uri.lastPathSegment?.substringAfterLast('/')
+                        ?: "imported_character"
+                    try {
+                        BatchImportSource(
+                            fileName,
+                            UriUtils.readBounded(context, uri, CharacterBatchImporter.IMPORT_MAX_BYTES),
+                        )
+                    } catch (e: Exception) {
+                        // Unreadable document: keep it in the batch so the
+                        // report shows the failure instead of silently dropping it.
+                        BatchImportSource(fileName, null, readError = e.message ?: e.javaClass.simpleName)
                     }
-                    val fileName = UriUtils.resolveDisplayName(context, it)
-                        ?: it.lastPathSegment
-                        ?: "imported_character.json"
-                    if (bytes != null) {
-                        viewModel.importCharacter(bytes, fileName)
-                    }
-                } catch (e: Exception) {
-                    snackbarHostState.showSnackbar(context.getString(R.string.chars_import_failed, e.message))
                 }
             }
+            viewModel.importCharacters(sources)
         }
     }
 
@@ -192,14 +200,78 @@ fun CharactersListScreen(
         }
     }
 
+    state.batchImportReport?.let { report ->
+        AlertDialog(
+            onDismissRequest = viewModel::clearBatchImportReport,
+            title = { Text(stringResource(R.string.chars_import_batch_title)) },
+            text = {
+                Column {
+                    Text(
+                        text = stringResource(
+                            R.string.chars_import_batch_summary,
+                            report.successCount,
+                            report.failedCount,
+                        ),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Column(
+                        modifier = Modifier
+                            .verticalScroll(rememberScrollState())
+                            .heightIn(max = 320.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        report.results.forEach { result ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(
+                                    imageVector = if (result.isSuccess) Icons.Default.Check else Icons.Default.Close,
+                                    contentDescription = null,
+                                    tint = if (result.isSuccess) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.error
+                                    },
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Column {
+                                    Text(result.fileName, style = MaterialTheme.typography.bodyMedium)
+                                    if (result.isSuccess) {
+                                        Text(
+                                            result.characterName ?: "",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    } else {
+                                        Text(
+                                            result.error ?: "",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = viewModel::clearBatchImportReport) {
+                    Text(stringResource(R.string.nav_got_it))
+                }
+            },
+        )
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.chars_title)) },
                 actions = {
-                    TextButton(onClick = onCreateWithAi) { Text(stringResource(R.string.chars_ai_create)) }
-                    IconButton(onClick = { importLauncher.launch("*/*") }) {
+                    IconButton(onClick = { importLauncher.launch(arrayOf("*/*")) }) {
                         Icon(Icons.Default.FileUpload, contentDescription = stringResource(R.string.chars_import_cd))
                     }
                     IconButton(onClick = { searchActive = !searchActive }) {
@@ -326,6 +398,7 @@ fun CharactersListScreen(
                                 character = character,
                                 avatarFile = state.avatarFiles[character.id],
                                 onClick = { onCharacterClick(character.id) },
+                                onEdit = { onEditClick(character.id) },
                                 onEditWithAi = { onEditWithAi(character.id) },
                                 onCreateWorldBookWithAi = { onCreateWorldBookWithAi(character.id) },
                                 onDuplicate = { viewModel.duplicateCharacter(character.id) },
@@ -351,6 +424,7 @@ private fun CharacterListItem(
     character: app.tellev.core.model.CharacterSummary,
     avatarFile: java.io.File?,
     onClick: () -> Unit,
+    onEdit: () -> Unit,
     onEditWithAi: () -> Unit,
     onCreateWorldBookWithAi: () -> Unit,
     onDuplicate: () -> Unit,
@@ -378,6 +452,15 @@ private fun CharacterListItem(
                     expanded = showContextMenu,
                     onDismissRequest = { showContextMenu = false },
                 ) {
+                    // 点卡片进聊天后，编辑卡片改从长按菜单进。
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.chars_edit_card)) },
+                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                        onClick = {
+                            onEdit()
+                            showContextMenu = false
+                        },
+                    )
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.chars_ai_edit)) },
                         leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
@@ -483,16 +566,14 @@ fun CharacterDetailScreen(
             scope.launch {
                 try {
                     val bytes = withContext(Dispatchers.IO) {
-                        context.contentResolver.openInputStream(it)?.readBytes()
+                        UriUtils.readBounded(context, it, maxBytes = 16L * 1024L * 1024L)
                     }
-                    if (bytes != null) {
-                        if (isCreating) {
-                            pendingAvatarPng = withContext(Dispatchers.IO) {
-                                app.tellev.util.decodeImageAsPng(bytes, maxEdge = 1024)
-                            } ?: error(context.getString(R.string.chars_image_parse_failed))
-                        } else {
-                            viewModel.setCharacterAvatar(bytes)
-                        }
+                    if (isCreating) {
+                        pendingAvatarPng = withContext(Dispatchers.IO) {
+                            app.tellev.util.decodeImageAsPng(bytes, maxEdge = 1024)
+                        } ?: error(context.getString(R.string.chars_image_parse_failed))
+                    } else {
+                        viewModel.setCharacterAvatar(bytes)
                     }
                 } catch (e: Exception) {
                     snackbarHostState.showSnackbar(context.getString(R.string.chars_read_image_failed, e.message))

@@ -2,9 +2,12 @@ chars_export_write_failed	无法写入所选位置
 chars_export_saved	已保存 %1$s.json
 chars_export_failed	导出失败：%1$s
 chars_import_failed	导入失败：%1$s
-chars_title	角色
+chars_title	角色卡
 chars_ai_create	AI 创建
 chars_import_cd	导入角色卡
+chars_import_batch_title	批量导入角色卡
+chars_import_batch_summary	导入完成：%1$d 个成功，%2$d 个失败
+chars_import_one_ok	角色“%1$s”已导入。
 chars_search_close_cd	关闭搜索
 chars_search_cd	搜索
 chars_new_character	新建角色
@@ -15,6 +18,7 @@ chars_empty_list	暂无角色
 chars_empty_hint	点击“新建角色”开始创建，或从右上角导入角色卡
 chars_more_options_cd	更多选项
 chars_ai_edit	AI 编辑
+chars_edit_card	编辑卡片
 chars_write_worldbook	基于此卡写世界书
 chars_duplicate	复制
 chars_export_json	导出 JSON

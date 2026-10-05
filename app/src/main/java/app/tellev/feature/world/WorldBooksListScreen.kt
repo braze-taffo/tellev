@@ -18,10 +18,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -49,6 +51,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,14 +63,21 @@ import androidx.compose.ui.unit.dp
 import app.tellev.R
 import app.tellev.core.model.WorldBookSummary
 import app.tellev.ui.AtmosphereIntro
+import app.tellev.ui.BookSpineCard
 import app.tellev.ui.QuietTag
+import app.tellev.ui.ShelfPlank
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Surface
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.contentDescription
@@ -90,6 +101,9 @@ fun WorldBooksListScreen(
     var showCreateDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
     var newBookName by remember { mutableStateOf("") }
+    var searchVisible by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var statusFilter by rememberSaveable { mutableIntStateOf(0) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val importLauncher = rememberLauncherForActivityResult(
@@ -99,7 +113,7 @@ fun WorldBooksListScreen(
             scope.launch {
                 try {
                     val bytes = withContext(Dispatchers.IO) {
-                        context.contentResolver.openInputStream(selectedUri)?.use { it.readBytes() }
+                        UriUtils.readBounded(context, selectedUri, maxBytes = 8L * 1024L * 1024L)
                     } ?: error(context.getString(R.string.wblist_read_file_failed))
                     val fileName = UriUtils.resolveDisplayName(context, selectedUri)
                         ?: selectedUri.lastPathSegment
@@ -135,12 +149,52 @@ fun WorldBooksListScreen(
         }
     }
 
+    // 列表本地过滤：书库通常几十本起，全量常驻内存再过滤比回落到 ViewModel 更省。
+    // 名称匹配大小写不敏感；状态筛选 0=全部 1=已启用 2=已停用。
+    val visibleBooks = remember(state.worldBookSummaries, searchQuery, statusFilter, state.disabledWorldIds) {
+        state.worldBookSummaries.filter { book ->
+            val matchesQuery = searchQuery.isBlank() || book.name.contains(searchQuery.trim(), ignoreCase = true)
+            val matchesStatus = when (statusFilter) {
+                1 -> book.id !in state.disabledWorldIds
+                2 -> book.id in state.disabledWorldIds
+                else -> true
+            }
+            matchesQuery && matchesStatus
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.wblist_title)) },
+                title = {
+                    if (searchVisible) {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text(stringResource(R.string.wblist_search_hint)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        Text(stringResource(R.string.wblist_title))
+                    }
+                },
+                navigationIcon = {
+                    if (searchVisible) {
+                        IconButton(onClick = {
+                            if (searchQuery.isNotEmpty()) searchQuery = "" else searchVisible = false
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.wblist_search_close))
+                        }
+                    }
+                },
                 actions = {
+                    if (!searchVisible) {
+                        IconButton(onClick = { searchVisible = true }) {
+                            Icon(Icons.Default.Search, contentDescription = stringResource(R.string.wblist_search_cd))
+                        }
+                    }
                     TextButton(onClick = onCreateWithAi) { Text(stringResource(R.string.wblist_ai_create)) }
                     IconButton(onClick = { showSettingsDialog = true }) {
                         Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.wblist_settings_cd))
@@ -209,6 +263,36 @@ fun WorldBooksListScreen(
                         )
                     }
                 }
+            } else if (visibleBooks.isEmpty()) {
+                // 有书但被搜索/筛选挡住：与真·空库区分，提供清除条件的一步操作。
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Default.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(56.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            stringResource(R.string.wblist_no_match),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        TextButton(onClick = {
+                            searchQuery = ""
+                            statusFilter = 0
+                        }) {
+                            Text(stringResource(R.string.wblist_clear_filters))
+                        }
+                    }
+                }
             } else {
                 LazyColumn(
                     modifier = Modifier
@@ -224,10 +308,33 @@ fun WorldBooksListScreen(
                             title = stringResource(R.string.ui_world_library),
                             subtitle = stringResource(R.string.ui_world_library_hint),
                             icon = Icons.AutoMirrored.Filled.MenuBook,
-                            label = stringResource(R.string.ui_world_count, state.worldBookSummaries.size),
+                            label = stringResource(
+                                R.string.ui_world_count_filtered,
+                                visibleBooks.size,
+                                state.worldBookSummaries.size,
+                            ),
                         )
                     }
-                    items(state.worldBookSummaries, key = { it.id }) { book ->
+                    item(key = "world_status_filter") {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = statusFilter == 0,
+                                onClick = { statusFilter = 0 },
+                                label = { Text(stringResource(R.string.wblist_filter_all)) },
+                            )
+                            FilterChip(
+                                selected = statusFilter == 1,
+                                onClick = { statusFilter = 1 },
+                                label = { Text(stringResource(R.string.wblist_filter_enabled)) },
+                            )
+                            FilterChip(
+                                selected = statusFilter == 2,
+                                onClick = { statusFilter = 2 },
+                                label = { Text(stringResource(R.string.wblist_filter_disabled)) },
+                            )
+                        }
+                    }
+                    items(visibleBooks, key = { it.id }) { book ->
                         WorldBookListItem(
                             book = book,
                             activated = book.id !in state.disabledWorldIds,
@@ -290,7 +397,11 @@ fun WorldBooksListScreen(
             onDismissRequest = { showSettingsDialog = false },
             title = { Text(stringResource(R.string.wblist_settings_title)) },
             text = {
-                Column {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 440.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth(),
@@ -440,79 +551,70 @@ private fun WorldBookListItem(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        onClick = onClick,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-        ),
-    ) {
+    // 书架式条目：一本立起的书 + 底部托板。名称、条目数、启用状态都在书脊上，
+    // 右侧保留开关与更多菜单，交互与旧的列表卡片完全一致。
+    Column(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom,
         ) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = if (activated) MaterialTheme.colorScheme.primaryContainer
-                    else MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.width(54.dp).height(74.dp),
+            BookSpineCard(
+                name = book.name,
+                entryCount = book.entryCount,
+                activated = activated,
+                onClick = onClick,
+                modifier = Modifier.weight(1f),
+                trailing = {
+                    Box {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = stringResource(R.string.ui_world_more),
+                                tint = Color.White,
+                            )
+                        }
+                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.wblist_ai_edit_cd)) },
+                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                                onClick = { showMenu = false; onEditWithAi() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.wblist_delete_cd)) },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error,
+                                    )
+                                },
+                                onClick = { showMenu = false; showDeleteDialog = true },
+                            )
+                        }
+                    }
+                },
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Box(Modifier.align(Alignment.CenterStart).width(5.dp).height(74.dp)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)))
-                    Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
-                }
-            }
-            Spacer(Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = book.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+                Switch(
+                    checked = activated,
+                    onCheckedChange = { onToggleActivation() },
+                    modifier = Modifier.semantics { contentDescription = book.name },
                 )
-                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = stringResource(R.string.wblist_entry_count, book.entryCount),
-                    style = MaterialTheme.typography.bodySmall,
+                    text = if (activated) stringResource(R.string.ui_world_enabled)
+                    else stringResource(R.string.ui_world_disabled),
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(6.dp))
-                QuietTag(stringResource(if (activated) R.string.ui_world_enabled else R.string.ui_world_disabled))
-            }
-
-            Switch(
-                checked = activated,
-                onCheckedChange = { onToggleActivation() },
-                modifier = Modifier.semantics { contentDescription = book.name },
-            )
-
-            Spacer(modifier = Modifier.padding(horizontal = 4.dp))
-
-            Box {
-                IconButton(onClick = { showMenu = true }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.ui_world_more))
-                }
-                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.wblist_ai_edit_cd)) },
-                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                        onClick = { showMenu = false; onEditWithAi() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.wblist_delete_cd)) },
-                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error) },
-                        onClick = { showMenu = false; showDeleteDialog = true },
-                    )
-                }
             }
         }
+        ShelfPlank(modifier = Modifier.padding(top = 4.dp))
     }
+
 
     if (showDeleteDialog) {
         AlertDialog(

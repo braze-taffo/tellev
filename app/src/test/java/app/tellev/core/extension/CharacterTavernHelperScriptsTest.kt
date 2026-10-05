@@ -2,7 +2,11 @@ package app.tellev.core.extension
 
 import app.tellev.core.storage.CharacterImporter
 import org.junit.Assert.assertEquals
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -334,4 +338,83 @@ class CharacterTavernHelperScriptsTest {
             }
             """.trimIndent(),
         )
+
+    @Test
+    fun `script entries list disabled scripts with their paths`() {
+        val card = importCard(
+            """
+            "tavern_helper": {
+                "scripts": [
+                    { "type": "script", "id": "on", "name": "On", "enabled": true, "content": "a;" },
+                    { "type": "script", "id": "off", "name": "Off", "content": "b;" }
+                ]
+            }
+            """.trimIndent(),
+        )
+
+        val entries = CharacterTavernHelperScripts.listScriptEntries(card)
+
+        assertEquals(2, entries.size)
+        val on = entries.first { it.id == "on" }
+        val off = entries.first { it.id == "off" }
+        assertTrue(on.enabled)
+        assertFalse(off.enabled)
+        assertEquals("tavern_helper.scripts.0", on.path)
+        assertEquals("tavern_helper.scripts.1", off.path)
+    }
+
+    @Test
+    fun `withScriptEnabledAt flips the flag and extract honors it`() {
+        val card = importCard(
+            """
+            "tavern_helper": {
+                "scripts": [
+                    { "type": "script", "id": "toggle", "name": "Toggle", "enabled": true, "content": "x;" }
+                ]
+            }
+            """.trimIndent(),
+        )
+        val entry = CharacterTavernHelperScripts.listScriptEntries(card).single()
+
+        val patched = CharacterTavernHelperScripts.withScriptEnabledAt(card, entry.path, enabled = false)!!
+
+        assertTrue(CharacterTavernHelperScripts.extract(patched).isEmpty())
+        val reEnabled = CharacterTavernHelperScripts.withScriptEnabledAt(patched, entry.path, enabled = true)!!
+        assertEquals("x;", CharacterTavernHelperScripts.extract(reEnabled).single().content)
+        // Content and name survive the patch losslessly.
+        assertEquals(entry.name, CharacterTavernHelperScripts.listScriptEntries(reEnabled).single().name)
+    }
+
+    @Test
+    fun `withScriptEnabledAt patches legacy value wrapper at the nested node`() {
+        val card = importCard(
+            """
+            "tavern_helper": {
+                "scripts": [
+                    { "type": "script", "value": { "id": "legacy", "enabled": true, "content": "old;" } }
+                ]
+            }
+            """.trimIndent(),
+        )
+        val entry = CharacterTavernHelperScripts.listScriptEntries(card).single()
+
+        val patched = CharacterTavernHelperScripts.withScriptEnabledAt(card, entry.path, enabled = false)!!
+
+        assertTrue(CharacterTavernHelperScripts.extract(patched).isEmpty())
+        // The wrapper keeps its type and the value keeps its other fields.
+        val raw = patched.raw["data"]!!.jsonObject["extensions"]!!.jsonObject["tavern_helper"]!!
+            .jsonObject["scripts"]!!.jsonArray[0].jsonObject
+        assertEquals("script", raw["type"]!!.jsonPrimitive.content)
+        assertTrue(raw["value"]!!.jsonObject.containsKey("content"))
+    }
+
+    @Test
+    fun `withScriptEnabledAt returns null for a stale path`() {
+        val card = importCard(
+            """
+            "tavern_helper": { "scripts": [] }
+            """.trimIndent(),
+        )
+        assertNull(CharacterTavernHelperScripts.withScriptEnabledAt(card, "tavern_helper.scripts.9", enabled = true))
+    }
 }

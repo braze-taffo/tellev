@@ -192,8 +192,7 @@ internal class PresetSettingsController(
             stateFlow.update { it.copy(isLoading = true, error = null) }
             try {
                 val bytes = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: error(UiStrings.get(S.presetctl_read_file_failed))
+                    UriUtils.readBounded(context, uri, maxBytes = 8L * 1024L * 1024L)
                 }
                 val fileName = UriUtils.resolveDisplayName(context, uri)
                     ?: uri.lastPathSegment

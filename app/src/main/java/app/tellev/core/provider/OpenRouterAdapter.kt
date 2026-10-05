@@ -88,6 +88,18 @@ class OpenRouterAdapter(
             if (request.preset.stop.isNotEmpty()) {
                 put("stop", buildJsonArray { request.preset.stop.forEach { add(JsonPrimitive(it)) } })
             }
+            // Unified reasoning strength: Auto passes the preset's own
+            // reasoning field through; explicit levels map to reasoning.effort.
+            val reasoningInjection = ReasoningSupport.inject(
+                family = ReasoningFamily.OpenRouter,
+                effort = ReasoningSupport.effortFor(request),
+                raw = request.preset.raw,
+            )
+            if (reasoningInjection.resolved == app.tellev.core.model.ReasoningEffort.Auto) {
+                request.preset.raw["reasoning"]?.let { put("reasoning", it) }
+            } else {
+                reasoningInjection.fields["reasoning"]?.let { put("reasoning", it) }
+            }
             put("messages", buildJsonArray {
                 // G6: declared Vision but never sent images. OpenRouter proxies
                 // the OpenAI shape — image_url content parts on the final user

@@ -22,6 +22,7 @@ chatvm_deleted_cleanup_failed	会话已删除，但清理未完成：%1$s
 chatvm_deleted_refresh_failed	会话已删除，但刷新会话列表失败：%1$s
 chatvm_delete_image_failed	删除图片失败：%1$s
 chatvm_load_preset_failed	加载预设失败：%1$s
+chatvm_send_blocked_loading	正在加载会话，请稍候再发送
 chatimgco_engine_not_configured	生图模型未配置：请先在设置中配置 ComfyUI 工作流或填写 NovelAI 令牌
 chatimgco_busy_generating_text	正在生成回复，请等回复结束后再生图
 chatimgco_select_character_first	请先选择角色
@@ -65,3 +66,17 @@ updchk_channel_apk_missing	未找到 %1$s 渠道的 APK 资产
 updchk_empty_response_body	空响应体
 updchk_apk_checksum_failed	APK 校验失败
 updchk_download_failed	下载失败
+chat_default_assistant_name	助手
+chat_script_consent_approve	启用并记住
+chat_script_consent_body	此角色卡包含 %1$d 个启用的内嵌脚本（%2$s）。启用后脚本将以角色 TavernHelper 身份随聊天自动运行，并获得存储、剪贴板、界面面板等权限。请仅在信任该卡片来源时启用。
+chat_script_consent_deny	禁用并记住
+chat_script_consent_enable	启用
+chat_script_consent_title	启用卡内嵌脚本？
+chat_script_disabled_banner	卡内脚本已停用
+chat_session_default_title	和 %1$s 的聊天
+chatvm_script_consent_save_failed	保存脚本授权状态失败：%1$s
+updvm_apk_rejected	更新包校验未通过，已取消安装
+chat_script_manager_title	脚本管理
+chat_script_manager_empty	当前角色卡内没有可管理的脚本。
+chat_script_manager_hint	改动会写回角色卡并热重载；脚本集合变化后需重新确认执行授权。
+chatvm_script_toggle_failed	脚本开关失败：%1$s

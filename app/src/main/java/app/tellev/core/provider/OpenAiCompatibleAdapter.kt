@@ -373,8 +373,18 @@ class OpenAiCompatibleAdapter(
             }
 
             if (providerId == ProviderCatalog.DEEPSEEK || config.optionBoolean("supportsReasoning") == true) {
-                request.preset.raw["thinking"]?.let { put("thinking", it) }
-                request.preset.raw["reasoning_effort"]?.let { put("reasoning_effort", it) }
+                val injection = ReasoningSupport.inject(
+                    family = ReasoningSupport.familyFor(providerId, config.options),
+                    effort = ReasoningSupport.effortFor(request),
+                    raw = request.preset.raw,
+                    maxTokens = maxTokens,
+                )
+                if (injection.resolved == app.tellev.core.model.ReasoningEffort.Auto) {
+                    request.preset.raw["thinking"]?.let { put("thinking", it) }
+                    request.preset.raw["reasoning_effort"]?.let { put("reasoning_effort", it) }
+                } else {
+                    injection.fields.forEach { (key, value) -> put(key, value) }
+                }
             }
             request.preset.raw["response_format"]?.let { put("response_format", it) }
 
@@ -420,8 +430,18 @@ class OpenAiCompatibleAdapter(
                 put("tools", tools)
                 request.metadata["tool_choice"]?.let { put("tool_choice", it) }
             }
-            request.preset.raw["thinking"]?.let { put("thinking", it) }
-            request.preset.raw["reasoning_effort"]?.let { put("reasoning_effort", it) }
+            val reasoningInjection = ReasoningSupport.inject(
+                family = ReasoningFamily.DeepSeek,
+                effort = ReasoningSupport.effortFor(request),
+                raw = request.preset.raw,
+                maxTokens = maxTokens,
+            )
+            if (reasoningInjection.resolved == app.tellev.core.model.ReasoningEffort.Auto) {
+                request.preset.raw["thinking"]?.let { put("thinking", it) }
+                request.preset.raw["reasoning_effort"]?.let { put("reasoning_effort", it) }
+            } else {
+                reasoningInjection.fields.forEach { (key, value) -> put(key, value) }
+            }
             request.preset.raw["response_format"]?.let { put("response_format", it) }
         }
 

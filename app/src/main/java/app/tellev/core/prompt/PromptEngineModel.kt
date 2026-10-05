@@ -87,6 +87,39 @@ data class PromptDiagnostics(
     val activatedWorldEntryIds: List<String>,
     val estimatedTokenCount: Int? = null,
     val warnings: List<String> = emptyList(),
+    /** Per-entry activation detail for the context viewer; empty on legacy producers. */
+    val worldBookHits: List<WorldEntryHit> = emptyList(),
+    /** Entries considered but not injected, with the reason; empty on legacy producers. */
+    val rejectedWorldEntries: List<WorldEntryRejection> = emptyList(),
+)
+
+/** One activated world-book entry, with why it fired — for the context viewer. */
+@Serializable
+data class WorldEntryHit(
+    val entryId: String,
+    /** ST entry "comment" (the entry's title in the editor UI). */
+    val title: String? = null,
+    val bookName: String? = null,
+    val matchedKeys: List<String> = emptyList(),
+    val matchedSecondaryKeys: List<String> = emptyList(),
+    /** Fired unconditionally (constant entry or @@activate decorator). */
+    val unconditional: Boolean = false,
+    /** Activated by content of an earlier entry, not the chat text itself. */
+    val recursionLevel: Int = 0,
+    val tokens: Int? = null,
+)
+
+/** Why a considered world-book entry did not reach the prompt. */
+@Serializable
+data class WorldEntryRejection(
+    val entryId: String,
+    val title: String? = null,
+    val bookName: String? = null,
+    /**
+     * Stable reason token: `disabled` | `keyword_miss` | `probability` |
+     * `inclusion_group` | `budget` | `delayed_until_recursion`.
+     */
+    val reason: String,
 )
 
 internal data class ExtensionInjection(

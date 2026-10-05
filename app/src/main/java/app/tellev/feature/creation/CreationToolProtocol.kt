@@ -20,7 +20,7 @@ internal const val TOOL_CALL_CLOSE = "</tool_call>"
 
 /** Shown in the unknown-tool error so the model can retry with a valid name. */
 internal const val TOOL_NAMES =
-    "read_card, list_lore, read_lore, set_card_fields, upsert_lore, remove_lore, list_assets, read_script, upsert_script, read_regex, upsert_regex, read_variables, set_variables, remove_asset"
+    "read_card, list_lore, read_lore, set_card_fields, upsert_lore, remove_lore, write_blueprint, list_assets, read_script, upsert_script, read_regex, upsert_regex, read_variables, set_variables, remove_asset"
 
 internal data class ToolCallRequest(val name: String, val arguments: JsonObject)
 
@@ -425,6 +425,17 @@ internal fun toolEventDetail(result: ToolResult): String {
                 if (miss > 0) append(", miss $miss")
             }
         }
+        "write_blueprint" -> {
+            val created = num("lore_created") ?: 0
+            val updated = num("lore_updated") ?: 0
+            val kept = num("lore_kept") ?: 0
+            buildString {
+                append("fields, lore")
+                if (created > 0) append(" +$created")
+                if (updated > 0) append(" ~$updated")
+                if (kept > 0) append(" =$kept")
+            }
+        }
         "ask_user" -> (result.payload["answer"] as? JsonPrimitive)?.contentOrNull.orEmpty().take(40)
         else -> ""
     }
@@ -480,6 +491,7 @@ internal class CreationToolBox(initial: CreationSession) {
             "set_card_fields" -> setCardFields(call.arguments)
             "upsert_lore" -> upsertLore(call.arguments)
             "remove_lore" -> removeLore(call.arguments)
+            "write_blueprint" -> writeBlueprint(call.arguments)
             "list_assets", "read_script", "upsert_script", "upsert_regex", "read_regex",
             "set_variables", "read_variables", "remove_asset" -> {
                 val (updated, result) = CreationAdvancedAssets.execute(session, call)
@@ -776,5 +788,33 @@ internal class CreationToolBox(initial: CreationSession) {
                 put("not_found", JsonArray(notFound.map(::JsonPrimitive)))
             },
         )
+    }
+
+    /**
+     * One-shot bulk write of the standard character blueprint: card fields
+     * wholesale, lore upsert by title, never deletes. Character sessions only
+     * — a world book has no card body to blueprint.
+     */
+    private fun writeBlueprint(arguments: JsonObject): ToolResult {
+        require(session.kind == CreationKind.Character) {
+            UiStrings.get(S.creng_blueprint_worldbook_unsupported)
+        }
+        val blueprint = CharacterBlueprintCompiler.fromArguments(arguments)
+        require(blueprint.name.isNotBlank()) { UiStrings.get(S.creng_blueprint_name_required) }
+        val before = session.lore
+        val updated = CharacterBlueprintCompiler.applyToSession(session, blueprint)
+        session = updated
+        // Counts from the model's view: titles matched by the blueprint were
+        // updated, blueprint-absent titles were kept, new titles were created.
+        val beforeIds = before.mapNotNull { it.id.ifBlank { null } }.toSet()
+        val created = updated.lore.count { it.id !in beforeIds }
+        val matchedTitles = blueprint.lore
+            .map { it.title.trim().lowercase() }
+            .filter(String::isNotEmpty)
+            .toSet()
+        val updatedCount = before.count { it.title.trim().lowercase() in matchedTitles }
+        val kept = before.size - updatedCount
+        return ToolResult(ok = true, name = "write_blueprint",
+            payload = blueprintAppliedPayload(created, updatedCount, kept))
     }
 }

@@ -22,16 +22,23 @@ import app.tellev.core.model.ChatSession
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.Persona
+import app.tellev.core.model.ReasoningEffort
 import app.tellev.core.model.WorldBook
 import app.tellev.core.memory.MemoryMode
 import app.tellev.core.memory.MemoryRecord
 import app.tellev.core.memory.MemoryService
 import app.tellev.core.memory.withMemoryMode
+import app.tellev.core.metrics.GenerationMetrics
+import app.tellev.core.metrics.GenerationMetricsAggregate
+import app.tellev.core.metrics.GenerationMetricsCalculator
+import app.tellev.core.metrics.GenerationMetricsStore
 import app.tellev.core.prompt.PromptEngine
 import app.tellev.core.provider.GenerationRuntimeResolver
 import app.tellev.core.provider.ProviderConfig
 import app.tellev.core.provider.ProviderConfigPersistence
+import app.tellev.core.provider.supportsChatGeneration
 import app.tellev.core.provider.ProviderRegistry
+import app.tellev.core.provider.ReasoningSupport
 import app.tellev.core.provider.presetCategoryForProvider
 import app.tellev.core.security.SecretStore
 import app.tellev.core.storage.GeneratedImage
@@ -51,6 +58,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.File
 
 data class ChatUiState(
@@ -69,6 +80,11 @@ data class ChatUiState(
     // Per-session chat background: chat_metadata["background"] resolved to a
     // file under st-data/backgrounds. Null = plain surface color.
     val chatBackgroundFile: File? = null,
+    /** Last main-line generation's assembled context (context viewer). */
+    val contextSnapshot: ContextSnapshot? = null,
+    val generationMetrics: List<GenerationMetrics> = emptyList(),
+    val generationMetricsAggregate: GenerationMetricsAggregate = GenerationMetricsAggregate(),
+    val latestGenerationMetrics: GenerationMetrics? = null,
     val messages: List<ChatMessage> = emptyList(),
     val isGenerating: Boolean = false,
     val streamingText: String = "",
@@ -99,10 +115,24 @@ data class ChatUiState(
     val generatedImages: List<GeneratedImage> = emptyList(),
     /** Last failed scene summary, kept in memory for user inspection; never written to logcat. */
     val imageGenDiagnostic: String? = null,
+    /** Configured custom image endpoints (`imgprof:` engine ids) shown in the generation dialog. */
+    val imageProfiles: List<ChatImageProfileOption> = emptyList(),
     // ── A1 卡内脚本确认：首次装载(或脚本集变化后)须用户确认,持久化于 script-consent.json ──
     val pendingScriptConsent: CharacterScriptConsent? = null,
     /** 卡内脚本已停用(拒绝过/本次会话跳过),展示横幅并提供一键重新询问。 */
     val characterScriptsDisabled: CharacterScriptConsent? = null,
+    /** 会话抽屉用：按角色分组的会话列表（当前角色排最前）。 */
+    val sessionGroups: List<CharacterSessionGroup> = emptyList(),
+    /** 置顶的会话 id（pinned-sessions.json）。 */
+    val pinnedSessionIds: Set<String> = emptySet(),
+)
+
+/** 抽屉里的一个角色分组：角色摘要 + 它名下的会话（按最近消息倒序）。 */
+data class CharacterSessionGroup(
+    val characterId: String,
+    val characterName: String,
+    val sessions: List<ChatSessionSummary>,
+    val isCurrentCharacter: Boolean = false,
 )
 
 /** 卡内脚本确认请求的数据:脚本源指纹 + 脚本名列表(用于弹窗展示)。 */
@@ -120,6 +150,7 @@ class ChatViewModel(
     private val extensionHost: ExtensionHost,
     private val permissionManager: ExtensionPermissionManager,
     private val externalChatWritePort: MutableExternalChatWritePort? = null,
+    imageDownloader: (suspend (String) -> ByteArray?)? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -155,13 +186,17 @@ class ChatViewModel(
     private val messageActions = ChatMessageActions(sessionRuntime, promptEngine)
     private val runtimeResolver = GenerationRuntimeResolver(dataStore, providerRegistry, secretStore)
     private val memoryService = MemoryService(dataStore, providerRegistry, secretStore)
+    private val generationMetricsStore = GenerationMetricsStore(dataStore.layout.root)
     private val generatedImageStore = GeneratedImageStore(dataStore.layout)
     private val imageGenCoordinator = ChatImageGenerationCoordinator(
-        dataStore, providerRegistry, secretStore, generatedImageStore,
+        dataStore, providerRegistry, secretStore, generatedImageStore, imageDownloader,
     )
     private val generationCoordinator = ChatGenerationCoordinator(
         dataStore, providerRegistry, promptEngine, extensionHost, sessionRuntime, runtimeResolver, memoryService,
+        generationMetricsStore,
     )
+    private val promptOptimizer = app.tellev.core.prompt.PromptOptimizer()
+    private var promptOptimizationJob: Job? = null
 
     private var characterScriptJob: Job? = null
     @Volatile
@@ -250,6 +285,7 @@ class ChatViewModel(
         observePersonaChanges()
         observeProviderChanges()
         observeChatChanges()
+        observeGenerationMetrics()
         loadInitialData()
     }
 
@@ -354,6 +390,21 @@ class ChatViewModel(
                     if (!error.message.orEmpty().contains("Chat session not found")) {
                         _uiState.update { it.copy(error = UiStrings.get(S.chatvm_read_session_state_failed, error.message)) }
                     }
+                }
+            }
+        }
+    }
+
+    private fun observeGenerationMetrics() {
+        viewModelScope.launch {
+            generationMetricsStore.load()
+            generationMetricsStore.entries.collect { entries ->
+                _uiState.update { state ->
+                    state.copy(
+                        generationMetrics = entries,
+                        latestGenerationMetrics = entries.lastOrNull(),
+                        generationMetricsAggregate = GenerationMetricsCalculator.aggregate(entries),
+                    )
                 }
             }
         }
@@ -667,11 +718,61 @@ class ChatViewModel(
         }
     }
 
+    /** Card script manager: every TavernHelper script in the selected character's card. */
+    fun characterScriptEntries(): List<CharacterTavernHelperScripts.ScriptEntry> {
+        val character = _uiState.value.selectedCharacter ?: return emptyList()
+        return CharacterTavernHelperScripts.listScriptEntries(character)
+    }
+
+    /**
+     * Flip one card script's `enabled` flag, persist the card losslessly and
+     * hot-reload its script runtime. Changing the enabled set changes the
+     * isolated source fingerprint, so the consent flow re-asks by design.
+     */
+    fun toggleCharacterScript(path: String) {
+        val character = _uiState.value.selectedCharacter ?: return
+        viewModelScope.launch {
+            try {
+                val entry = CharacterTavernHelperScripts.listScriptEntries(character)
+                    .firstOrNull { it.path == path } ?: return@launch
+                val patched = CharacterTavernHelperScripts.withScriptEnabledAt(character, path, !entry.enabled)
+                    ?: return@launch
+                dataStore.saveCharacter(patched)
+                _uiState.update {
+                    it.copy(
+                        selectedCharacter = patched,
+                        characterAvatarFile = it.characterAvatarFile,
+                    )
+                }
+                reloadCharacterTavernHelperScripts(patched)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = UiStrings.get(S.chatvm_script_toggle_failed, e.message)) }
+            }
+        }
+    }
+
     fun correctMemory(recordId: String, newText: String?) {
         val id = _uiState.value.currentSession?.id ?: return
         viewModelScope.launch {
             try {
                 memoryService.correct(id, recordId, newText)
+                refreshMemory(id)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = UiStrings.get(S.chatvm_memory_correct_failed, e.message)) }
+            }
+        }
+    }
+
+    /** Restore a corrected record to one of its previous versions (0 = newest). */
+    fun rollbackMemoryCorrection(recordId: String, historyIndex: Int) {
+        val id = _uiState.value.currentSession?.id ?: return
+        viewModelScope.launch {
+            try {
+                memoryService.rollbackCorrection(id, recordId, historyIndex)
                 refreshMemory(id)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -778,7 +879,13 @@ class ChatViewModel(
 
     fun sendMessage(text: String, attachments: List<Attachment> = emptyList()): Boolean {
         // 与消息编辑/滑动删除一致的门禁：会话切换/删除进行中不接受发送。
-        if (_uiState.value.isLoading) return false
+        if (_uiState.value.isLoading) {
+            // 输入栏已经把发送控件置灰，这道门禁是第二道防线（脚本触发的发送、切会话瞬间的
+            // 竞态点击都会走到这里）。拒绝不再静默：走既有的 error → Snackbar 通道给出
+            // 本地化提示，草稿与附件由调用方保留，不在这里丢弃。
+            _uiState.update { it.copy(error = UiStrings.get(S.chatvm_send_blocked_loading)) }
+            return false
+        }
         return sendMessageWithRole(text, attachments, MessageRole.User)
     }
 
@@ -813,6 +920,150 @@ class ChatViewModel(
     fun regenerateLastMessage(): Boolean {
         val lastResponse = _uiState.value.messages.lastOrNull() ?: return false
         return regenerateResponse(lastResponse.id)
+    }
+
+    /** 继续生成：最后一条角色/助手回复续写。没有可续写的回复时给出提示。 */
+    fun continueGeneration(): Boolean {
+        val last = _uiState.value.messages.lastOrNull() ?: run {
+            _uiState.update { it.copy(error = UiStrings.get(S.chat_continue_empty)) }
+            return false
+        }
+        return generationCoordinator.continueGeneration(
+            messageId = last.id,
+            uiState = _uiState,
+            scope = viewModelScope,
+            characterScriptJob = characterScriptJob,
+        )
+    }
+
+    /**
+     * 绑定/解绑本会话的世界书（ST 的 chat-level world_info）。
+     * name 为空表示解除绑定；不存在的世界书给出错误提示。
+     */
+    fun setChatWorldBook(name: String?) {
+        val session = _uiState.value.currentSession ?: return
+        viewModelScope.launch {
+            if (name != null && _uiState.value.worldBooks.none { it.name == name || it.id == name }) {
+                _uiState.update { it.copy(error = UiStrings.get(S.chat_world_book_not_found, name)) }
+                return@launch
+            }
+            val updated = session.copy(
+                metadata = if (name == null) {
+                    JsonObject(session.metadata - "world_info")
+                } else {
+                    JsonObject(session.metadata + ("world_info" to JsonPrimitive(name)))
+                },
+            )
+            if (updated == session) return@launch
+            sessionRuntime.persistSessionMutation(session, updated) { saved ->
+                _uiState.update {
+                    if (it.currentSession?.id == saved.id) {
+                        it.copy(currentSession = saved, messages = saved.messages)
+                    } else {
+                        it
+                    }
+                }
+            }
+        }
+    }
+
+    /** 导出当前会话为 JSON（消息 + 角色/预设/用户设定元数据），供分享与备份。 */
+    fun exportChatLog(resolver: android.content.ContentResolver, uri: android.net.Uri) {
+        val state = _uiState.value
+        val session = state.currentSession ?: return
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val messages = JsonArray(session.messages.map { message ->
+                        JsonObject(
+                            mapOf(
+                                "role" to JsonPrimitive(message.role.name.lowercase()),
+                                "name" to JsonPrimitive(message.name),
+                                "content" to JsonPrimitive(message.content),
+                                "createdAt" to JsonPrimitive(message.createdAtMillis),
+                            ),
+                        )
+                    })
+                    val payload = JsonObject(
+                        mapOf(
+                            "character" to JsonPrimitive(state.selectedCharacter?.name ?: ""),
+                            "preset" to JsonPrimitive(state.selectedPreset?.name ?: ""),
+                            "persona" to JsonPrimitive(state.selectedPersona?.name ?: ""),
+                            "messages" to messages,
+                        ),
+                    ).toString()
+                    requireNotNull(resolver.openOutputStream(uri))
+                        .use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                }
+            }
+            _uiState.update {
+                it.copy(
+                    error = if (result.isSuccess) UiStrings.get(S.chat_export_log_saved)
+                    else UiStrings.get(S.chat_export_log_failed, result.exceptionOrNull()?.message),
+                )
+            }
+        }
+    }
+
+    /** 抽屉用：装载按角色分组的会话列表。当前角色的分组排最前。 */
+    fun loadSessionGroups() {
+        viewModelScope.launch {
+            val groups = withContext(Dispatchers.Default) {
+                val characters = _uiState.value.characters
+                val currentId = _uiState.value.selectedCharacter?.id
+                characters.map { character ->
+                    val sessions = dataStore.listChatSessionSummaries(characterId = character.id)
+                    CharacterSessionGroup(
+                        characterId = character.id,
+                        characterName = character.name,
+                        sessions = sessions,
+                        isCurrentCharacter = character.id == currentId,
+                    )
+                }.filter { it.sessions.isNotEmpty() }
+                    .sortedWith(compareByDescending<CharacterSessionGroup> { it.isCurrentCharacter }
+                        .thenByDescending { it.sessions.firstOrNull()?.lastMessageAtMillis ?: 0L })
+            }
+            val pinned = withContext(Dispatchers.IO) { ChatPinnedSessions.read(dataStore.layout.root) }
+            _uiState.update { it.copy(sessionGroups = groups, pinnedSessionIds = pinned) }
+        }
+    }
+
+    /** 抽屉里的 📌：切换置顶并落盘。 */
+    fun togglePinnedSession(sessionId: String) {
+        viewModelScope.launch {
+            val updated = withContext(Dispatchers.IO) {
+                ChatPinnedSessions.toggle(dataStore.layout.root, sessionId)
+            }
+            _uiState.update { it.copy(pinnedSessionIds = updated) }
+        }
+    }
+
+    /**
+     * 消息反馈（参考图一的 👍/👎）：写到消息 metadata 的 feedback 字段
+     * （"up"/"down"，再次点击同一个清除）。不改消息内容、不触发重渲染管线。
+     */
+    fun setMessageFeedback(messageIndex: Int, feedback: String?) {
+        val state = _uiState.value
+        val session = state.currentSession ?: return
+        if (messageIndex !in state.messages.indices) return
+        viewModelScope.launch {
+            val messages = state.messages.toMutableList()
+            val message = messages[messageIndex]
+            val current = (message.metadata["feedback"] as? JsonPrimitive)?.contentOrNull
+            val nextMetadata = if (feedback == null || feedback == current) {
+                JsonObject(message.metadata - "feedback")
+            } else {
+                JsonObject(message.metadata + ("feedback" to JsonPrimitive(feedback)))
+            }
+            messages[messageIndex] = message.copy(metadata = nextMetadata)
+            val updated = session.copy(messages = messages)
+            sessionRuntime.persistSessionMutation(session, updated) { saved ->
+                _uiState.update {
+                    if (it.currentSession?.id == saved.id) it.copy(currentSession = saved, messages = saved.messages)
+                    else it
+                }
+            }
+        }
     }
 
     fun stopGeneration() {
@@ -1100,6 +1351,30 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Per-session reasoning effort override, persisted in the session's
+     * metadata and honored by every main-line generation of this chat.
+     * [ReasoningEffort.Auto] (or null) clears the override so the preset's
+     * own field applies again.
+     */
+    fun setSessionReasoningEffort(effort: ReasoningEffort?) {
+        val session = _uiState.value.currentSession ?: return
+        val updated = session.copy(metadata = ReasoningSupport.withSessionOverride(session.metadata, effort))
+        if (updated.metadata == session.metadata) return
+        viewModelScope.launch {
+            try {
+                sessionRuntime.persistSessionMutation(session, updated) { saved ->
+                    _uiState.update {
+                        if (it.currentSession?.id == saved.id) it.copy(currentSession = saved, messages = saved.messages)
+                        else it
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = UiStrings.get(S.chat_reasoning_set_failed, e.message)) }
+            }
+        }
+    }
+
     fun clearChatBackground() {
         val session = _uiState.value.currentSession ?: return
         viewModelScope.launch {
@@ -1119,6 +1394,90 @@ class ChatViewModel(
                 onError = { err -> _uiState.update { it.copy(error = err) } },
             )
         }
+    }
+
+    /**
+     * Switch the chat model without leaving the conversation.
+     *
+     * Built-in providers keep their model in the `provider-<id>-model` secret,
+     * which is exactly what [GenerationRuntimeResolver] reads back, so a write
+     * here propagates through [observeProviderChanges] on the next send.
+     * Custom (`custom:<id>`) endpoints keep their model inside the custom
+     * config JSON — that one is edited in Settings, so it is reported as
+     * unsupported here instead of silently doing nothing.
+     */
+    fun selectModel(model: String) {
+        val trimmed = model.trim()
+        if (trimmed.isEmpty()) {
+            _uiState.update { it.copy(error = UiStrings.get(S.chatvm_model_blank)) }
+            return
+        }
+        val providerId = _uiState.value.selectedProvider
+        if (app.tellev.core.provider.ProviderConfigPersistence.isCustomConfigId(providerId)) {
+            _uiState.update { it.copy(error = UiStrings.get(S.chatvm_model_custom_unsupported)) }
+            return
+        }
+        viewModelScope.launch {
+            try {
+                secretStore.putSecret("provider-$providerId-model", trimmed)
+                // 写密钥已触发 secretStore.changes -> refreshRuntimeState；这里再显式
+                // 刷新一次，保证读取失败时用户能看到错误而不是静默回退。
+                refreshRuntimeState(S.chatvm_reread_provider_failed)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = UiStrings.get(S.chatvm_model_set_failed, e.message)) }
+            }
+        }
+    }
+
+    /**
+     * Side-effect-free draft optimization for the input bar: resolves the same
+     * runtime as a chat send (provider + preset) but never writes messages,
+     * variables or extension events. Returns false when it cannot start
+     * (no provider / adapter without chat capability).
+     */
+    fun optimizeDraft(
+        text: String,
+        options: app.tellev.core.prompt.PromptOptimizationOptions,
+        onPreview: (String) -> Unit,
+        onDone: (app.tellev.core.prompt.PromptOptimizationResult) -> Unit,
+    ): Boolean {
+        promptOptimizationJob?.cancel()
+        promptOptimizationJob = viewModelScope.launch {
+            try {
+                val runtime = runtimeResolver.resolve(_uiState.value.selectedPersona?.id)
+                val adapter = providerRegistry.find(runtime.providerConfig.providerType)
+                    ?.takeIf { it.supportsChatGeneration }
+                if (adapter == null) {
+                    onDone(app.tellev.core.prompt.PromptOptimizationResult.failed(
+                        listOf(UiStrings.get(S.chat_optimize_unavailable)),
+                    ))
+                    return@launch
+                }
+                val result = promptOptimizer.optimize(
+                    input = text,
+                    options = options,
+                    config = runtime.providerConfig,
+                    adapter = adapter,
+                    preset = runtime.preset,
+                    onPreview = onPreview,
+                )
+                onDone(result)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                onDone(app.tellev.core.prompt.PromptOptimizationResult.failed(
+                    listOf(error.message ?: UiStrings.get(S.chat_optimize_failed_generic)),
+                ))
+            }
+        }
+        return true
+    }
+
+    fun cancelPromptOptimization() {
+        promptOptimizationJob?.cancel()
+        promptOptimizationJob = null
     }
 
     fun generateImage(prompt: String, negativePrompt: String, summarizeScene: Boolean, selectedEngine: String? = null) {
@@ -1211,12 +1570,13 @@ class ChatViewModel(
     }
 
     private suspend fun refreshImageGenAvailability() {
-        imageGenCoordinator.refreshImageGenAvailability { available, configured, engine ->
+        imageGenCoordinator.refreshImageGenAvailability { available, configured, engine, profiles ->
             _uiState.update {
                 it.copy(
                     imageGenAvailable = available,
                     configuredImageEngines = configured,
                     imageEngine = engine,
+                    imageProfiles = profiles,
                 )
             }
         }
@@ -1370,6 +1730,7 @@ class ChatViewModel(
     }
 
     override fun onCleared() {
+        promptOptimizationJob?.cancel()
         generationCoordinator.clearInterruptionJob()
         externalChatWritePort?.register(null)
         extensionHost.setContextProvider(null)
@@ -1392,6 +1753,7 @@ class ChatViewModelFactory(
     private val extensionHost: ExtensionHost,
     private val permissionManager: ExtensionPermissionManager,
     private val externalChatWritePort: MutableExternalChatWritePort? = null,
+    private val imageDownloader: (suspend (String) -> ByteArray?)? = null,
 ) : androidx.lifecycle.ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -1404,6 +1766,7 @@ class ChatViewModelFactory(
                 extensionHost = extensionHost,
                 permissionManager = permissionManager,
                 externalChatWritePort = externalChatWritePort,
+                imageDownloader = imageDownloader,
             ) as T
         }
         throw IllegalArgumentException("未知 ViewModel 类型：${modelClass.name}")

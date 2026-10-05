@@ -1,0 +1,19 @@
+metrics_title	生成指标
+metrics_summary	聚合摘要
+metrics_count	调用次数：%1$d
+metrics_average_ttft	平均首 Delta 延迟：%1$s %2$s
+metrics_average_speed	平均生成速度：%1$s %2$s
+metrics_total_tokens	累计 token：%1$d
+metrics_cache_hit_rate	缓存命中率：%1$s
+metrics_cached_tokens	缓存 token：%1$s
+metrics_total_cost	累计估算成本：%1$s
+metrics_latest	最近一次调用
+metrics_history	历史趋势
+metrics_empty	暂无生成指标
+metrics_close	关闭
+metrics_unknown	未上报
+metrics_ms	毫秒
+metrics_tokens_second	tokens/秒
+metrics_estimated	本地估算
+metrics_reported	服务商上报
+metrics_row	%1$s · %2$s · 输入 %3$s · 输出 %4$s · TTFT %5$s ms · %6$s tokens/秒 · 缓存 %7$s (%8$s) · 成本 %9$s · %10$s

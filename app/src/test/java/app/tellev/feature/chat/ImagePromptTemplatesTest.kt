@@ -30,9 +30,9 @@ class ImagePromptTemplatesTest {
 
     @Test
     fun `tag engines retry invalid scene output once with format instructions`() = runBlocking {
-        for (engine in ChatImageEngine.entries.filter { it.usesEnglishTags }) {
+        for (usesEnglishTags in listOf(true)) {
             val instructions = mutableListOf<String>()
-            val result = ImagePromptTemplates.summarize(engine) { instruction ->
+            val result = ImagePromptTemplates.summarize(usesEnglishTags) { instruction ->
                 instructions += instruction
                 if (instructions.size == 1) "女孩坐在花园里" else "1girl, solo, sitting, garden"
             }
@@ -46,7 +46,7 @@ class ImagePromptTemplatesTest {
     @Test
     fun `tag engines never pass invalid fallback text to image generation`() = runBlocking {
         var attempts = 0
-        assertNull(ImagePromptTemplates.summarize(ChatImageEngine.NovelAi) {
+        assertNull(ImagePromptTemplates.summarize(usesEnglishTags = true) {
             attempts++
             "1girl, 女孩微笑"
         })
@@ -56,13 +56,13 @@ class ImagePromptTemplatesTest {
     @Test
     fun `valid tags and provider failures do not trigger extra requests`() = runBlocking {
         var attempts = 0
-        assertEquals("1girl, solo", ImagePromptTemplates.summarize(ChatImageEngine.NovelAi) {
+        assertEquals("1girl, solo", ImagePromptTemplates.summarize(usesEnglishTags = true) {
             attempts++
             "1girl, solo"
         })
         assertEquals(1, attempts)
         attempts = 0
-        assertNull(ImagePromptTemplates.summarize(ChatImageEngine.NovelAi) { attempts++; null })
+        assertNull(ImagePromptTemplates.summarize(usesEnglishTags = true) { attempts++; null })
         assertEquals(1, attempts)
     }
 
@@ -71,7 +71,7 @@ class ImagePromptTemplatesTest {
         for (invalid in listOf("魔法少女和使魔走在回家的路上.", "女孩撑着红伞，1girl, solo", ".", "123")) {
             var attempts = 0
             val expected = "A magical girl and her small animal familiar walk home along a quiet street."
-            val result = ImagePromptTemplates.summarize(ChatImageEngine.ComfyUi) {
+            val result = ImagePromptTemplates.summarize(usesEnglishTags = false) {
                 attempts++
                 if (attempts == 1) invalid else expected
             }
@@ -83,10 +83,10 @@ class ImagePromptTemplatesTest {
     @Test
     fun `ComfyUI rejects invalid second output and provider failure`() = runBlocking {
         var attempts = 0
-        assertNull(ImagePromptTemplates.summarize(ChatImageEngine.ComfyUi) { attempts++; "教室，女孩微笑." })
+        assertNull(ImagePromptTemplates.summarize(usesEnglishTags = false) { attempts++; "教室，女孩微笑." })
         assertEquals(2, attempts)
         attempts = 0
-        assertNull(ImagePromptTemplates.summarize(ChatImageEngine.ComfyUi) { attempts++; null })
+        assertNull(ImagePromptTemplates.summarize(usesEnglishTags = false) { attempts++; null })
         assertEquals(1, attempts)
     }
 

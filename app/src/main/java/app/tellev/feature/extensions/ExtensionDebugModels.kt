@@ -1,6 +1,9 @@
 package app.tellev.feature.extensions
 
+import app.tellev.core.extension.ExtensionErrorRecord
 import app.tellev.core.extension.ExtensionEvent
+import app.tellev.core.extension.host.ExtensionApiStat
+import app.tellev.core.extension.host.ExtensionRecentCall
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import kotlinx.serialization.json.JsonArray
@@ -62,6 +65,31 @@ data class ExtensionRuntimeOverview(
     val statusByExtensionId: Map<String, ExtensionRuntimeStatus> = emptyMap(),
     val logs: List<ExtensionRuntimeLog> = emptyList(),
     val promptDebugSnapshot: PromptDebugSnapshot? = null,
+    /** Bridge API statistics pulled from the host; refreshed when the debug sheet opens. */
+    val statsByExtensionId: Map<String, List<ExtensionApiStat>> = emptyMap(),
+    val recentCallsByExtensionId: Map<String, List<ExtensionRecentCall>> = emptyMap(),
+    val errors: List<ExtensionErrorRecord> = emptyList(),
+    val declaredPermissionsByExtensionId: Map<String, Set<app.tellev.core.extension.ExtensionPermission>> = emptyMap(),
+    val grantedPermissionsByExtensionId: Map<String, Set<app.tellev.core.extension.ExtensionPermission>> = emptyMap(),
+)
+
+/**
+ * Merge a host diagnostics snapshot into the event-reduced overview. Pure —
+ * the ViewModel calls it when the debug sheet opens and after clears.
+ */
+internal fun mergeHostDiagnostics(
+    current: ExtensionRuntimeOverview,
+    stats: Map<String, List<ExtensionApiStat>>,
+    recentCalls: Map<String, List<ExtensionRecentCall>>,
+    errors: List<ExtensionErrorRecord>,
+    declaredPermissions: Map<String, Set<app.tellev.core.extension.ExtensionPermission>> = emptyMap(),
+    grantedPermissions: Map<String, Set<app.tellev.core.extension.ExtensionPermission>> = emptyMap(),
+): ExtensionRuntimeOverview = current.copy(
+    statsByExtensionId = stats,
+    recentCallsByExtensionId = recentCalls,
+    errors = errors,
+    declaredPermissionsByExtensionId = declaredPermissions,
+    grantedPermissionsByExtensionId = grantedPermissions,
 )
 
 internal const val PROMPT_DIAGNOSTICS_EVENT = "prompt_diagnostics"

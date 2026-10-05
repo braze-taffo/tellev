@@ -302,4 +302,69 @@ class ProviderConfigPersistenceTest {
         assertEquals("pst-token", config.apiKey)
         assertEquals("https://image.novelai.net", config.baseUrl)
     }
+
+    // ── 自定义生图端口（ImageProviderProfile 多配置）──
+
+    private fun profile(
+        id: String,
+        name: String = "Relay",
+        baseUrl: String = "https://relay.example",
+    ) = ImageProviderProfile(id = id, name = name, baseUrl = baseUrl, model = "dall-e-3")
+
+    @Test
+    fun `image profiles round-trip and upsert keeps order`() = runBlocking {
+        val s = store()
+        assertTrue(ProviderConfigPersistence.listImageProviderProfiles(s).isEmpty())
+        val a = profile("imgp_a", name = "A")
+        val b = profile("imgp_b", name = "B")
+        ProviderConfigPersistence.upsertImageProviderProfile(s, a)
+        ProviderConfigPersistence.upsertImageProviderProfile(s, b)
+        assertEquals(listOf(a, b), ProviderConfigPersistence.listImageProviderProfiles(s))
+        val edited = a.copy(model = "gpt-image-1")
+        ProviderConfigPersistence.upsertImageProviderProfile(s, edited)
+        assertEquals(listOf(edited, b), ProviderConfigPersistence.listImageProviderProfiles(s))
+    }
+
+    @Test
+    fun `configured engines include configured profiles only`() = runBlocking {
+        val s = store()
+        ProviderConfigPersistence.upsertImageProviderProfile(s, profile("imgp_a"))
+        ProviderConfigPersistence.upsertImageProviderProfile(s, profile("imgp_b", baseUrl = ""))
+        val configured = ProviderConfigPersistence.configuredImageEngines(s)
+        assertEquals(
+            setOf(ProviderConfigPersistence.imageProfileEngineId("imgp_a")),
+            configured,
+        )
+    }
+
+    @Test
+    fun `engine selection accepts profile ids and falls back when stale`() = runBlocking {
+        val s = store()
+        val engineId = ProviderConfigPersistence.imageProfileEngineId("imgp_a")
+        ProviderConfigPersistence.upsertImageProviderProfile(s, profile("imgp_a"))
+        ProviderConfigPersistence.saveImageEngine(s, engineId)
+        assertEquals(engineId, ProviderConfigPersistence.loadImageEngine(s))
+        assertEquals(engineId,
+            ProviderConfigPersistence.availableImageEngine(s, ProviderConfigPersistence.configuredImageEngines(s)))
+        // Profile removed: the saved id must not surface as available.
+        ProviderConfigPersistence.deleteImageProviderProfile(s, "imgp_a")
+        assertTrue(ProviderConfigPersistence.loadImageEngine(s) != engineId)
+        assertTrue(ProviderConfigPersistence.configuredImageEngines(s).isEmpty())
+        assertNull(ProviderConfigPersistence.availableImageEngine(
+            s, ProviderConfigPersistence.configuredImageEngines(s)))
+    }
+
+    @Test
+    fun `saveImageEngine rejects unknown ids back to comfy`() = runBlocking {
+        val s = store()
+        ProviderConfigPersistence.saveImageEngine(s, "imgprof:missing")
+        assertEquals(ProviderCatalog.COMFYUI, ProviderConfigPersistence.loadImageEngine(s))
+    }
+
+    @Test
+    fun `new profile ids are unique and prefixed`() {
+        val ids = (1..20).map { ProviderConfigPersistence.newImageProviderProfileId() }
+        assertEquals(20, ids.toSet().size)
+        assertTrue(ids.all { it.startsWith("imgp_") })
+    }
 }

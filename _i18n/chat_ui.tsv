@@ -90,16 +90,19 @@ chat_generate	生成
 chat_image_gen_cancel	取消
 chat_select_character	选择角色
 chat_no_characters	暂无角色
-chat_import_hint	请先在“角色”页导入角色卡。
+chat_import_hint	请先在“角色卡”页导入角色卡。
 chat_character_card_interface	角色卡界面
 chat_close_character_card_interface	关闭角色卡界面
 chat_previous_page	上一页
 chat_next_page	下一页
 nav_tab_chat	聊天
-nav_tab_characters	角色
+nav_tab_workshop	角色工坊
+nav_tab_community	类脑
+nav_tab_characters	角色卡
 nav_tab_world	世界书
 nav_tab_extensions	扩展
 nav_tab_settings	设置
+chat_world_books	世界书
 nav_preset_limit_title	请检查当前生成预设
 nav_preset_limit_message	旧版默认预设的上下文上限仅 4096、输出上限仅 300，可能造成世界书和回复被严重截断。新版内置默认值已调整为 1,000,000 / 131,072；导入或自行修改过的预设不会被强制覆盖，请前往“设置 → 生成预设”切换或检查当前预设。
 nav_later	稍后
@@ -118,3 +121,159 @@ nav_update_apk_size	安装包约 %1$s MB
 nav_update_now	立即更新
 nav_update_download_started	开始下载新版本…
 ui_placeholder_message	架构入口已就绪，具体功能实现放在当前模块。
+chat_optimize_title	优化提示词
+chat_optimize_mode_polish	润色
+chat_optimize_mode_expand	扩写
+chat_optimize_mode_condense	压缩
+chat_optimize_mode_roleplay	角色扮演化
+chat_optimize_mode_structured	结构化
+chat_optimize_keep_facts	保留事实与专有名词
+chat_optimize_allow_detail	允许补充细节
+chat_optimize_keep_macros	保留模板宏（{{char}} 等）
+chat_optimize_language	输出语言（留空保持原文）
+chat_optimize_instruction	附加要求（可选）
+chat_optimize_start	开始优化
+chat_optimize_stop	停止
+chat_optimize_apply	替换草稿
+chat_optimize_cancel	取消
+chat_optimize_preview	优化结果（仅替换草稿，不会自动发送）
+chat_optimize_running	正在优化…
+chat_optimize_notes	模型备注：%1$s
+chat_optimize_failed	优化失败：%1$s
+chat_optimize_failed_generic	优化请求失败
+chat_optimize_unavailable	当前服务商不支持文本生成，无法优化
+chatimgco_invalid_image_data	返回内容不是有效图片
+chat_reasoning_effort	思考强度
+chat_reasoning_effort_auto	跟随预设
+chat_reasoning_effort_off	关闭
+chat_reasoning_effort_low	低
+chat_reasoning_effort_medium	中
+chat_reasoning_effort_high	高
+chat_reasoning_effort_max	最大
+chat_reasoning_set_failed	设置思考强度失败：%1$s
+ui_character_count	%1$d 位角色
+ui_character_library	你的角色收藏
+ui_character_library_hint	从一张角色卡，走进另一段故事。
+ui_chat_intro	从这里，开启对话
+ui_chat_intro_hint	选择一位角色，继续你们的故事。
+ui_creation_intro	把灵感写成故事
+ui_creation_intro_hint	从一个想法开始，创作角色与世界设定。
+ui_exit_body	退出 Tellev，返回桌面。
+ui_exit_no	否
+ui_exit_title	你真的要退出吗？
+ui_exit_yes	是
+ui_extensions_intro	为故事添些可能
+ui_extensions_intro_hint	管理记忆、脚本和角色能力。
+ui_settings_appearance	外观
+ui_settings_data	资料
+ui_settings_identity	身份
+ui_settings_intro	让故事更合心意
+ui_settings_intro_hint	模型、预设、外观与资料，都在这里管理。
+ui_settings_models	模型与预设
+ui_world_count	%1$d 本世界书
+ui_world_disabled	未启用
+ui_world_enabled	已启用
+ui_world_library	故事里的世界
+ui_world_library_hint	整理设定与人物，让故事更连贯。
+ui_world_more	世界书操作
+ctxview_title	上下文查看器
+ctxview_no_data	尚未生成过回复——发送一条消息后，这里会显示本轮实际发送的完整上下文。
+ctxview_export	导出 JSON
+ctxview_export_failed	导出失败：%1$s
+ctxview_copy_cd	复制内容
+ctxview_stats_tokens	预计 token：%1$s
+ctxview_stats_messages	消息 %1$d 条
+ctxview_stats_hits	命中 %1$d
+ctxview_stats_warnings	警告 %1$d
+ctxview_section_warnings	警告
+ctxview_section_world_hits	世界书命中（%1$d）
+ctxview_section_world_rejected	未生效条目（%1$d）
+ctxview_section_memory	记忆注入（%1$d）
+ctxview_section_messages	Prompt 消息（%1$d）
+ctxview_empty_section	（无）
+ctxview_book_name	世界书：%1$s
+ctxview_unconditional	常驻
+ctxview_recursion	递归第 %1$d 层
+ctxview_matched_keys	命中关键词：%1$s
+ctxview_matched_secondary	次级关键词：%1$s
+ctxview_score	检索评分 %1$s
+ctxview_jump_to_source	→ 跳转来源消息
+ctxview_no_source	来源消息已不在会话中
+ctxview_reason_disabled	条目已禁用
+ctxview_reason_keyword_miss	关键词未命中
+ctxview_reason_probability	概率未命中
+ctxview_reason_inclusion_group	包含组竞争落选
+ctxview_reason_budget	超出世界书 token 预算
+ctxview_reason_delayed	递归前置门未开启
+chat_memory_history	历史版本
+chat_memory_history_title	记忆历史版本
+chat_memory_history_empty	该记录没有历史版本。
+chat_memory_restore	恢复此版本
+chat_memory_history_current	当前文本：
+chat_drawer_open	打开会话抽屉
+chat_quick_settings	设定
+chat_panel_world_section	世界书
+chat_panel_world_session	世界书（本会话）
+chat_panel_preset_section	生成预设
+chat_panel_persona_section	用户设定
+chat_panel_world_unbound	未绑定世界书
+chat_panel_persona_default	默认用户
+chat_drawer_new_session	新会话
+chat_drawer_plugins	插件
+chat_drawer_export_log	导出会话日志
+chat_drawer_settings	设置
+chat_drawer_search_sessions	搜索会话
+chat_drawer_no_sessions	暂无会话
+chat_drawer_expand	展开其余 %1$d 个会话
+chat_drawer_session_count	%1$d 个会话
+chat_settings_model	模型
+chat_settings_tts	自定义 TTS
+chat_settings_imagegen	自定义生图
+chat_settings_usage	使用统计
+chat_continue	继续生成
+chat_speak_current	播放语音
+chat_input_voice	语音输入
+chat_input_voice_listening	正在聆听…
+chat_attach_menu_title	添加附件
+chat_attach_audio	音频
+chat_attach_video	视频
+chat_attach_image	图片
+chat_attach_document	文档
+chat_attach_failed	附件添加失败：%1$s
+chat_voice_failed	语音识别失败：%1$s
+chat_voice_unsupported	当前设备不支持语音识别
+chat_input_placeholder	发消息或创建任务，/ 调用指令，@ 文件或对话
+chat_stats_round	%1$d 轮
+chat_stats_step	%1$d 步
+chat_stats_tokens	%1$s tok
+chat_stats_cache_hit	缓存命中 %1$s
+chat_export_log_saved	会话日志已导出
+chat_export_log_failed	导出失败：%1$s
+chat_continue_empty	还没有可继续的回复
+chat_world_book_not_found	找不到世界书：%1$s
+chat_feedback_up	点赞
+chat_feedback_down	点踩
+chat_share	分享
+chat_pin	置顶
+chat_unpin	取消置顶
+chat_panel_reasoning	思考强度
+time_now	刚刚
+time_minutes_ago	%1$d 分钟前
+time_hours_ago	%1$d 小时前
+time_days_ago	%1$d 天前
+chat_input_placeholder	发消息或创建任务, / 调用指令, @ 文件或对话
+ctx_used_pct	上下文已用 %1$s
+ctx_total	~%1$s / %2$s
+ctx_segment_system	系统提示词
+ctx_segment_world	世界书
+ctx_segment_messages	对话消息
+ctx_tokens_approx	~%1$s
+drawer_filter_pinned	只看置顶
+drawer_plugins_cd	插件
+ctx_usage_title	上下文已用 %1$s
+ctx_usage_total	~%1$s / %2$s
+ctx_label_system	系统提示词
+ctx_label_world	世界书
+ctx_label_messages	对话消息
+time_hours_short	%1$d小时
+time_days_short	%1$d天

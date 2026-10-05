@@ -89,6 +89,58 @@ private val WarmLightColors = lightColorScheme(
     surfaceContainerHighest = Color(0xFFEBDCD1),
 )
 
+private val InkLightColors = lightColorScheme(
+    primary = Color(0xFF315F8C),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFD9E8F8),
+    onPrimaryContainer = Color(0xFF102F4C),
+    secondary = Color(0xFF536270),
+    secondaryContainer = Color(0xFFE1E7ED),
+    onSecondaryContainer = Color(0xFF1D2933),
+    tertiary = Color(0xFF7A5B2C),
+    tertiaryContainer = Color(0xFFF4E2BD),
+    onTertiaryContainer = Color(0xFF2C210C),
+    background = Color(0xFFF4F5F7),
+    onBackground = Color(0xFF17191C),
+    surface = Color(0xFFFAFBFC),
+    onSurface = Color(0xFF17191C),
+    surfaceVariant = Color(0xFFE0E3E7),
+    onSurfaceVariant = Color(0xFF454A51),
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Color(0xFFF0F1F3),
+    surfaceContainer = Color(0xFFE9EBEE),
+    surfaceContainerHigh = Color(0xFFE2E5E8),
+    surfaceContainerHighest = Color(0xFFDCE0E4),
+)
+
+private val InkDarkColors = darkColorScheme(
+    primary = Color(0xFF78B7F1),
+    onPrimary = Color(0xFF062F52),
+    primaryContainer = Color(0xFF174A74),
+    onPrimaryContainer = Color(0xFFD5E9FF),
+    secondary = Color(0xFFB8C6D2),
+    onSecondary = Color(0xFF1E2A34),
+    secondaryContainer = Color(0xFF36444F),
+    onSecondaryContainer = Color(0xFFD9E5EE),
+    tertiary = Color(0xFFF1C77A),
+    onTertiary = Color(0xFF3D2C05),
+    tertiaryContainer = Color(0xFF5B461A),
+    onTertiaryContainer = Color(0xFFFFE2A9),
+    background = Color(0xFF0B0C0F),
+    onBackground = Color(0xFFF1F3F5),
+    surface = Color(0xFF111317),
+    onSurface = Color(0xFFF1F3F5),
+    surfaceVariant = Color(0xFF292C31),
+    onSurfaceVariant = Color(0xFFA6ABB3),
+    surfaceDim = Color(0xFF0B0C0F),
+    surfaceBright = Color(0xFF343840),
+    surfaceContainerLowest = Color(0xFF08090B),
+    surfaceContainerLow = Color(0xFF15171B),
+    surfaceContainer = Color(0xFF1C1F24),
+    surfaceContainerHigh = Color(0xFF25282E),
+    surfaceContainerHighest = Color(0xFF30343B),
+)
+
 private val WarmDarkColors = darkColorScheme(
     primary = Color(0xFFEFAE92),
     onPrimary = Color(0xFF491A0B),
@@ -180,16 +232,21 @@ enum class ThemeAccent {
 
     /** Blue accent with matching cool surfaces. */
     Classic,
+
+    /** Near-black ink surfaces for the statistics and immersive chat views. */
+    Ink,
 }
 
 fun ThemeAccent.lightColors(): ColorScheme = when (this) {
     ThemeAccent.Warm -> WarmLightColors
     ThemeAccent.Classic -> ClassicLightColors
+    ThemeAccent.Ink -> InkLightColors
 }
 
 fun ThemeAccent.darkColors(): ColorScheme = when (this) {
     ThemeAccent.Warm -> WarmDarkColors
     ThemeAccent.Classic -> ClassicDarkColors
+    ThemeAccent.Ink -> InkDarkColors
 }
 
 /** Tolerant parse for values read from storage; unknown names fall back to Warm. */

@@ -201,3 +201,16 @@ internal fun ChatMessage.withRegeneratedSwipe(newContent: String): ChatMessage {
         swipeIndex = previousSwipes.size,
     )
 }
+
+/**
+ * 继续生成：把 [addition] 拼到当前 swipe 的内容后面（不新开 swipe）。
+ * 中断时传的是部分文本，语义相同。
+ */
+internal fun ChatMessage.withContinuedText(addition: String): ChatMessage {
+    if (addition.isEmpty()) return this
+    val appended = content + addition
+    val swipes = swipes.ifEmpty { listOf(content) }.toMutableList()
+    val index = if (swipeIndex in swipes.indices) swipeIndex else swipes.lastIndex
+    swipes[index] = appended
+    return copy(content = appended, swipes = swipes, swipeIndex = index)
+}

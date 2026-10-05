@@ -16,7 +16,11 @@ object MemoryRetrieval {
         return words + cjk
     }
 
-    fun search(records: List<MemoryRecord>, query: String, vector: List<Float>? = null, limit: Int = 6): List<MemoryRecord> {
+    fun search(records: List<MemoryRecord>, query: String, vector: List<Float>? = null, limit: Int = 6): List<MemoryRecord> =
+        searchScored(records, query, vector, limit).map { it.first }
+
+    /** [search] with retrieval scores attached, for the context viewer's provenance view. */
+    fun searchScored(records: List<MemoryRecord>, query: String, vector: List<Float>? = null, limit: Int = 6): List<Pair<MemoryRecord, Double>> {
         val active = records.filter { it.active && it.text.isNotBlank() }
         if (active.isEmpty()) return emptyList()
         val queryTerms = terms(query).toSet()
@@ -51,7 +55,6 @@ object MemoryRetrieval {
             .distinctBy { it.first.id }
             .sortedByDescending { it.second }
             .take(limit)
-            .map { it.first }
     }
 
     private fun cosine(a: List<Float>, b: List<Float>): Double {

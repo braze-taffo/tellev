@@ -1,5 +1,7 @@
 package app.tellev.core.extension
 
+import app.tellev.core.extension.host.ExtensionApiStat
+import app.tellev.core.extension.host.ExtensionRecentCall
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -27,6 +29,20 @@ interface ExtensionHost {
     val events: SharedFlow<ExtensionEvent>
 
     fun setContextProvider(provider: ExtensionContextProvider?) {}
+
+    /** Per-extension bridge API statistics for the debug panel; empty when unsupported. */
+    fun snapshotExtensionStats(): Map<String, List<ExtensionApiStat>> = emptyMap()
+
+    /** Recent bridge calls per extension, newest first; empty when unsupported. */
+    fun snapshotExtensionRecentCalls(): Map<String, List<ExtensionRecentCall>> = emptyMap()
+
+    /** Structured script errors with stacks, newest first; empty when unsupported. */
+    fun snapshotExtensionErrors(): List<ExtensionErrorRecord> = emptyList()
+
+    /** Permissions each loaded module declared in its manifest; empty when unsupported. */
+    fun declaredExtensionPermissions(): Map<String, Set<ExtensionPermission>> = emptyMap()
+
+    fun clearExtensionStats(extensionId: String?) {}
 
     /**
      * Plug in the live LOCAL-scope variable backend (the current chat's
@@ -228,6 +244,20 @@ data class ExtensionEvent(
     val name: String,
     val extensionId: String? = null,
     val payload: JsonObject = buildJsonObject { },
+)
+
+/**
+ * A structured script error for the debug panel: message plus the JS stack
+ * when available. Repeat occurrences of the same error merge into one record
+ * with a counter instead of flooding the log.
+ */
+data class ExtensionErrorRecord(
+    val extensionId: String,
+    val message: String,
+    val stack: String? = null,
+    val firstSeenAtMillis: Long,
+    val lastSeenAtMillis: Long,
+    val occurrences: Int,
 )
 
 // ── Slash commands ─────────────────────────────────────────────────────
