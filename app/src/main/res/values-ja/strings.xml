@@ -1173,4 +1173,5 @@
     <string name="ui_placeholder_message">アーキテクチャのエントリポイントです。機能は各モジュールに実装します。</string>
     <string name="settings_language">言語</string>
     <string name="settings_language_system">システムに従う</string>
+    <string name="chat_render_pending">メッセージを処理中…</string>
 </resources>

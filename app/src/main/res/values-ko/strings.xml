@@ -1173,4 +1173,5 @@
     <string name="ui_placeholder_message">아키텍처 진입점이 준비되었습니다. 기능은 각 모듈에 구현합니다.</string>
     <string name="settings_language">언어</string>
     <string name="settings_language_system">시스템 설정 따름</string>
+    <string name="chat_render_pending">메시지 처리 중…</string>
 </resources>

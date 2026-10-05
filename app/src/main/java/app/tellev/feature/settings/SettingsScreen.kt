@@ -45,12 +45,10 @@ import app.tellev.core.model.Persona
 import app.tellev.core.model.PresetCategory
 import app.tellev.feature.update.UpdateViewModel
 import app.tellev.util.UriUtils
-import app.tellev.ui.AtmosphereIntro
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.FilterChip
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -157,8 +155,8 @@ internal fun SettingsScreen(
     LaunchedEffect(presetFocusRequest, state.isLoading, providerDetailsOnly) {
         if (presetFocusRequest > 0 && !state.isLoading && !providerDetailsOnly && !imageGenDetailsOnly) {
             settingsSection = 0
-            // Intro, provider card/divider, image card/divider, preset divider.
-            listState.animateScrollToItem(6)
+            // Provider card/divider, image card/divider, preset divider.
+            listState.animateScrollToItem(5)
         }
     }
 
@@ -244,13 +242,6 @@ internal fun SettingsScreen(
                         onDeleteCustomConfigClick = { pendingDeleteConfigId = it },
                     )
                 } else {
-                    item(key = "settings_intro") {
-                        AtmosphereIntro(
-                            title = stringResource(R.string.ui_settings_intro),
-                            subtitle = stringResource(R.string.ui_settings_intro_hint),
-                            icon = Icons.Default.Settings,
-                        )
-                    }
                     if (settingsSection == 0) {
                     item(key = "provider_quick_switch") {
                         ProviderQuickSwitchCard(

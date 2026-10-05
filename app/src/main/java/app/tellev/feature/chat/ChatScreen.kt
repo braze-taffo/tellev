@@ -63,6 +63,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.Alignment
@@ -87,6 +90,8 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -144,7 +149,10 @@ private fun ChatContentScreen(
     chatFontSizeSp: Int,
     modifier: Modifier = Modifier,
 ) {
-    val renderMacroContext = viewModel.messageMacroContext(state)
+    val globalVariables = viewModel.messageGlobalVariables()
+    val renderMacroContext = remember(state.currentSession, state.selectedCharacter, state.selectedPersona,
+        state.selectedPreset, state.providerConfig, globalVariables) { viewModel.messageMacroContext(state) }
+    val regexDepths = remember(state.messages) { visibleRegexDepths(state.messages) }
     val runtimeToken = viewModel.currentRuntimeToken(state.currentSession?.id)
     LaunchedEffect(state.currentSession?.id) { viewModel.refreshMemory() }
     val listState = key(state.currentSession?.id) {
@@ -179,12 +187,53 @@ private fun ChatContentScreen(
     }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var nativeTouch by remember(state.currentSession?.id) { mutableStateOf(false) }
+    var listTouch by remember(state.currentSession?.id) { mutableStateOf(false) }
+    val busy = rememberUpdatedState(nativeTouch || listTouch || listState.isScrollInProgress)
+    val sizes = remember(state.currentSession?.id) { ChatPanelSizes { busy.value } }
+    val messagePositions = rememberUpdatedState(remember(state.messages) {
+        state.messages.mapIndexed { index, message -> message.id to index }.toMap()
+    })
+    val scrollDeltas = remember(state.currentSession?.id) { ChatScrollDeltas() }
+    val dragSignals = remember(state.currentSession?.id) { Channel<Unit>(Channel.CONFLATED) }
+    var flingJob by remember(state.currentSession?.id) { mutableStateOf<Job?>(null) }
+    val onHtmlBoundaryDrag: (Float) -> Unit = { delta -> scrollDeltas.add(delta); dragSignals.trySend(Unit) }
+    LaunchedEffect(dragSignals, listState) {
+        for (signal in dragSignals) {
+            withFrameNanos { }
+            val delta = scrollDeltas.drain()
+            if (delta != 0f) listState.scrollBy(delta)
+        }
+    }
+    LaunchedEffect(sizes, listState) {
+        snapshotFlow { busy.value }.collect { scrolling ->
+            if (!scrolling) {
+                val anchor = listState.layoutInfo.visibleItemsInfo.firstOrNull()
+                val offset = listState.firstVisibleItemScrollOffset
+                if (sizes.flush() && anchor != null) {
+                    // Request the same keyed anchor for the next measure, without an animation.
+                    val index = messagePositions.value[anchor.key] ?: anchor.index.coerceAtMost(
+                        (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+                    listState.requestScrollToItem(index, offset)
+                }
+            }
+        }
+    }
+    DisposableEffect(sizes, dragSignals) {
+        onDispose { sizes.clear(); dragSignals.close(); flingJob?.cancel() }
+    }
     val onHtmlScrollStart: () -> Unit = {
+        nativeTouch = true
         followLatest = false
+        flingJob?.cancel()
         scope.launch { listState.stopScroll(MutatePriority.UserInput) }
     }
+    val onHtmlScrollEnd: () -> Unit = { nativeTouch = false }
     val onHtmlBoundaryFling: (Float) -> Unit = { velocity ->
-        scope.launch {
+        flingJob?.cancel()
+        flingJob = scope.launch {
+            val remaining = scrollDeltas.drain()
+            if (remaining != 0f) listState.scrollBy(remaining)
             listState.scroll(MutatePriority.UserInput) {
                 with(flingBehavior) { performFling(velocity) }
             }
@@ -244,13 +293,13 @@ private fun ChatContentScreen(
     }
 
     LaunchedEffect(listState) {
-        snapshotFlow { !listState.isScrollInProgress && !listState.canScrollForward }
+        snapshotFlow { !busy.value && !listState.canScrollForward }
             .collect { atEnd -> if (atEnd) followLatest = true }
     }
     // A visible last item can still be many screens tall. Scroll to its bottom,
     // not its top, and never restart a token-level animation over a user's drag.
     LaunchedEffect(state.currentSession?.id, state.messages.size, state.streamingText, state.streamingReasoning) {
-        if (followLatest && !listState.isScrollInProgress) {
+        if (followLatest && !busy.value) {
             val streaming = state.isGenerating && (state.streamingText.isNotEmpty() || state.streamingReasoning.isNotEmpty())
             val target = if (streaming) state.messages.size else state.messages.lastIndex
             if (target >= 0) listState.scrollToItem(target, Int.MAX_VALUE)
@@ -480,6 +529,11 @@ private fun ChatContentScreen(
                         awaitEachGesture {
                             awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                             followLatest = false
+                            listTouch = true
+                            try {
+                                do { val event = awaitPointerEvent(PointerEventPass.Initial) }
+                                while (event.changes.any { it.pressed })
+                            } finally { listTouch = false }
                         }
                     }
                     .padding(horizontal = 12.dp),
@@ -505,15 +559,19 @@ private fun ChatContentScreen(
                             dataRoot = dataRoot,
                             preset = state.selectedPreset,
                             userName = state.selectedPersona?.name ?: "User",
-                            depth = visibleRegexDepth(state.messages, index),
+                            depth = regexDepths[index],
                             htmlPanelMaxHeight = htmlPanelMaxHeight,
                             bubbleAlpha = bubbleAlpha,
                             chatFontSizeSp = chatFontSizeSp,
                             tavernRuntime = TavernMessageRuntime(
                                 onScrollStart = onHtmlScrollStart,
+                                onScrollEnd = onHtmlScrollEnd,
                                 onBoundaryFling = onHtmlBoundaryFling,
                                 token = runtimeToken,
                                 messageIndex = index,
+                                messageId = message.id,
+                                sizes = sizes,
+                                readVariables = { viewModel.tavernMessageScopedVariablesJson(runtimeToken, message.id, it) },
                                 variablesJson = { viewModel.tavernMessageVariablesJson(runtimeToken) },
                                 contextJson = { viewModel.tavernMessageContextJson(runtimeToken) },
                                 currentInput = { inputText },
@@ -527,9 +585,7 @@ private fun ChatContentScreen(
                                     )
                                 },
                             ),
-                            onHtmlBoundaryDrag = { chatScrollDelta ->
-                                scope.launch { listState.scrollBy(chatScrollDelta) }
-                            },
+                            onHtmlBoundaryDrag = onHtmlBoundaryDrag,
                             onSwipeLeft = { viewModel.swipeMessage(index, 1) },
                             onSwipeRight = { viewModel.swipeMessage(index, -1) },
                             canRegenerate = !state.isGenerating && canRegenerateResponse(state.messages, index),
@@ -559,9 +615,13 @@ private fun ChatContentScreen(
                             tavernRuntime = TavernMessageRuntime(
                                 allowContentUpdates = followLatest,
                                 onScrollStart = onHtmlScrollStart,
+                                onScrollEnd = onHtmlScrollEnd,
                                 onBoundaryFling = onHtmlBoundaryFling,
                                 token = runtimeToken,
                                 messageIndex = state.messages.size,
+                                messageId = "streaming",
+                                sizes = sizes,
+                                readVariables = { viewModel.tavernMessageScopedVariablesJson(runtimeToken, "streaming", it) },
                                 variablesJson = { viewModel.tavernMessageVariablesJson(runtimeToken) },
                                 contextJson = { viewModel.tavernMessageContextJson(runtimeToken) },
                                 currentInput = { inputText },
@@ -569,7 +629,7 @@ private fun ChatContentScreen(
                                     viewModel.handleTavernMessageRequest(operation, payload, { inputText = it }, callback, runtimeToken)
                                 },
                             ),
-                            onHtmlBoundaryDrag = { delta -> scope.launch { listState.scrollBy(delta) } },
+                            onHtmlBoundaryDrag = onHtmlBoundaryDrag,
                         )
                     }
                 }

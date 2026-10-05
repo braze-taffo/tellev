@@ -5,6 +5,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.test.platform.app.InstrumentationRegistry
 import app.tellev.core.model.*
@@ -38,7 +39,7 @@ class TavernFrontendLifecycleTest {
                 ChatViewModel(graph.dataStore, graph.providerRegistry, graph.promptEngine, graph.secretStore,
                     graph.extensionHost, graph.permissionManager).also {
                     models.put("test", it)
-                    activity.setContent { TellevTheme { ChatScreen(it) } }
+                    activity.setContent { CompositionLocalProvider(LocalTellevGraph provides graph) { TellevTheme { ChatScreen(it) } } }
                 }
             }
             waitUntil { !vm.uiState.value.isLoading }

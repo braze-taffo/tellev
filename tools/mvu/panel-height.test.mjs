@@ -27,3 +27,29 @@ test('hidden or fixed decorations do not enlarge the content panel', () => {
   const decoration = { style: { display: 'block', position: 'fixed' }, getBoundingClientRect: () => ({ bottom: 900 }) };
   assert.equal(measure(64, 500, [decoration]), 64);
 });
+
+const installTemplate = source.split('internal fun tavernPanelInstallScript(')[1].split('"""')[1];
+function install(window, document, height = 500) {
+  const code = installTemplate.replaceAll('$quotedId', JSON.stringify('current'))
+    .replaceAll('$viewportHeight', String(height))
+    .replace('$script', 'window.installCount = (window.installCount || 0) + 1;');
+  vm.runInNewContext(code, { window, document });
+}
+
+test('layout installation waits for the current DOM and runs once per viewport without waiting for remote resources', () => {
+  const window = { __tellevDocumentId: 'old' };
+  const document = { readyState: 'complete' };
+  install(window, document);
+  assert.equal(window.installCount, undefined);
+  window.__tellevDocumentId = 'current';
+  document.readyState = 'loading';
+  install(window, document);
+  assert.equal(window.installCount, undefined);
+  document.readyState = 'interactive';
+  install(window, document);
+  document.readyState = 'complete';
+  install(window, document);
+  assert.equal(window.installCount, 1);
+  install(window, document, 700);
+  assert.equal(window.installCount, 2);
+});

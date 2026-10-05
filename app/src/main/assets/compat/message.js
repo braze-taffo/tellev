@@ -3,7 +3,16 @@
   const th = window.TavernHelper;
   const expose = (name, fn) => { th[name] = window[name] = fn; };
   const request = window.__tellevRequest;
+  const compact = payload => {
+    if (typeof TellevMessage.readVariables !== 'function') return null;
+    const result = JSON.parse(TellevMessage.readVariables(JSON.stringify(payload)));
+    if (result === null) return null;
+    if (!result.ok) throw new Error(result.error);
+    return result;
+  };
   expose('getVariables', (option = {type:'chat'}) => {
+    const result = compact({kind:'scope',options:option});
+    if (result) return result.value;
     const c = snapshot(), type = option.type || 'chat';
     if (type !== 'message') return c.variableScopes?.[type] || {};
     let id = option.message_id;
@@ -14,12 +23,17 @@
     return m.variables?.[m.swipe_id || 0] || {};
   });
   expose('getAllVariables', () => {
+    const cached = compact({kind:'all'});
+    if (cached) return cached.value;
     const c = snapshot(), result = Object.assign({}, c.variableScopes?.global,
       c.variableScopes?.character, c.variableScopes?.chat);
     for (const m of c.chat.slice(0, getCurrentMessageId()+1)) Object.assign(result,m.variables?.[m.swipe_id || 0]);
     return result;
   });
-  expose('getLastMessageId', () => snapshot().chat.length-1);
+  expose('getLastMessageId', () => {
+    const cached = compact({kind:'last'});
+    return cached ? cached.value : snapshot().chat.length-1;
+  });
   expose('getChatMessages', (range,options) => window.__tellevGetChatMessages(snapshot().chat,range,options));
   expose('replaceVariables', (variables, options) => request('replaceVariables',{variables,options}));
   expose('updateVariablesWith', async (updater,options) => {

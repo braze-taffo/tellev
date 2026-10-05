@@ -244,10 +244,20 @@ fun TellevRoot() {
 
     // Hide bottom bar on detail/edit screens.
     val showBottomBar = isTopLevelScreen(currentDestination?.route)
+    val chatState by chatViewModel.uiState.collectAsState()
     var showExitConfirmation by rememberSaveable { mutableStateOf(false) }
-    val exitConfirmationEnabled = shouldConfirmAppExit(currentDestination?.route) &&
+    val pageBackEnabled = !currentDestination?.route.isNullOrBlank() &&
         startupGuide == null && manualGuide == null &&
         !showPresetLimitUpgradeNotice && !showQqGroupNotice
+
+    fun returnToChatHome() {
+        chatViewModel.deselectCharacter()
+        navController.navigate(TellevTab.Chat.route) {
+            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
 
     // 指引覆盖层的宿主：它是一个应用窗口内的全屏层，不是独立窗口——全屏 Dialog 的窗口
     // 几何会让底部按钮被切掉（见 GuideOverlay 的注释）。Box 里唯一需要留意的是顺序：
@@ -318,10 +328,18 @@ fun TellevRoot() {
                 content: @Composable AnimatedContentScope.(NavBackStackEntry) -> Unit,
             ) {
                 navigationComposable(route = route, arguments = arguments) { entry ->
+                    // Own the page's back action before NavHost, while letting
+                    // screen-specific handlers perform their cleanup first.
+                    BackHandler(enabled = pageBackEnabled) {
+                        when (appBackAction(entry.destination.route, chatState.selectedCharacter != null)) {
+                            AppBackAction.CloseConversation -> chatViewModel.deselectCharacter()
+                            AppBackAction.ChatHome -> returnToChatHome()
+                            AppBackAction.Parent -> if (!navController.popBackStack()) returnToChatHome()
+                            AppBackAction.ConfirmExit -> showExitConfirmation = true
+                            AppBackAction.None -> Unit
+                        }
+                    }
                     content(entry)
-                    // Register after the page's handlers, within its entry,
-                    // so every page has priority over NavHost's back callback.
-                    BackHandler(enabled = exitConfirmationEnabled) { showExitConfirmation = true }
                 }
             }
 

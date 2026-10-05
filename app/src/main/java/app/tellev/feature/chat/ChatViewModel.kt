@@ -506,6 +506,8 @@ class ChatViewModel(
         }
     }
 
+    fun messageGlobalVariables(): kotlinx.serialization.json.JsonObject = promptEngine.snapshotPromptTemplateVariables().global
+
     fun messageMacroContext(state: ChatUiState): app.tellev.core.prompt.MacroContext? {
         val character = state.selectedCharacter ?: return null
         val session = state.currentSession ?: return null
@@ -765,6 +767,10 @@ class ChatViewModel(
             extensionHost.unload(ChatTavernAdapter.characterScriptExtensionId(it.id))
         }
         sessionRuntime.retireSessionRuntime(extensionHost)
+        synchronized(this) {
+            messageVariableToken = null
+            messageVariableCache = MessageFrontendVariables()
+        }
     }
 
     fun sendMessage(text: String, attachments: List<Attachment> = emptyList()): Boolean {
@@ -1239,8 +1245,28 @@ class ChatViewModel(
     fun tavernMessageContextJson(token: RuntimeToken?): String =
         ChatTavernAdapter.tavernMessageContextJson(token, _uiState.value, promptEngine, sessionRuntime, extensionHost)
 
+    private var messageVariableToken: RuntimeToken? = null
+    private var messageVariableCache = MessageFrontendVariables()
+
+    @Synchronized
+    private fun messageVariables(token: RuntimeToken?): MessageFrontendVariables {
+        sessionRuntime.requireMessageRuntime(token, _uiState.value.currentSession?.id)
+        if (messageVariableToken != token) {
+            messageVariableToken = token
+            messageVariableCache = MessageFrontendVariables()
+        }
+        return messageVariableCache
+    }
+
     fun tavernMessageVariablesJson(token: RuntimeToken?): String =
-        ChatTavernAdapter.tavernMessageVariablesJson(token, _uiState.value, promptEngine, sessionRuntime)
+        messageVariables(token).legacy(_uiState.value, promptEngine.snapshotPromptTemplateVariables())
+
+    fun tavernMessageScopedVariablesJson(token: RuntimeToken?, messageId: String, payload: String): String {
+        val cache = messageVariables(token)
+        val state = _uiState.value
+        sessionRuntime.requireMessageRuntime(token, state.currentSession?.id)
+        return cache.read(state, promptEngine.snapshotPromptTemplateVariables(), messageId, payload)
+    }
 
     fun handleTavernMessageRequest(
         operation: String,

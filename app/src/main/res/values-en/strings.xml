@@ -1173,4 +1173,5 @@
     <string name="ui_placeholder_message">Architecture entry point ready; features live in their own modules.</string>
     <string name="settings_language">Language</string>
     <string name="settings_language_system">Follow system</string>
+    <string name="chat_render_pending">Processing message…</string>
 </resources>

@@ -225,7 +225,7 @@ class TavernMessageCompatTest {
         assertTrue(script.contains("setTimeout(postHeightNow, 150)"))
         // 差值门限：1px 级抖动不进主线程消息队列。
         assertTrue(script.contains("lastPostedHeight"))
-        assertTrue(script.contains("Math.abs(h - lastPostedHeight) < 2"))
+        assertTrue(script.contains("Math.abs(h - lastPostedHeight) * (window.devicePixelRatio || 1) < 2"))
     }
 
     @Test
@@ -248,7 +248,8 @@ class TavernMessageCompatTest {
 
         assertTrue(script.contains("window.scrollTo(0, 0)"))
         assertTrue(script.contains("hasOversizedFlowChild"))
-        assertTrue(script.contains("justify-content', 'flex-start"))
+        assertTrue(script.contains("bodyStyle.flexDirection"))
+        assertTrue(script.contains("align-items', 'flex-start"))
         assertTrue(script.contains("findNestedScrollOwner"))
         assertTrue(script.contains("overflowY === 'auto' || overflowY === 'scroll'"))
         assertTrue(script.contains("TellevBridge.setNestedScrollGesture(!!owner)"))
@@ -262,7 +263,7 @@ class TavernMessageCompatTest {
         assertFalse(script.contains("overflow-y: visible !important"))
         assertTrue(script.contains("document.fonts.ready"))
         assertTrue(script.contains("nativeViewportHeight = 462"))
-        assertTrue(script.contains("nativeViewportHeight > 0"))
+        assertTrue(script.contains("window.__tellevNativeViewportHeight > 0"))
         assertTrue(script.contains("new MutationObserver(resetMessageViewport)"))
         assertTrue(script.contains("setTimeout(resetMessageViewport, 1000)"))
     }

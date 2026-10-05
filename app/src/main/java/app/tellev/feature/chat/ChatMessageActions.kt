@@ -244,6 +244,17 @@ internal fun visibleRegexDepth(messages: List<ChatMessage>, messageIndex: Int): 
         !it.isHidden && it.role != MessageRole.System && it.role != MessageRole.Tool
     }
 
+internal fun visibleRegexDepths(messages: List<ChatMessage>): IntArray {
+    val depths = IntArray(messages.size)
+    var depth = 0
+    for (index in messages.indices.reversed()) {
+        depths[index] = depth
+        val message = messages[index]
+        if (!message.isHidden && message.role != MessageRole.System && message.role != MessageRole.Tool) depth++
+    }
+    return depths
+}
+
 internal fun ChatMessage.withRegeneratedSwipe(newContent: String): ChatMessage {
     val previousSwipes = swipes.ifEmpty { listOf(content) }
     return preserveReasoningSwipe().copy(

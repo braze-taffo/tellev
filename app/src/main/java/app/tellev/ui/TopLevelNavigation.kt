@@ -5,5 +5,13 @@ internal fun isTopLevelScreen(route: String?): Boolean = route in setOf(
     "chat", "characters/list", "world/list", "extensions", "settings",
 )
 
-/** Every app page confirms system back; toolbar buttons retain page navigation. */
-internal fun shouldConfirmAppExit(route: String?): Boolean = !route.isNullOrBlank()
+internal enum class AppBackAction { None, Parent, ChatHome, CloseConversation, ConfirmExit }
+
+/** The conversation and character picker share the chat route. */
+internal fun appBackAction(route: String?, conversationOpen: Boolean): AppBackAction = when {
+    route.isNullOrBlank() -> AppBackAction.None
+    route == "chat" && conversationOpen -> AppBackAction.CloseConversation
+    route == "chat" -> AppBackAction.ConfirmExit
+    isTopLevelScreen(route) -> AppBackAction.ChatHome
+    else -> AppBackAction.Parent
+}

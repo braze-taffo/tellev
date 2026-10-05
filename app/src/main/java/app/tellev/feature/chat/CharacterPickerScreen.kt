@@ -12,8 +12,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -23,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.tellev.R
-import app.tellev.ui.AtmosphereIntro
 import app.tellev.ui.CharacterPortraitCard
 
 @Composable
@@ -41,14 +38,6 @@ internal fun CharacterPickerScreen(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item(key = "chat_intro", span = { GridItemSpan(maxLineSpan) }) {
-            AtmosphereIntro(
-                title = stringResource(R.string.ui_chat_intro),
-                subtitle = stringResource(R.string.ui_chat_intro_hint),
-                icon = Icons.AutoMirrored.Filled.Chat,
-                label = stringResource(R.string.ui_character_count, characters.size),
-            )
-        }
         if (isLoading && characters.isEmpty()) {
             item(key = "loading", span = { GridItemSpan(maxLineSpan) }) {
                 Box(Modifier.fillMaxWidth().height(280.dp), contentAlignment = Alignment.Center) {

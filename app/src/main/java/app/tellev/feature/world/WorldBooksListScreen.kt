@@ -58,7 +58,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.tellev.R
 import app.tellev.core.model.WorldBookSummary
-import app.tellev.ui.AtmosphereIntro
 import app.tellev.ui.QuietTag
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.width
@@ -219,14 +218,6 @@ fun WorldBooksListScreen(
                         start = 18.dp, end = 18.dp, top = 16.dp, bottom = 104.dp,
                     ),
                 ) {
-                    item(key = "world_library_intro") {
-                        AtmosphereIntro(
-                            title = stringResource(R.string.ui_world_library),
-                            subtitle = stringResource(R.string.ui_world_library_hint),
-                            icon = Icons.AutoMirrored.Filled.MenuBook,
-                            label = stringResource(R.string.ui_world_count, state.worldBookSummaries.size),
-                        )
-                    }
                     items(state.worldBookSummaries, key = { it.id }) { book ->
                         WorldBookListItem(
                             book = book,

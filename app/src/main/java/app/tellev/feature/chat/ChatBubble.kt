@@ -49,6 +49,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -214,13 +216,14 @@ internal fun ChatBubble(
                 macroContext = macroContext,
             )
         }
-        val renderSegments = rememberRenderedSegments(renderInputs, message.id) {
+        val renderState = rememberRenderedSegments(renderInputs, "${tavernRuntime.token}:${message.id}", tavernRuntime.sizes) {
             renderMessageParts(
                 parts, message.role, character, preset, userName, depth,
                 includeNormal = !CharacterRegexApplier.isNormalProcessed(message),
                 macroContext = macroContext,
             )
         }.value
+        val renderSegments = renderState.segments
         if (!isUser && parts.body.isBlank() && parts.reasoning.isNotBlank()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.chat_no_body), modifier = Modifier.padding(8.dp))
@@ -259,7 +262,9 @@ internal fun ChatBubble(
         }
 
         // 生图消息优先走图片分支：无论正文是否前端渲染，图片都必须展示。
-        if (hasFrontend && !isUser && imageFiles.isEmpty()) {
+        if (!renderState.hasDisplay) {
+            PendingMessagePanel(htmlPanelMaxHeight, tavernRuntime)
+        } else if (hasFrontend && !isUser && imageFiles.isEmpty()) {
             if (message.swipes.size > 1) {
                 HtmlSwipeControls(
                     currentIndex = message.swipeIndex,
@@ -361,7 +366,11 @@ internal fun TavernMessageContent(
     onHtmlBoundaryDrag: (Float) -> Unit,
 ) {
     val dialogueColor = MaterialTheme.colorScheme.primary
-    Column(modifier = modifier) {
+    val density = LocalDensity.current
+    Column(modifier = modifier.onSizeChanged {
+        tavernRuntime.sizes?.record(PanelSizeKey("bubble:${tavernRuntime.messageId}", "estimate", 0,
+            density.density, density.fontScale, ""), it.height)
+    }) {
         segments.forEachIndexed { index, segment ->
             when (segment) {
                 is TavernRenderSegment.Text -> {
@@ -377,7 +386,7 @@ internal fun TavernMessageContent(
                             availableMaxHeight = availableMaxHeight,
                             dialogueQuoteColor = if (highlightDialogue) dialogueColor.toCssHex() else null,
                             baseFontSizePx = chatFontSizeSp,
-                            tavernRuntime = tavernRuntime,
+                            tavernRuntime = tavernRuntime.copy(segmentIndex = index),
                             onBoundaryDrag = onHtmlBoundaryDrag,
                         )
                     } else {
@@ -410,7 +419,7 @@ internal fun TavernMessageContent(
                     TavernHtmlPanel(
                         html = segment.html,
                         availableMaxHeight = availableMaxHeight,
-                        tavernRuntime = tavernRuntime,
+                        tavernRuntime = tavernRuntime.copy(segmentIndex = index),
                         onBoundaryDrag = onHtmlBoundaryDrag,
                     )
                 }
@@ -496,7 +505,7 @@ internal fun StreamingBubble(
             macroContext = macroContext,
         )
     }
-    val segments = rememberRenderedSegments(streamingInputs, "streaming") {
+    val renderState = rememberRenderedSegments(streamingInputs, "${tavernRuntime.token}:streaming", tavernRuntime.sizes) {
         renderMessageParts(
             MessageReasoning.fromResponse(text, reasoning), MessageRole.Character,
             character, preset, userName, 0, includeNormal = true,
@@ -513,8 +522,9 @@ internal fun StreamingBubble(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
         )
-        TavernMessageContent(
-            segments = segments,
+        if (!renderState.hasDisplay) PendingMessagePanel(availableMaxHeight, tavernRuntime)
+        else TavernMessageContent(
+            segments = renderState.segments,
             availableMaxHeight = availableMaxHeight,
             isUser = false,
             highlightDialogue = true,

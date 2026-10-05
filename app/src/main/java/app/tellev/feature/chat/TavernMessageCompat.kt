@@ -168,13 +168,17 @@ internal fun tavernWorldBookEntry(
 internal fun tavernMessageLayoutScript(nativeViewportHeight: Int = 0): String = """
     (function() {
       var nativeViewportHeight = ${nativeViewportHeight.coerceAtLeast(0)};
+      window.__tellevNativeViewportHeight = nativeViewportHeight;
       var activeScreenOwner = null;
 
       function findNestedScrollOwner(target) {
         var body = document.body;
         var doc = document.documentElement;
         var node = target && target.nodeType === 1 ? target : target && target.parentElement;
-        while (node && node !== body && node !== doc) {
+        // In quirks-mode card documents, body can be an independent scroller
+        // while the document viewport stays fixed. It needs the same boundary
+        // handling as other nested containers, rather than native root scrolling.
+        while (node && node !== doc && (node !== body || document.scrollingElement !== body)) {
           var style = window.getComputedStyle(node);
           var overflowY = style.overflowY;
           if ((overflowY === 'auto' || overflowY === 'scroll') &&
@@ -261,8 +265,8 @@ internal fun tavernMessageLayoutScript(nativeViewportHeight: Int = 0): String = 
         var doc = document.documentElement;
         if (!body || !doc) return;
 
-        var viewportHeight = nativeViewportHeight > 0
-          ? nativeViewportHeight
+        var viewportHeight = window.__tellevNativeViewportHeight > 0
+          ? window.__tellevNativeViewportHeight
           : Math.max(window.innerHeight || 0, doc.clientHeight || 0);
         var activeScreen = body.querySelector('.screen.active');
         var activeScreenChanged = activeScreen !== activeScreenOwner;
@@ -286,9 +290,25 @@ internal fun tavernMessageLayoutScript(nativeViewportHeight: Int = 0): String = 
           return Math.max(child.scrollHeight || 0, child.offsetHeight || 0, rect.height || 0) > viewportHeight + 8;
         });
         var bodyStyle = window.getComputedStyle(body);
-        if (hasOversizedFlowChild && (bodyStyle.display === 'flex' || bodyStyle.display === 'inline-flex')) {
-          body.style.setProperty('justify-content', 'flex-start', 'important');
+        if (!activeScreen && hasOversizedFlowChild && (bodyStyle.display === 'flex' || bodyStyle.display === 'inline-flex')) {
+          // A long child centered on the vertical axis starts above the document
+          // origin, where WebView cannot scroll to it. Respect the authored
+          // horizontal alignment; the vertical flex axis depends on direction.
+          var direction = bodyStyle.flexDirection;
+          if (direction === 'column' || direction === 'column-reverse') {
+            body.style.setProperty('justify-content', direction === 'column-reverse' ? 'flex-end' : 'flex-start', 'important');
+          } else {
+            body.style.setProperty('align-items', 'flex-start', 'important');
+          }
           body.style.setProperty('height', 'auto', 'important');
+          if (document.compatMode === 'BackCompat' && body.getBoundingClientRect().height < viewportHeight - 1) {
+            // Android WebView can shrink an auto-height quirks-mode body to its
+            // padding alone, clipping the child while fixed decorations remain
+            // visible. Give its independent scroller the native viewport size.
+            doc.style.setProperty('height', viewportHeight + 'px', 'important');
+            body.style.setProperty('height', viewportHeight + 'px', 'important');
+            body.style.setProperty('min-height', viewportHeight + 'px', 'important');
+          }
           body.style.setProperty('overflow-y', 'auto', 'important');
         }
 
