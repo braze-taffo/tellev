@@ -11,6 +11,7 @@ import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageReasoning
 import app.tellev.core.model.MessageRole
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Deferred
@@ -68,17 +69,29 @@ internal data class MessageRenderState(
  * cache makes the guarantee structurally instead:
  *
  * - rendering runs on background workers, never on the compose thread;
- * - each computation runs under a hard budget; past it the message degrades
- *   to regex-free parsing (still fully readable, tags shown as text) instead
- *   of freezing the app;
- * - the degraded result is cached, so a catastrophic rule burns one worker
- *   for at most its own runtime and is never retried on recomposition;
+ * - the hard budget measures execution only: the deadline is armed when the
+ *   worker actually starts the compute, never during queue wait — a finalized
+ *   message no longer degrades just because scroll/stream renders occupy the
+ *   workers (Izumi preset: the newest floor rendered regex-free whenever the
+ *   user scrolled while a long generation finished). A separate admission
+ *   ceiling bounds how long a fully busy pool may delay the start;
+ * - past the execution budget the message degrades to regex-free parsing
+ *   (still fully readable, tags shown as text) instead of freezing the app;
+ * - the degraded result is cached for a short retry window only (a
+ *   catastrophic rule is not re-run on every scroll), then dropped: the next
+ *   lookup recomputes, so a transient timeout gets a second chance;
  * - results are LRU-cached across recomposition, scrolling, and re-entering
  *   the chat, keyed by every input the pipeline depends on.
  */
 internal object ChatMessageRenderCache {
     /** Hard budget for one message's full regex pipeline on a worker. */
     private const val BUDGET_MS = 1_000L
+
+    /** Upper bound on waiting for a free worker before degrading outright. */
+    private const val ADMISSION_CEILING_MS = 15_000L
+
+    /** How long a degraded render is served before the next lookup recomputes. */
+    private const val DEGRADED_RETRY_MS = 10_000L
 
     private const val MAX_ENTRIES = 400
 
@@ -94,6 +107,9 @@ internal object ChatMessageRenderCache {
     private val cache = Object() // monitor for lru
     private val lru = LinkedHashMap<RenderInputs, MessageRenderState>(64, 0.75f, true)
 
+    /** Degraded entries: when they were stored, so lookups can expire them. */
+    private val degradedAtMillis = HashMap<RenderInputs, Long>()
+
     /** Latest in-flight job per group (message id, or "streaming"). */
     private val groupJobs = ConcurrentHashMap<String, Deferred<MessageRenderState>>()
 
@@ -101,7 +117,25 @@ internal object ChatMessageRenderCache {
     private val inFlight = ConcurrentHashMap<RenderInputs, Deferred<MessageRenderState>>()
 
     internal fun cachedState(inputs: RenderInputs): MessageRenderState? =
-        synchronized(cache) { lru[inputs] }
+        synchronized(cache) {
+            val state = lru[inputs]
+            if (state != null && state.phase == MessageRenderPhase.Degraded &&
+                System.currentTimeMillis() - (degradedAtMillis[inputs] ?: 0L) >= degradedRetryMs
+            ) {
+                // A degraded render sticks only for the retry window; drop it
+                // so the next caller recomputes. The bubble keeps showing the
+                // degraded segments it already committed until then.
+                lru.remove(inputs)
+                degradedAtMillis.remove(inputs)
+                null
+            } else {
+                state
+            }
+        }
+
+    /** Test hook: retry window for degraded entries (production: [DEGRADED_RETRY_MS]). */
+    @Volatile
+    internal var degradedRetryMs: Long = DEGRADED_RETRY_MS
 
     internal fun cached(inputs: RenderInputs): List<TavernRenderSegment>? =
         cachedState(inputs)?.segments
@@ -109,9 +143,15 @@ internal object ChatMessageRenderCache {
     private fun store(inputs: RenderInputs, result: MessageRenderState) {
         synchronized(cache) {
             lru[inputs] = result
+            if (result.phase == MessageRenderPhase.Degraded) {
+                degradedAtMillis[inputs] = System.currentTimeMillis()
+            } else {
+                degradedAtMillis.remove(inputs)
+            }
             while (lru.size > MAX_ENTRIES) {
                 val eldest = lru.keys.firstOrNull() ?: break
                 lru.remove(eldest)
+                degradedAtMillis.remove(eldest)
             }
         }
     }
@@ -138,21 +178,77 @@ internal object ChatMessageRenderCache {
             cachedState(inputs)?.let { return it }
             inFlight[inputs]?.let { return@synchronized it }
             val created = scope.async(start = CoroutineStart.LAZY) {
-                val outcome = withTimeoutOrNull(BUDGET_MS) {
-                    val future = CompletableFuture.supplyAsync(compute, workers)
-                    suspendCancellableCoroutine { cont ->
-                        future.whenComplete { value, error ->
-                            if (error != null) cont.resume(null)
-                            else cont.resume(value)
+                // The budget measures execution, not queue wait: the deadline is
+                // only armed once the worker actually starts the compute. Before
+                // that, the admission ceiling bounds how long a busy pool may
+                // delay the start (timing from submission degraded a healthy
+                // message without its pipeline ever running).
+                val submittedAt = System.nanoTime()
+                val startedAt = java.util.concurrent.atomic.AtomicLong()
+                val future = CompletableFuture.supplyAsync<List<TavernRenderSegment>?>({
+                    // Never zero: 0 is the "not started yet" sentinel below.
+                    startedAt.set(System.nanoTime().coerceAtLeast(1L))
+                    compute()
+                }, workers)
+                // One completion signal; the loop below may wait on it several
+                // times (admission phase, then execution phase).
+                val doneSignal = CompletableFuture<Void>()
+                future.whenComplete { _, _ -> doneSignal.complete(null) }
+                var outcome: List<TavernRenderSegment>? = null
+                var degrade = false
+                var started = false
+                var deadlineNanos = submittedAt + ADMISSION_CEILING_MS * 1_000_000
+                try {
+                    while (true) {
+                        if (!started && startedAt.get() != 0L) {
+                            // The worker just picked the compute up: re-arm the
+                            // deadline from execution start — queue wait no
+                            // longer counts against the budget. Checked every
+                            // quantum, because the wait below cannot be
+                            // interrupted by the start alone.
+                            started = true
+                            deadlineNanos = startedAt.get() + BUDGET_MS * 1_000_000
                         }
-                        cont.invokeOnCancellation { future.cancel(false) }
+                        val remainingMs = (deadlineNanos - System.nanoTime() + 999_999) / 1_000_000
+                        if (remainingMs <= 0) {
+                            future.cancel(false)
+                            degrade = true
+                            break
+                        }
+                        // Before the compute starts, wait in short quanta so the
+                        // execution deadline is armed promptly once it starts.
+                        // No invokeOnCancellation here: a quantum timeout must
+                        // NOT retract a queued task (it would then never run);
+                        // the deadline check above is what gives up.
+                        val quantumMs = if (started) remainingMs else minOf(remainingMs, 100L)
+                        val fired = withTimeoutOrNull(quantumMs) {
+                            suspendCancellableCoroutine<Unit> { cont ->
+                                doneSignal.whenComplete { _, _ -> cont.resume(Unit) }
+                            }
+                        }
+                        if (fired != null && future.isDone) {
+                            outcome = try {
+                                if (future.isCompletedExceptionally) null else future.get()
+                            } catch (_: Exception) {
+                                null
+                            }
+                            break
+                        }
                     }
+                } catch (e: CancellationException) {
+                    // Caller went away (superseded streaming render, closed
+                    // chat): still free the worker queue like the original
+                    // single-wait version did.
+                    future.cancel(false)
+                    throw e
                 }
-                // Timeout or crash: degrade to regex-free parsing and cache the
-                // degraded result so this rule is not retried on every scroll.
+                // Timeout or crash: degrade to regex-free parsing. The degraded
+                // result is cached only for the retry window, so a transient
+                // timeout is recomputed on a later lookup instead of sticking
+                // for the entry's lifetime.
                 coroutineContext.ensureActive()
                 val result = MessageRenderState(inputs,
-                    if (outcome == null) MessageRenderPhase.Degraded else MessageRenderPhase.Ready,
+                    if (degrade || outcome == null) MessageRenderPhase.Degraded else MessageRenderPhase.Ready,
                     outcome ?: renderMessagePartsUnregulated(inputs.parts, inputs.role))
                 coroutineContext.ensureActive()
                 store(inputs, result)
