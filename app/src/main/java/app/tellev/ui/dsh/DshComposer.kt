@@ -1,31 +1,30 @@
 package app.tellev.ui.dsh
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.Icon
@@ -34,12 +33,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -52,9 +51,12 @@ import androidx.compose.ui.unit.sp
 import app.tellev.R
 
 /**
- * dsh Composer（图一）像素复刻：24dp 圆角输入卡，无框输入区，
- * 控制行左簇 [+] [盾⌄] [📎]（间距 8）、右簇 [库⌄] [圆环] [↑]（间距 3，
- * 上游「焊在一起」）。统计条为卡片外的 28px 单行（上游 stats-line 规格）。
+ * dsh Composer 官方复刻（harness InputBar.module.css）：
+ * 输入卡 = 圆角 28、底 input-major、0.5px border-l2 描边 + elevation-soft、
+ * padding-top 8、文/行 gap 12；编辑面 min-height 36、14sp/24、光标蓝、无占位文字。
+ * 控制行（padding 2/8/6）：左下角 [📎 附件]；右侧焊死 [模型/档位合并图标]
+ * [上下文环 14px] [发送 34 圆]（gap 3）。长按输入框 = 语音输入（Initial 拦截，
+ * 不与文本选择的长按冲突）。
  */
 @Composable
 fun DshComposer(
@@ -65,10 +67,12 @@ fun DshComposer(
     contextRatio: Float?,
     onSend: () -> Unit,
     onStop: () -> Unit,
-    onOpenAttachMenu: () -> Unit,
-    onOpenReasoning: () -> Unit,
-    onPickImage: () -> Unit,
+    attachments: List<DshPendingAttachment> = emptyList(),
+    onRemoveAttachment: (String) -> Unit = {},
+    onPickFile: () -> Unit = {},
+    onOptimize: () -> Unit = {},
     onOpenModelMenu: () -> Unit,
+    onOpenModelConfig: () -> Unit = {},
     onOpenContext: () -> Unit,
     onLongPressVoice: () -> Unit,
     listening: Boolean,
@@ -78,182 +82,215 @@ fun DshComposer(
     onStatsLeft: () -> Unit,
     onStatsRight: () -> Unit,
 ) {
+    val cardShape = RoundedCornerShape(Dsh.RADIUS_PANEL.dp)
     Column {
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLowest,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp),
-        ) {
-            Column {
-                if (listening) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+            Surface(
+                shape = cardShape,
+                color = Dsh.inputMajor,
+                shadowElevation = 2.dp,
+                border = androidx.compose.foundation.BorderStroke(0.5.dp, Dsh.borderL2),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(top = 8.dp)) {
+                    if (listening) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Default.Mic,
+                                contentDescription = stringResource(R.string.chat_input_voice),
+                                tint = Dsh.blue,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                stringResource(R.string.chat_input_voice_listening),
+                                fontSize = 13.sp,
+                                lineHeight = 18.sp,
+                                color = Dsh.textSecondary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                stringResource(R.string.chat_cancel),
+                                fontSize = 13.sp,
+                                color = Dsh.textTertiary,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(Dsh.RADIUS_SM.dp))
+                                    .clickable(onClick = onCancelVoice)
+                                    .padding(6.dp),
+                            )
+                        }
+                    }
+                    if (attachments.isNotEmpty()) {
+                        DshAttachmentStrip(attachments, onRemoveAttachment)
+                    }
+                    // 编辑面：无占位文字；长按=语音（detectTapGestures 直挂输入框，
+                    // 空文本时不与文本选择冲突；有文本时长按为选择，语音用键盘/重进空态）。
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = text,
+                        onValueChange = onTextChange,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 36.dp)
+                            .padding(start = 14.dp, end = 8.dp)
+                            .padding(vertical = 4.dp)
+                            .pointerInput(Unit) {
+                                detectTapGestures(onLongPress = { onLongPressVoice() })
+                            },
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(
+                            color = Dsh.textPrimary,
+                            fontSize = 14.sp,
+                            lineHeight = 24.sp,
+                        ),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(Dsh.blue),
+                        maxLines = 8,
+                    )
+                    // 控制行：左下角 📎；右簇 [合并图标][环][发送] gap 3。
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 8.dp, end = 8.dp, top = 2.dp, bottom = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        MicTone()
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            stringResource(R.string.chat_input_voice_listening),
-                            fontSize = 13.sp,
-                            color = Dsh.blue,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text(
-                            stringResource(R.string.chat_cancel),
-                            fontSize = 13.sp,
-                            color = Dsh.textSecondary,
+                        // 回形针：直接唤起系统文件选择器（不再套一层附件弹层）。
+                        // 官方 composer 工具键 28dp 偏小，这里整盒 40dp、图标 20dp，
+                        // 命中区够大且视觉与右侧 34dp 发送键协调。
+                        Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(onClick = onCancelVoice)
-                                .padding(6.dp),
-                        )
-                    }
-                }
-                androidx.compose.foundation.text.BasicTextField(
-                    value = text,
-                    onValueChange = onTextChange,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
-                        .pointerInput(Unit) { detectTapGestures(onLongPress = { onLongPressVoice() }) },
-                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Dsh.textPrimary),
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(Dsh.blue),
-                    decorationBox = { inner ->
-                        Box {
-                            if (text.isEmpty() && !listening) {
-                                Text(
-                                    stringResource(R.string.chat_input_placeholder),
-                                    fontSize = 15.sp,
-                                    color = Dsh.textTertiary,
-                                    maxLines = 1,
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .clickable(onClick = onPickFile),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                DshIcons.Paperclip,
+                                contentDescription = stringResource(R.string.dsh_attach_file),
+                                tint = Dsh.textSecondary,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        // 优化提示词：常驻键（弹层本体已迁至设置页，这里仍可快捷打开）。
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .alpha(if (text.isNotBlank()) 1f else 0.4f)
+                                .clickable(enabled = text.isNotBlank(), onClick = onOptimize),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                DshIcons.WandSparkles,
+                                contentDescription = stringResource(R.string.dsh_optimize_prompt),
+                                tint = Dsh.textSecondary,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Spacer(Modifier.weight(1f))
+                        // 模型/思考档位合并图标（图一右下的模型键）。
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(RoundedCornerShape(Dsh.RADIUS_SM.dp))
+                                .clickable(onClick = onOpenModelMenu),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    DshIcons.Database,
+                                    contentDescription = stringResource(R.string.model_picker_title),
+                                    tint = Dsh.textSecondary,
+                                    modifier = Modifier.size(15.dp),
+                                )
+                                Icon(
+                                    Icons.Default.ExpandMore,
+                                    contentDescription = null,
+                                    tint = Dsh.textTertiary,
+                                    modifier = Modifier.size(10.dp),
                                 )
                             }
-                            inner()
                         }
-                    },
-                )
-                // 控制行（上游 gap：左簇 8 / 右簇 3，行 padding 6）。
+                        Spacer(Modifier.width(3.dp))
+                        if (contextRatio != null) {
+                            ContextRing(contextRatio.coerceIn(0f, 1f), onOpenContext)
+                            Spacer(Modifier.width(3.dp))
+                        }
+                        SendOrStop(isGenerating, canSend, onSend, onStop)
+                    }
+                }
+            }
+            // dock 统计条（官方 .dock：居中、gap 12、padding-top 4；图一带小图标）。
+            if (statsLeft != null || statsRight != null) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 6.dp, end = 6.dp, bottom = 6.dp),
+                        .padding(top = 4.dp)
+                        .height(24.dp),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
                 ) {
-                    DshIconKey(Icons.Default.Add, stringResource(R.string.chat_attach_menu_title), onOpenAttachMenu)
-                    Spacer(Modifier.width(8.dp))
-                    DshIconKey(Icons.Default.Shield, stringResource(R.string.chat_panel_reasoning), onOpenReasoning, chevron = true)
-                    Spacer(Modifier.width(8.dp))
-                    DshIconKey(Icons.Default.AttachFile, stringResource(R.string.chat_attach_image), onPickImage)
-                    Spacer(Modifier.weight(1f))
-                    DshIconKey(Icons.Default.Storage, stringResource(R.string.model_picker_title), onOpenModelMenu, chevron = true)
-                    Spacer(Modifier.width(3.dp))
-                    if (contextRatio != null) {
-                        ContextRing16(contextRatio.coerceIn(0f, 1f), onOpenContext)
-                        Spacer(Modifier.width(3.dp))
+                    if (statsLeft != null) {
+                        StatsPill(statsLeft, Icons.Default.Speed, onStatsLeft)
                     }
-                    SendOrStop(isGenerating, canSend, onSend, onStop)
-                }
-            }
-        }
-        // 统计条（图一底部）：28px 单行居中，左组开指标、右组开上下文。
-        if (statsLeft != null || statsRight != null) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(28.dp)
-                    .padding(horizontal = 22.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-            ) {
-                if (statsLeft != null) {
-                    Text(
-                        statsLeft,
-                        fontSize = 12.sp,
-                        color = Dsh.textTertiary,
-                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onStatsLeft).padding(horizontal = 4.dp),
-                    )
-                }
-                if (statsLeft != null && statsRight != null) {
-                    Spacer(Modifier.width(14.dp))
-                }
-                if (statsRight != null) {
-                    Text(
-                        statsRight,
-                        fontSize = 12.sp,
-                        color = Dsh.textTertiary,
-                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onStatsRight).padding(horizontal = 4.dp),
-                    )
+                    if (statsRight != null) {
+                        StatsPill(statsRight, Icons.Default.Storage, onStatsRight)
+                    }
                 }
             }
         }
     }
 }
 
+/** 官方 dock pill：12sp tertiary tabular、radius 999、可选 14dp 图标。 */
 @Composable
-private fun MicTone() {
-    Icon(
-        Icons.Default.Mic,
-        contentDescription = stringResource(R.string.chat_input_voice),
-        tint = Dsh.blue,
-        modifier = Modifier.size(16.dp),
-    )
-}
-
-/** dsh 控制行图标键：30dp 触控、20dp 线性图标、可选 12dp ⌄。 */
-@Composable
-fun DshIconKey(
+private fun StatsPill(
+    text: String,
     icon: ImageVector,
-    contentDescription: String,
     onClick: () -> Unit,
-    chevron: Boolean = false,
 ) {
-    Box(
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .size(30.dp)
-            .clip(CircleShape)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
+            .clip(RoundedCornerShape(999.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 1.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                icon,
-                contentDescription = contentDescription,
-                tint = Dsh.textSecondary,
-                modifier = Modifier.size(20.dp),
-            )
-            if (chevron) {
-                Icon(
-                    Icons.Default.ExpandMore,
-                    contentDescription = null,
-                    tint = Dsh.textTertiary,
-                    modifier = Modifier.size(12.dp),
-                )
-            }
-        }
+        Icon(icon, contentDescription = null, tint = Dsh.textTertiary, modifier = Modifier.size(13.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            color = Dsh.textTertiary,
+        )
     }
 }
 
-/** 右簇 16dp 上下文圆环（上游「font-size:0 只留环」）。 */
+/**
+ * 官方 ContextMeter：svg 14×14、r=5.5、stroke 2、轨道 border-l3、进度 tertiary、
+ * 圆头、-90° 起点；触发器命中 28 高、radius 8。
+ */
 @Composable
-private fun ContextRing16(ratio: Float, onClick: () -> Unit) {
+private fun ContextRing(ratio: Float, onClick: () -> Unit) {
+    val trackColor = Dsh.borderL3
+    val fillColor = Dsh.textTertiary
     Box(
         modifier = Modifier
-            .size(30.dp)
-            .clip(CircleShape)
-            .clickable(onClick = onClick),
+            .height(28.dp)
+            .clip(RoundedCornerShape(Dsh.RADIUS_SM.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 7.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(modifier = Modifier.size(16.dp)) {
-            val stroke = 2.4f
-            drawCircle(
-                color = Color.Gray.copy(alpha = 0.25f),
-                radius = (size.minDimension - stroke) / 2f,
-                style = Stroke(width = stroke),
-            )
+        Canvas(modifier = Modifier.size(14.dp)) {
+            val stroke = 2.dp.toPx()
+            val radius = (size.minDimension - stroke) / 2f
+            drawCircle(color = trackColor, radius = radius, style = Stroke(width = stroke))
             drawArc(
-                color = Dsh.blue,
+                color = fillColor,
                 startAngle = -90f,
                 sweepAngle = 360f * ratio,
                 useCenter = false,
@@ -263,7 +300,7 @@ private fun ContextRing16(ratio: Float, onClick: () -> Unit) {
     }
 }
 
-/** 34dp 发送/停止圆钮。 */
+/** 官方发送键：34 圆、button-info-fill 底、恒白箭头、disabled 0.4、translateY(-2px)。 */
 @Composable
 private fun SendOrStop(
     isGenerating: Boolean,
@@ -274,15 +311,11 @@ private fun SendOrStop(
     val enabled = if (isGenerating) true else canSend
     Box(
         modifier = Modifier
+            .offset(y = (-2).dp)
             .size(34.dp)
+            .alpha(if (enabled || isGenerating) 1f else 0.4f)
             .clip(CircleShape)
-            .background(
-                when {
-                    isGenerating -> Dsh.textPrimary.copy(alpha = 0.16f)
-                    canSend -> Dsh.blue
-                    else -> Dsh.blue.copy(alpha = 0.35f)
-                }
-            )
+            .background(Dsh.sendBlue)
             .clickable(enabled = enabled) { if (isGenerating) onStop() else onSend() },
         contentAlignment = Alignment.Center,
     ) {
@@ -291,8 +324,79 @@ private fun SendOrStop(
             contentDescription = stringResource(
                 if (isGenerating) R.string.chat_stop_generation else R.string.chat_send_message,
             ),
-            tint = if (isGenerating) Dsh.textPrimary else Color.White,
-            modifier = Modifier.size(18.dp),
+            tint = Color.White,
+            modifier = Modifier.size(17.dp),
         )
+    }
+}
+
+/** 待发附件：只用于 composer 上方的缩略条（名称 + 是否图片）。 */
+data class DshPendingAttachment(
+    val id: String,
+    val name: String,
+    val isImage: Boolean,
+    val file: java.io.File? = null,
+)
+
+/** 附件条：横向滚动的小卡片，图片显示缩略图，其余显示文件名，右上角 × 移除。 */
+@Composable
+private fun DshAttachmentStrip(
+    attachments: List<DshPendingAttachment>,
+    onRemove: (String) -> Unit,
+) {
+    androidx.compose.foundation.lazy.LazyRow(
+        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(attachments.size, key = { attachments[it].id }) { index ->
+            val item = attachments[index]
+            Box {
+                Surface(
+                    shape = RoundedCornerShape(Dsh.RADIUS_MD.dp),
+                    color = Dsh.selector,
+                    modifier = Modifier.padding(top = 6.dp, end = 6.dp),
+                ) {
+                    if (item.isImage && item.file != null) {
+                        coil.compose.AsyncImage(
+                            model = item.file,
+                            contentDescription = item.name,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.size(56.dp),
+                        )
+                    } else {
+                        Row(
+                            modifier = Modifier.height(56.dp).widthIn(max = 140.dp).padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(DshIcons.Paperclip, null, tint = Dsh.textTertiary, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                item.name,
+                                fontSize = 12.sp,
+                                color = Dsh.textSecondary,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(Dsh.textSecondary)
+                        .clickable { onRemove(item.id) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        DshIcons.Close,
+                        contentDescription = stringResource(R.string.dsh_attach_remove),
+                        tint = Dsh.bgBase,
+                        modifier = Modifier.size(13.dp),
+                    )
+                }
+            }
+        }
     }
 }

@@ -237,7 +237,14 @@ internal fun TavernHtmlPanel(
             val screenBound = (configuration.screenHeightDp.dp * 0.92f)
                 .coerceAtLeast(420.dp)
                 .coerceAtMost(1120.dp)
-            val viewportBound = if (availableMaxHeight > 0.dp) availableMaxHeight else screenBound
+            // 旧调用方传 480dp 把正文卡硬截到 2/3 屏——正文被裁只剩背景就是这
+            // 个上限。引用块类小面板继续尊重传入值；但 Frontend 正文卡
+            // （调用方传的 availableMaxHeight 与屏高同量级时）以屏高为上限。
+            val viewportBound = if (availableMaxHeight > 0.dp && availableMaxHeight < screenBound) {
+                availableMaxHeight
+            } else {
+                screenBound
+            }
             minOf(screenBound, viewportBound).coerceAtLeast(180.dp)
         }
         // Keep the same state holder as the AndroidView callback across HTML updates.
@@ -569,6 +576,16 @@ internal fun tavernResizeScript(): String = """
                 var observer = new ResizeObserver(postHeight);
                 observer.observe(document.documentElement);
                 if (document.body) observer.observe(document.body);
+            }
+            // 卡内脚本注入 DOM（状态栏/异步渲染）不触发 load/resize/toggle：
+            // 观察 body 全子树，注入完成后重测高度。正文被裁只剩背景的根因
+            // 之一就是注入后的真实高度从未上报。
+            if (window.MutationObserver) {
+                var mo = new MutationObserver(postHeight);
+                mo.observe(document.documentElement, {
+                    childList: true, subtree: true,
+                    attributes: true, attributeFilter: ['style', 'class'],
+                });
             }
             setTimeout(postHeight, 50);
             setTimeout(postHeight, 250);

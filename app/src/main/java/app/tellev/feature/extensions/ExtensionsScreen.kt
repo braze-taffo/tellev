@@ -60,7 +60,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.tellev.R
-import app.tellev.ui.AtmosphereIntro
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -132,13 +131,6 @@ fun ExtensionsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(16.dp),
             ) {
-                item(key = "extensions_intro") {
-                    AtmosphereIntro(
-                        title = stringResource(R.string.ui_extensions_intro),
-                        subtitle = stringResource(R.string.ui_extensions_intro_hint),
-                        icon = Icons.Default.Extension,
-                    )
-                }
                 item(key = "memory_module") { MemoryExtensionCard() }
 
                 item(key = "built_in_header") {

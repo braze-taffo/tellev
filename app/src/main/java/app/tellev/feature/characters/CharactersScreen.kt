@@ -40,7 +40,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material.icons.filled.Save
-import app.tellev.ui.AtmosphereIntro
 import app.tellev.ui.CharacterCover
 import app.tellev.ui.CharacterPortraitCard
 import androidx.compose.foundation.rememberScrollState
@@ -382,14 +381,6 @@ fun CharactersListScreen(
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                         contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 16.dp, bottom = 104.dp),
                     ) {
-                        item(key = "library_intro", span = { GridItemSpan(maxLineSpan) }) {
-                            AtmosphereIntro(
-                                title = stringResource(R.string.ui_character_library),
-                                subtitle = stringResource(R.string.ui_character_library_hint),
-                                icon = Icons.Default.People,
-                                label = stringResource(R.string.ui_character_count, state.filteredCharacters.size),
-                            )
-                        }
                         items(
                             state.filteredCharacters,
                             key = { it.id },

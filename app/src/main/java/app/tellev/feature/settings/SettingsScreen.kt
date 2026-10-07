@@ -49,7 +49,6 @@ import app.tellev.core.model.Persona
 import app.tellev.core.model.PresetCategory
 import app.tellev.feature.update.UpdateViewModel
 import app.tellev.util.UriUtils
-import app.tellev.ui.AtmosphereIntro
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Column
@@ -72,6 +71,8 @@ internal fun SettingsScreen(
     onOpenImageGenSettings: () -> Unit = {},
     onOpenUsageStats: () -> Unit = {},
     onOpenExtensions: () -> Unit = {},
+    onOpenModelConfig: () -> Unit = {},
+    onOpenPromptOptimizer: () -> Unit = {},
     imageGenDetailsOnly: Boolean = false,
     presetFocusRequest: Int = 0,
     onOpenGuide: (GuideKind) -> Unit = {},
@@ -260,16 +261,19 @@ internal fun SettingsScreen(
                         onDeleteCustomConfigClick = { pendingDeleteConfigId = it },
                     )
                 } else {
-                    item(key = "settings_intro") {
-                        AtmosphereIntro(
-                            title = stringResource(R.string.ui_settings_intro),
-                            subtitle = stringResource(R.string.ui_settings_intro_hint),
-                            icon = Icons.Default.Settings,
-                        )
-                    }
                     if (settingsSection == 0) {
                     item(key = "usage_stats_entry") {
                         UsageStatsEntryCard(onClick = onOpenUsageStats)
+                    }
+
+                    item(key = "dsh_model_config_entry") {
+                        // dsh Models 页语义：模型配置在弹层就地编辑。
+                        ModelConfigEntryCard(onClick = onOpenModelConfig)
+                    }
+
+                    item(key = "dsh_prompt_optimizer_entry") {
+                        // 优化提示词（写作助手）设置入口。
+                        PromptOptimizerEntryCard(onClick = onOpenPromptOptimizer)
                     }
 
                     item(key = "provider_quick_switch") {
@@ -581,5 +585,59 @@ internal fun SettingsScreen(
                 }
             },
         )
+    }
+}
+
+
+/** dsh 设置页的模型配置入口卡。 */
+@Composable
+private fun ModelConfigEntryCard(onClick: () -> Unit) {
+    androidx.compose.material3.Surface(
+        onClick = onClick,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.dsh_model_config_title),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    stringResource(R.string.dsh_model_config_open),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** 优化提示词设置入口卡。 */
+@Composable
+private fun PromptOptimizerEntryCard(onClick: () -> Unit) {
+    androidx.compose.material3.Surface(
+        onClick = onClick,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.dsh_optimize_prompt),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+            }
+            Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }

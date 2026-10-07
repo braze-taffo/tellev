@@ -1,6 +1,18 @@
 package app.tellev.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -29,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import app.tellev.R
 import app.tellev.core.prompt.PromptOptimizationMode
 import app.tellev.core.prompt.PromptOptimizationOptions
+import app.tellev.core.prompt.PromptOptimizationStrategies
 import app.tellev.core.prompt.PromptOptimizationResult
 
 /**
@@ -41,6 +54,7 @@ import app.tellev.core.prompt.PromptOptimizationResult
 @Composable
 fun PromptOptimizationDialog(
     providerLabel: String?,
+    initialBasePrompt: String? = null,
     onRun: (
         options: PromptOptimizationOptions,
         onPreview: (String) -> Unit,
@@ -51,11 +65,16 @@ fun PromptOptimizationDialog(
     onDismiss: () -> Unit,
 ) {
     var mode by remember { mutableStateOf(PromptOptimizationMode.Polish) }
+    // 策略选择（linshenkx/prompt-optimizer 复刻）：默认通用优化。
+    var strategyId by remember { mutableStateOf("general") }
     var keepFacts by remember { mutableStateOf(true) }
     var allowDetail by remember { mutableStateOf(false) }
     var keepMacros by remember { mutableStateOf(true) }
     var languageHint by remember { mutableStateOf("") }
     var instruction by remember { mutableStateOf("") }
+    // 迭代：迭代需求在这里填；basePrompt（上一版结果）由调用方传入形成版本链。
+    var iterateInput by remember { mutableStateOf("") }
+    var basePrompt by remember { mutableStateOf(initialBasePrompt) }
     var running by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf("") }
     var result by remember { mutableStateOf<PromptOptimizationResult?>(null) }
@@ -63,11 +82,14 @@ fun PromptOptimizationDialog(
 
     fun options() = PromptOptimizationOptions(
         mode = mode,
+        strategyId = strategyId,
         keepFacts = keepFacts,
         allowDetail = allowDetail,
         keepMacros = keepMacros,
         languageHint = languageHint.trim(),
         instruction = instruction,
+        iterateInput = iterateInput.trim(),
+        basePrompt = basePrompt,
     )
 
     AlertDialog(
@@ -87,17 +109,66 @@ fun PromptOptimizationDialog(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    PromptOptimizationMode.entries.forEach { candidate ->
-                        FilterChip(
-                            selected = mode == candidate,
-                            onClick = { if (!running) mode = candidate },
-                            label = { Text(modeLabel(candidate)) },
-                        )
+                // 策略选择（开源案例复刻）：六条策略，选中项带一句说明。
+                Text(
+                    stringResource(R.string.chat_optimize_strategy),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                PromptOptimizationStrategies.ALL.forEach { strategy ->
+                    val selected = strategyId == strategy.id
+                    Surface(
+                        onClick = { if (!running) strategyId = strategy.id },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                        border = BorderStroke(
+                            width = if (selected) 2.dp else 1.dp,
+                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = selected,
+                                onClick = { if (!running) strategyId = strategy.id },
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(strategy.name, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    strategy.description,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                     }
+                }
+                // 迭代优化：填了迭代需求就走 iterate 模板（把需求融进上一版，
+                // 不执行它）；带 basePrompt（上一版结果）时是版本链的一环。
+                OutlinedTextField(
+                    value = iterateInput,
+                    onValueChange = { iterateInput = it.take(PromptOptimizationOptions.MAX_ITERATE_CHARS) },
+                    label = { Text(stringResource(R.string.chat_optimize_iterate_input)) },
+                    enabled = !running,
+                    minLines = 1,
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    stringResource(R.string.chat_optimize_iterate_hint),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (basePrompt != null) {
+                    Text(
+                        stringResource(R.string.chat_optimize_version_chain),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                 }
                 ToggleRow(stringResource(R.string.chat_optimize_keep_facts), keepFacts, enabled = !running) { keepFacts = it }
                 ToggleRow(stringResource(R.string.chat_optimize_allow_detail), allowDetail, enabled = !running) { allowDetail = it }

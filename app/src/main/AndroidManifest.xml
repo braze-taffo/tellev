@@ -8,6 +8,15 @@
          (sideloaded), so this is the standard self-update permission. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Android 11+ package visibility: without this query SpeechRecognizer
+         cannot see the device's RecognitionService and isRecognitionAvailable()
+         returns false, silently disabling long-press voice input. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <application
         android:name=".TellevApplication"
         android:allowBackup="false"

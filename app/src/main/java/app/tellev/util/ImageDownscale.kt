@@ -12,7 +12,7 @@ import java.io.ByteArrayOutputStream
  *
  * Returns null when the bytes are not a decodable image.
  */
-fun decodeImageAsPng(imageBytes: ByteArray, maxEdge: Int = 1024): ByteArray? {
+fun decodeImageAsPng(imageBytes: ByteArray, maxEdge: Int = 2048): ByteArray? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, bounds)
     if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null

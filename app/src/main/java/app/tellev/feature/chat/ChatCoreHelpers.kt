@@ -170,3 +170,15 @@ internal fun extractTextAttachmentContent(
         decoded.take(TEXT_ATTACHMENT_CHAR_LIMIT) + "\n…(truncated)"
     }
 }
+
+/**
+ * DSH 分支标题递增（increasedForkTitle）：已以 (N)/（N）结尾则 N+1，否则追加 (1)。
+ */
+internal fun increasedForkTitle(title: String): String {
+    val match = Regex("^(.*?)\\s*[（(](\\d+)[)）]\\s*$").find(title)
+    return if (match != null) {
+        "${match.groupValues[1]} (${match.groupValues[2].toInt() + 1})"
+    } else {
+        "$title (1)"
+    }
+}

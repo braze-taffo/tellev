@@ -33,7 +33,8 @@ internal fun DropdownSelector(
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val selectedLabel = options.firstOrNull { it.first == selected }?.second ?: options.first().second
+    val selectedLabel = options.firstOrNull { it.first == selected }?.second
+        ?: options.firstOrNull()?.second.orEmpty()
     ExposedDropdownMenuBox(
         expanded = expanded,
         onExpandedChange = { if (enabled) expanded = it },

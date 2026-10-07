@@ -49,6 +49,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
@@ -97,9 +98,13 @@ internal fun TavernMessageContent(
     modifier: Modifier = Modifier,
     tavernRuntime: TavernMessageRuntime,
     onHtmlBoundaryDrag: (Float) -> Unit,
+    centerText: Boolean = false,
 ) {
     val dialogueColor = MaterialTheme.colorScheme.primary
-    Column(modifier = modifier) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = if (centerText) Alignment.CenterHorizontally else Alignment.Start,
+    ) {
         segments.forEachIndexed { index, segment ->
             when (segment) {
                 is TavernRenderSegment.Text -> {
@@ -109,8 +114,9 @@ internal fun TavernMessageContent(
                     // the cheap native Text() to avoid spinning up a WebView per bubble.
                     if (!isUser && MarkdownRenderer.looksLikeMarkdown(text)) {
                         TavernHtmlPanel(
-                            html = remember(text, highlightDialogue) {
-                                MarkdownRenderer.render(text, highlightDialogue = highlightDialogue)
+                            html = remember(text, highlightDialogue, centerText) {
+                                val rendered = MarkdownRenderer.render(text, highlightDialogue = highlightDialogue)
+                                if (centerText) "<div style=\"text-align:center\">$rendered</div>" else rendered
                             },
                             availableMaxHeight = availableMaxHeight,
                             dialogueQuoteColor = if (highlightDialogue) dialogueColor.toCssHex() else null,
@@ -126,6 +132,7 @@ internal fun TavernMessageContent(
                                     fontSize = MaterialTheme.typography.bodyLarge.fontSize * (chatFontSizeSp / 16f),
                                     lineHeight = MaterialTheme.typography.bodyLarge.lineHeight * (chatFontSizeSp / 16f),
                                 ),
+                                textAlign = if (centerText) TextAlign.Center else null,
                                 modifier = Modifier.padding(
                                     start = 12.dp,
                                     top = if (index == 0) 12.dp else 8.dp,
@@ -226,6 +233,7 @@ internal fun StreamingBubble(
     tavernRuntime: TavernMessageRuntime,
     onHtmlBoundaryDrag: (Float) -> Unit,
     macroContext: app.tellev.core.prompt.MacroContext? = null,
+    centerText: Boolean = false,
 ) {
     val streamingInputs = remember(text, reasoning, character, preset, userName, macroContext) {
         RenderInputs(
@@ -243,7 +251,7 @@ internal fun StreamingBubble(
     }.value
     Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.Start,
+        horizontalAlignment = if (centerText) Alignment.CenterHorizontally else Alignment.Start,
     ) {
         Text(
             text = characterName,
@@ -258,6 +266,7 @@ internal fun StreamingBubble(
             highlightDialogue = true,
             bubbleAlpha = bubbleAlpha,
             chatFontSizeSp = chatFontSizeSp,
+            centerText = centerText,
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))

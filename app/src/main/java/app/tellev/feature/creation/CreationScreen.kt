@@ -96,7 +96,6 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.tellev.R
-import app.tellev.ui.AtmosphereIntro
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import app.tellev.core.provider.ImageProviderProfile
@@ -174,13 +173,6 @@ fun CreationHomeScreen(
             contentPadding = PaddingValues(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item(key = "creation_intro") {
-            AtmosphereIntro(
-                title = stringResource(R.string.ui_creation_intro),
-                subtitle = stringResource(R.string.ui_creation_intro_hint),
-                icon = Icons.Filled.Badge,
-            )
-            }
             item(key = "creation_start") {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 CreationStartCard(
