@@ -1,5 +1,7 @@
 package app.tellev.feature.creation
 
+import app.tellev.ui.dsh.Dsh
+
 import android.annotation.SuppressLint
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -35,6 +37,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.filled.Forum
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -59,7 +65,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.unit.sp
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
@@ -145,6 +151,7 @@ fun CreationHomeScreen(
     viewModel: CreationViewModel,
     onBack: () -> Unit,
     onOpenEditor: () -> Unit,
+    onOpenChatCreation: (String) -> Unit = { onOpenEditor() },
 ) {
     val state by viewModel.state.collectAsState()
     var pendingDelete by remember { mutableStateOf<CreationSessionSummary?>(null) }
@@ -159,7 +166,7 @@ fun CreationHomeScreen(
             },
             confirmButton = {
                 TextButton(onClick = { viewModel.deleteDraft(draft.id); pendingDelete = null }, enabled = !state.busy) {
-                    Text(stringResource(R.string.crs_delete), color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.crs_delete), color = Dsh.errorPrimary)
                 }
             },
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.crs_cancel)) } },
@@ -174,6 +181,7 @@ fun CreationHomeScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item(key = "creation_start") {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 CreationStartCard(
                     modifier = Modifier.weight(1f),
@@ -192,15 +200,58 @@ fun CreationHomeScreen(
                     onClick = { viewModel.start(CreationKind.WorldBook); onOpenEditor() },
                 )
             }
+            // 聊天式创建（dsh 资金界面一致）：一句话或引导对话出卡。
+            Surface(
+                onClick = {
+                    viewModel.start(CreationKind.Character)
+                    onOpenChatCreation("chat")
+                },
+                shape = RoundedCornerShape(22.dp),
+                color = Dsh.blue.copy(alpha = 0.1f),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        Modifier.clip(CircleShape)
+                            .background(Dsh.blue.copy(alpha = 0.12f))
+                            .padding(8.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Forum,
+                            contentDescription = null,
+                            tint = Dsh.blue,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.crs_chat_create_title),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Dsh.textPrimary,
+                        )
+                        Text(
+                            stringResource(R.string.crs_chat_create_desc),
+                            fontSize = 12.sp,
+                            color = Dsh.textSecondary,
+                        )
+                    }
+                }
+            }
+            }
             }
             item(key = "drafts_header") {
-                Text(stringResource(R.string.crs_drafts_title), style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.crs_drafts_title), fontSize = 14.sp)
             }
                 items(state.sessions, key = CreationSessionSummary::id) { session ->
                     Surface(
                         shape = RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        color = Dsh.bgBase,
+                        border = BorderStroke(1.dp, Dsh.borderL3),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -217,19 +268,19 @@ fun CreationHomeScreen(
                                 val sessionName = session.cardName.ifBlank { session.worldName.ifBlank {
                                     stringResource(if (session.kind == CreationKind.Character) R.string.crs_unnamed_character else R.string.crs_unnamed_worldbook)
                                 } }
-                                Text(sessionName, style = MaterialTheme.typography.titleSmall)
+                                Text(sessionName, fontSize = 13.sp)
                                 val kindLabel = stringResource(if (session.kind == CreationKind.Character) R.string.crs_kind_character else R.string.crs_kind_worldbook)
                                 Text(
                                     stringResource(R.string.crs_session_meta, kindLabel, session.turnsCount, session.loreCount),
-                                    style = MaterialTheme.typography.bodySmall,
+                                    fontSize = 12.sp,
                                 )
                                 if (session.sourceLength > 0) {
-                                    Text(stringResource(R.string.crs_source_extracted_short, session.sourceCursor, session.sourceLength), style = MaterialTheme.typography.bodySmall)
+                                    Text(stringResource(R.string.crs_source_extracted_short, session.sourceCursor, session.sourceLength), fontSize = 12.sp)
                                 }
                             }
                             IconButton(onClick = { pendingDelete = session }, enabled = !state.busy) {
                                 Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.crs_delete),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    tint = Dsh.textSecondary)
                             }
                         }
                     }
@@ -250,19 +301,19 @@ private fun CreationStartCard(
 ) {
     Surface(
         shape = RoundedCornerShape(22.dp),
-        color = MaterialTheme.colorScheme.primaryContainer,
+        color = Dsh.hover,
         modifier = modifier.clip(RoundedCornerShape(22.dp)).clickable(enabled = enabled, onClick = onClick),
     ) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(
                 Modifier.clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                    .background(Dsh.blue.copy(alpha = 0.12f))
                     .padding(8.dp),
             ) { icon() }
-            Text(title, style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer)
-            Text(description, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+            Text(title, fontSize = 13.sp,
+                color = Dsh.textPrimary)
+            Text(description, fontSize = 12.sp,
+                color = Dsh.textPrimary.copy(alpha = 0.8f))
         }
     }
 }
@@ -384,8 +435,8 @@ fun CreationEditorScreen(
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text(
                     state.error ?: stringResource(R.string.crs_loading_draft),
-                    color = if (state.error != null) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (state.error != null) Dsh.errorPrimary
+                    else Dsh.textSecondary,
                     modifier = Modifier.padding(16.dp),
                 )
             }
@@ -466,15 +517,15 @@ private fun CreationBottomNav(tab: Int, kind: CreationKind, busy: Boolean, onSel
 @Composable
 private fun CreationBanner(text: String, isError: Boolean) {
     Surface(
-        color = if (isError) MaterialTheme.colorScheme.errorContainer
-        else MaterialTheme.colorScheme.secondaryContainer,
+        color = if (isError) Dsh.errorPrimary
+        else Dsh.hover,
         shape = RoundedCornerShape(10.dp),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
     ) {
         Text(
-            text, style = MaterialTheme.typography.bodySmall,
-            color = if (isError) MaterialTheme.colorScheme.onErrorContainer
-            else MaterialTheme.colorScheme.onSecondaryContainer,
+            text, fontSize = 12.sp,
+            color = if (isError) Dsh.bgBase
+            else Dsh.textPrimary,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
         )
     }
@@ -497,14 +548,14 @@ private fun CreationActivityPanel(state: CreationUiState, session: CreationSessi
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (state.busy) CircularProgressIndicator(modifier = Modifier.height(20.dp))
                     val progressTitle = stringResource(R.string.crs_progress_title)
-                    Text(state.operationLabel.ifBlank { progressTitle }, style = MaterialTheme.typography.titleSmall)
+                    Text(state.operationLabel.ifBlank { progressTitle }, fontSize = 13.sp)
                 }
                 if (state.busy) TextButton(onClick = viewModel::cancelGeneration) { Text(stringResource(R.string.crs_stop)) }
             }
-            Text(state.modelPhase, style = MaterialTheme.typography.bodySmall)
+            Text(state.modelPhase, fontSize = 12.sp)
             if (state.toolEvents.isNotEmpty()) {
                 Text(stringResource(R.string.crs_tool_events_title, state.toolEvents.size),
-                    style = MaterialTheme.typography.labelMedium)
+                    fontSize = 12.sp)
                 // Per-round grouped activity log: one line per call, in the same
                 // order the model issued them. Cap the log so a 32-round turn
                 // cannot grow the panel without bound.
@@ -518,67 +569,67 @@ private fun CreationActivityPanel(state: CreationUiState, session: CreationSessi
                         if (event.round != lastRound) {
                             lastRound = event.round
                             Text(stringResource(R.string.crs_tool_round, event.round),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                fontSize = 11.sp,
+                                color = Dsh.textSecondary)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(if (event.ok) "✓" else "✗",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (event.ok) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.error)
+                                fontSize = 12.sp,
+                                color = if (event.ok) Dsh.blue
+                                else Dsh.errorPrimary)
                             Text(
                                 "  #${event.index} ${event.name}" +
                                     if (event.detail.isNotBlank()) " — ${event.detail}" else "",
-                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 12.sp,
                             )
                         }
                     }
                 }
             }
             if (state.providerLabel.isNotBlank()) {
-                Text(stringResource(R.string.crs_provider_connected, state.providerLabel), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.crs_provider_connected, state.providerLabel), fontSize = 12.sp)
             }
             if (state.busy && state.operationStartedAtMillis > 0) {
                 val elapsedSeconds = ((clockMillis - state.operationStartedAtMillis).coerceAtLeast(0) / 1_000)
-                Text(stringResource(R.string.crs_task_elapsed, elapsedSeconds), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.crs_task_elapsed, elapsedSeconds), fontSize = 12.sp)
             }
             if (state.deltaCount > 0) {
                 val spanSeconds = ((state.lastDeltaMillis ?: 0L) - (state.firstDeltaMillis ?: 0L))
                     .coerceAtLeast(0) / 1_000
                 Text(stringResource(R.string.crs_delta_stats,
                     state.firstDeltaMillis.orZeroSeconds(), state.lastDeltaMillis.orZeroSeconds(), spanSeconds, state.deltaCount),
-                    style = MaterialTheme.typography.bodySmall)
+                    fontSize = 12.sp)
             } else if (state.busy && state.modelPhase.contains(UiStrings.get(S.creng_phase_waiting_model))) {
                 // modelPhase carries the engine's UiStrings-resolved text; compare against the same
                 // creng_phase_waiting_model resource instead of a hardcoded display string.
-                Text(stringResource(R.string.crs_waiting_first_chunk), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.crs_waiting_first_chunk), fontSize = 12.sp)
             } else if (!state.busy && state.modelElapsedMillis > 0 && state.liveOutput.isNotBlank()) {
                 Text(stringResource(R.string.crs_no_stream_fallback, state.modelElapsedMillis / 1_000),
-                    style = MaterialTheme.typography.bodySmall)
+                    fontSize = 12.sp)
             }
             if (session.sourceLength > 0) {
                 val fraction = session.sourceCursor.toFloat() / session.sourceLength
                 LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
                 Text(stringResource(R.string.crs_source_saved_pct, session.sourceCursor, session.sourceLength, (fraction * 100).toInt()),
-                    style = MaterialTheme.typography.bodySmall)
+                    fontSize = 12.sp)
             }
             if (state.extractionProgress.isNotBlank()) {
-                Text(state.extractionProgress, style = MaterialTheme.typography.bodySmall)
+                Text(state.extractionProgress, fontSize = 12.sp)
             }
             if (state.busy && state.liveAssistantMessage.isNotBlank()) {
-                Text(stringResource(R.string.crs_agent_replying), style = MaterialTheme.typography.labelMedium)
+                Text(stringResource(R.string.crs_agent_replying), fontSize = 12.sp)
                 Column(Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState())) {
                     Text(state.liveAssistantMessage.takeLast(1_000))
                 }
             }
             if (state.liveReasoning.isNotBlank()) {
-                Text(stringResource(R.string.crs_reasoning_title), style = MaterialTheme.typography.labelMedium)
+                Text(stringResource(R.string.crs_reasoning_title), fontSize = 12.sp)
                 Column(Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState())) {
                     SelectionContainer { Text(state.liveReasoning) }
                 }
             } else if (!state.busy && state.liveOutput.isNotBlank()) {
                 Text(stringResource(R.string.crs_no_reasoning),
-                    style = MaterialTheme.typography.bodySmall)
+                    fontSize = 12.sp)
             }
             if (state.liveOutput.isNotBlank()) {
                 TextButton(onClick = { showRawStream = !showRawStream }) {
@@ -596,14 +647,14 @@ private fun CreationActivityPanel(state: CreationUiState, session: CreationSessi
                 }
                 Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.crs_draft_raw_title), style = MaterialTheme.typography.labelMedium)
+                    Text(stringResource(R.string.crs_draft_raw_title), fontSize = 12.sp)
                     SelectionContainer {
                         Text(if (showFullStream) state.liveOutput else state.liveOutput.takeLast(limit))
                     }
-                    if (shortened) Text(stringResource(R.string.crs_stream_truncated, limit), style = MaterialTheme.typography.bodySmall)
+                    if (shortened) Text(stringResource(R.string.crs_stream_truncated, limit), fontSize = 12.sp)
                 }
             } else if (state.busy && state.liveReasoning.isBlank() && state.liveAssistantMessage.isBlank()) {
-                Text(stringResource(R.string.crs_waiting_provider_text), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.crs_waiting_provider_text), fontSize = 12.sp)
             }
         }
     }
@@ -629,7 +680,7 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
             item {
                 Text(
                     stringResource(R.string.crs_conversation_intro),
-                    style = MaterialTheme.typography.bodyMedium,
+                    fontSize = 13.sp,
                 )
             }
             if (session.turns.isEmpty()) {
@@ -652,22 +703,22 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                             .fillMaxWidth(0.85f)
                             .clip(RoundedCornerShape(12.dp))
                             .background(
-                                if (isUser) MaterialTheme.colorScheme.primaryContainer
-                                else MaterialTheme.colorScheme.surfaceVariant,
+                                if (isUser) Dsh.hover
+                                else Dsh.hover,
                             )
                             .padding(10.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
                         Text(
                             if (isUser) stringResource(R.string.crs_role_you) else stringResource(R.string.crs_role_agent),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.outline,
+                            fontSize = 11.sp,
+                            color = Dsh.borderL2,
                         )
                         SelectionContainer {
                             Text(
                                 turn.text,
-                                color = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer
-                                else MaterialTheme.colorScheme.onSurface,
+                                color = if (isUser) Dsh.textPrimary
+                                else Dsh.textPrimary,
                             )
                         }
                     }
@@ -699,7 +750,7 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
             } else if (session.sourceLength > 0) {
                 item(key = "source-progress") {
                     Text(stringResource(R.string.crs_source_extracted_continue, session.sourceCursor, session.sourceLength),
-                        style = MaterialTheme.typography.bodySmall)
+                        fontSize = 12.sp)
                 }
             }
             state.pendingQuestion?.let { question ->
@@ -707,9 +758,9 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(stringResource(R.string.crs_agent_asking),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary)
-                            Text(question.question, style = MaterialTheme.typography.bodyMedium)
+                                fontSize = 12.sp,
+                                color = Dsh.blue)
+                            Text(question.question, fontSize = 13.sp)
                             question.options.forEach { option ->
                                 OutlinedButton(
                                     onClick = { viewModel.answerAgentQuestion(option.label) },
@@ -719,8 +770,8 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                                         Text(option.label)
                                         if (option.description.isNotBlank()) {
                                             Text(option.description,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                fontSize = 12.sp,
+                                                color = Dsh.textSecondary)
                                         }
                                     }
                                 }
@@ -813,8 +864,8 @@ private fun CreationBriefForm(kind: CreationKind, busy: Boolean, onStart: (Strin
     var loreOneByOne by remember(kind) { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.crs_brief_title), style = MaterialTheme.typography.titleMedium)
-            Text(stringResource(R.string.crs_brief_hint), style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.crs_brief_title), fontSize = 14.sp)
+            Text(stringResource(R.string.crs_brief_hint), fontSize = 12.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(selected = guided, onClick = { guided = true }, label = { Text(stringResource(R.string.crs_mode_chat)) })
                 FilterChip(selected = !guided, onClick = { guided = false }, label = { Text(stringResource(R.string.crs_mode_direct_draft)) })
@@ -837,10 +888,10 @@ private fun CreationBriefForm(kind: CreationKind, busy: Boolean, onStart: (Strin
                     OutlinedTextField(value = characters, onValueChange = { characters = it }, modifier = Modifier.fillMaxWidth(),
                         label = { Text(stringResource(R.string.crs_field_characters)) }, minLines = 3, maxLines = 6)
                     if (characters.lineSequence().count { it.isNotBlank() } < 2) {
-                        Text(stringResource(R.string.crs_min_characters_hint), style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.crs_min_characters_hint), fontSize = 12.sp)
                     }
                 }
-                Text(stringResource(R.string.crs_length_title), style = MaterialTheme.typography.labelMedium)
+                Text(stringResource(R.string.crs_length_title), fontSize = 12.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     CreationDetail.entries.forEach { option ->
                         // CreationDetail.label is also part of the LLM prompt; localize display here only.
@@ -875,8 +926,8 @@ private fun CreationBriefForm(kind: CreationKind, busy: Boolean, onStart: (Strin
 private fun PanelCard(content: @Composable ColumnScope.() -> Unit) {
     Surface(
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = Dsh.bgBase,
+        border = BorderStroke(1.dp, Dsh.borderL3),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
@@ -889,8 +940,8 @@ private fun DraftSection(title: String, initiallyExpanded: Boolean = false, cont
     var expanded by rememberSaveable(title) { mutableStateOf(initiallyExpanded) }
     Surface(
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = Dsh.bgBase,
+        border = BorderStroke(1.dp, Dsh.borderL3),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column {
@@ -900,9 +951,9 @@ private fun DraftSection(title: String, initiallyExpanded: Boolean = false, cont
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                Text(title, fontSize = 13.sp, modifier = Modifier.weight(1f))
                 Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    contentDescription = null, tint = Dsh.textSecondary)
             }
             if (expanded) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
@@ -935,7 +986,7 @@ private fun CharacterDraftEditor(
             if (coverBitmap != null) {
                 Image(coverBitmap, contentDescription = stringResource(R.string.crs_cover_cd),
                     modifier = Modifier.fillMaxWidth().height(180.dp), contentScale = ContentScale.Fit)
-            } else Text(stringResource(R.string.crs_cover_missing_hint), style = MaterialTheme.typography.bodySmall)
+            } else Text(stringResource(R.string.crs_cover_missing_hint), fontSize = 12.sp)
             OutlinedButton(onClick = onPickCover, enabled = !busy) {
                 Text(if (coverPng == null) stringResource(R.string.crs_cover_pick) else stringResource(R.string.crs_cover_change))
             }
@@ -982,14 +1033,14 @@ private fun CharacterDraftEditor(
             Text(
                 if (hasContent) stringResource(R.string.crs_blueprint_summary, session.lore.size)
                 else stringResource(R.string.crs_blueprint_empty_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+                color = Dsh.textSecondary,
             )
             if (card.coverPrompt.isNotBlank()) {
                 Text(
                     stringResource(R.string.crs_blueprint_cover_prompt_line, card.coverPrompt),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    color = Dsh.textSecondary,
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1033,7 +1084,7 @@ private fun CoverGenerationDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(stringResource(R.string.chat_engine_label), style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.chat_engine_label), fontSize = 13.sp)
                 engines.forEach { engineId ->
                     val label = when (engineId) {
                         ProviderCatalog.COMFYUI -> "ComfyUI"
@@ -1050,7 +1101,7 @@ private fun CoverGenerationDialog(
                             selected = selectedEngineId == engineId,
                             onClick = { selectedEngineId = engineId },
                         )
-                        Text(label, style = MaterialTheme.typography.bodyMedium)
+                        Text(label, fontSize = 13.sp)
                     }
                 }
                 OutlinedTextField(
@@ -1102,9 +1153,9 @@ private fun AdvancedAssetsPanel(session: CreationSession, viewModel: CreationVie
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.crs_assets_summary, scripts.size, regexes.size, variables.size),
-            style = MaterialTheme.typography.titleMedium)
+            fontSize = 14.sp)
         Text(stringResource(R.string.crs_assets_hint),
-            style = MaterialTheme.typography.bodySmall)
+            fontSize = 12.sp)
         OutlinedButton(onClick = { viewModel.send(UiStrings.get(S.creng_quick_check_assets)) },
             enabled = !busy) { Text(stringResource(R.string.crs_btn_check_assets)) }
         scripts.forEach { item ->
@@ -1181,13 +1232,13 @@ private fun WorldDraftEditor(
                     Text(if (session.sourceCursor == 0) stringResource(R.string.crs_start_extract) else stringResource(R.string.crs_continue_extract))
                 }
             }
-            Text(stringResource(R.string.crs_lore_count, session.lore.size), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.crs_lore_count, session.lore.size), fontSize = 14.sp)
             val repeatedTitles = remember(session.lore) {
                 session.lore.groupBy { it.title.trim().lowercase() }
                     .filter { (title, entries) -> title.isNotBlank() && entries.size > 1 }
             }
             if (repeatedTitles.isNotEmpty()) {
-                Text(stringResource(R.string.crs_duplicate_titles, repeatedTitles.size), color = MaterialTheme.colorScheme.error)
+                Text(stringResource(R.string.crs_duplicate_titles, repeatedTitles.size), color = Dsh.errorPrimary)
             }
             }
         }
@@ -1220,7 +1271,7 @@ private fun WorldDraftEditor(
                     }
                     DraftField(stringResource(R.string.crs_field_note), item.note, busy, 2) { viewModel.editLore(index, item.copy(note = it)) }
                     if (item.sourceQuote.isNotBlank()) {
-                        Text(stringResource(R.string.crs_source_quote, item.sourceName, item.sourceOffset, item.sourceQuote), style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.crs_source_quote, item.sourceName, item.sourceOffset, item.sourceQuote), fontSize = 12.sp)
                     }
                     TextButton(onClick = { viewModel.editLore(index, null) }, enabled = !busy) { Text(stringResource(R.string.crs_delete_entry)) }
                 }
@@ -1264,7 +1315,7 @@ private fun FrontendPreview(card: CharacterDraft, viewModel: CreationViewModel, 
             AndroidView(
                 modifier = Modifier.fillMaxWidth().height(previewHeight)
                     .clip(RoundedCornerShape(12.dp))
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+                    .border(1.dp, Dsh.borderL3, RoundedCornerShape(12.dp)),
                 factory = { context ->
                     WebView(context).apply {
                         settings.javaScriptEnabled = false
@@ -1290,7 +1341,7 @@ private fun FrontendPreview(card: CharacterDraft, viewModel: CreationViewModel, 
             viewModel.editCard { it.copy(frontendHtml = value) }
         }
         val issues = portableFrontendIssues(card.frontendHtml)
-        if (issues.isNotEmpty()) Text(stringResource(R.string.crs_portability_issues, issues.joinToString()), color = MaterialTheme.colorScheme.error)
+        if (issues.isNotEmpty()) Text(stringResource(R.string.crs_portability_issues, issues.joinToString()), color = Dsh.errorPrimary)
         Text(stringResource(R.string.crs_first_message_preview, card.firstMessage))
     }
 }

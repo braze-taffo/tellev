@@ -215,6 +215,8 @@ private fun DshRootContent() {
     var showQqGroupNotice by rememberSaveable { mutableStateOf(false) }
     var presetFocusRequest by rememberSaveable { mutableIntStateOf(0) }
     var showExitConfirmation by rememberSaveable { mutableStateOf(false) }
+    // 聊天式创建屏的 JSON 导出中转（SAF 选完 Uri 再写）。
+    var pendingCreationExport by remember { mutableStateOf<ByteArray?>(null) }
     // 层级化返回：只有导航栈到栈底（当前页无上级可 pop）时，系统返回才
     // 是「退出应用」语义，弹确认；栈里还有页面时返回键交给 NavController
     // 正常回退，不确认。
@@ -363,7 +365,7 @@ private fun DshRootContent() {
                 page("world/list") {
                     WorldBooksListScreen(
                         viewModel = worldViewModel,
-                        onCreateWithAi = { navController.navigate("creation/home") },
+                        onCreateWithAi = { navController.navigate("creation/chat") },
                         onEditWithAi = { navController.navigate("creation/edit/world/$it") },
                         onBookClick = { bookId ->
                             worldViewModel.selectBook(bookId)
@@ -404,6 +406,36 @@ private fun DshRootContent() {
                     viewModel = creationViewModel,
                     onBack = { navController.popBackStack() },
                     onOpenEditor = { navController.navigate("creation/editor") },
+                )
+            }
+            // 聊天式创建（PRD 主机屏）：角色卡会话以聊天气泡/输入框/流式完成；
+            // 世界书会话与手动编辑仍走旧编辑器（高级资产在那里）。
+            page("creation/chat") {
+                // 保存前没有 current 会话（首页直接进来）→ 起一个新角色卡会话。
+                androidx.compose.runtime.LaunchedEffect(Unit) {
+                    if (creationViewModel.state.value.current == null) {
+                        creationViewModel.start(app.tellev.feature.creation.CreationKind.Character)
+                    }
+                }
+                val jsonSaver = androidx.activity.compose.rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json"),
+                ) { uri ->
+                    uri ?: return@rememberLauncherForActivityResult
+                    pendingCreationExport?.let { bytes ->
+                        activityContext.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    }
+                    pendingCreationExport = null
+                }
+                DshCreationChatScreen(
+                    viewModel = creationViewModel,
+                    onBack = { navController.popBackStack() },
+                    onOpenManualEditor = { navController.navigate("creation/editor") },
+                    onExportJson = { bytes -> pendingCreationExport = bytes; jsonSaver.launch("character.json") },
+                    onSaved = { kind, _ ->
+                        if (kind == app.tellev.feature.creation.CreationKind.Character) charactersViewModel.loadCharacters()
+                        else worldViewModel.loadBookSummaries()
+                        navController.popBackStack()
+                    },
                 )
             }
             page(
