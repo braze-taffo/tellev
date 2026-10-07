@@ -41,6 +41,15 @@ class GeminiAdapter(
         ProviderCapability.Vision,
     )
 
+    override fun declaredContextWindow(config: ProviderConfig): Long? {
+        val model = config.model.orEmpty().lowercase()
+        return when {
+            "gemini-2.5-pro" in model || "gemini-3" in model -> 1_048_576L
+            "gemini" in model -> 1_048_576L
+            else -> null
+        }
+    }
+
     override suspend fun checkStatus(config: ProviderConfig): ProviderStatus {
         val model = config.model ?: "gemini-2.0-flash"
         val url = "${config.baseUrl.trimEnd('/')}/v1beta/models/$model"
@@ -107,8 +116,8 @@ class GeminiAdapter(
                 request.preset.seed?.takeIf { it >= 0 }?.let { put("seed", JsonPrimitive(it)) }
                 request.preset.presencePenalty?.let { put("presencePenalty", JsonPrimitive(it)) }
                 request.preset.frequencyPenalty?.let { put("frequencyPenalty", JsonPrimitive(it)) }
-                if (request.preset.stop.isNotEmpty()) {
-                    put("stopSequences", buildJsonArray { request.preset.stop.forEach { add(JsonPrimitive(it)) } })
+                if ((request.preset.stop + request.prompt.stop).isNotEmpty()) {
+                    put("stopSequences", buildJsonArray { (request.preset.stop + request.prompt.stop).distinct().forEach { add(JsonPrimitive(it)) } })
                 }
                 request.preset.raw["responseMimeType"]?.let { put("responseMimeType", it) }
                 request.preset.raw["responseSchema"]?.let { put("responseSchema", it) }

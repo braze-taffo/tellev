@@ -80,15 +80,31 @@ object ReasoningSupport {
         else -> ReasoningFamily.None
     }
 
+    /**
+     * Adapter-side family gate: an explicit effort (Off..Max) must reach the
+     * wire even when the endpoint never declared reasoning support — OpenAI-
+     * shaped bodies take the OpenAiCompatible mapping. [ReasoningEffort.Auto]
+     * keeps the legacy passthrough exactly (no fields when not opted in), so
+     * presets that already carry reasoning fields keep working.
+     */
+    fun effectiveFamily(providerType: String, options: JsonObject, effort: ReasoningEffort): ReasoningFamily {
+        val declared = familyFor(providerType, options)
+        return if (declared == ReasoningFamily.None && effort != ReasoningEffort.Auto) {
+            ReasoningFamily.OpenAiCompatible
+        } else {
+            declared
+        }
+    }
+
     fun capabilities(family: ReasoningFamily): ReasoningCapabilities = when (family) {
         ReasoningFamily.None ->
             ReasoningCapabilities(family, setOf(ReasoningEffort.Auto), independentBudget = false)
         ReasoningFamily.OpenAiCompatible, ReasoningFamily.OpenRouter ->
-            // OpenAI-shaped bodies accept low/medium/high; "Max" is not a wire
-            // value and is clamped at injection time.
+            // OpenAI-shaped bodies accept minimal/low/medium/high/xhigh; "Max"
+            // is not a wire value and is clamped at injection time.
             ReasoningCapabilities(
                 family,
-                setOf(ReasoningEffort.Auto, ReasoningEffort.Off, ReasoningEffort.Low, ReasoningEffort.Medium, ReasoningEffort.High),
+                setOf(ReasoningEffort.Auto, ReasoningEffort.Off, ReasoningEffort.Minimal, ReasoningEffort.Low, ReasoningEffort.Medium, ReasoningEffort.High, ReasoningEffort.XHigh),
                 independentBudget = false,
             )
         ReasoningFamily.DeepSeek ->
@@ -96,7 +112,7 @@ object ReasoningSupport {
             // per-level budget, so Low..Max all map to "enabled".
             ReasoningCapabilities(
                 family,
-                setOf(ReasoningEffort.Auto, ReasoningEffort.Off, ReasoningEffort.Low, ReasoningEffort.Medium, ReasoningEffort.High, ReasoningEffort.Max),
+                setOf(ReasoningEffort.Auto, ReasoningEffort.Off, ReasoningEffort.Minimal, ReasoningEffort.Low, ReasoningEffort.Medium, ReasoningEffort.High, ReasoningEffort.XHigh, ReasoningEffort.Max),
                 independentBudget = false,
             )
         ReasoningFamily.Gemini, ReasoningFamily.Anthropic ->
@@ -106,6 +122,35 @@ object ReasoningSupport {
                 independentBudget = true,
             )
     }
+
+    /**
+     * Ordered effort levels the chat slider may offer for [family]. Honest per
+     * protocol: the DeepSeek relay family only expresses on/off, so exactly one
+     * enabled level is offered instead of five fake strengths; OpenAI-shaped
+     * bodies cap at high (Max is not a wire value); budget families expose the
+     * full ladder. A stored level outside the list still resolves on the wire —
+     * this list is a UI affordance, not a validation gate.
+     */
+    fun uiLevels(family: ReasoningFamily): List<ReasoningEffort> = when (family) {
+        ReasoningFamily.None -> listOf(ReasoningEffort.Auto, ReasoningEffort.Off, ReasoningEffort.Minimal, ReasoningEffort.Low, ReasoningEffort.Medium, ReasoningEffort.High)
+        ReasoningFamily.OpenAiCompatible, ReasoningFamily.OpenRouter ->
+            listOf(ReasoningEffort.Auto, ReasoningEffort.Off, ReasoningEffort.Minimal, ReasoningEffort.Low, ReasoningEffort.Medium, ReasoningEffort.High, ReasoningEffort.XHigh)
+        ReasoningFamily.DeepSeek -> listOf(ReasoningEffort.Auto, ReasoningEffort.Off, ReasoningEffort.Low)
+        ReasoningFamily.Gemini, ReasoningFamily.Anthropic -> ReasoningEffort.entries.toList()
+    }
+
+    /**
+     * Slider index for [effort] within [levels]. A stored level the UI no longer
+     * offers (e.g. DeepSeek Medium persisted by an older build) snaps to the
+     * nearest truthful position: Off stays Off, any enabled level snaps to the
+     * last (enabled) entry, Auto to the first.
+     */
+    fun uiIndexOf(levels: List<ReasoningEffort>, effort: ReasoningEffort): Int =
+        levels.indexOf(effort).takeIf { it >= 0 } ?: when (effort) {
+            ReasoningEffort.Auto -> 0
+            ReasoningEffort.Off -> levels.indexOf(ReasoningEffort.Off).takeIf { it >= 0 } ?: 0
+            else -> levels.lastIndex
+        }
 
     /**
      * Applies the override chain. [presetEffort] is the preset's own serialized
@@ -146,6 +191,39 @@ object ReasoningSupport {
         ReasoningFamily.Anthropic -> anthropic(effort, maxTokens)
     }
 
+    /**
+     * 档案拼写优先的注入（bre 每模型声明语义）：用户为该模型声明过
+     * reasoning profile 时，档位按档案的线上拼写落到 openai 兼容 body；
+     * 拼写为 null = 该档不发字段（端点默认）。无档案 → 回落 [inject] 的
+     * family 硬编码，行为与旧版完全一致。
+     */
+    fun injectWithProfile(
+        family: ReasoningFamily,
+        effort: ReasoningEffort,
+        modelId: String?,
+        profile: ModelReasoningProfile?,
+        raw: JsonObject = JsonObject(emptyMap()),
+        maxTokens: Int? = null,
+    ): ReasoningInjection {
+        if (effort == ReasoningEffort.Auto) return inject(family, effort, raw, maxTokens)
+        val efforts = profile?.efforts?.takeIf { it.isNotEmpty() } ?: return inject(family, effort, raw, maxTokens)
+        val wire = efforts[effort.name.lowercase()] ?: run {
+            // 档案没声明这个档位：off 缺席时抑制字段（不发明拼写），其余档回落 family。
+            if (effort == ReasoningEffort.Off) {
+                return ReasoningInjection(effort, suppress = setOf("reasoning_effort", "thinking", "reasoning"))
+            }
+            return inject(family, effort, raw, maxTokens)
+        }
+        if (wire == null) {
+            return ReasoningInjection(effort, suppress = setOf("reasoning_effort", "thinking", "reasoning"))
+        }
+        return ReasoningInjection(
+            effort,
+            fields = mapOf("reasoning_effort" to JsonPrimitive(wire)),
+            suppress = setOf("thinking", "reasoning"),
+        )
+    }
+
     private fun openAiCompatible(effort: ReasoningEffort, raw: JsonObject): ReasoningInjection = when (effort) {
         ReasoningEffort.Auto ->
             ReasoningInjection(effort, fields = rawFields(raw, "thinking", "reasoning_effort"))
@@ -153,8 +231,8 @@ object ReasoningSupport {
             ReasoningInjection(effort, suppress = setOf("thinking", "reasoning_effort"))
         ReasoningEffort.Max -> ReasoningInjection(
             effort,
-            fields = mapOf("reasoning_effort" to JsonPrimitive("high")),
-            warnings = listOf("reasoning_effort 已按接口上限映射为 high"),
+            fields = mapOf("reasoning_effort" to JsonPrimitive("xhigh")),
+            warnings = listOf("reasoning_effort 已按接口上限映射为 xhigh（端点不支持时请用 high 档）"),
         )
         else -> ReasoningInjection(
             effort,
@@ -206,10 +284,12 @@ object ReasoningSupport {
         )
         else -> {
             val budget = when (effort) {
+                ReasoningEffort.Minimal -> 512
                 ReasoningEffort.Low -> 1_024
                 ReasoningEffort.Medium -> 4_096
                 ReasoningEffort.High -> 12_288
-                ReasoningEffort.Max -> 24_576
+                ReasoningEffort.XHigh -> 24_576
+                ReasoningEffort.Max -> 32_768
                 else -> null
             } ?: return ReasoningInjection(effort)
             ReasoningInjection(
@@ -227,9 +307,11 @@ object ReasoningSupport {
             // Anthropic requires budget_tokens >= 1024 and < max_tokens, and
             // temperature == 1 without top_p while extended thinking is on.
             val wanted = when (effort) {
+                ReasoningEffort.Minimal -> 1_024
                 ReasoningEffort.Low -> 2_048
                 ReasoningEffort.Medium -> 8_192
                 ReasoningEffort.High -> 16_384
+                ReasoningEffort.XHigh -> 24_576
                 ReasoningEffort.Max -> 32_768
                 else -> return ReasoningInjection(effort)
             }

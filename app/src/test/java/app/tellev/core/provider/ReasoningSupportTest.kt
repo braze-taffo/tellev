@@ -85,7 +85,8 @@ class ReasoningSupportTest {
         assertEquals("low", low.fields["reasoning_effort"]!!.jsonPrimitive.content)
 
         val max = ReasoningSupport.inject(ReasoningFamily.OpenAiCompatible, ReasoningEffort.Max)
-        assertEquals("high", max.fields["reasoning_effort"]!!.jsonPrimitive.content)
+        // 词汇扩充后 Max → xhigh（真实拼写，不再钳 high）。
+        assertEquals("xhigh", max.fields["reasoning_effort"]!!.jsonPrimitive.content)
         assertTrue(max.warnings.isNotEmpty())
     }
 
@@ -142,7 +143,7 @@ class ReasoningSupportTest {
 
         assertEquals(4096, ReasoningSupport.inject(ReasoningFamily.Gemini, ReasoningEffort.Medium)
             .fields["thinkingConfig"]!!.jsonObject["thinkingBudget"]!!.jsonPrimitive.content.toInt())
-        assertEquals(24576, ReasoningSupport.inject(ReasoningFamily.Gemini, ReasoningEffort.Max)
+        assertEquals(32768, ReasoningSupport.inject(ReasoningFamily.Gemini, ReasoningEffort.Max)
             .fields["thinkingConfig"]!!.jsonObject["thinkingBudget"]!!.jsonPrimitive.content.toInt())
     }
 
@@ -278,5 +279,81 @@ class ReasoningSupportTest {
         val plain = ReasoningSupport.sessionOverrideMetadata(session(buildJsonObject { }))
         assertTrue(plain.isEmpty())
         assertEquals(ReasoningEffort.Off, ReasoningSupport.effortFor(sessionRequest(plain, ReasoningEffort.Off)))
+    }
+    // ── effectiveFamily：显式档位必须落到线上（自定义端点滑杆生效） ──────
+
+    @Test
+    fun effectiveFamilyCoercesNoneToOpenAiCompatibleForExplicitEffort() {
+        val options = buildJsonObject { }
+        for (effort in listOf(
+            ReasoningEffort.Off, ReasoningEffort.Low,
+            ReasoningEffort.Medium, ReasoningEffort.High, ReasoningEffort.Max,
+        )) {
+            assertEquals(
+                "explicit $effort must reach an undeclared OpenAI-shaped endpoint",
+                ReasoningFamily.OpenAiCompatible,
+                ReasoningSupport.effectiveFamily("custom-relay", options, effort),
+            )
+        }
+    }
+
+    @Test
+    fun effectiveFamilyKeepsAutoPassthroughForUndeclaredEndpoint() {
+        val options = buildJsonObject { }
+        assertEquals(
+            ReasoningFamily.None,
+            ReasoningSupport.effectiveFamily("custom-relay", options, ReasoningEffort.Auto),
+        )
+    }
+
+    @Test
+    fun effectiveFamilyKeepsDeclaredFamilies() {
+        val options = buildJsonObject { }
+        assertEquals(
+            ReasoningFamily.DeepSeek,
+            ReasoningSupport.effectiveFamily(ProviderCatalog.DEEPSEEK, options, ReasoningEffort.High),
+        )
+        assertEquals(
+            ReasoningFamily.OpenAiCompatible,
+            ReasoningSupport.effectiveFamily(
+                "custom-relay",
+                buildJsonObject { put("supportsReasoning", true) },
+                ReasoningEffort.Auto,
+            ),
+        )
+    }
+
+    // ── uiLevels / uiIndexOf（滑杆诚实挡位） ──────────────────────────────
+
+    @Test
+    fun uiLevelsAreHonestPerFamily() {
+        assertEquals(
+            listOf(ReasoningEffort.Auto, ReasoningEffort.Off, ReasoningEffort.Minimal, ReasoningEffort.Low, ReasoningEffort.Medium, ReasoningEffort.High, ReasoningEffort.XHigh),
+            ReasoningSupport.uiLevels(ReasoningFamily.OpenAiCompatible),
+        )
+        // DeepSeek 中继只有开/关：一个启用档位，不再展示五个假强度。
+        assertEquals(
+            listOf(ReasoningEffort.Auto, ReasoningEffort.Off, ReasoningEffort.Low),
+            ReasoningSupport.uiLevels(ReasoningFamily.DeepSeek),
+        )
+        assertEquals(
+            listOf(ReasoningEffort.Auto, ReasoningEffort.Off, ReasoningEffort.Minimal, ReasoningEffort.Low, ReasoningEffort.Medium, ReasoningEffort.High, ReasoningEffort.XHigh, ReasoningEffort.Max),
+            ReasoningSupport.uiLevels(ReasoningFamily.Gemini),
+        )
+    }
+
+    @Test
+    fun uiIndexOfSnapsStoredLevelsOutsideTheUiList() {
+        val deepseek = ReasoningSupport.uiLevels(ReasoningFamily.DeepSeek)
+        assertEquals(0, ReasoningSupport.uiIndexOf(deepseek, ReasoningEffort.Auto))
+        assertEquals(1, ReasoningSupport.uiIndexOf(deepseek, ReasoningEffort.Off))
+        // 旧版本存下的 Medium/Max 吸附到启用档位。
+        assertEquals(2, ReasoningSupport.uiIndexOf(deepseek, ReasoningEffort.Medium))
+        assertEquals(2, ReasoningSupport.uiIndexOf(deepseek, ReasoningEffort.Max))
+
+        val openAi = ReasoningSupport.uiLevels(ReasoningFamily.OpenAiCompatible)
+        // 词汇扩充后 Max 在 OpenAI 列表末位（真实索引），不再吸附。
+        assertEquals(openAi.lastIndex, ReasoningSupport.uiIndexOf(openAi, ReasoningEffort.Max))
+        assertEquals(1, ReasoningSupport.uiIndexOf(openAi, ReasoningEffort.Off))
     }
 }

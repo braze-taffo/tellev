@@ -17,6 +17,13 @@ interface ProviderAdapter {
     suspend fun checkStatus(config: ProviderConfig): ProviderStatus
     suspend fun listModels(config: ProviderConfig): List<ProviderModel>
     fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk>
+
+    /**
+     * 适配器自家路由的上下文窗口上限（dsh contextWindow：adapter 声明的
+     * 容量）。只有握有权威数字的适配器覆写（如 Gemini 系列的固定窗）；
+     * 默认 null。调用方叠加：用户档案 > 知识库 > 本声明 > 预设值。
+     */
+    fun declaredContextWindow(config: ProviderConfig): Long? = null
 }
 
 /** OpenAI-shaped bodies exposed to request-time completion hooks. */

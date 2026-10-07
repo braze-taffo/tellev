@@ -19,7 +19,7 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 enum class ReasoningEffort {
-    Auto, Off, Low, Medium, High, Max;
+    Auto, Off, Minimal, Low, Medium, High, XHigh, Max;
 
     companion object {
         /** Parses a stored/settings string; unknown or blank values return null. */

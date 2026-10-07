@@ -149,9 +149,22 @@ class OpenAiCompatibleAdapter(
                 if (!response.isSuccessful) return@runCatching fallbackModels
                 val body = response.body?.string().orEmpty()
                 val data = json.parseToJsonElement(body).jsonObject["data"]?.jsonArray ?: JsonArray(emptyList())
+                val signals = EndpointSignalDetector.detectAll(data)
                 val models = data.mapNotNull { item ->
                     val modelId = item.jsonObject["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                    ProviderModel(id = modelId, capabilities = capabilities)
+                    // 端点披露的能力信号（reasoning/modalities/context）随模型携带，
+                    // 供思考档案自动适配与 UI 使用——此前整段丢弃。
+                    val signal = signals[modelId]
+                    ProviderModel(
+                        id = modelId,
+                        capabilities = capabilities,
+                        metadata = if (signal == null) JsonObject(emptyMap()) else buildJsonObject {
+                            signal.reasoning?.let { put("signal_reasoning", JsonPrimitive(it)) }
+                            signal.reasoningSource?.let { put("signal_source", JsonPrimitive(it)) }
+                            signal.input?.let { put("signal_input", JsonPrimitive(it.joinToString(","))) }
+                            signal.contextLength?.let { put("signal_context", JsonPrimitive(it)) }
+                        },
+                    )
                 }
                 models.ifEmpty { fallbackModels }
             }
@@ -341,13 +354,21 @@ class OpenAiCompatibleAdapter(
                     put("include_usage", JsonPrimitive(true))
                 })
             }
-            request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
-            request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
+            // o1/o3/o4 reasoning models accept only the default sampling values and
+            // answer 400 to any explicit temperature/top_p/penalty field, so a
+            // normal preset made every generation fail on them.
+            val reasoningOnlyModel = isOSeriesModel(config.model ?: defaultModel)
+            if (!reasoningOnlyModel) {
+                request.preset.temperature?.let { put("temperature", JsonPrimitive(it)) }
+                request.preset.topP?.let { put("top_p", JsonPrimitive(it)) }
+            }
             if (config.optionBoolean("supportsTopK") ?: supportsTopKByDefault) {
                 request.preset.topK?.let { put("top_k", JsonPrimitive(it)) }
             }
-            request.preset.presencePenalty?.let { put("presence_penalty", JsonPrimitive(it)) }
-            request.preset.frequencyPenalty?.let { put("frequency_penalty", JsonPrimitive(it)) }
+            if (!reasoningOnlyModel) {
+                request.preset.presencePenalty?.let { put("presence_penalty", JsonPrimitive(it)) }
+                request.preset.frequencyPenalty?.let { put("frequency_penalty", JsonPrimitive(it)) }
+            }
             // SillyTavern presets use -1 as the sentinel for a random seed.
             // OpenAI-compatible APIs generally accept only unsigned/non-negative
             // integers, so the sentinel means that the field must be omitted.
@@ -355,7 +376,10 @@ class OpenAiCompatibleAdapter(
             val maxTokens = request.prompt.maxTokens
                 ?: request.preset.maxCompletionTokens
                 ?: request.preset.maxTokens
-            val outputLengthField = config.optionString("maxTokensField") ?: maxTokensField
+            val configuredLengthField = config.optionString("maxTokensField") ?: maxTokensField
+            // o-series rejects "max_tokens" outright; only max_completion_tokens is valid.
+            val outputLengthField =
+                if (reasoningOnlyModel && configuredLengthField == "max_tokens") "max_completion_tokens" else configuredLengthField
             maxTokens?.let { put(outputLengthField, JsonPrimitive(it)) }
             val stopSeqs = request.preset.stop + request.prompt.stop
             if (stopSeqs.isNotEmpty()) {
@@ -372,10 +396,15 @@ class OpenAiCompatibleAdapter(
                 }
             }
 
-            if (providerId == ProviderCatalog.DEEPSEEK || config.optionBoolean("supportsReasoning") == true) {
-                val injection = ReasoningSupport.inject(
-                    family = ReasoningSupport.familyFor(providerId, config.options),
-                    effort = ReasoningSupport.effortFor(request),
+            // 显式档位（Off..Max）即使端点未声明 supportsReasoning 也要落到线上，
+            // 否则自定义端点上思考滑杆只是摆设；Auto 保持原直通语义。
+            val reasoningEffort = ReasoningSupport.effortFor(request)
+            if (providerId == ProviderCatalog.DEEPSEEK || config.optionBoolean("supportsReasoning") == true || reasoningEffort != app.tellev.core.model.ReasoningEffort.Auto) {
+                val injection = ReasoningSupport.injectWithProfile(
+                    family = ReasoningSupport.effectiveFamily(providerId, config.options, reasoningEffort),
+                    effort = reasoningEffort,
+                    modelId = config.model,
+                    profile = requestMetadataProfile(request),
                     raw = request.preset.raw,
                     maxTokens = maxTokens,
                 )
@@ -430,9 +459,11 @@ class OpenAiCompatibleAdapter(
                 put("tools", tools)
                 request.metadata["tool_choice"]?.let { put("tool_choice", it) }
             }
-            val reasoningInjection = ReasoningSupport.inject(
+            val reasoningInjection = ReasoningSupport.injectWithProfile(
                 family = ReasoningFamily.DeepSeek,
                 effort = ReasoningSupport.effortFor(request),
+                modelId = config.model,
+                profile = requestMetadataProfile(request),
                 raw = request.preset.raw,
                 maxTokens = maxTokens,
             )
@@ -446,6 +477,14 @@ class OpenAiCompatibleAdapter(
         }
 
     /** Legacy attachments carry base64 inline; file-backed ones are resolved through the data root. */
+    /** 请求 metadata 里携带的思考档案（生成链注入）；缺省 null。 */
+    private fun requestMetadataProfile(request: GenerateRequest): ModelReasoningProfile? {
+        val element = request.metadata["tellev_model_profile"] ?: return null
+        return runCatching {
+            json.decodeFromString(ModelReasoningProfile.serializer(), element.toString())
+        }.getOrNull()
+    }
+
     protected fun visionBase64(attachment: app.tellev.core.model.Attachment): String? {
         attachment.metadata["base64"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { return it }
         if (attachment.relativePath.isBlank()) return null
@@ -599,8 +638,15 @@ class OpenAiCompatibleAdapter(
             val obj = json.parseToJsonElement(data).jsonObject
             val choice = obj["choices"]?.jsonArray?.firstOrNull()?.jsonObject
             val message = choice?.get("message")?.jsonObject
-            val text = message?.get("content")?.jsonPrimitive?.contentOrNull.orEmpty()
-            val finishReason = choice?.get("finish_reason")?.jsonPrimitive?.contentOrNull
+            val text = when (val value = message?.get("content")) {
+                null, is JsonNull -> ""
+                is JsonPrimitive -> value.contentOrNull.orEmpty()
+                is JsonArray -> value.mapNotNull { part ->
+                    ((part as? JsonObject)?.get("text") as? JsonPrimitive)?.contentOrNull
+                }.joinToString("")
+                else -> ""
+            }
+            val finishReason = (choice?.get("finish_reason") as? JsonPrimitive)?.contentOrNull
 
             // Include reasoning if present
             val reasoning = message?.get("reasoning_content")?.jsonPrimitive?.contentOrNull.orEmpty()
@@ -651,6 +697,10 @@ class OpenAiCompatibleAdapter(
 
     private fun ProviderConfig.optionString(key: String): String? =
         (options[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+
+    /** `o1`, `o3-mini`, `o4-mini`, also behind a vendor prefix (`openai/o3`). */
+    private fun isOSeriesModel(model: String?): Boolean =
+        model != null && Regex("(^|/)o[0-9]+(-|\$)", RegexOption.IGNORE_CASE).containsMatchIn(model.trim())
 
     private fun ProviderConfig.optionBoolean(key: String): Boolean? =
         (options[key] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
