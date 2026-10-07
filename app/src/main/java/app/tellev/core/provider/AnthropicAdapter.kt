@@ -75,7 +75,16 @@ class AnthropicAdapter(
             .filter { it.role == MessageRole.System }
             .joinToString("\n\n") { it.content }
             .takeIf { it.isNotBlank() }
-        val conversationMessages = request.prompt.messages.filter { it.role != MessageRole.System }
+        val conversationMessages = request.prompt.messages
+            .filter { it.role != MessageRole.System }
+            .let { turns ->
+                // A fresh chat's first history message is the character greeting
+                // (assistant). The Messages API answers 400 unless the first
+                // message is a user turn, so lead with SillyTavern's marker.
+                if (turns.isNotEmpty() && turns.first().role != MessageRole.User) {
+                    listOf(app.tellev.core.prompt.PromptMessage(MessageRole.User, content = "[Start a new Chat]")) + turns
+                } else turns
+            }
 
         // Engine-resolved output budget; extended-thinking budgets must stay
         // below it, so resolve the unified reasoning injection up front.
@@ -111,8 +120,8 @@ class AnthropicAdapter(
             if (systemMessage != null) {
                 put("system", JsonPrimitive(systemMessage))
             }
-            if (request.preset.stop.isNotEmpty()) {
-                put("stop_sequences", buildJsonArray { request.preset.stop.forEach { add(JsonPrimitive(it)) } })
+            if ((request.preset.stop + request.prompt.stop).isNotEmpty()) {
+                put("stop_sequences", buildJsonArray { (request.preset.stop + request.prompt.stop).distinct().forEach { add(JsonPrimitive(it)) } })
             }
             put("messages", buildJsonArray {
                 val lastUserIndex = conversationMessages.indexOfLast { it.role == MessageRole.User }
@@ -123,7 +132,7 @@ class AnthropicAdapter(
                         // attachments went silently missing. Encode them into the
                         // final user turn, mirroring the OpenAI/Gemini adapters.
                         val images = if (index == lastUserIndex) {
-                            request.attachments.mapNotNull { attachment ->
+                            request.attachments.filter { it.mimeType.startsWith("image/") }.mapNotNull { attachment ->
                                 val base64 = visionBase64(attachment) ?: return@mapNotNull null
                                 buildJsonObject {
                                     put("type", JsonPrimitive("image"))

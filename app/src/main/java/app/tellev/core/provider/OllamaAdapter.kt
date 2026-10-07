@@ -39,6 +39,7 @@ class OllamaAdapter(
     override suspend fun checkStatus(config: ProviderConfig): ProviderStatus {
         val request = Request.Builder()
             .url(config.baseUrl.trimEnd('/') + "/api/tags")
+            .apply { config.headers.forEach { (k, v) -> header(k, v) } }
             .get()
             .build()
         return runCatching {
@@ -56,6 +57,7 @@ class OllamaAdapter(
     override suspend fun listModels(config: ProviderConfig): List<ProviderModel> {
         val request = Request.Builder()
             .url(config.baseUrl.trimEnd('/') + "/api/tags")
+            .apply { config.headers.forEach { (k, v) -> header(k, v) } }
             .get()
             .build()
         return runCatching {
@@ -82,8 +84,8 @@ class OllamaAdapter(
                 // Engine-resolved budget: honor maxCompletionTokens, not just maxTokens.
                 (request.prompt.maxTokens ?: request.preset.maxCompletionTokens ?: request.preset.maxTokens)
                     ?.let { put("num_predict", JsonPrimitive(it)) }
-                if (request.preset.stop.isNotEmpty()) {
-                    put("stop", buildJsonArray { request.preset.stop.forEach { add(JsonPrimitive(it)) } })
+                if ((request.preset.stop + request.prompt.stop).isNotEmpty()) {
+                    put("stop", buildJsonArray { (request.preset.stop + request.prompt.stop).distinct().forEach { add(JsonPrimitive(it)) } })
                 }
             })
             put("messages", buildJsonArray {
@@ -101,7 +103,7 @@ class OllamaAdapter(
                         }))
                         put("content", JsonPrimitive(msg.content))
                         if (index == lastUserIndex) {
-                            val images = request.attachments.mapNotNull { visionBase64(it) }
+                            val images = request.attachments.filter { it.mimeType.startsWith("image/") }.mapNotNull { visionBase64(it) }
                             if (images.isNotEmpty()) {
                                 put("images", JsonArray(images.map { JsonPrimitive(it) }))
                             }

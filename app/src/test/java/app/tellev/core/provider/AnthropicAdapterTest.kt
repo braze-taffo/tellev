@@ -150,6 +150,76 @@ class AnthropicAdapterTest {
         assertTrue(capturedBody.contains("\"max_tokens\":77"))
     }
 
+    @Test
+    fun `fresh chat starting with a character greeting still leads with a user turn`() = runBlocking {
+        var capturedBody = ""
+        val adapter = AnthropicAdapter(client = client { chain ->
+            capturedBody = Buffer().also { chain.request().body?.writeTo(it) }.readUtf8()
+            response(chain, 200, """{"content":[{"type":"text","text":"ok"}]}""")
+        })
+        val prompt = PromptBuildResult(
+            messages = listOf(
+                PromptMessage(MessageRole.System, content = "card"),
+                PromptMessage(MessageRole.Assistant, content = "Hello, traveller."),
+                PromptMessage(MessageRole.User, content = "hi"),
+            ),
+            stop = emptyList(),
+            maxTokens = 77,
+            providerType = ProviderCatalog.ANTHROPIC,
+            diagnostics = PromptDiagnostics(activatedWorldEntryIds = emptyList()),
+        )
+        adapter.streamGenerate(
+            config(),
+            GenerateRequest(prompt = prompt, preset = GenerationPreset("p", "p", ProviderCatalog.ANTHROPIC)),
+        ).toList()
+
+        val messages = Json.parseToJsonElement(capturedBody).jsonObject["messages"]!!.jsonArray
+        // The Messages API answers 400 unless the first message is a user turn.
+        assertEquals("user", messages[0].jsonObject["role"]!!.jsonPrimitive.content)
+        assertEquals("assistant", messages[1].jsonObject["role"]!!.jsonPrimitive.content)
+        assertEquals("Hello, traveller.", messages[1].jsonObject["content"]!!.jsonPrimitive.content)
+        assertEquals("user", messages[2].jsonObject["role"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `non image attachments are not encoded as image blocks and instruct stops are sent`() = runBlocking {
+        var capturedBody = ""
+        val adapter = AnthropicAdapter(
+            client = client { chain ->
+                capturedBody = Buffer().also { chain.request().body?.writeTo(it) }.readUtf8()
+                response(chain, 200, """{"content":[{"type":"text","text":"ok"}]}""")
+            },
+            resolveAttachmentBytes = { "bytes".toByteArray() },
+        )
+        val prompt = PromptBuildResult(
+            messages = listOf(PromptMessage(MessageRole.User, content = "see file")),
+            stop = listOf("<|im_end|>"),
+            maxTokens = 77,
+            providerType = ProviderCatalog.ANTHROPIC,
+            diagnostics = PromptDiagnostics(activatedWorldEntryIds = emptyList()),
+        )
+        adapter.streamGenerate(
+            config(),
+            GenerateRequest(
+                prompt = prompt,
+                preset = GenerationPreset("p", "p", ProviderCatalog.ANTHROPIC, stop = listOf("END")),
+                attachments = listOf(
+                    app.tellev.core.model.Attachment(
+                        id = "a1", name = "notes.pdf", mimeType = "application/pdf",
+                        relativePath = "user/files/a1.pdf",
+                    ),
+                ),
+            ),
+        ).toList()
+
+        val payload = Json.parseToJsonElement(capturedBody).jsonObject
+        val content = payload["messages"]!!.jsonArray[0].jsonObject["content"]!!
+        // No image block: the content stays a plain string.
+        assertEquals("see file", content.jsonPrimitive.content)
+        val stops = payload["stop_sequences"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("END", "<|im_end|>"), stops)
+    }
+
     private fun prompt() = PromptBuildResult(
         messages = listOf(PromptMessage(MessageRole.User, content = "hello")),
         stop = emptyList(),

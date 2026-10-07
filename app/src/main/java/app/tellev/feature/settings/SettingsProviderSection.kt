@@ -1,18 +1,27 @@
 package app.tellev.feature.settings
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -39,12 +48,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import app.tellev.R
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
@@ -311,68 +324,48 @@ internal fun LazyListScope.providerDetailsItems(
     }
 
     item(key = "provider_model") {
-        var modelMenuExpanded by remember { mutableStateOf(false) }
+        var pickerOpen by remember { mutableStateOf(false) }
         val availableModels = remember(state.availableModels) {
             state.availableModels.distinct()
         }
-        val modelFilter = state.model.takeUnless { current ->
-            availableModels.any { it == current }
-        }.orEmpty()
-        val matchingModels = remember(availableModels, modelFilter) {
-            if (modelFilter.isBlank()) {
-                availableModels
-            } else {
-                availableModels.filter { it.contains(modelFilter, ignoreCase = true) }
-            }
-        }
-
-        ExposedDropdownMenuBox(
-            expanded = modelMenuExpanded && matchingModels.isNotEmpty(),
-            onExpandedChange = {
-                modelMenuExpanded = it && availableModels.isNotEmpty()
+        OutlinedTextField(
+            value = state.model,
+            onValueChange = { viewModel.updateModel(it) },
+            label = { Text(stringResource(R.string.setprov_model_label)) },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text(stringResource(R.string.setprov_model_placeholder)) },
+            supportingText = {
+                Text(
+                    if (availableModels.isEmpty()) {
+                        stringResource(R.string.setprov_model_help_empty)
+                    } else {
+                        stringResource(R.string.setprov_model_help_count, availableModels.size)
+                    },
+                )
             },
-        ) {
-            OutlinedTextField(
-                value = state.model,
-                onValueChange = {
-                    viewModel.updateModel(it)
-                    modelMenuExpanded = availableModels.isNotEmpty()
-                },
-                label = { Text(stringResource(R.string.setprov_model_label)) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .menuAnchor(MenuAnchorType.PrimaryEditable),
-                singleLine = true,
-                placeholder = { Text(stringResource(R.string.setprov_model_placeholder)) },
-                trailingIcon = {
-                    if (availableModels.isNotEmpty()) {
-                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelMenuExpanded)
+            trailingIcon = {
+                if (availableModels.isNotEmpty()) {
+                    IconButton(onClick = { pickerOpen = true }) {
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = stringResource(R.string.setprov_model_pick))
                     }
-                },
-                supportingText = {
-                    Text(
-                        if (availableModels.isEmpty()) {
-                            stringResource(R.string.setprov_model_help_empty)
-                        } else {
-                            stringResource(R.string.setprov_model_help_count, availableModels.size)
-                        },
-                    )
-                },
-            )
-            ExposedDropdownMenu(
-                expanded = modelMenuExpanded && matchingModels.isNotEmpty(),
-                onDismissRequest = { modelMenuExpanded = false },
-            ) {
-                matchingModels.take(100).forEach { model ->
-                    DropdownMenuItem(
-                        text = { Text(model) },
-                        onClick = {
-                            viewModel.updateModel(model)
-                            modelMenuExpanded = false
-                        },
-                    )
                 }
-            }
+            },
+        )
+        if (pickerOpen && availableModels.isNotEmpty()) {
+            SettingsModelPickerPopup(
+                availableModels = availableModels,
+                currentModel = state.model,
+                manualLabel = UiStrings.get(S.model_group_manual),
+                manualPlaceholder = UiStrings.get(S.model_picker_manual),
+                applyLabel = UiStrings.get(S.model_picker_apply),
+                searchPlaceholder = UiStrings.get(S.model_picker_search),
+                onSelect = {
+                    viewModel.updateModel(it)
+                    pickerOpen = false
+                },
+                onDismiss = { pickerOpen = false },
+            )
         }
     }
 
@@ -421,7 +414,7 @@ internal fun LazyListScope.providerDetailsItems(
 
     if (state.providerStatus != null) {
         item(key = "provider_status") {
-            val status = state.providerStatus!!
+            val status = state.providerStatus ?: return@item
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -441,6 +434,131 @@ internal fun LazyListScope.providerDetailsItems(
                         style = MaterialTheme.typography.bodySmall,
                         color = if (status.available) MaterialTheme.colorScheme.onPrimaryContainer
                         else MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * DSH 风格模型选择弹层：搜索 + 可滚列表（当前模型对勾）+ 底部手动输入行。
+ * 替换原 ExposedDropdownMenuBox「截断 100 条」的旧选择器。
+ */
+@Composable
+internal fun SettingsModelPickerPopup(
+    availableModels: List<String>,
+    currentModel: String,
+    manualLabel: String,
+    manualPlaceholder: String,
+    applyLabel: String,
+    searchPlaceholder: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    var manual by remember(currentModel) { mutableStateOf(currentModel) }
+    Popup(
+        alignment = Alignment.BottomCenter,
+        offset = androidx.compose.ui.unit.IntOffset(0, -with(androidx.compose.ui.platform.LocalDensity.current) { 96.dp.roundToPx() }),
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true),
+    ) {
+        Column(
+            modifier = Modifier
+                .width(312.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(12.dp),
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                placeholder = { Text(searchPlaceholder, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(6.dp))
+            val visible = remember(availableModels, query) {
+                if (query.isBlank()) availableModels
+                else availableModels.filter { it.contains(query.trim(), ignoreCase = true) }
+            }
+            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 340.dp)) {
+                items(visible.size, key = { visible[it] }) { index ->
+                    val model = visible[index]
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                if (model == currentModel) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                                else androidx.compose.ui.graphics.Color.Transparent,
+                                RoundedCornerShape(10.dp),
+                            )
+                            .clickable { onSelect(model) }
+                            .padding(horizontal = 14.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            model,
+                            fontSize = 15.sp,
+                            fontWeight = if (model == currentModel) FontWeight.SemiBold else FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (model == currentModel) {
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    }
+                }
+                if (visible.isEmpty()) {
+                    item {
+                        Text(
+                            stringResource(R.string.setprov_model_help_empty),
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        )
+                    }
+                }
+            }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            Text(
+                manualLabel,
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 14.dp, bottom = 4.dp),
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = manual,
+                    onValueChange = { manual = it },
+                    singleLine = true,
+                    placeholder = { Text(manualPlaceholder, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    shape = RoundedCornerShape(10.dp),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface),
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                androidx.compose.material3.Surface(
+                    onClick = { onSelect(manual.trim()) },
+                    enabled = manual.isNotBlank() && manual.trim() != currentModel,
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                ) {
+                    Text(
+                        applyLabel,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                     )
                 }
             }

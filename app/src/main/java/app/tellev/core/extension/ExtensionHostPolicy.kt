@@ -3,13 +3,47 @@ package app.tellev.core.extension
 import java.net.URI
 import java.security.MessageDigest
 
+/**
+ * Collapses the path forms that can smuggle a protected prefix past a literal
+ * `startsWith` check: duplicate slashes (`/api//secrets`) and dot segments
+ * (`/api/./secrets`, `/api/x/../secrets`). Applied by BOTH the permission
+ * gate and the router so the two can never disagree — the gate used to
+ * compare the raw path while the router split on `/` and dropped empty
+ * segments, letting an undeclared module reach `/api//secrets/<id>` with no
+ * permission at all. Percent escapes are deliberately NOT decoded: the router
+ * matches raw segments, and decoding here (plus '+'→space form decoding)
+ * would change which id strings handlers receive.
+ */
+internal fun normalizeApiPath(rawPath: String): String {
+    val pathOnly = rawPath.substringBefore('?').substringBefore('#')
+    val segments = pathOnly.split('/')
+        .mapNotNull { segment -> segment.takeIf { it.isNotEmpty() && it != "." } }
+        .toMutableList()
+    var index = 0
+    while (index < segments.size) {
+        if (segments[index] == "..") {
+            segments.removeAt(index)
+            if (index > 0) {
+                index--
+                segments.removeAt(index)
+            }
+        } else {
+            index++
+        }
+    }
+    // Keep the original case: the router matches raw segment ids (chat ids,
+    // character ids, secret ids). Case folding happens only where the OLD
+    // gate did it — inside requiredExtensionPermissionForPath.
+    return "/" + segments.joinToString("/")
+}
+
 /** Permission required by the native virtual API route, if any. */
 internal fun requiredExtensionPermissionForPath(rawPath: String): ExtensionPermission? {
     val path = runCatching { URI(rawPath).path }
         .getOrNull()
         ?.takeIf { it.isNotBlank() }
         ?: rawPath.substringBefore('?').substringBefore('#')
-    val normalized = if (path.startsWith('/')) path.lowercase() else "/${path.lowercase()}"
+    val normalized = normalizeApiPath(path).lowercase()
     return when {
         normalized == "/api/secrets" || normalized.startsWith("/api/secrets/") ->
             ExtensionPermission.Secrets

@@ -301,13 +301,14 @@ class VirtualApiRouter(
             method == "GET" && segments.size == 1 && segments[0] == "tags" ->
                 jsonResponse(200, buildJsonObject { putJsonArray("tags") { } }, json)
 
-            // ── worldinfo create / save / delete (stub) ────────────
+            // ── worldinfo create / save / delete（官方契约：create/save 同 edit
+            //    整体写入，delete 删除文件；不再返回 501 stub） ────────────
             method == "POST" && segments.size == 2 && segments[0] == "worldinfo" && segments[1] == "create" ->
-                errorResponse(501, "World Info create via virtual API is not supported; use the UI layer", json)
+                worldBookHandler.handleStEditWorldInfo(request)
             method == "POST" && segments.size == 2 && segments[0] == "worldinfo" && segments[1] == "save" ->
-                errorResponse(501, "World Info save via virtual API is not supported; use the UI layer", json)
+                worldBookHandler.handleStEditWorldInfo(request)
             method == "POST" && segments.size == 2 && segments[0] == "worldinfo" && segments[1] == "delete" ->
-                errorResponse(501, "World Info delete via virtual API is not supported; use the UI layer", json)
+                worldBookHandler.handleStDeleteWorldInfo(request)
 
             else ->
                 errorResponse(404, "No route for $method $path", json)

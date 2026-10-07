@@ -36,7 +36,11 @@ internal fun errorResponse(status: Int, message: String, json: Json): VirtualApi
 
 internal fun normalizePath(raw: String): String {
     val pathOnly = raw.substringBefore('?')
-    return if (pathOnly.startsWith("/")) pathOnly else "/$pathOnly"
+    // Delegate to the gate's segment-collapsing normalization so the router and
+    // the permission gate always see the same path. A literal passthrough let
+    // `/api//secrets/k1` reach the secrets handler while the gate (which used
+    // to compare raw prefixes) saw no protected prefix at all.
+    return app.tellev.core.extension.normalizeApiPath(pathOnly)
 }
 
 internal fun parseSimpleQuery(path: String): Map<String, String> {

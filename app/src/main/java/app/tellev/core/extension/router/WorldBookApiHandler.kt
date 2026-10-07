@@ -13,6 +13,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.readText
@@ -73,7 +74,10 @@ internal class WorldBookApiHandler(
             ?: bodyObj?.get("wim_name")?.jsonPrimitive?.content
             ?: return errorResponse(400, "Missing name", json)
         val file = safeStorageChild(dataStore.layout.worlds, name, ".json")
-        if (!file.exists()) return errorResponse(404, "World info not found: $name", json)
+        // 官方契约：文件不存在返回 200 {entries:{}}，不是 404。
+        if (!file.exists()) {
+            return jsonResponse(200, buildJsonObject { putJsonObject("entries") { } }, json)
+        }
         val raw = runCatching { json.parseToJsonElement(file.readText()) as? JsonObject }.getOrNull()
             ?: return errorResponse(500, "Failed to read world info: $name", json)
         return jsonResponse(200, raw, json)
@@ -110,5 +114,19 @@ internal class WorldBookApiHandler(
         // nothing and vanishes from the list.
         dataStore.saveWorldBookRawJson(name, data)
         return jsonResponse(200, buildJsonObject { put("name", name) }, json)
+    }
+
+    /**
+     * POST /api/worldinfo/delete { name } — official contract: deletes the file;
+     * a missing file is an error (delete is not idempotent upstream).
+     */
+    suspend fun handleStDeleteWorldInfo(request: VirtualApiRequest): VirtualApiResponse {
+        val body = parseBodyAsJsonObject(request, json)
+        val name = body.stringValue("name")?.takeIf { it.isNotBlank() }
+            ?: return errorResponse(400, "Missing name", json)
+        val file = safeStorageChild(dataStore.layout.worlds, name, ".json")
+        if (!file.exists()) return errorResponse(404, "World info not found: $name", json)
+        dataStore.deleteWorldBook(name)
+        return jsonResponse(200, buildJsonObject { put("ok", true) }, json)
     }
 }

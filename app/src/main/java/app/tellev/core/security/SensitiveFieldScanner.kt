@@ -32,6 +32,28 @@ object SensitiveFieldScanner {
     )
 
     /**
+     * Fields that carry content hashes or fingerprints, not secrets. The
+     * shape rule above (40+ alphanumerics) matches every SHA-256 hex digest,
+     * and backup export sanitizes every .json it ships: without this exclusion
+     * a backup round-trip rewrote memory `processed` hashes and script-consent
+     * fingerprints to "[REDACTED]", so the first prompt after a restore wiped
+     * long-term memory and re-asked every script consent.
+     */
+    private val hashLikeKeys = setOf(
+        "processed",
+        "fingerprint",
+        "sha256",
+        "sha_256",
+        "sha-256",
+        "sha1",
+        "sha-1",
+        "checksum",
+        "digest",
+        "hash",
+        "tellev_card_fingerprint",
+    )
+
+    /**
      * Scans a JsonObject for sensitive fields and returns their paths.
      * Returns a list of dotted paths like "extensions.api_key" or "data.secret".
      */
@@ -55,7 +77,11 @@ object SensitiveFieldScanner {
     fun looksLikeSecret(key: String, value: String): Boolean {
         val normalizedKey = key.lowercase()
         if (sensitiveKeys.contains(normalizedKey)) {
+            // An explicit secret key wins even when it also looks like a hash field.
             return true
+        }
+        if (normalizedKey in hashLikeKeys) {
+            return false
         }
         return sensitiveValuePatterns.any { it.matches(value) }
     }
@@ -89,13 +115,24 @@ object SensitiveFieldScanner {
         }
     }
 
+    /**
+     * A value under a hash-like parent (e.g. `processed: {messageId: sha256}`)
+     * is exempt even though its own key is an arbitrary id, unless that key
+     * itself names a secret.
+     */
+    private fun shouldRedact(parentKey: String, childKey: String, value: String): Boolean {
+        if (!looksLikeSecret(childKey, value)) return false
+        val parentIsHash = parentKey.lowercase() in hashLikeKeys
+        return !(parentIsHash && childKey.lowercase() !in sensitiveKeys)
+    }
+
     private fun sanitizeRecursive(obj: JsonObject): JsonObject =
         sanitizeElement(obj, "") as JsonObject
 
     private fun sanitizeElement(element: JsonElement, key: String): JsonElement = when (element) {
         is JsonObject -> buildJsonObject {
             for ((childKey, child) in element) {
-                put(childKey, if (child is JsonPrimitive && child.isString && looksLikeSecret(childKey, child.content)) {
+                put(childKey, if (child is JsonPrimitive && child.isString && shouldRedact(key, childKey, child.content)) {
                     JsonPrimitive("[REDACTED]")
                 } else {
                     sanitizeElement(child, childKey)

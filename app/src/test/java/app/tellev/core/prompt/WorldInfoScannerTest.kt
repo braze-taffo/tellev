@@ -204,8 +204,10 @@ class WorldInfoScannerTest {
         val d2 = entry("d2", keys = listOf("lvl2"), content = "lvl2 lore", delayUntilRecursion = 2)
         // Full run: d1 at level 1, d2 at level 2.
         assertEquals(setOf("a", "d1", "d2"), ids(scan(listOf(a, d1, d2), "start").allActivated))
-        // Capped at one recursion pass: d2 is not eligible yet.
-        assertEquals(setOf("a", "d1"), ids(scan(listOf(a, d1, d2), "start", maxRecursion = 1).allActivated))
+        // 步数预算含首扫（ST 语义）：cap=1 只有首扫，无递归；cap=2 首扫 + 一次
+        // 递归（level 1），d2 要到 level 2 需要 cap=3。
+        assertEquals(setOf("a"), ids(scan(listOf(a, d1, d2), "start", maxRecursion = 1).allActivated))
+        assertEquals(setOf("a", "d1"), ids(scan(listOf(a, d1, d2), "start", maxRecursion = 2).allActivated))
     }
 
     @Test
@@ -215,8 +217,9 @@ class WorldInfoScannerTest {
         val d2 = entry("d2", keys = listOf("lvl2"), content = "lvl2 lore", delayUntilRecursion = 2)
         // "lvl2" is present in the initial scan text, but d2 must still wait
         // for recursion level 2 — it must not activate in earlier passes.
-        assertEquals(setOf("a", "d1"), ids(scan(listOf(a, d1, d2), "start lvl2", maxRecursion = 1).allActivated))
-        assertEquals(setOf("a", "d1", "d2"), ids(scan(listOf(a, d1, d2), "start lvl2", maxRecursion = 2).allActivated))
+        assertEquals(setOf("a"), ids(scan(listOf(a, d1, d2), "start lvl2", maxRecursion = 1).allActivated))
+        assertEquals(setOf("a", "d1"), ids(scan(listOf(a, d1, d2), "start lvl2", maxRecursion = 2).allActivated))
+        assertEquals(setOf("a", "d1", "d2"), ids(scan(listOf(a, d1, d2), "start lvl2", maxRecursion = 3).allActivated))
     }
 
     // ── position bucketing ───────────────────────────────────────────────

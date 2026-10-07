@@ -89,7 +89,10 @@ internal object WorldBookCodec {
                 book.entries.forEachIndexed { index, entry ->
                     val merged = mutableMapOf<String, JsonElement>()
                     merged.putAll(entry.raw)
-                    merged["uid"] = entry.raw["uid"] ?: JsonPrimitive(entry.id.toIntOrNull() ?: nextUid++)
+                    val uidValue = entry.raw["uid"]?.let { (it as? JsonPrimitive)?.content?.toIntOrNull() }
+                        ?: entry.id.toIntOrNull()
+                        ?: nextUid++
+                    merged["uid"] = JsonPrimitive(uidValue)
                     merged["key"] = JsonArray(entry.keys.map { JsonPrimitive(it) })
                     merged["keysecondary"] = JsonArray(entry.secondaryKeys.map { JsonPrimitive(it) })
                     merged["content"] = JsonPrimitive(entry.content)
@@ -121,7 +124,10 @@ internal object WorldBookCodec {
                     }
                     if (!merged.containsKey("displayIndex")) merged["displayIndex"] = JsonPrimitive(index)
                     if (!merged.containsKey("extensions")) merged["extensions"] = buildJsonObject { }
-                    put(index.toString(), JsonObject(merged))
+                    // ST 用 data.entries[uid] 寻址条目：对象键必须是 uid 本身。
+                    // 旧版按列表 index 写键却保留原 uid，稀疏 UID 的书保存后
+                    // 在 ST / 扩展侧直接错位。
+                    put(uidValue.toString(), JsonObject(merged))
                 }
             }
         }

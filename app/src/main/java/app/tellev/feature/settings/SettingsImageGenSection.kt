@@ -302,7 +302,7 @@ internal fun LazyListScope.imageGenDetailsItems(
     }
     if (state.comfyStatus != null) {
         item(key = "comfy_status") {
-            val status = state.comfyStatus!!
+            val status = state.comfyStatus ?: return@item
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -438,7 +438,7 @@ internal fun LazyListScope.imageGenDetailsItems(
     }
     if (state.novelAiStatus != null) {
         item(key = "novelai_status") {
-            val status = state.novelAiStatus!!
+            val status = state.novelAiStatus ?: return@item
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(

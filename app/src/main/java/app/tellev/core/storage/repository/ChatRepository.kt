@@ -36,6 +36,7 @@ import java.util.UUID
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
 import kotlin.io.path.nameWithoutExtension
 import kotlin.io.path.readText
 
@@ -57,9 +58,11 @@ internal class ChatRepository(
         }
         val reader = ChatSessionSummaryReader(json)
         roots.flatMap { root ->
+            // 会话归属=所在目录名（chats/<characterId>/）；群聊目录与 chats 根不视作角色卡。
+            val owner = if (root.parent == layout.chats) root.name else null
             if (!root.exists()) emptyList() else root.listDirectoryEntries("*.jsonl").mapNotNull { path ->
                 try {
-                    reader.read(path)
+                    reader.read(path, owner)
                 } catch (error: Exception) {
                     // 并发删除的会话直接跳过；损坏的会话隔离后跳过（M8），
                     // 不再让单个坏文件拖垮整个列表。

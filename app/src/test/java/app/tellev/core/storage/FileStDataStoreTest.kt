@@ -306,7 +306,8 @@ class FileStDataStoreTest {
         val saved = FileStDataStore.defaultJson
             .parseToJsonElement(layout.worlds.resolve("raw_preserve.json").readText())
             .jsonObject
-        val entry = saved["entries"]!!.jsonObject["0"]!!.jsonObject
+        // ST 契约：对象键 = uid（42），不是列表 index（0）。
+        val entry = saved["entries"]!!.jsonObject["42"]!!.jsonObject
         assertEquals("9", saved["scan_depth"]!!.jsonPrimitive.content)
         assertEquals("42", entry["uid"]!!.jsonPrimitive.content)
         assertEquals("37", entry["probability"]!!.jsonPrimitive.content)

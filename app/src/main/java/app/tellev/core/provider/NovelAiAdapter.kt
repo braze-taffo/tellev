@@ -78,8 +78,8 @@ class NovelAiAdapter(
                 // Engine-resolved budget: honor maxCompletionTokens, not just maxTokens.
                 (request.prompt.maxTokens ?: request.preset.maxCompletionTokens ?: request.preset.maxTokens)
                     ?.let { put("max_length", JsonPrimitive(it)) }
-                if (request.preset.stop.isNotEmpty()) {
-                    put("stop_sequences", buildJsonArray { request.preset.stop.forEach { add(JsonPrimitive(it)) } })
+                if ((request.preset.stop + request.prompt.stop).isNotEmpty()) {
+                    put("stop_sequences", buildJsonArray { (request.preset.stop + request.prompt.stop).distinct().forEach { add(JsonPrimitive(it)) } })
                 }
             })
         }

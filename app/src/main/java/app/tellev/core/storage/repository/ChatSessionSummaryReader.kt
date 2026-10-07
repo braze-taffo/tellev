@@ -13,14 +13,17 @@ import kotlin.io.path.nameWithoutExtension
 
 /** Reads the header and tail, without decoding or migrating inactive histories. */
 internal class ChatSessionSummaryReader(private val json: Json) {
-    fun read(path: Path): ChatSessionSummary {
+    fun read(path: Path, characterId: String? = null): ChatSessionSummary {
         val id = path.nameWithoutExtension
         val header = path.toFile().bufferedReader(Charsets.UTF_8).use { reader ->
             generateSequence { reader.readLine() }.firstOrNull { it.isNotBlank() }
         }?.let { runCatching { json.parseToJsonElement(it) as? JsonObject }.getOrNull() }
+        val chatMetadata = header?.get("chat_metadata") as? JsonObject
         val title = if (header?.containsKey("user_name") == true) {
-            ((header["chat_metadata"] as? JsonObject)?.get("title") as? JsonPrimitive)?.content ?: id
+            (chatMetadata?.get("title") as? JsonPrimitive)?.content ?: id
         } else id
+        val parentId = (chatMetadata?.get("tellev_parent_session") as? JsonPrimitive)
+            ?.content?.takeIf { it.isNotBlank() }
         val lastTime = RandomAccessFile(path.toFile(), "r").use { file ->
             reverseLines(file).firstNotNullOfOrNull { line ->
                 if (line.isBlank()) return@firstNotNullOfOrNull null
@@ -30,7 +33,7 @@ internal class ChatSessionSummaryReader(private val json: Json) {
                 if (message.isGeneratedImage()) null else message.createdAtMillis
             } ?: 0L
         }
-        return ChatSessionSummary(id, title, lastTime)
+        return ChatSessionSummary(id, title, lastTime, parentId, characterId)
     }
 
     // Reverse bytes only to find LF boundaries; decode UTF-8 after restoring order.

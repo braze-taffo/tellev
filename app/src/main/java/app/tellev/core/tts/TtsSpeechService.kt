@@ -113,20 +113,18 @@ class TtsSpeechService(
         requestJob = currentCoroutineContext()[Job]
         mutableRequestingId.value = playbackId
         try {
-            var file = withContext(Dispatchers.IO) { cache.get(cleanText, values) }
+            // 音色/模型先收敛成生效值（customVoice/customModel 覆盖预设值），
+            // 缓存键与请求载荷共用同一视图，端点变了缓存键也随之分开。
+            val effective = values.normalized()
+            var file = withContext(Dispatchers.IO) { cache.get(cleanText, effective) }
             if (file == null) {
-                val selectedId = secrets.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
-                    ?: ProviderCatalog.OPENAI_COMPATIBLE
-                if (ProviderConfigPersistence.adapterIdFor(selectedId) != ProviderCatalog.OPENAI_COMPATIBLE) {
-                    return Result.failure(TtsFailure.ProviderNotConfigured.asException())
-                }
+                val config = speechConfig(values) ?: return Result.failure(TtsFailure.ProviderNotConfigured.asException())
                 val adapter = providers.find(ProviderCatalog.OPENAI_SPEECH)
                     ?: return Result.failure(TtsFailure.ProviderUnavailable.asException())
-                val rawConfig = ProviderConfigPersistence.loadProviderConfig(secrets, selectedId)
-                val config = TtsRequestPayload.normalizeConfig(rawConfig).copy(model = values.model)
-                val payload = TtsRequestPayload(cleanText, values.model, values.voice, values.speed, values.format)
+                val normalized = TtsRequestPayload.normalizeConfig(config).copy(model = effective.model)
+                val payload = TtsRequestPayload(cleanText, effective.model, effective.voice, effective.speed, effective.format)
                 var failure: TtsFailure? = null
-                adapter.streamGenerate(config, payload.toRequest(config)).collect { chunk ->
+                adapter.streamGenerate(normalized, payload.toRequest(normalized)).collect { chunk ->
                     when (chunk) {
                         is GenerateChunk.Completed -> {
                             val bytes = try {
@@ -136,7 +134,7 @@ class TtsSpeechService(
                                 return@collect
                             }
                             if (bytes.isEmpty()) failure = TtsFailure.NoAudio
-                            else file = withContext(Dispatchers.IO) { cache.put(cleanText, values, bytes) }
+                            else file = withContext(Dispatchers.IO) { cache.put(cleanText, effective, bytes) }
                         }
                         is GenerateChunk.Failed -> failure = when (chunk.error.code) {
                             "openai_speech_empty" -> TtsFailure.NoAudio
@@ -194,6 +192,25 @@ class TtsSpeechService(
     }
 
     fun release() { stop(); player.release() }
+
+    /**
+     * 语音端点选择：TTS 设置里 baseUrl 非空 → 用独立的自定义端点（apiKey 同理，
+     * 留空则不带 Authorization）；否则回退聊天服务商（沿袭原约束：必须是 OpenAI
+     * 兼容适配器）。/v1 收缩与鉴权头仍由 [TtsRequestPayload.normalizeConfig] 统一处理。
+     */
+    private suspend fun speechConfig(values: TtsSettingsValues): ProviderConfig? {
+        if (values.hasCustomEndpoint) {
+            return ProviderConfig(
+                providerType = ProviderCatalog.OPENAI_COMPATIBLE,
+                baseUrl = values.baseUrl,
+                apiKey = values.apiKey.takeIf { it.isNotBlank() },
+            )
+        }
+        val selectedId = secrets.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
+            ?: ProviderCatalog.OPENAI_COMPATIBLE
+        if (ProviderConfigPersistence.adapterIdFor(selectedId) != ProviderCatalog.OPENAI_COMPATIBLE) return null
+        return ProviderConfigPersistence.loadProviderConfig(secrets, selectedId)
+    }
 
     companion object {
         fun stablePlaybackId(text: String): String = TtsCache.sha256Key(text)

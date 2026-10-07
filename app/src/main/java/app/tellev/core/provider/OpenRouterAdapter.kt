@@ -41,7 +41,7 @@ class OpenRouterAdapter(
 
     override suspend fun checkStatus(config: ProviderConfig): ProviderStatus {
         val request = Request.Builder()
-            .url(config.baseUrl.trimEnd('/') + "/api/v1/models")
+            .url(apiV1Url(config, "/models"))
             .applyHeaders(config)
             .get()
             .build()
@@ -59,7 +59,7 @@ class OpenRouterAdapter(
 
     override suspend fun listModels(config: ProviderConfig): List<ProviderModel> {
         val request = Request.Builder()
-            .url(config.baseUrl.trimEnd('/') + "/api/v1/models")
+            .url(apiV1Url(config, "/models"))
             .applyHeaders(config)
             .get()
             .build()
@@ -85,8 +85,8 @@ class OpenRouterAdapter(
             // A preset that only sets one of the two must still reach the wire.
             (request.prompt.maxTokens ?: request.preset.maxCompletionTokens ?: request.preset.maxTokens)
                 ?.let { put("max_tokens", JsonPrimitive(it)) }
-            if (request.preset.stop.isNotEmpty()) {
-                put("stop", buildJsonArray { request.preset.stop.forEach { add(JsonPrimitive(it)) } })
+            if ((request.preset.stop + request.prompt.stop).isNotEmpty()) {
+                put("stop", buildJsonArray { (request.preset.stop + request.prompt.stop).distinct().forEach { add(JsonPrimitive(it)) } })
             }
             // Unified reasoning strength: Auto passes the preset's own
             // reasoning field through; explicit levels map to reasoning.effort.
@@ -114,7 +114,7 @@ class OpenRouterAdapter(
                             MessageRole.Tool -> "tool"
                         }))
                         val images = if (index == lastUserIndex) {
-                            request.attachments.mapNotNull { attachment ->
+                            request.attachments.filter { it.mimeType.startsWith("image/") }.mapNotNull { attachment ->
                                 val base64 = visionBase64(attachment) ?: return@mapNotNull null
                                 buildJsonObject {
                                     put("type", JsonPrimitive("image_url"))
@@ -156,7 +156,7 @@ class OpenRouterAdapter(
         val payload = request.completionSettings ?: completionPayload(config, request)
 
         val httpRequest = Request.Builder()
-            .url(config.baseUrl.trimEnd('/') + "/api/v1/chat/completions")
+            .url(apiV1Url(config, "/chat/completions"))
             .applyHeaders(config)
             .post(payload.toString().toRequestBody(JSON_TYPE))
             .build()
@@ -233,6 +233,15 @@ class OpenRouterAdapter(
         header("HTTP-Referer", "https://tellev.app")
         header("X-Title", "Tellev")
         config.headers.forEach { (name, value) -> header(name, value) }
+    }
+
+    /** Accepts both `https://openrouter.ai` and the documented `https://openrouter.ai/api/v1`. */
+    private fun apiV1Url(config: ProviderConfig, suffix: String): String {
+        var base = config.baseUrl.trimEnd('/')
+        for (tail in listOf("/api/v1", "/api")) {
+            if (base.endsWith(tail, ignoreCase = true)) { base = base.dropLast(tail.length); break }
+        }
+        return "$base/api/v1$suffix"
     }
 
     private companion object {

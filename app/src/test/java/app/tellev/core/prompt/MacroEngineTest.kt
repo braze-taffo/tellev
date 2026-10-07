@@ -637,4 +637,41 @@ class MacroEngineTest {
     fun `time with UTC offset formats HH mm`() {
         assertTrue(engine.expand("{{time_UTC+8}}", context).matches(Regex("\\d{2}:\\d{2}")))
     }
+
+    @Test
+    fun `dice macros with degenerate or hostile specs never throw`() {
+        // Macro text comes straight from character cards and world books, and
+        // resolveExpression has no catch: these used to abort the whole
+        // prompt build (nextInt on an empty range, Int overflow on digits).
+        listOf(
+            "{{roll:1d0}}", "{{roll:d0}}", "{{roll:0d6}}", "{{roll::2d0+3}}",
+            "{{roll:d99999999999999999999}}", "{{roll:99999999999999999999d6}}",
+            "{{roll:1d6+99999999999999999999}}", "{{roll:0}}", "{{roll:-3}}",
+        ).forEach { macro ->
+            val result = engine.expand(macro, context)
+            assertTrue("$macro -> [$result]", result.toIntOrNull() != null)
+        }
+    }
+
+    @Test
+    fun `dice count is bounded so a card cannot stall prompt building`() {
+        val started = System.nanoTime()
+        val result = engine.expand("{{roll:2000000000d6}}", context).toLong()
+        assertTrue("took ${(System.nanoTime() - started) / 1_000_000} ms", (System.nanoTime() - started) < 2_000_000_000L)
+        // Capped at 1000 dice of 6 sides.
+        assertTrue(result in 1000L..6000L)
+    }
+
+    @Test
+    fun `random range at the Int edge does not overflow`() {
+        listOf("{{random:0-2147483647}}", "{{random:2147483647-0}}", "{{random:2147483647}}", "{{random:99999999999}}")
+            .forEach { macro -> engine.expand(macro, context) }
+    }
+
+    @Test
+    fun `whitespace repeat macros are bounded`() {
+        assertEquals(1000, engine.expand("{{newline::2000000000}}", context).length)
+        assertEquals(1000, engine.expand("{{space::2000000000}}", context).length)
+        assertEquals("\n\n\n", engine.expand("{{newline::3}}", context))
+    }
 }

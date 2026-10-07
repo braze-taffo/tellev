@@ -98,21 +98,29 @@ internal class PresetRepository(
         val parent = resolvePresetDirectory(if (preset.category == PresetCategory.OpenAi) presetCategory(preset.providerType) else preset.category)
         parent.createDirectories()
         val merged = preset.raw.toMutableMap()
-        preset.temperature?.let { merged["temperature"] = JsonPrimitive(it) }
-        preset.topP?.let { merged["top_p"] = JsonPrimitive(it) }
-        preset.topK?.let { merged["top_k"] = JsonPrimitive(it) }
-        preset.topA?.let { merged["top_a"] = JsonPrimitive(it) }
-        preset.minP?.let { merged["min_p"] = JsonPrimitive(it) }
-        preset.repetitionPenalty?.let { merged["repetition_penalty"] = JsonPrimitive(it) }
-        preset.repetitionPenaltyRange?.let { merged["repetition_penalty_range"] = JsonPrimitive(it) }
-        preset.presencePenalty?.let { merged["presence_penalty"] = JsonPrimitive(it) }
-        preset.frequencyPenalty?.let { merged["frequency_penalty"] = JsonPrimitive(it) }
-        preset.seed?.let { merged["seed"] = JsonPrimitive(it) }
-        preset.maxContextTokens?.let { merged["openai_max_context"] = JsonPrimitive(it) }
-        (preset.maxCompletionTokens ?: preset.maxTokens)?.let {
-            merged["openai_max_tokens"] = JsonPrimitive(it)
-            merged["max_tokens"] = JsonPrimitive(it)
+        // Typed nulls mean "clear": every alias the parser would read the value
+        // back from is removed, otherwise a cleared field silently resurrected
+        // from its legacy raw key on the next load.
+        fun clear(vararg keys: String) = keys.forEach(merged::remove)
+        if (preset.temperature != null) merged["temperature"] = JsonPrimitive(preset.temperature) else clear("temperature", "temp", "temp_openai")
+        if (preset.topP != null) merged["top_p"] = JsonPrimitive(preset.topP) else clear("top_p", "topP")
+        if (preset.topK != null) merged["top_k"] = JsonPrimitive(preset.topK) else clear("top_k", "topK")
+        if (preset.topA != null) merged["top_a"] = JsonPrimitive(preset.topA) else clear("top_a", "topA")
+        if (preset.minP != null) merged["min_p"] = JsonPrimitive(preset.minP) else clear("min_p", "minP")
+        if (preset.repetitionPenalty != null) merged["repetition_penalty"] = JsonPrimitive(preset.repetitionPenalty) else clear("repetition_penalty", "rep_pen")
+        if (preset.repetitionPenaltyRange != null) merged["repetition_penalty_range"] = JsonPrimitive(preset.repetitionPenaltyRange) else clear("repetition_penalty_range", "rep_pen_range")
+        if (preset.presencePenalty != null) merged["presence_penalty"] = JsonPrimitive(preset.presencePenalty) else clear("presence_penalty")
+        if (preset.frequencyPenalty != null) merged["frequency_penalty"] = JsonPrimitive(preset.frequencyPenalty) else clear("frequency_penalty")
+        if (preset.seed != null) merged["seed"] = JsonPrimitive(preset.seed) else clear("seed")
+        if (preset.maxContextTokens != null) merged["openai_max_context"] = JsonPrimitive(preset.maxContextTokens) else clear("openai_max_context", "max_context", "context_length")
+        val completionTokens = preset.maxCompletionTokens ?: preset.maxTokens
+        if (completionTokens != null) {
+            merged["openai_max_tokens"] = JsonPrimitive(completionTokens)
+            merged["max_tokens"] = JsonPrimitive(completionTokens)
+        } else {
+            clear("openai_max_tokens", "max_tokens", "maxTokens", "max_new_tokens")
         }
+        if (preset.reasoningEffort != null) merged["reasoning_effort"] = JsonPrimitive(preset.reasoningEffort.name.lowercase()) else clear("reasoning_effort")
         if (preset.stop.isNotEmpty()) merged["stop"] = stringArray(preset.stop)
         if (preset.prompts.isNotEmpty() || preset.promptsUnused.isNotEmpty() || "prompts" in merged) {
             val definitions = (preset.prompts + preset.promptsUnused).distinctBy { it.identifier }

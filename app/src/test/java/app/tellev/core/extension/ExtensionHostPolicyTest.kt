@@ -28,6 +28,43 @@ class ExtensionHostPolicyTest {
     }
 
     @Test
+    fun `path manipulation cannot smuggle protected prefixes past the gate`() {
+        // The router splits on '/' and drops empty segments, so every one of
+        // these forms used to reach the secrets/storage handlers while the
+        // gate (raw prefix match) saw an unprotected path.
+        listOf(
+            "/api//secrets",
+            "/api//secrets/k1",
+            "/api///secrets/k1",
+            "api//secrets",
+            "/api/./secrets",
+            "/api/./secrets/k1",
+            "/api/x/../secrets/k1",
+        ).forEach { path ->
+            assertEquals("path=[$path]", ExtensionPermission.Secrets, requiredExtensionPermissionForPath(path))
+        }
+        listOf("/api//providers", "/api//backends/chat-completions/generate").forEach { path ->
+            assertEquals("path=[$path]", ExtensionPermission.ProviderRequest, requiredExtensionPermissionForPath(path))
+        }
+        listOf("/api//chats", "/api//characters", "/api//worldinfo/get", "/api//presets").forEach { path ->
+            assertEquals("path=[$path]", ExtensionPermission.Storage, requiredExtensionPermissionForPath(path))
+        }
+    }
+
+    @Test
+    fun `normalizeApiPath collapses segments the same way the router does`() {
+        assertEquals("/api/secrets/k1", normalizeApiPath("/api//secrets/k1"))
+        assertEquals("/api/secrets/k1", normalizeApiPath("/api/./secrets/k1"))
+        assertEquals("/api/secrets/k1", normalizeApiPath("/api/a/../secrets/k1"))
+        assertEquals("/api/secrets/k1", normalizeApiPath("api//secrets/k1?x=1#frag"))
+        // Case and percent escapes are preserved: the router matches raw ids.
+        assertEquals("/api/extension%2Fname", normalizeApiPath("/api/extension%2Fname"))
+        assertEquals("/api/Chats/chat-Char", normalizeApiPath("/api/Chats/chat-Char"))
+        // Leading ../ must not escape above the root.
+        assertEquals("/secrets", normalizeApiPath("/../secrets"))
+    }
+
+    @Test
     fun `navigation stays on the owning extension origin`() {
         val origin = extensionBaseUrl("demo")
         assertTrue(origin.matches(Regex("https://e-[0-9a-f]{40}\\.extensions\\.tellev\\.local/")))

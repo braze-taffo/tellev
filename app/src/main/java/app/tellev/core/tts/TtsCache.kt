@@ -19,7 +19,7 @@ class TtsCache(
     }
 
     fun key(text: String, settings: TtsSettingsValues): String = sha256(
-        listOf(text, settings.model, settings.voice, settings.speed.toString(), settings.format)
+        listOf(text, settings.model, settings.voice, settings.speed.toString(), settings.format, settings.baseUrl)
             .joinToString("\u0000"),
     )
 

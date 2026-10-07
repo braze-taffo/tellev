@@ -29,6 +29,11 @@ internal object PresetCodec {
         val definitions = parsePresetPrompts(raw["prompts"])
         val (orderedPrompts, inferredUnused) = applyPromptOrder(definitions, raw["prompt_order"])
         val explicitUnused = parsePresetPrompts(raw["prompts_unused"] ?: raw["promptsUnused"])
+        // ST openai presets carry "reasoning_effort": auto/off/low/medium/high.
+        // "auto" maps to null (= our Auto passthrough); explicit levels persist.
+        val reasoningEffort = (raw["reasoning_effort"] as? JsonPrimitive)?.content?.trim()
+            ?.let(app.tellev.core.model.ReasoningEffort::fromStored)
+            ?.takeIf { it != app.tellev.core.model.ReasoningEffort.Auto }
         return GenerationPreset(
             id = path.nameWithoutExtension,
             name = path.nameWithoutExtension,
@@ -49,6 +54,7 @@ internal object PresetCodec {
                 ?: raw.intValue("max_context")
                 ?: raw.intValue("context_length"),
             maxCompletionTokens = completionTokens,
+            reasoningEffort = reasoningEffort,
             presencePenalty = raw.doubleValue("presence_penalty"),
             frequencyPenalty = raw.doubleValue("frequency_penalty"),
             seed = (raw["seed"] as? JsonPrimitive)?.content?.toLongOrNull(),

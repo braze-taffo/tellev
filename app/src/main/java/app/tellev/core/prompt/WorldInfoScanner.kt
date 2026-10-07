@@ -148,6 +148,9 @@ class WorldInfoScanner(
         }
         val activated = LinkedHashMap<WorldBookEntry, String>()
         val failedProbability = mutableSetOf<WorldBookEntry>()
+        // 逐轮共享的预算计数（ST：每轮对当轮候选按 order 降序做预算选择，
+        // 剩余预算跨轮累计；旧实现是全扫完后从尾部一次性裁剪）。
+        var budgetUsed = 0
 
         fun processMatchedPass(matched: List<WorldBookEntry>, passText: (WorldBookEntry) -> String, level: Int): List<WorldBookEntry> {
             // Inclusion groups run on each pass's fresh matches BEFORE the
@@ -156,28 +159,44 @@ class WorldInfoScanner(
             if (diagnostics != null) {
                 matched.filterNot { it in survivors }.forEach { diagnostics.reject(it, REJECT_INCLUSION_GROUP) }
             }
-            val nextNew = mutableListOf<WorldBookEntry>()
+            val rolled = mutableListOf<Pair<WorldBookEntry, String>>()
             for (entry in survivors) {
                 if (activated.containsKey(entry)) continue
                 if (passesProbability(entry)) {
-                    activated[entry] = expand(entry, stripped.getValue(entry).content)
-                    nextNew.add(entry)
-                    if (diagnostics != null) {
-                        val (primary, secondary) = matchedKeysOf(entry, passText(entry), keyExpand, decorators.getValue(entry))
-                        diagnostics.hit(
-                            ScanDiagnostics.Hit(
-                                entry = entry,
-                                matchedKeys = primary,
-                                matchedSecondaryKeys = secondary,
-                                unconditional = entry.constant || "@@activate" in decorators.getValue(entry),
-                                recursionLevel = level,
-                                tokens = TokenBudget.estimateTokens(activated.getValue(entry)),
-                            ),
-                        )
-                    }
+                    rolled += entry to expand(entry, stripped.getValue(entry).content)
                 } else {
                     failedProbability.add(entry)
                     diagnostics?.reject(entry, REJECT_PROBABILITY)
+                }
+            }
+            // 预算闸门（world-info.js:4900-4954）：当轮候选按 order 降序；
+            // 越过预算的条目丢弃并锁定本轮，其后仅 ignoreBudget 可继续。
+            // 被拒条目从未激活，因此不会进入递归缓冲。
+            val nextNew = mutableListOf<WorldBookEntry>()
+            var overflowed = false
+            for ((entry, content) in rolled.sortedByDescending { it.first.insertionOrder }) {
+                val tokens = TokenBudget.estimateTokens(content)
+                val gated = maxContentTokens?.takeIf { it > 0 }
+                if (gated != null && !entry.ignoreBudget && (overflowed || budgetUsed + tokens >= gated)) {
+                    overflowed = true
+                    diagnostics?.reject(entry, REJECT_BUDGET)
+                    continue
+                }
+                budgetUsed += tokens
+                activated[entry] = content
+                nextNew.add(entry)
+                if (diagnostics != null) {
+                    val (primary, secondary) = matchedKeysOf(entry, passText(entry), keyExpand, decorators.getValue(entry))
+                    diagnostics.hit(
+                        ScanDiagnostics.Hit(
+                            entry = entry,
+                            matchedKeys = primary,
+                            matchedSecondaryKeys = secondary,
+                            unconditional = entry.constant || "@@activate" in decorators.getValue(entry),
+                            recursionLevel = level,
+                            tokens = tokens,
+                        ),
+                    )
                 }
             }
             return nextNew
@@ -192,14 +211,16 @@ class WorldInfoScanner(
         processMatchedPass(initialMatches, entrySearchText, level = 0)
 
         // ── Recursive passes ──────────────────────────────────────────────
+        // ST 的 max_recursion_steps 是「总扫描次数含首扫」：0 不设上限，
+        // 1 只扫一次（无递归），2 首扫 + 一次递归（world-info.js checkWorldInfo）。
         if (maxRecursionSteps > 0) {
             var newlyActivated = activated.keys.toList()
             // ST's recurse buffer accumulates across ALL passes
             // (WorldInfoBuffer.addRecurse pushes, never clears mid-scan).
             val recurseBuffer = StringBuilder()
-            var steps = 0
-            while (newlyActivated.isNotEmpty() && steps < maxRecursionSteps) {
-                val currentLevel = steps + 1
+            var stepsUsed = 1
+            while (newlyActivated.isNotEmpty() && stepsUsed < maxRecursionSteps) {
+                val currentLevel = stepsUsed
                 // preventRecursion entries do not feed further recursion (but
                 // were still activated themselves).
                 val recursionText = buildString {
@@ -228,7 +249,7 @@ class WorldInfoScanner(
                     .filter { matchEntry(it, combinedText(it), keyExpand, decorators.getValue(it)) }
 
                 newlyActivated = processMatchedPass(matchedThisRound, combinedText, level = currentLevel)
-                steps++
+                stepsUsed++
             }
         }
 
@@ -236,8 +257,10 @@ class WorldInfoScanner(
         if (diagnostics != null) {
             for (entry in candidates) {
                 if (activated.containsKey(entry)) continue
+                // 步数预算含首扫：level d 需要第 d 轮（stepsUsed == d）发生，
+                // 即 d <= maxRecursionSteps - 1；否则按「延迟未开放」记录。
                 val delayed = entry.delayUntilRecursion > 0 &&
-                    (maxRecursionSteps == 0 || entry.delayUntilRecursion > maxRecursionSteps)
+                    (maxRecursionSteps == 0 || entry.delayUntilRecursion >= maxRecursionSteps)
                 diagnostics.reject(entry, if (delayed) REJECT_DELAYED else REJECT_KEYWORD_MISS)
             }
         }
@@ -245,12 +268,11 @@ class WorldInfoScanner(
         // ── Sort + bucket by position ────────────────────────────────────
         // ST sorts descending by `order` for budget selection (world-info.js:88),
         // then unshifts into the position buckets, so the final text order
-        // inside each bucket is ascending by `order`.
-        val sorted = activated.entries.toList()
+        // inside each bucket is ascending by `order`. 预算已在逐轮闸门中处理。
+        val all = activated.entries.toList()
             .sortedByDescending { it.key.insertionOrder }
-
-        val budgeted = applyTokenBudget(sorted, diagnostics)
-        val all = budgeted.asReversed().map { ActivatedEntry(it.key, it.value) }
+            .asReversed()
+            .map { ActivatedEntry(it.key, it.value) }
         return ScanResult(
             before = all.bucket(WorldInfoPosition.BEFORE),
             after = all.bucket(WorldInfoPosition.AFTER),
@@ -266,43 +288,6 @@ class WorldInfoScanner(
 
     private fun List<ActivatedEntry>.bucket(pos: WorldInfoPosition): List<ActivatedEntry> =
         filter { WorldInfoPosition.of(it.entry.position) == pos }
-
-    private fun applyTokenBudget(
-        entries: List<Map.Entry<WorldBookEntry, String>>,
-        diagnostics: ScanDiagnostics? = null,
-    ): List<Map.Entry<WorldBookEntry, String>> {
-        val budget = maxContentTokens?.takeIf { it > 0 } ?: return entries
-        val included = mutableListOf<Map.Entry<WorldBookEntry, String>>()
-        var usedTokens = 0
-        var overflowed = false
-
-        // ST semantics (world-info.js:4900-4954): the entry that crosses the
-        // budget is dropped AND the overflow latches — every later entry is
-        // skipped too, except ignoreBudget entries which always insert.
-        for (entry in entries) {
-            if (entry.key.ignoreBudget) {
-                // Always inserted, but its content still counts toward the
-                // budget for later entries (ST accumulates newContent
-                // unconditionally before the overflow check).
-                included += entry
-                usedTokens += TokenBudget.estimateTokens(entry.value)
-                continue
-            }
-            if (overflowed) {
-                diagnostics?.reject(entry.key, REJECT_BUDGET)
-                continue
-            }
-            val contentTokens = TokenBudget.estimateTokens(entry.value)
-            if (usedTokens + contentTokens < budget) {
-                included += entry
-                usedTokens += contentTokens
-            } else {
-                overflowed = true
-                diagnostics?.reject(entry.key, REJECT_BUDGET)
-            }
-        }
-        return included
-    }
 
     /**
      * Diagnostics-only mirror of [matchEntry]: which primary/secondary keys
