@@ -21,7 +21,11 @@ import app.tellev.core.provider.GenerateChunk
 import app.tellev.core.provider.GenerateRequest
 import app.tellev.core.provider.GenerationRuntimeResolver
 import app.tellev.core.provider.ProviderRegistry
+import app.tellev.core.provider.ModelReasoningProfile
+import app.tellev.core.provider.ModelReasoningProfiles
+import app.tellev.core.provider.ReasoningKnowledgeBase
 import app.tellev.core.provider.ReasoningSupport
+import app.tellev.core.provider.json
 import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.prompt.ChatTextProcessing
 import app.tellev.core.storage.StDataStore
@@ -69,6 +73,23 @@ internal class ChatGenerationCoordinator(
 
     var interruptionJob: Job? = null
         private set
+
+    /**
+     * 上下文上限分层（与 ChatViewModel.resolvedContextWindow 同一口径）：
+     * 用户档案 > 知识库 > adapter 声明 > 预设值。均无 → null（未知，UI 不算比率）。
+     */
+    private fun resolveContextWindow(
+        config: app.tellev.core.provider.ProviderConfig,
+        preset: app.tellev.core.model.GenerationPreset,
+    ): Int? {
+        val model = config.model?.takeIf(String::isNotBlank)
+        if (model != null) {
+            ModelReasoningProfiles.read(dataStore.layout.root).profiles[model]?.contextWindow?.let { return it.toInt() }
+            ReasoningKnowledgeBase.suggest(model).contextWindow?.let { return it.toInt() }
+        }
+        providerRegistry.find(config.providerType)?.declaredContextWindow(config)?.let { return it.toInt() }
+        return preset.maxContextTokens
+    }
 
     var activeRegeneration: ActiveRegeneration? = null
         private set
@@ -380,7 +401,9 @@ internal class ChatGenerationCoordinator(
                                 )
                             },
                             estimatedTokenCount = promptResult.diagnostics.estimatedTokenCount,
-                            contextTokenLimit = preset.maxContextTokens ?: DEFAULT_MAX_CONTEXT_TOKENS,
+                            // dsh contextWindow 语义：路由容量分层（档案>知识库>
+                            // adapter>预设），预设兜底时不再编造 1M 内部值——null 即未知。
+                            contextTokenLimit = resolveContextWindow(config, preset),
                             warnings = promptResult.diagnostics.warnings,
                             worldBookHits = promptResult.diagnostics.worldBookHits,
                             rejectedWorldEntries = promptResult.diagnostics.rejectedWorldEntries,
@@ -416,13 +439,26 @@ internal class ChatGenerationCoordinator(
                     stream = true,
                     // Per-session reasoning effort override rides on request
                     // metadata; adapters resolve it ahead of the preset field.
-                    metadata = ReasoningSupport.sessionOverrideMetadata(promptSession),
+                    metadata = run {
+                        // 会话档位 override + 该模型的思考档案（bre 每模型声明）一起
+                        // 挂上请求元数据；适配器按档案拼写落 body。
+                        val base = ReasoningSupport.sessionOverrideMetadata(promptSession)
+                        val profile = ModelReasoningProfiles.read(dataStore.layout.root)
+                            .profiles[config.model]
+                        if (profile == null) base
+                        else JsonObject(base + ("tellev_model_profile" to json.encodeToJsonElement(
+                            ModelReasoningProfile.serializer(), profile,
+                        )))
+                    },
                 ), adapter)
                 val flow = adapter.streamGenerate(prepared.config, prepared.request)
                 val generationStartedAtMs = System.currentTimeMillis()
                 var firstDeltaAtMs: Long? = null
                 var accumulatedText = ""
                 var accumulatedReasoning = ""
+                // 本次生成的会话账本桶（Completed 时填充；默认零桶=不入账）。
+                var metricsLedgerBuckets: ChatTokenUsageLedger.Buckets? = null
+                var metricsLedgerReasoning = 0L
 
                 flow.collect { chunk ->
                     when (chunk) {
@@ -446,7 +482,11 @@ internal class ChatGenerationCoordinator(
                                     startedAtMs = generationStartedAtMs,
                                     firstDeltaAtMs = firstDeltaAtMs,
                                     completedAtMs = completedAtMs,
+                                    sessionId = updatedSession.id,
                                 )
+                                // 账本只收 provider 上报的精确样本；估算样本给零桶。
+                                metricsLedgerBuckets = ChatTokenUsageLedger.bucketsOf(metrics)
+                                metricsLedgerReasoning = (metrics.reasoningTokens ?: 0).toLong()
                                 scope.launch { runCatching { store.record(metrics) } }
                             }
                             // 服务商 HTTP 200 但响应体为空（网关/中转站错误帧被适配器吞掉、
@@ -522,9 +562,35 @@ internal class ChatGenerationCoordinator(
                                     variables = listOfNotNull(promptResult.promptTemplateVariableUpdates.message),
                                 ).withGenerationReasoning(parts, rawFinalText, chunk.reasoning, chunk.finishReason, false))
                             }
+                            // ── 会话级 token 账本（dsh tokenUsage 投影）──
+                            // 本 swipe 的桶 = 本次生成的 provider 上报；重新生成/继续时
+                            // 先减去该消息旧 swipe 的桶（addReplacing，重刷不重复计数）。
+                            val ledgerBuckets = metricsLedgerBuckets
+                            val ledgerTargetIndex = when {
+                                regeneratedIndex >= 0 -> regeneratedIndex
+                                continueIndex >= 0 -> continueIndex
+                                else -> finalMessages.lastIndex
+                            }
+                            val ledgerPrev = if ((regeneratedIndex >= 0 || continueIndex >= 0) && ledgerTargetIndex in finalMessages.indices) {
+                                ChatTokenUsageLedger.messageBuckets(baseMessages.getOrNull(ledgerTargetIndex)?.metadata)
+                            } else ChatTokenUsageLedger.Buckets()
+                            val ledgerMessages = finalMessages.mapIndexed { idx, msg ->
+                                if (idx == ledgerTargetIndex && ledgerBuckets != null) {
+                                    msg.copy(metadata = ChatTokenUsageLedger.messageMetadataWith(
+                                        msg.metadata, ledgerBuckets, metricsLedgerReasoning,
+                                    ))
+                                } else {
+                                    msg
+                                }
+                            }
+                            val ledgerMetadata = ChatTokenUsageLedger.sessionMetadataWith(
+                                (latestSession?.takeIf { it.id == updatedSession.id } ?: updatedSession).metadata,
+                                previous = ledgerPrev,
+                                next = ledgerBuckets ?: ChatTokenUsageLedger.Buckets(),
+                            ) ?: finalBase.metadata
                             val finalSession = (latestSession?.takeIf { it.id == updatedSession.id } ?: updatedSession)
-                                .copy(messages = finalMessages,
-                                    metadata = JsonObject(finalBase.metadata + ("variables" to processedFinal.localVariables)))
+                                .copy(messages = ledgerMessages,
+                                    metadata = JsonObject(ledgerMetadata + ("variables" to processedFinal.localVariables)))
 
                             sessionRuntime.persistSessionMutation(
                                 latestSession?.takeIf { it.id == updatedSession.id } ?: updatedSession,

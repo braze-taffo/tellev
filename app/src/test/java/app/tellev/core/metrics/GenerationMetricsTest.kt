@@ -248,4 +248,55 @@ class GenerationMetricsTest {
             root.toFile().deleteRecursively()
         }
     }
+
+    // ── session attribution（会话归属回归） ──────────────────────────────
+
+    @Test
+    fun `session attribution round trips and legacy records stay null`() {
+        val metrics = GenerationMetricsCalculator.fromCompletion(
+            providerType = "deepseek", model = "deepseek-chat", usage = null,
+            estimatedPromptTokens = 10, deltaText = "hi",
+            startedAtMs = 0, firstDeltaAtMs = 5, completedAtMs = 100,
+            sessionId = "sess-1",
+        )
+        assertEquals("sess-1", metrics.sessionId)
+        val legacy = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+            .decodeFromString(GenerationMetrics.serializer(), """{"providerType":"deepseek","timestampMs":1}""")
+        assertNull(legacy.sessionId)
+    }
+
+    @Test
+    fun `cached tokens are not double counted in cost`() {
+        // gpt-4o: input $2.50/M, cached factor 0.5。prompt 1000 中 800 命中缓存：
+        // uncached 200*2.5 + cached 800*2.5*0.5 = 1500/1e6 = 0.0015。
+        // 旧实现把缓存部分再按全价计入一次，得到 0.0035。
+        val cost = GenerationMetricsCalculator.estimateCostUsd("gpt-4o", 1_000, 0, 800)!!
+        assertEquals(0.0015, cost, 0.0000001)
+    }
+
+    @Test
+    fun `aggregateHybrid takes long-term totals from daily summaries`() {
+        val zone = java.time.ZoneId.systemDefault()
+        fun at(day: Int) = java.time.LocalDate.of(2026, 9, day).atTime(12, 0).atZone(zone).toInstant().toEpochMilli()
+        val daily = listOf(
+            DailyUsageSummary("2026-09-01", 30, 3_000, 2_000, 1_000, 0, mapOf("m1" to 3_000), mapOf("m1" to 30)),
+            DailyUsageSummary("2026-09-02", 20, 2_000, 1_000, 1_000, 0, mapOf("m1" to 2_000), mapOf("m1" to 20)),
+        )
+        val recent = listOf(
+            GenerationMetrics(model = "m1", promptTokens = 10, completionTokens = 5, totalTokens = 15, ttftMs = 100, tokensPerSecond = 10.0),
+        )
+        val aggregate = GenerationMetricsCalculator.aggregateHybrid(recent, daily, zone)
+        // 明细缓冲只有 1 条（15 tokens）；长期总量与请求数以日汇总为准。
+        assertEquals(5_000L, aggregate.totalTokens)
+        assertEquals(50, aggregate.sampleCount)
+        assertEquals(2, aggregate.activeDays)
+        assertEquals(100.0, aggregate.averageTtftMs!!, 0.0001)
+
+        val modelUsage = GenerationMetricsCalculator.modelUsageFromDaily(daily)
+        assertEquals(1, modelUsage.size)
+        assertEquals("m1", modelUsage[0].model)
+        assertEquals(5_000L, modelUsage[0].totalTokens)
+        assertEquals(50, modelUsage[0].requestCount)
+        assertEquals(1.0, modelUsage[0].percentage, 0.0001)
+    }
 }

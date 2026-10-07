@@ -28,6 +28,8 @@ import kotlin.io.path.createDirectories
 data class GenerationMetrics(
     val providerType: String? = null,
     val model: String? = null,
+    /** Owning chat session id. Null on records written before session attribution existed. */
+    val sessionId: String? = null,
     val promptTokens: Int? = null,
     val completionTokens: Int? = null,
     val totalTokens: Int? = null,
@@ -35,9 +37,30 @@ data class GenerationMetrics(
     val cachedTokens: Int? = null,
     val cacheReadTokens: Int? = null,
     val cacheCreationTokens: Int? = null,
+    /**
+     * Prompt tokens that were NOT served from any cache (dsh uncachedInput):
+     * prompt - cacheRead - cacheWrite. Null when the provider reported no
+     * cache buckets at all (the whole input was uncached but we cannot prove
+     * the split is meaningful versus simply unreported).
+     */
+    val uncachedInputTokens: Int? = null,
+    /**
+     * Reasoning/thinking output subset. Already included in completionTokens
+     * (dsh invariant: never accumulated twice). Null when unreported or when
+     * the reported value exceeds output (contradictory sample → drop).
+     */
+    val reasoningTokens: Int? = null,
     val ttftMs: Long? = null,
     val totalMs: Long? = null,
     val tokensPerSecond: Double? = null,
+    /**
+     * Decode-only wall time (totalMs minus first-token latency): the window
+     * the model actually spent emitting tokens. dsh computes session speed
+     * over exactly this window so TTFT wait does not drag the reading down.
+     */
+    val decodeMs: Long? = null,
+    /** completionTokens per decodeMs-second; null when either input is absent. */
+    val decodeTokensPerSecond: Double? = null,
     val cacheHitRate: Double? = null,
     val estimatedCostUsd: Double? = null,
     val timestampMs: Long = 0L,
@@ -89,6 +112,8 @@ data class ParsedUsage(
     val cacheHitRate: Double?,
     val cacheReadTokens: Int? = null,
     val cacheCreationTokens: Int? = null,
+    val uncachedInputTokens: Int? = null,
+    val reasoningTokens: Int? = null,
 )
 
 data class ModelPricing(
@@ -134,8 +159,14 @@ object GenerationMetricsCalculator {
         val openAiCached = (source["prompt_tokens_details"] as? JsonObject)?.int("cached_tokens")
         val anthropicRead = source.int("cache_read_input_tokens")
         val anthropicCreation = source.int("cache_creation_input_tokens")
+        // DeepSeek 官方/中继的缓存字段：命中与未命中是两个独立桶。
+        val deepseekCacheHit = source.int("prompt_cache_hit_tokens")
+        val deepseekCacheMiss = source.int("prompt_cache_miss_tokens")
         val anthropicCached = safeSum(anthropicRead, anthropicCreation)
-        val cached = openAiCached ?: anthropicCached ?: source.int("cachedContentTokenCount")
+        val cached = openAiCached ?: anthropicCached ?: deepseekCacheHit ?: source.int("cachedContentTokenCount")
+        // 思考子集：DeepSeek reasoning_tokens；已含在输出内，超出即弃（矛盾样本）。
+        val reasoning = source.int("reasoning_tokens")
+            ?.takeIf { completion != null && it <= (completion ?: 0) }
         // Anthropic's input_tokens excludes cache read/create tokens. Normalize all
         // providers to a full prompt denominator for hit rate and total tokens.
         val prompt = when {
@@ -149,14 +180,28 @@ object GenerationMetricsCalculator {
         val cacheHit = if (cached != null && prompt != null && prompt > 0) {
             (if (anthropicRead != null) anthropicRead else cached).toDouble() / prompt
         } else null
+        // uncachedInput = prompt - cacheRead - cacheWrite（dsh 互斥三桶）。
+        // 只有真报了缓存桶才可算；DeepSeek 的 miss 桶本身就是未命中输入。
+        val uncachedInput = when {
+            deepseekCacheMiss != null -> deepseekCacheMiss
+            prompt == null -> null
+            anthropicRead != null || anthropicCreation != null || openAiCached != null || deepseekCacheHit != null -> {
+                val read = anthropicRead ?: deepseekCacheHit ?: openAiCached ?: 0
+                val write = anthropicCreation ?: 0
+                (prompt - read - write).takeIf { it >= 0 }
+            }
+            else -> null
+        }
         return ParsedUsage(
             promptTokens = prompt,
             completionTokens = completion,
             totalTokens = total,
             cachedTokens = cached,
             cacheHitRate = cacheHit?.coerceIn(0.0, 1.0),
-            cacheReadTokens = anthropicRead,
+            cacheReadTokens = anthropicRead ?: deepseekCacheHit ?: openAiCached,
             cacheCreationTokens = anthropicCreation,
+            uncachedInputTokens = uncachedInput,
+            reasoningTokens = reasoning,
         )
     }
 
@@ -178,16 +223,18 @@ object GenerationMetricsCalculator {
         val completion = completionTokens ?: return null
         val read = (cacheReadTokens ?: 0).coerceAtLeast(0)
         val creation = (cacheCreationTokens ?: 0).coerceAtLeast(0)
-        val cached = (cachedTokens ?: 0).coerceIn(0, prompt)
+        // OpenAI 风格的 cachedTokens 是「命中缓存的输入」：若不扣除，缓存部分
+        // 会被按全价计入 uncachedInput 再叠加一次折扣价，造成重复计费。
+        val openAiCached = if (read == 0 && creation == 0) (cachedTokens ?: 0).coerceIn(0, prompt) else 0
         val boundedRead = read.coerceAtMost(prompt)
         val boundedCreation = creation.coerceAtMost((prompt - boundedRead).coerceAtLeast(0))
-        val uncachedInput = (prompt - boundedRead - boundedCreation).coerceAtLeast(0)
+        val uncachedInput = (prompt - boundedRead - boundedCreation - openAiCached).coerceAtLeast(0)
         val readFactor = rate.cacheReadInputFactor ?: (1.0 - rate.cachedInputDiscount)
         val creationFactor = rate.cacheCreationInputFactor ?: (1.0 - rate.cachedInputDiscount)
         val inputCost = (uncachedInput * rate.inputUsdPerMillion +
             boundedRead * rate.inputUsdPerMillion * readFactor +
             boundedCreation * rate.inputUsdPerMillion * creationFactor +
-            (if (read == 0 && creation == 0) cached * rate.inputUsdPerMillion * (1.0 - rate.cachedInputDiscount) else 0.0)) / 1_000_000.0
+            openAiCached * rate.inputUsdPerMillion * (1.0 - rate.cachedInputDiscount)) / 1_000_000.0
         return inputCost + completion * rate.outputUsdPerMillion / 1_000_000.0
     }
 
@@ -261,6 +308,53 @@ object GenerationMetricsCalculator {
             }.sortedByDescending { it.totalTokens }
     }
 
+    /**
+     * 长期口径：明细缓冲（generation-metrics.jsonl）只保留最近 100 条，而日汇总
+     * 文件覆盖全历史。总量/请求数/活跃与连续天数以日汇总为准；TTFT/速度/缓存率/
+     * 峰值等只有明细能算的指标仍来自近期明细（无法从日汇总恢复，宁缺毋滥）。
+     * 无日汇总文件时回退到纯明细聚合。
+     */
+    fun aggregateHybrid(
+        recentEntries: List<GenerationMetrics>,
+        daily: List<DailyUsageSummary>,
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): GenerationMetricsAggregate {
+        if (daily.isEmpty()) return aggregate(recentEntries, zoneId)
+        val base = aggregate(recentEntries, zoneId)
+        val dates = daily.map { LocalDate.parse(it.date) }.sorted()
+        return base.copy(
+            totalTokens = daily.sumOf { it.totalTokens },
+            sampleCount = daily.sumOf { it.requestCount },
+            activeDays = dates.size,
+            currentStreakDays = currentStreak(dates, LocalDate.now(zoneId)),
+            longestStreakDays = longestStreak(dates),
+        )
+    }
+
+    /** 全历史（或任一日期区间）的模型占比：来自日汇总的 per-model 累计。 */
+    fun modelUsageFromDaily(daily: List<DailyUsageSummary>): List<ModelUsageSummary> {
+        val tokensByModel = linkedMapOf<String, Long>()
+        val requestsByModel = mutableMapOf<String, Int>()
+        for (summary in daily) {
+            for ((model, tokens) in summary.modelTokens) {
+                tokensByModel[model] = (tokensByModel[model] ?: 0L) + tokens
+            }
+            for ((model, requests) in summary.modelRequests) {
+                requestsByModel[model] = (requestsByModel[model] ?: 0) + requests
+            }
+        }
+        val total = tokensByModel.values.sum().coerceAtLeast(1L)
+        return tokensByModel.map { (model, tokens) ->
+            ModelUsageSummary(
+                model = model,
+                requestCount = requestsByModel[model] ?: 0,
+                totalTokens = tokens,
+                percentage = tokens.toDouble() / total.toDouble(),
+                estimatedCount = 0,
+            )
+        }.sortedByDescending { it.totalTokens }
+    }
+
     private fun longestStreak(dates: List<LocalDate>): Int {
         if (dates.isEmpty()) return 0
         var longest = 1
@@ -295,6 +389,7 @@ object GenerationMetricsCalculator {
         firstDeltaAtMs: Long?,
         completedAtMs: Long,
         timestampMs: Long = completedAtMs,
+        sessionId: String? = null,
     ): GenerationMetrics {
         val parsed = parseUsage(usage)
         val estimatedCompletion = TokenBudget.estimateTokens(deltaText).takeIf { deltaText.isNotEmpty() }
@@ -306,15 +401,25 @@ object GenerationMetricsCalculator {
         return GenerationMetrics(
             providerType = providerType,
             model = model,
+            sessionId = sessionId,
             promptTokens = prompt,
             completionTokens = completion,
             totalTokens = total,
             cachedTokens = cached,
             cacheReadTokens = parsed.cacheReadTokens,
             cacheCreationTokens = parsed.cacheCreationTokens,
+            // 估算的 prompt 顶替真值时（provider 没上报 usage），桶结构不可信，
+            // 全部置空——宁可缺数也不把估算混进精确桶（dsh 严格校验语义）。
+            uncachedInputTokens = parsed.promptTokens?.let { parsed.uncachedInputTokens },
+            reasoningTokens = parsed.reasoningTokens,
             ttftMs = ttftMs(startedAtMs, firstDeltaAtMs),
             totalMs = totalMs,
             tokensPerSecond = tokensPerSecond(completion, totalMs),
+            decodeMs = (totalMs - (ttftMs(startedAtMs, firstDeltaAtMs) ?: 0L)).takeIf { it > 0 },
+            decodeTokensPerSecond = run {
+                val decode = (totalMs - (ttftMs(startedAtMs, firstDeltaAtMs) ?: 0L)).takeIf { it > 0 }
+                tokensPerSecond(completion, decode)
+            },
             cacheHitRate = parsed.cacheHitRate ?: if (cached != null && prompt != null && prompt > 0) {
                 (cached.toDouble() / prompt).coerceIn(0.0, 1.0)
             } else null,
@@ -374,6 +479,16 @@ class GenerationMetricsStore(
         withContext(Dispatchers.IO) {
             readDailySummaries()
         }
+    }
+
+    /** usage 面板的「清除统计」：明细与日汇总两个文件一起清空。 */
+    suspend fun clearAll() = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            root.createDirectories()
+            runCatching { Files.deleteIfExists(file) }
+            runCatching { Files.deleteIfExists(dailyFile) }
+        }
+        mutableEntries.value = emptyList()
     }
 
     suspend fun record(metrics: GenerationMetrics) = mutex.withLock {

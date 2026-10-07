@@ -58,8 +58,14 @@ class UsageStatsViewModel(
                     range = _uiState.value.range,
                     daily = selected,
                     recentEntries = selectedEntries,
-                    aggregate = GenerationMetricsCalculator.aggregate(selectedEntries),
-                    modelUsage = GenerationMetricsCalculator.modelUsage(selectedEntries),
+                    // 明细缓冲只有最近 100 条：总量/请求数/模型占比与趋势一样
+                    // 以日汇总（全历史）为准，均值类指标保留明细精度。
+                    aggregate = GenerationMetricsCalculator.aggregateHybrid(selectedEntries, selected),
+                    modelUsage = if (selected.isEmpty()) {
+                        GenerationMetricsCalculator.modelUsage(selectedEntries)
+                    } else {
+                        GenerationMetricsCalculator.modelUsageFromDaily(selected)
+                    },
                 )
             }.onSuccess { _uiState.value = it }
                 .onFailure { error ->
