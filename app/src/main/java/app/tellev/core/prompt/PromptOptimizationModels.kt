@@ -2,7 +2,11 @@ package app.tellev.core.prompt
 
 import kotlinx.serialization.Serializable
 
-/** What the optimizer should do with the draft text. */
+/**
+ * Legacy mode labels. Retained so existing callers compile; the strategy
+ * system ([PromptOptimizationStrategies]) is the live surface — a run maps a
+ * strategy to one of these only when the caller still speaks in modes.
+ */
 @Serializable
 enum class PromptOptimizationMode {
     /** Improve wording and flow without changing meaning or length much. */
@@ -20,6 +24,15 @@ enum class PromptOptimizationMode {
 /** User-controllable constraints for one optimization run. */
 data class PromptOptimizationOptions(
     val mode: PromptOptimizationMode = PromptOptimizationMode.Polish,
+    /**
+     * Strategy id from [PromptOptimizationStrategies.ALL]; blank falls back to
+     * the legacy mode mapping so old callers keep working.
+     */
+    val strategyId: String = "",
+    /** Iteration requirement for the iterate strategy (merged, never executed). */
+    val iterateInput: String = "",
+    /** The last optimized text the iterate round starts from. */
+    val basePrompt: String? = null,
     /** Facts, names and numbers in the input must survive unchanged. */
     val keepFacts: Boolean = true,
     /** Whether the model may add concrete details beyond the input. */
@@ -34,6 +47,16 @@ data class PromptOptimizationOptions(
     companion object {
         const val MAX_INSTRUCTION_CHARS = 2_000
         const val MAX_INPUT_CHARS = 32_000
+        const val MAX_ITERATE_CHARS = 2_000
+
+        /** Legacy mode → strategy id (for callers that still set only a mode). */
+        fun strategyFor(mode: PromptOptimizationMode): String = when (mode) {
+            PromptOptimizationMode.Polish -> "general"
+            PromptOptimizationMode.Expand -> "professional"
+            PromptOptimizationMode.Condense -> "condense"
+            PromptOptimizationMode.Roleplay -> "general"
+            PromptOptimizationMode.Structured -> "analytical"
+        }
     }
 }
 

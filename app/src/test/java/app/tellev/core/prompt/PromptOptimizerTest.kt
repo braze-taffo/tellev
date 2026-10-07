@@ -192,8 +192,9 @@ class PromptOptimizerTest {
         assertEquals(MessageRole.System, request.prompt.messages[0].role)
         assertEquals(MessageRole.User, request.prompt.messages[1].role)
         assertTrue(request.prompt.messages[0].content.contains("\"optimized\""))
-        assertTrue(request.prompt.messages[1].content.contains("condense"))
-        assertTrue(request.prompt.messages[1].content.contains("<draft>"))
+        // 证据走 JSON 包裹（不再是 <draft> 标签）；Condense mode 映射到 condense 策略。
+        assertTrue(request.prompt.messages[0].content.contains("精简"))
+        assertTrue(request.prompt.messages[1].content.contains("originalPrompt"))
         assertTrue(request.prompt.messages[1].content.contains("草稿"))
     }
 
@@ -211,11 +212,12 @@ class PromptOptimizerTest {
             config = config(), adapter = adapter,
         )
         val userText = adapter.requests.single().prompt.messages[1].content
-        assertTrue(userText.contains("expand"))
-        assertTrue(userText.contains("简体中文"))
-        assertTrue(userText.contains("强调雨夜氛围"))
-        assertTrue(userText.contains("{{char}}"))
-        assertTrue(adapter.requests.single().prompt.messages[0].content.contains("verbatim"))
+        // 草稿本体进 JSON 证据（含未转义的宏占位符）。
+        assertTrue(userText.contains("带 {{char}} 的草稿"))
+        val systemText = adapter.requests.single().prompt.messages[0].content
+        assertTrue(systemText.contains("简体中文"))
+        assertTrue(systemText.contains("强调雨夜氛围"))
+        assertTrue(systemText.contains("{{char}}"))
     }
 
     @Test

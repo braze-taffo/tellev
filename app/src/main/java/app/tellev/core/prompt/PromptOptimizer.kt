@@ -29,48 +29,10 @@ class PromptOptimizer {
         /** One bounded format-repair round; never an unbounded loop. */
         internal const val MAX_REPAIR_ROUNDS = 1
 
-        private val MODE_LABELS = mapOf(
-            PromptOptimizationMode.Polish to
-                "polish (improve wording and flow; keep meaning and rough length)",
-            PromptOptimizationMode.Expand to
-                "expand (enrich with concrete detail; do not invent new plot-critical facts)",
-            PromptOptimizationMode.Condense to
-                "condense (tighten and shorten; every constraint must survive)",
-            PromptOptimizationMode.Roleplay to
-                "roleplay (rewrite as an in-character instruction set for a roleplay prompt)",
-            PromptOptimizationMode.Structured to
-                "structured (reorganize into clearly labeled sections)",
-        )
-
-        private fun systemInstruction(options: PromptOptimizationOptions): String = buildString {
-            appendLine("You are a prompt editor inside a roleplay chat app. The user gives you a draft prompt text to optimize.")
-            appendLine("Tasks:")
-            appendLine("- Rewrite the DRAFT according to the requested mode and constraints.")
-            appendLine("- Keep the draft's language unless an explicit output language is given.")
-            appendLine("- Never answer the prompt, never roleplay in the reply, never add commentary outside the JSON.")
-            if (options.keepFacts) appendLine("- Preserve every fact, name, number and explicit constraint exactly.")
-            if (options.allowDetail) appendLine("- You may add concrete details that serve the draft's intent.")
-            else appendLine("- Do not add information that is not implied by the draft.")
-            if (options.keepMacros) appendLine("- Preserve template macros like {{char}}, {{user}}, {{random}}… verbatim, including their braces.")
-            appendLine("Reply with ONLY one JSON object and nothing else:")
-            appendLine("""{"optimized": "<the rewritten draft>", "notes": "<one short sentence, may be empty>"}""")
-        }
-
-        private fun userInstruction(input: String, options: PromptOptimizationOptions): String = buildString {
-            appendLine("Mode: ${MODE_LABELS.getValue(options.mode)}")
-            if (options.languageHint.isNotBlank()) appendLine("Output language: ${options.languageHint.take(60)}")
-            if (options.instruction.isNotBlank()) {
-                appendLine("Additional instruction from the user (follow unless it conflicts with the rules above):")
-                appendLine(options.instruction.take(PromptOptimizationOptions.MAX_INSTRUCTION_CHARS))
-            }
-            appendLine("<draft>")
-            append(input.take(PromptOptimizationOptions.MAX_INPUT_CHARS))
-            append("\n</draft>")
-        }
 
         private val repairSystem = buildString {
-            appendLine("Your previous reply was not the required JSON object. Return ONLY one JSON object:")
-            appendLine("""{"optimized": "<the rewritten draft>", "notes": "<one short sentence, may be empty>"}""")
+            appendLine("你的上一条回复不是要求的 JSON 对象。只回复一个 JSON 对象：")
+            appendLine("""{"optimized": "<优化后的完整提示词>", "notes": "<一句改动说明，可为空>"}""")
         }
     }
 
@@ -97,10 +59,19 @@ class PromptOptimizer {
         val warnings = mutableListOf<String>()
         var repairRounds = 0
 
+        // 策略模板（linshenkx/prompt-optimizer 复刻）：完整结构系统提示词 +
+        // JSON 证据包裹；空 strategyId 的旧调用方回落 mode 映射。
+        val strategyId = options.strategyId.ifBlank {
+            PromptOptimizationOptions.strategyFor(options.mode)
+        }
         val first = request(
-            messages = listOf(
-                PromptMessage(MessageRole.System, content = systemInstruction(options)),
-                PromptMessage(MessageRole.User, content = userInstruction(input, options)),
+            messages = PromptOptimizationStrategies.messages(
+                strategyId = strategyId,
+                draft = input,
+                languageHint = options.languageHint,
+                instruction = options.instruction,
+                basePrompt = options.basePrompt,
+                iterateInput = options.iterateInput.take(PromptOptimizationOptions.MAX_ITERATE_CHARS),
             ),
             temperature = 0.4,
             maxTokens = outputBudget,
