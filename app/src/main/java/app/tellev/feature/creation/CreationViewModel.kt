@@ -114,7 +114,7 @@ class CreationViewModel(
 
     fun start(kind: CreationKind) {
         if (_state.value.busy) return
-        val session = CreationSession(kind = kind)
+        val session = CreationSession(kind = kind, allowAgentLoreEdits = kind == CreationKind.WorldBook)
         _state.update { it.copy(current = session, coverPreviewPng = null, error = null, info = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList(), pendingQuestion = null) }
         persist(session)
     }
@@ -122,7 +122,7 @@ class CreationViewModel(
     fun open(id: String) = viewModelScope.launch {
         if (_state.value.busy) return@launch
         _state.update { it.copy(current = null, coverPreviewPng = null, error = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList(), pendingQuestion = null) }
-        runCatching { repository.load(id).withAssignedLoreIds() }
+        runCatching { writeMutex.withLock { repository.load(id).withAssignedLoreIds() } }
             .onSuccess { session ->
                 val coverResult = runCatching {
                     session.coverSha256.takeIf(String::isNotBlank)?.let { repository.readCover(id, it) }
@@ -189,7 +189,91 @@ class CreationViewModel(
 
     fun close() { if (!_state.value.busy) _state.update { it.copy(current = null, coverPreviewPng = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList(), pendingQuestion = null) } }
 
+    /** Continue with a separate card/book draft while preserving the current draft and cover. */
+    fun startRelatedDraft(target: CreationKind) = viewModelScope.launch {
+        val source = _state.value.current ?: return@launch
+        if (_state.value.busy || target == source.kind) return@launch
+        _state.update { it.copy(busy = true, error = null) }
+        try {
+            if (target == CreationKind.Character) checkedWorldBook(source)
+            else require(source.card.name.isNotBlank()) { UiStrings.get(S.crvm_error_name_required) }
+            var next = source.relatedDraft(target)
+            val cover = source.coverSha256.takeIf(String::isNotBlank)?.let {
+                repository.readCover(source.id, it)
+            }
+            if (cover != null) next = next.copy(coverSha256 = repository.saveCover(next.id, cover))
+            write(source)
+            write(next)
+            _state.update { CreationUiState(sessions = it.sessions, current = next,
+                coverPreviewPng = cover.takeIf { target == CreationKind.Character }, busy = true) }
+            refresh()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            fail(e)
+        } finally {
+            _state.update { it.copy(busy = false) }
+        }
+    }
+
+    suspend fun worldBookSources(): List<CreationWorldBookSource> = withContext(Dispatchers.IO) {
+        val drafts = repository.list().filter { it.kind == CreationKind.WorldBook }.map {
+            CreationWorldBookSource(it.id, it.worldName, it.loreCount, fromDraft = true)
+        }
+        val saved = store.listWorldBookSummaries().map {
+            CreationWorldBookSource(it.id, it.name, it.entryCount, fromDraft = false)
+        }
+        drafts + saved
+    }
+
+    /** Associate a read-only book. Existing embedded entries stay in the card until an explicit merge. */
+    fun associateWorldBook(source: CreationWorldBookSource) = viewModelScope.launch {
+        val current = _state.value.current ?: return@launch
+        if (_state.value.busy || current.kind != CreationKind.Character) return@launch
+        _state.update { it.copy(busy = true, error = null) }
+        try {
+            val book = if (source.fromDraft) {
+                // Wait for earlier editor writes before reading the chosen draft.
+                val draft = writeMutex.withLock { repository.load(source.id) }
+                require(draft.kind == CreationKind.WorldBook)
+                checkedWorldBook(draft)
+            } else store.readWorldBook(source.id)
+            val next = current.copy(referenceBook = book, allowAgentLoreEdits = false,
+                updatedAt = System.currentTimeMillis())
+            write(next)
+            _state.update { it.copy(current = next) }
+            refresh()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            fail(e)
+        } finally {
+            _state.update { it.copy(busy = false) }
+        }
+    }
+
+    fun embedReferenceWorldBook() {
+        val current = _state.value.current ?: return
+        if (_state.value.busy || current.kind != CreationKind.Character || current.referenceBook == null) return
+        val next = current.embedReferenceBook()
+        _state.update { it.copy(current = next) }
+        persist(next)
+    }
+
+    fun setAgentLoreEdits(allowed: Boolean) {
+        val current = _state.value.current ?: return
+        if (_state.value.busy || current.kind != CreationKind.Character) return
+        val next = current.copy(allowAgentLoreEdits = allowed, updatedAt = System.currentTimeMillis())
+        _state.update { it.copy(current = next) }
+        persist(next)
+    }
+
     fun send(text: String) {
+        // A typed reply resumes the waiting ask_user call inside this turn.
+        if (_state.value.pendingQuestion != null) {
+            answerAgentQuestion(text)
+            return
+        }
         val session = _state.value.current ?: return
         if (_state.value.busy || text.isBlank()) return
         generationJob = viewModelScope.launch {
@@ -363,9 +447,13 @@ class CreationViewModel(
 
     fun cancelGeneration() { generationJob?.cancel() }
 
-    /** Resolve a pending ask_user with the option the user tapped. */
+    /** Resolve a pending ask_user with a selected option or a free-form reply. */
     fun answerAgentQuestion(choice: String) {
-        askAnswer?.complete(choice)
+        val answer = choice.trim()
+        if (answer.isBlank()) return
+        if (askAnswer?.complete(answer) == true) {
+            _state.update { it.copy(pendingQuestion = null) }
+        }
     }
 
     fun editCard(edit: (CharacterDraft) -> CharacterDraft) {

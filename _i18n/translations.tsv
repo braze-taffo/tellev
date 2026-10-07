@@ -1157,3 +1157,37 @@ guide_load_failed	Could not load the guide	ガイドを読み込めませんで�
 guide_close	Close guide	ガイドを閉じる	안내 닫기
 setabout_guide_update	What is new	更新内容	업데이트 내용
 setabout_guide_onboarding	Getting started	はじめかた	시작 안내
+crs_question_custom_answer	Write your own answer / combine options	自分で入力 / 選択肢を組み合わせる	직접 입력 / 선택지 조합
+crs_question_answer_label	Your answer	回答を入力	답변 입력
+crs_question_answer_hint	Give another answer, combine options, or add details	別の回答、複数の選択肢の組み合わせ、補足を入力できます	다른 답변을 입력하거나 여러 선택지를 조합하고 설명을 덧붙일 수 있습니다
+crs_workflow_title	Connect world books and character cards	ワールドブックとキャラクターカードの連携	세계관 책과 캐릭터 카드 연결
+crs_world_to_card	Create a card from this world book	このワールドブックからカードを作る	이 세계관 책으로 카드 만들기
+crs_world_to_card_hint	Start a character or director card session with this world book as reference.	この世界設定を参照して人物カードやディレクターカードを作れます。	이 세계관을 참고하여 인물 카드나 디렉터 카드 제작을 시작합니다.
+crs_card_to_world	Create a world book from this card	このカードからワールドブックを作る	이 카드로 세계관 책 만들기
+crs_workflow_source_card	Source card: %1$s	元のカード：%1$s	원본 카드: %1$s
+crs_link_worldbook	Link a world book	ワールドブックを関連付ける	세계관 책 연결
+crs_link_worldbook_empty	No world books available. Create or import one first.	関連付けるワールドブックがありません。先に作成またはインポートしてください。	연결할 세계관 책이 없습니다. 먼저 만들거나 가져오세요.
+crs_link_source_draft	Creation draft	制作中の下書き	제작 초안
+crs_link_source_saved	Saved world book	保存済みワールドブック	저장된 세계관 책
+crs_link_worldbook_source	%1$s · %2$d entries	%1$s · %2$d 件	%1$s · 항목 %2$d개
+crs_reference_worldbook	Reference world book: %1$s (%2$d entries)	参照ワールドブック：%1$s（%2$d 件）	참고 세계관 책: %1$s (항목 %2$d개)
+crs_reference_worldbook_hint	The agent can read this reference. Merge it to include it in the card. Link it again after changing the source book.	AI は参照設定を読めます。カードに追加するには結合してください。元のブックを変更したら再度関連付けてください。	AI가 참고 설정을 읽을 수 있습니다. 카드에 포함하려면 병합하세요. 원본을 수정한 뒤 다시 연결하면 참고 내용이 갱신됩니다.
+crs_merge_worldbook	Merge into the card	カードに結合	카드에 병합
+crs_merge_worldbook_confirm	Merge %2$d reference entries from “%1$s” into the card for PNG/JSON export. Existing entries are kept; identical previously merged entries are skipped.	「%1$s」の参照項目 %2$d 件をカードに結合し、PNG/JSON に含めます。既存の項目は保持し、結合済みの同一項目は追加しません。	“%1$s”의 참고 항목 %2$d개를 카드에 병합하여 PNG/JSON으로 내보냅니다. 기존 항목은 유지하고 이미 병합된 동일 항목은 중복 추가하지 않습니다.
+crs_allow_agent_lore_edits	Allow the agent to edit world book entries	AI にワールドブック項目の編集を許可	AI의 세계관 책 항목 편집 허용
+setimg_novelai_official	Official	公式	공식
+setimg_novelai_relay	Third-party relay (official format)	外部中継（公式形式）	타사 중계 (공식 형식)
+setimg_novelai_relay_url	Relay API URL	中継 API URL	중계 API 주소
+setimg_novelai_relay_help	Enter the relay URL, optionally with a path prefix or full generation endpoint. Requests use the official NovelAI format.	中継 URL を入力します。パス接頭辞または生成エンドポイント全体も指定できます。NovelAI の公式形式を使用します。	중계 URL을 입력하세요. 경로 접두사 또는 전체 생성 주소도 사용할 수 있습니다. NovelAI 공식 요청 형식을 사용합니다.
+setimg_novelai_relay_paths	Custom endpoint paths (optional)	エンドポイントのパス（任意）	사용자 지정 API 경로 (선택 사항)
+setimg_novelai_generate_path	Generation path	画像生成パス	이미지 생성 경로
+setimg_novelai_status_path	Connection check path	接続確認パス	연결 확인 경로
+setimg_novelai_upscale_path	Upscale path	拡大パス	업스케일 경로
+setimg_novelai_relay_key	Relay API key	中継 API キー	중계 API 키
+setimg_novelai_relay_key_help	Use the key provided by your relay. It is saved separately from the official token.	中継サービスのキーを使用します。公式トークンとは別に保存します。	중계 서비스가 제공한 키를 사용하세요. 공식 토큰과 별도로 저장됩니다.
+setimg_novelai_relay_model	Relay model name (optional)	中継モデル名（任意）	중계 모델 이름 (선택 사항)
+setimg_novelai_relay_model_help	Leave blank to use the model above, or enter the alias required by your relay.	空欄では上のモデルを使用します。中継に別名が必要な場合は入力してください。	비워 두면 위 모델을 사용합니다. 중계 서비스에서 별칭을 요구하면 입력하세요.
+novai_relay_status_unsupported	The relay does not support the connection check endpoint (HTTP 404/405). This does not determine generation availability. Check the path or try generating an image.	中継は接続確認 API に対応していません（HTTP 404/405）。生成の可否は判定できません。パスを確認するか画像生成を試してください。	중계 서비스가 연결 확인 API를 지원하지 않습니다 (HTTP 404/405). 이미지 생성 가능 여부는 판단할 수 없습니다. 경로를 확인하거나 생성을 시도하세요.
+novai_relay_status_connected	Relay connection check succeeded. Image generation and upscaling still require an actual generation test.	中継の接続確認に成功しました。生成・拡大の動作は実際の画像生成で確認してください。	중계 연결 확인에 성공했습니다. 이미지 생성 및 업스케일은 실제 생성으로 확인해야 합니다.
+novai_relay_invalid_url	Invalid relay URL: enter a complete http:// or https:// URL without credentials, query parameters, or fragments.	中継 URL が無効です。認証情報・クエリ・フラグメントを含まない完全な http:// または https:// URL を入力してください。	잘못된 중계 주소입니다. 인증 정보, 쿼리, 프래그먼트가 없는 전체 http:// 또는 https:// URL을 입력하세요.
+novai_relay_invalid_path	Invalid endpoint path: start with a single / and omit query parameters and fragments.	パスが無効です。単一の / で始め、クエリやフラグメントを含めないでください。	잘못된 API 경로입니다. 하나의 /로 시작하고 쿼리나 프래그먼트는 제외하세요.

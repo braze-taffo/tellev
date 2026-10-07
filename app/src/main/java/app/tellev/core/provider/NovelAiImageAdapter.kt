@@ -5,7 +5,6 @@ import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.TellevError
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -44,6 +43,14 @@ import kotlin.random.Random
  */
 @Serializable
 data class NovelAiImageSettings(
+    val useRelay: Boolean = false,
+    val relayBaseUrl: String = "",
+    val relayModel: String = "",
+    /** Blank paths use the official endpoint defaults. */
+    val relayGeneratePath: String = "",
+    val relayStatusPath: String = "",
+    /** Blank uses /ai/upscale on the relay, never the official host. */
+    val relayUpscalePath: String = "",
     val model: String = "nai-diffusion-4-5-full",
     val sampler: String = "k_euler_ancestral",
     val scheduler: String = "karras",
@@ -67,6 +74,7 @@ data class NovelAiImageSettings(
         "low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry",
 ) {
     companion object {
+        const val RELAY_TOKEN_SECRET_ID = "provider-novelai-image-relay-apikey"
         /** SillyTavern loadNovelModels(): fixed catalogue, NovelAI exposes no listing endpoint. */
         val MODELS: List<Pair<String, String>> = listOf(
             "nai-diffusion-4-5-full" to "NAI Diffusion Anime V4.5 (Full)",
@@ -308,20 +316,31 @@ class NovelAiImageAdapter(
     override suspend fun checkStatus(config: ProviderConfig): ProviderStatus {
         val token = config.apiKey?.takeIf { it.isNotBlank() }
             ?: return ProviderStatus(available = false, message = UiStrings.get(S.novai_status_token_missing))
+        val settings = settings(config)
+        val statusUrl = try {
+            if (settings.useRelay) NovelAiImageRelay.endpoint(settings, NovelAiImageRelay.statusPath(settings))
+            else "$API_BASE/user/subscription"
+        } catch (e: IllegalArgumentException) { return ProviderStatus(false, e.message.orEmpty()) }
         val request = Request.Builder()
-            .url("$API_BASE/user/subscription")
+            .url(statusUrl)
             .get()
             .header("Authorization", "Bearer $token")
             .build()
 
-        return runCatching {
-            client.newCall(request).execute().use { response ->
+        return try {
+            client.newCall(request).executeCancellable { response ->
                 if (!response.isSuccessful) {
+                    if (settings.useRelay && response.code in listOf(404, 405)) {
+                        return@executeCancellable ProviderStatus(false, UiStrings.get(S.novai_relay_status_unsupported))
+                    }
                     val extra = if (response.code == 401) UiStrings.get(S.novai_status_token_invalid_suffix) else ""
-                    return@use ProviderStatus(available = false, message = "HTTP ${response.code}$extra")
+                    return@executeCancellable ProviderStatus(available = false, message = "HTTP ${response.code}$extra")
                 }
                 val body = response.body?.string().orEmpty()
                 val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+                if (settings.useRelay) {
+                    return@executeCancellable ProviderStatus(true, UiStrings.get(S.novai_relay_status_connected))
+                }
                 val active = root?.get("active")?.jsonPrimitive?.booleanOrNull ?: true
                 val tierName = when (root?.get("tier")?.jsonPrimitive?.intOrNull) {
                     3 -> "Opus"
@@ -335,10 +354,15 @@ class NovelAiImageAdapter(
                     ProviderStatus(available = false, message = UiStrings.get(S.novai_status_inactive, tierName))
                 }
             }
-        }.getOrElse {
-            ProviderStatus(available = false, message = UiStrings.get(S.novai_status_connect_failed, it.message))
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) {
+            ProviderStatus(available = false, message = UiStrings.get(S.novai_status_connect_failed, e.message))
         }
     }
+
+    private fun settings(config: ProviderConfig): NovelAiImageSettings = config.options[SETTINGS_METADATA_KEY]
+        ?.let { runCatching { json.decodeFromJsonElement(NovelAiImageSettings.serializer(), it) }.getOrNull() }
+        ?: NovelAiImageSettings()
 
     override suspend fun listModels(config: ProviderConfig): List<ProviderModel> =
         NovelAiImageSettings.MODELS.map { (id, name) ->
@@ -362,7 +386,7 @@ class NovelAiImageAdapter(
 
         val settings = request.metadata[SETTINGS_METADATA_KEY]
             ?.let { element -> runCatching { json.decodeFromJsonElement(NovelAiImageSettings.serializer(), element) }.getOrNull() }
-            ?: NovelAiImageSettings()
+            ?: settings(config)
         val rawPrompt = request.prompt.messages
             .filter { it.role != MessageRole.System }
             .joinToString(" ") { it.content }
@@ -374,26 +398,32 @@ class NovelAiImageAdapter(
         val params = NovelAiImageProtocol.resolveParams(settings)
         // SillyTavern backend: seed >= 0 fixed, else floor(random * 9999999999).
         val seed = if (settings.seed >= 0) settings.seed else Random.nextLong(0, MAX_SEED)
-        val body = NovelAiImageProtocol.buildRequestBody(settings, params, prompt, negative, seed).toString()
+        // A relay alias changes routing, not the selected official model's parameter schema.
+        val officialBody = NovelAiImageProtocol.buildRequestBody(settings, params, prompt, negative, seed)
+        val body = JsonObject(officialBody + ("model" to JsonPrimitive(NovelAiImageRelay.model(settings)))).toString()
 
         try {
             coroutineContext.ensureActive()
-            val png = execute(token, "$IMAGE_BASE/ai/generate-image", body)
+            NovelAiImageRelay.validate(settings)
+            val generateUrl = if (settings.useRelay) NovelAiImageRelay.endpoint(settings, NovelAiImageRelay.generatePath(settings), generation = true)
+                else "$IMAGE_BASE/ai/generate-image"
+            val png = execute(token, generateUrl, body, relay = settings.useRelay)
 
             val imageBytes = if (settings.upscaleRatio > 1.0) {
                 // SillyTavern: upscale failure falls back to the original image.
-                runCatching {
+                try {
                     execute(
                         token,
-                        "$API_BASE/ai/upscale",
+                        if (settings.useRelay) NovelAiImageRelay.endpoint(settings, NovelAiImageRelay.upscalePath(settings)) else "$API_BASE/ai/upscale",
                         buildJsonObject {
                             put("image", Base64.getEncoder().encodeToString(png))
                             put("height", params.height)
                             put("width", params.width)
                             put("scale", settings.upscaleRatio)
-                        }.toString(),
+                        }.toString(), relay = settings.useRelay,
                     )
-                }.getOrDefault(png)
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) { png }
             } else {
                 png
             }
@@ -425,7 +455,7 @@ class NovelAiImageAdapter(
     }.flowOn(Dispatchers.IO)
 
     /** POSTs [body], unzips the archive and returns the first PNG entry's bytes. */
-    private suspend fun execute(token: String, url: String, body: String): ByteArray {
+    private suspend fun execute(token: String, url: String, body: String, relay: Boolean = false): ByteArray {
         val call = client.newCall(
             Request.Builder()
                 .url(url)
@@ -434,31 +464,27 @@ class NovelAiImageAdapter(
                 .header("Content-Type", "application/json")
                 .build(),
         )
-        // 空 guard 子 Job 无协程体可等：取消级联到达的瞬间即终结并断开连接，
-        // 停止等待 NovelAI 的长耗时生成（默认参 invokeOnCompletion 只在终态触发，阻塞读等不到）。
-        val callGuard = Job(coroutineContext[Job])
-        callGuard.invokeOnCompletion { if (!call.isCanceled()) call.cancel() }
-        try {
-            call.execute().use { response ->
-                if (!response.isSuccessful) {
-                    val text = response.body?.string().orEmpty()
-                    throw NovelAiHttpException(
-                        code = "novelai_http_${response.code}",
-                        message = friendlyMessage(response.code, text),
-                        retryable = response.code in 429..599,
-                    )
-                }
-                val zip = response.body?.bytes()
-                    ?: throw NovelAiHttpException("novelai_no_image_data", UiStrings.get(S.novai_error_empty_response), retryable = true)
-                return NovelAiImageProtocol.extractFirstPng(zip)
-                    ?: throw NovelAiHttpException(
-                        "novelai_no_png",
-                        UiStrings.get(S.novai_error_no_png),
-                        retryable = false,
-                    )
+        return call.executeCancellable { response ->
+            if (!response.isSuccessful) {
+                val text = response.body?.string().orEmpty()
+                throw NovelAiHttpException(
+                    code = "novelai_http_${response.code}",
+                    message = friendlyMessage(response.code, text),
+                    retryable = response.code in 429..599,
+                )
             }
-        } finally {
-            callGuard.complete()
+            val zip = response.body?.bytes()
+                ?: throw NovelAiHttpException("novelai_no_image_data", UiStrings.get(S.novai_error_empty_response), retryable = true)
+            if (relay) {
+                return@executeCancellable NovelAiImageRelay.decode(zip)
+                    ?: throw NovelAiHttpException("novelai_no_image_data", UiStrings.get(S.novai_error_no_png), false)
+            }
+            NovelAiImageProtocol.extractFirstPng(zip)
+                ?: throw NovelAiHttpException(
+                    "novelai_no_png",
+                    UiStrings.get(S.novai_error_no_png),
+                    retryable = false,
+                )
         }
     }
 

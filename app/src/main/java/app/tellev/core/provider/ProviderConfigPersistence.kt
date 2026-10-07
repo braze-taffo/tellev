@@ -173,7 +173,9 @@ object ProviderConfigPersistence {
 
     /** True when a NovelAI access token has been saved; model/parameters all carry valid defaults. */
     suspend fun isNovelAiImageConfigured(secretStore: SecretStore): Boolean {
-        return !secretStore.readSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey").isNullOrBlank()
+        val settings = loadNovelAiImageSettings(secretStore)
+        val key = if (settings.useRelay) NovelAiImageSettings.RELAY_TOKEN_SECRET_ID else "provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey"
+        return !secretStore.readSecret(key).isNullOrBlank() && runCatching { NovelAiImageRelay.validate(settings) }.isSuccess
     }
 
     suspend fun loadNovelAiImageSettings(secretStore: SecretStore): NovelAiImageSettings {
@@ -215,6 +217,12 @@ object ProviderConfigPersistence {
     }
 
     suspend fun loadProviderConfig(secretStore: SecretStore, providerId: String): ProviderConfig {
+        if (providerId == ProviderCatalog.NOVELAI_IMAGE) {
+            val settings = loadNovelAiImageSettings(secretStore)
+            return novelAiImageConfig(settings,
+                secretStore.readSecret("provider-$providerId-apikey"),
+                secretStore.readSecret(NovelAiImageSettings.RELAY_TOKEN_SECRET_ID))
+        }
         // A custom: id selects one of the user's named OpenAI-compatible configs.
         if (isCustomConfigId(providerId)) {
             val config = listCustomConfigs(secretStore)
@@ -245,6 +253,14 @@ object ProviderConfigPersistence {
             options = if (customOpenAi) advanced.toOptions() else JsonObject(emptyMap()),
         )
     }
+
+    fun novelAiImageConfig(settings: NovelAiImageSettings, officialToken: String?, relayToken: String?): ProviderConfig = ProviderConfig(
+        providerType = ProviderCatalog.NOVELAI_IMAGE,
+        baseUrl = if (settings.useRelay) settings.relayBaseUrl.trim() else ProviderDefaults.baseUrl(ProviderCatalog.NOVELAI_IMAGE),
+        apiKey = (if (settings.useRelay) relayToken else officialToken)?.trim()?.takeIf(String::isNotBlank),
+        model = NovelAiImageRelay.model(settings),
+        options = buildJsonObject { put(NovelAiImageAdapter.SETTINGS_METADATA_KEY, json.encodeToJsonElement(NovelAiImageSettings.serializer(), settings)) },
+    )
 
     /**
      * One-time migration from the legacy single `openai-compatible` slot to the

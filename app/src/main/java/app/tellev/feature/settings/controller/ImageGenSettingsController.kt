@@ -5,6 +5,7 @@ import app.tellev.core.i18n.UiStrings
 import app.tellev.core.provider.ComfyUiSettings
 import app.tellev.core.provider.ComfyWorkflowTemplate
 import app.tellev.core.provider.NovelAiImageSettings
+import app.tellev.core.provider.NovelAiImageRelay
 import app.tellev.core.provider.ProviderCatalog
 import app.tellev.core.provider.ProviderConfig
 import app.tellev.core.provider.ProviderConfigPersistence
@@ -115,26 +116,30 @@ internal class ImageGenSettingsController(
     }
 
     fun updateNovelAiToken(value: String) {
-        stateFlow.update { it.copy(novelAiToken = value) }
+        stateFlow.update { it.copy(novelAiToken = value, novelAiStatus = null) }
+    }
+
+    fun updateNovelAiRelayToken(value: String) {
+        stateFlow.update { it.copy(novelAiRelayToken = value, novelAiStatus = null) }
     }
 
     fun updateNovelAiSettings(transform: (NovelAiImageSettings) -> NovelAiImageSettings) {
-        stateFlow.update { state -> state.copy(novelAiSettings = transform(state.novelAiSettings)) }
+        stateFlow.update { state -> state.copy(novelAiSettings = transform(state.novelAiSettings), novelAiStatus = null) }
     }
 
     fun testNovelAiImage() {
         val state = stateFlow.value
-        val config = ProviderConfig(
-            providerType = ProviderCatalog.NOVELAI_IMAGE,
-            baseUrl = ProviderDefaults.baseUrl(ProviderCatalog.NOVELAI_IMAGE),
-            apiKey = state.novelAiToken.trim().takeIf { it.isNotBlank() },
-        )
+        val config = ProviderConfigPersistence.novelAiImageConfig(state.novelAiSettings, state.novelAiToken, state.novelAiRelayToken)
         scope.launch {
             stateFlow.update { it.copy(isTestingNovelAi = true, novelAiStatus = null, error = null) }
             try {
                 val adapter = providerRegistry.require(ProviderCatalog.NOVELAI_IMAGE)
                 val status = withContext(Dispatchers.IO) { adapter.checkStatus(config) }
-                stateFlow.update { it.copy(isTestingNovelAi = false, novelAiStatus = status) }
+                stateFlow.update { current ->
+                    current.copy(isTestingNovelAi = false,
+                        novelAiStatus = status.takeIf { state.novelAiSettings == current.novelAiSettings &&
+                            state.novelAiToken == current.novelAiToken && state.novelAiRelayToken == current.novelAiRelayToken })
+                }
             } catch (e: Exception) {
                 stateFlow.update {
                     it.copy(isTestingNovelAi = false, error = UiStrings.get(S.imgctl_novelai_test_failed, e.message))
@@ -148,11 +153,14 @@ internal class ImageGenSettingsController(
         scope.launch {
             stateFlow.update { it.copy(isLoading = true, error = null) }
             try {
-                val token = state.novelAiToken.trim()
+                NovelAiImageRelay.validate(state.novelAiSettings)
+                val token = (if (state.novelAiSettings.useRelay) state.novelAiRelayToken else state.novelAiToken).trim()
+                val tokenId = if (state.novelAiSettings.useRelay) NovelAiImageSettings.RELAY_TOKEN_SECRET_ID
+                    else "provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey"
                 if (token.isNotBlank()) {
-                    secretStore.putSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey", token)
+                    secretStore.putSecret(tokenId, token)
                 } else {
-                    secretStore.deleteSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey")
+                    secretStore.deleteSecret(tokenId)
                 }
                 ProviderConfigPersistence.saveNovelAiImageSettings(secretStore, state.novelAiSettings)
                 stateFlow.update {

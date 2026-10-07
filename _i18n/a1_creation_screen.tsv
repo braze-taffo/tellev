@@ -139,3 +139,21 @@ crs_view_full_stream	查看完整流式内容
 crs_view_progress	查看本轮进度 · %1$s
 crs_waiting_first_chunk	仍在等待首个流式片段。
 crs_waiting_provider_text	等待供应商返回可显示的文字…
+crs_question_custom_answer	自己输入 / 组合选项
+crs_question_answer_label	输入你的回答
+crs_question_answer_hint	可输入其他答案、组合多个选项或补充说明
+crs_workflow_title	世界书与角色卡衔接
+crs_world_to_card	基于世界书制作角色卡
+crs_world_to_card_hint	新建人物卡或导演卡制作会话，AI 可读取这本世界书的设定。
+crs_card_to_world	基于角色卡制作世界书
+crs_workflow_source_card	来源角色卡：%1$s
+crs_link_worldbook	关联世界书
+crs_link_worldbook_empty	暂无可关联的世界书，请先制作或导入世界书。
+crs_link_source_draft	制作草稿
+crs_link_source_saved	已保存世界书
+crs_link_worldbook_source	%1$s · %2$d 条
+crs_reference_worldbook	参考世界书：%1$s（%2$d 条）
+crs_reference_worldbook_hint	AI 可读取参考设定，合并后才会添加到角色卡中。来源世界书修改后，重新关联即可更新参考内容。
+crs_merge_worldbook	合并到角色卡
+crs_merge_worldbook_confirm	将「%1$s」的 %2$d 条参考条目合并到角色卡，并随 PNG/JSON 导出。现有条目保留，已合并的相同条目不会重复添加。
+crs_allow_agent_lore_edits	允许 AI 修改世界书条目

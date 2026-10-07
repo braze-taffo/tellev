@@ -945,7 +945,7 @@ class CreationFeatureTest {
                 })
             },
         )
-        val session = CreationSession.fromCharacter(original)
+        val session = CreationSession.fromCharacter(original).copy(allowAgentLoreEdits = true)
         assertEquals("原系统提示", session.card.systemPrompt)
         assertEquals(listOf("L1"), session.lore.map { it.id })
         assertEquals(2, session.lore.single().originalEntry?.delayUntilRecursion)
@@ -1076,7 +1076,7 @@ class CreationFeatureTest {
                 },
             ),
         ))
-        val session = CreationSession.fromCharacter(original)
+        val session = CreationSession.fromCharacter(original).copy(allowAgentLoreEdits = true)
         val box = CreationToolBox(session)
         assertTrue(box.execute(
             ToolCallRequest("upsert_lore", buildJsonObject {
@@ -1104,7 +1104,7 @@ class CreationFeatureTest {
             WorldBookEntry(id = "1", keys = listOf("b"), content = "乙"),
             WorldBookEntry(id = "2", keys = listOf("c"), content = "丙"),
         ))
-        val box = CreationToolBox(CreationSession.fromCharacter(original))
+        val box = CreationToolBox(CreationSession.fromCharacter(original).copy(allowAgentLoreEdits = true))
         assertTrue(box.execute(
             ToolCallRequest("remove_lore", buildJsonObject { put("ids", JsonArray(listOf(JsonPrimitive("L1")))) }),
         ).ok)

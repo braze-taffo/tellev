@@ -58,3 +58,7 @@ main_error_read_file	无法读取文件
 memmod_mode_none	无记忆
 memmod_mode_archive	柏宝书式
 memmod_mode_episodic	STARmem 式
+novai_relay_status_unsupported	中转站不支持连接检查接口（HTTP 404/405）。此结果不能判断生图是否可用，请核对路径或尝试生图。
+novai_relay_status_connected	中转站连接检查成功。生图及放大是否可用仍需实际生成验证。
+novai_relay_invalid_url	中转地址无效：请输入完整的 http:// 或 https:// 地址，不含账号密码、查询参数或片段。
+novai_relay_invalid_path	接口路径无效：须以单个 / 开头，不含查询参数或片段。

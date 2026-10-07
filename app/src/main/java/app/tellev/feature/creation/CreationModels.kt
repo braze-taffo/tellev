@@ -48,10 +48,13 @@ data class CreationToolEvent(
     val detail: String,
 )
 
-/** Pending ask_user interaction: the agent loop suspends until the user taps an option. */
+/** Pending ask_user interaction: the agent loop suspends until the user selects or types an answer. */
 data class CreationAgentOption(val label: String, val description: String = "")
 
 data class CreationAgentQuestion(val question: String, val options: List<CreationAgentOption>)
+
+/** Lightweight picker row; full book bodies are loaded only after selection. */
+data class CreationWorldBookSource(val id: String, val name: String, val entryCount: Int, val fromDraft: Boolean)
 
 @Serializable
 data class CharacterDraft(
@@ -126,6 +129,10 @@ data class CreationSession(
     val originalCard: CharacterCard? = null,
     /** Merge base for editing an existing stored (or embedded) world book. */
     val originalBook: WorldBook? = null,
+    /** User-selected reference material; never embedded merely by being associated. */
+    val referenceBook: WorldBook? = null,
+    /** Existing drafts retain their prior behavior; new card sessions opt out by default. */
+    val allowAgentLoreEdits: Boolean = true,
     /** Editable SillyTavern extension tree; unknown keys remain untouched. */
     val advancedExtensions: JsonObject = JsonObject(emptyMap()),
 ) {
@@ -155,6 +162,7 @@ data class CreationSession(
                 savedArtifactId = card.id,
                 originalCard = card,
                 originalBook = book,
+                allowAgentLoreEdits = false,
                 advancedExtensions = (data?.get("extensions") as? JsonObject) ?: JsonObject(emptyMap()),
             ).withAssignedLoreIds()
         }
@@ -182,6 +190,62 @@ data class CreationSession(
             )
         }
     }
+}
+
+/** Start the next creation step without replacing the source draft or copying its conversation. */
+internal fun CreationSession.relatedDraft(target: CreationKind): CreationSession {
+    require(target != kind)
+    return if (target == CreationKind.Character) {
+        val base = originalCard?.let(CreationSession::fromCharacter) ?: CreationSession(kind = target)
+        base.copy(
+            savedArtifactId = "",
+            worldName = worldName,
+            referenceBook = toWorldBook(),
+            allowAgentLoreEdits = false,
+        )
+    } else {
+        require(card.name.isNotBlank())
+        CreationSession(
+            kind = target,
+            card = card,
+            worldName = worldName.ifBlank { "${card.name}世界书" },
+            lore = lore,
+            originalCard = toCharacterCard(),
+            originalBook = originalBook,
+            referenceBook = referenceBook,
+            advancedExtensions = advancedExtensions,
+            nextLoreNumber = nextLoreNumber,
+        ).withAssignedLoreIds()
+    }
+}
+
+/** Explicit user merge. Keep existing entries and remap imported identities to avoid uid collisions. */
+internal fun CreationSession.embedReferenceBook(): CreationSession {
+    require(kind == CreationKind.Character)
+    val book = requireNotNull(referenceBook)
+    val assigned = withAssignedLoreIds()
+    fun identity(entry: LoreDraft): LoreDraft = entry.copy(
+        id = "",
+        originalEntry = entry.originalEntry?.let { it.copy(id = "", raw = JsonObject(it.raw - "uid")) },
+    )
+    val working = assigned.lore.toMutableList()
+    val seen = working.map(::identity).toMutableSet()
+    var cursor = assigned.nextLoreNumber.coerceAtLeast(
+        working.mapNotNull { it.id.removePrefix("L").toIntOrNull() }.maxOrNull() ?: 0)
+    book.entries.map(WorldBookEntry::toLoreDraft).forEach { entry ->
+        if (seen.add(identity(entry))) {
+            require(cursor < Int.MAX_VALUE - 1)
+            cursor++
+            working += entry.copy(
+                id = "L$cursor",
+                originalEntry = entry.originalEntry?.let {
+                    it.copy(id = "linked_$cursor", raw = JsonObject(it.raw - "uid"))
+                },
+            )
+        }
+    }
+    return copy(lore = working, worldName = worldName.ifBlank { book.name },
+        nextLoreNumber = cursor, updatedAt = System.currentTimeMillis())
 }
 
 fun WorldBookEntry.toLoreDraft(): LoreDraft = LoreDraft(

@@ -7,6 +7,7 @@ import app.tellev.core.prompt.PromptDiagnostics
 import app.tellev.core.prompt.PromptMessage
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
@@ -345,6 +346,116 @@ class NovelAiImageAdapterTest {
         assertEquals("x y z", NovelAiImageProtocol.combinePrefixes("x {prompt} z", "y", "{prompt}"))
         // No macro present -> plain comma join with a trailing comma trimmed.
         assertEquals("x z, y", NovelAiImageProtocol.combinePrefixes("x z", "y", "{prompt}"))
+    }
+
+    @Test
+    fun `relay keeps the official V4 body and sends only its selected key`() = runBlocking {
+        val official = NovelAiImageSettings(seed = 456, promptPrefix = "", negativePrompt = "", varietyBoost = true)
+        val relay = official.copy(useRelay = true, relayBaseUrl = "https://relay.example/novel/")
+        var body: kotlinx.serialization.json.JsonObject? = null
+        val adapter = NovelAiImageAdapter(client(Interceptor { chain ->
+            assertEquals("https://relay.example/novel/ai/generate-image", chain.request().url.toString())
+            assertEquals("Bearer relay-key", chain.request().header("Authorization"))
+            val buffer = Buffer()
+            chain.request().body!!.writeTo(buffer)
+            body = Json.parseToJsonElement(buffer.readUtf8()).jsonObject
+            response(chain, 200, zip("image.png" to "relay-image".toByteArray()), "application/zip")
+        }))
+        val config = ProviderConfigPersistence.novelAiImageConfig(relay, "official-key", "relay-key")
+        val result = adapter.streamGenerate(config, request(relay)).toList().single() as GenerateChunk.Completed
+        assertEquals(capturedBody(official), body)
+        assertEquals("relay-image", Base64.getDecoder().decode(result.text).decodeToString())
+    }
+
+    @Test
+    fun `relay model alias and custom upscale path stay on relay host`() = runBlocking {
+        val settings = NovelAiImageSettings(useRelay = true, relayBaseUrl = "https://relay.example/proxy/ai/generate-image",
+            relayModel = "relay-v4-alias", relayUpscalePath = "/images/upscale", upscaleRatio = 2.0)
+        val urls = mutableListOf<String>()
+        val adapter = NovelAiImageAdapter(client(Interceptor { chain ->
+            urls += chain.request().url.toString()
+            assertEquals("relay.example", chain.request().url.host)
+            assertEquals("Bearer relay-key", chain.request().header("Authorization"))
+            val buffer = Buffer()
+            chain.request().body!!.writeTo(buffer)
+            val body = Json.parseToJsonElement(buffer.readUtf8()).jsonObject
+            if (urls.size == 1) {
+                assertEquals("relay-v4-alias", body.str("model"))
+                assertNotNull(body.obj("parameters")["v4_prompt"])
+            } else {
+                assertEquals("original", Base64.getDecoder().decode(body.str("image")).decodeToString())
+            }
+            response(chain, 200, zip("image.png" to (if (urls.size == 1) "original" else "upscaled").toByteArray()), "application/zip")
+        }))
+        val chunks = adapter.streamGenerate(ProviderConfigPersistence.novelAiImageConfig(settings, "official", "relay-key"), request(settings)).toList()
+        assertEquals(listOf("https://relay.example/proxy/ai/generate-image", "https://relay.example/proxy/images/upscale"), urls)
+        assertEquals("upscaled", Base64.getDecoder().decode((chunks.single() as GenerateChunk.Completed).text).decodeToString())
+    }
+
+    @Test
+    fun `relay status uses custom endpoint and unsupported subscription is not invalid key`() = runBlocking {
+        val settings = NovelAiImageSettings(useRelay = true, relayBaseUrl = "https://relay.example/prefix", relayStatusPath = "/health")
+        val config = ProviderConfigPersistence.novelAiImageConfig(settings, "official", "relay-key")
+        for (code in listOf(200, 401, 404, 405)) {
+            val status = NovelAiImageAdapter(client(Interceptor { chain ->
+                assertEquals("https://relay.example/prefix/health", chain.request().url.toString())
+                assertEquals("GET", chain.request().method)
+                assertEquals("Bearer relay-key", chain.request().header("Authorization"))
+                response(chain, code, "{}")
+            })).checkStatus(config)
+            assertEquals(code == 200, status.available)
+            if (code == 404 || code == 405) assertTrue(status.message.contains("不能判断"))
+        }
+    }
+
+    @Test
+    fun `relay rejects invalid address before any request and accepts unzipped png`() = runBlocking {
+        val invalid = NovelAiImageSettings(useRelay = true, relayBaseUrl = "")
+        val never = NovelAiImageAdapter(client(Interceptor { error("Must not send a request") }))
+        assertTrue(never.streamGenerate(config(), request(invalid)).toList().single() is GenerateChunk.Failed)
+        val png = byteArrayOf(0x89.toByte(), 80, 78, 71, 13, 10, 26, 10, 12)
+        val relay = invalid.copy(relayBaseUrl = "http://127.0.0.1:9876")
+        val adapter = NovelAiImageAdapter(client(Interceptor { response(it, 200, png, "image/png") }))
+        val result = adapter.streamGenerate(config(), request(relay)).toList().single() as GenerateChunk.Completed
+        assertTrue(png.contentEquals(Base64.getDecoder().decode(result.text)))
+    }
+
+    @Test
+    fun `relay generation and connection checks cancel during a stalled response body`() = runBlocking {
+        for (status in listOf(false, true)) {
+            val server = java.net.ServerSocket(0)
+            val ready = java.util.concurrent.CountDownLatch(1)
+            val worker = kotlin.concurrent.thread(isDaemon = true) {
+                runCatching {
+                    server.accept().use { socket ->
+                        socket.soTimeout = 3_000
+                        val input = socket.getInputStream()
+                        var terminator = ""
+                        while (!terminator.endsWith("\r\n\r\n")) {
+                            val value = input.read(); check(value >= 0)
+                            terminator = (terminator + value.toChar()).takeLast(4)
+                        }
+                        socket.getOutputStream().apply {
+                            write("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n".toByteArray()); flush()
+                        }
+                        ready.countDown()
+                        while (input.read() >= 0) { /* Wait until cancellation closes the connection. */ }
+                    }
+                }
+            }
+            try {
+                val settings = NovelAiImageSettings(useRelay = true, relayBaseUrl = "http://127.0.0.1:${server.localPort}")
+                val adapter = NovelAiImageAdapter(OkHttpClient.Builder().readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).build())
+                val selected = ProviderConfigPersistence.novelAiImageConfig(settings, null, "fixture")
+                val job = launch(kotlinx.coroutines.Dispatchers.IO) {
+                    if (status) adapter.checkStatus(selected) else adapter.streamGenerate(selected, request(settings)).toList()
+                    error("A cancelled request must not return a status or image")
+                }
+                assertTrue(ready.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                kotlinx.coroutines.withTimeout(2_000) { job.cancel(); job.join() }
+                assertTrue(job.isCancelled)
+            } finally { server.close(); worker.join(1_000) }
+        }
     }
 
     // ── helpers ─────────────────────────────────────────────────────────

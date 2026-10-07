@@ -302,4 +302,35 @@ class ProviderConfigPersistenceTest {
         assertEquals("pst-token", config.apiKey)
         assertEquals("https://image.novelai.net", config.baseUrl)
     }
+
+    @Test
+    fun `relay selection loads only relay credentials and round trips paths`() = runBlocking {
+        val s = store()
+        s.putSecret("provider-novelai-image-apikey", "official-token")
+        val settings = NovelAiImageSettings(useRelay = true, relayBaseUrl = "https://relay.example/prefix",
+            relayModel = "nai-diffusion-4-5-curated", relayGeneratePath = "/generate", relayStatusPath = "/health", relayUpscalePath = "/upscale")
+        ProviderConfigPersistence.saveNovelAiImageSettings(s, settings)
+        assertEquals(settings, ProviderConfigPersistence.loadNovelAiImageSettings(s))
+        assertNull(ProviderConfigPersistence.loadProviderConfig(s, ProviderCatalog.NOVELAI_IMAGE).apiKey)
+        assertTrue(!ProviderConfigPersistence.isNovelAiImageConfigured(s))
+        s.putSecret(NovelAiImageSettings.RELAY_TOKEN_SECRET_ID, "relay-token")
+        val relay = ProviderConfigPersistence.loadProviderConfig(s, ProviderCatalog.NOVELAI_IMAGE)
+        assertEquals("relay-token", relay.apiKey)
+        assertEquals("https://relay.example/prefix", relay.baseUrl)
+        assertEquals(settings.relayModel, relay.model)
+        assertTrue(ProviderConfigPersistence.isNovelAiImageConfigured(s))
+        ProviderConfigPersistence.saveNovelAiImageSettings(s, settings.copy(useRelay = false))
+        assertEquals("official-token", ProviderConfigPersistence.loadProviderConfig(s, ProviderCatalog.NOVELAI_IMAGE).apiKey)
+        assertEquals("relay-token", s.readSecret(NovelAiImageSettings.RELAY_TOKEN_SECRET_ID))
+    }
+
+    @Test
+    fun `relay availability requires a valid address as well as a separate token`() = runBlocking {
+        val s = store()
+        s.putSecret(NovelAiImageSettings.RELAY_TOKEN_SECRET_ID, "relay")
+        for (url in listOf("", "not-a-url", "https://user:pass@relay.example", "https://relay.example?token=abc")) {
+            ProviderConfigPersistence.saveNovelAiImageSettings(s, NovelAiImageSettings(useRelay = true, relayBaseUrl = url))
+            assertTrue(!ProviderConfigPersistence.isNovelAiImageConfigured(s))
+        }
+    }
 }

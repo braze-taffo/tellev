@@ -499,6 +499,12 @@ internal class CreationToolBox(initial: CreationSession) {
             put("card", encodeJson.encodeToJsonElement(session.card))
             put("world_name", session.worldName)
             put("lore_count", session.lore.size)
+            put("allow_lore_edits", session.kind == CreationKind.WorldBook || session.allowAgentLoreEdits)
+            session.referenceBook?.let { book ->
+                put("reference_world_name", book.name)
+                put("reference_lore_count", book.entries.size)
+                put("reference_is_read_only", true)
+            }
         },
     )
 
@@ -525,11 +531,20 @@ internal class CreationToolBox(initial: CreationSession) {
         }
     }
 
+    private fun loreSource(arguments: JsonObject): List<LoreDraft> = when (arguments.argString("source", "draft")) {
+        "draft" -> session.lore
+        "reference" -> requireNotNull(session.referenceBook) { "没有关联参考世界书" }.entries.mapIndexed { index, entry ->
+            entry.toLoreDraft().copy(id = "R${index + 1}")
+        }
+        else -> throw IllegalArgumentException("source 只能是 draft 或 reference")
+    }
+
     private fun listLore(arguments: JsonObject): ToolResult {
         val offset = arguments.argInt("offset", 0).coerceAtLeast(0)
         val limit = arguments.argInt("limit", 20).coerceIn(1, 50)
         val keyword = arguments.argString("keyword", "").trim()
-        val filtered = if (keyword.isEmpty()) session.lore else session.lore.filter { entry ->
+        val source = loreSource(arguments)
+        val filtered = if (keyword.isEmpty()) source else source.filter { entry ->
             entry.title.contains(keyword, ignoreCase = true) ||
                 entry.keys.any { it.contains(keyword, ignoreCase = true) }
         }
@@ -539,6 +554,7 @@ internal class CreationToolBox(initial: CreationSession) {
                 put("total", filtered.size)
                 put("offset", offset)
                 put("limit", limit)
+                put("source", arguments.argString("source", "draft"))
                 put(
                     "entries",
                     JsonArray(filtered.drop(offset).take(limit).map { entry ->
@@ -576,13 +592,15 @@ internal class CreationToolBox(initial: CreationSession) {
         val ids = arguments.argStringArray("ids")
         require(ids.isNotEmpty()) { "ids 不能为空" }
         require(ids.size <= 20) { "单次最多读取 20 条（收到 ${ids.size} 条）" }
-        val found = ids.mapNotNull { id -> session.lore.firstOrNull { it.id == id } }
-        val notFound = ids.filter { id -> session.lore.none { it.id == id } }
+        val source = loreSource(arguments)
+        val found = ids.mapNotNull { id -> source.firstOrNull { it.id == id } }
+        val notFound = ids.filter { id -> source.none { it.id == id } }
         return ToolResult(
             ok = true, name = "read_lore",
             payload = buildJsonObject {
                 put("found", JsonArray(found.map(::loreModelView)))
                 put("not_found", JsonArray(notFound.map(::JsonPrimitive)))
+                put("source", arguments.argString("source", "draft"))
             },
         )
     }
@@ -640,6 +658,9 @@ internal class CreationToolBox(initial: CreationSession) {
     }
 
     private fun upsertLore(arguments: JsonObject): ToolResult {
+        require(session.kind == CreationKind.WorldBook || session.allowAgentLoreEdits) {
+            "用户未允许修改角色卡世界书。请只创作角色卡字段；需要写条目时，请用户打开「允许 AI 修改世界书条目」。参考世界书只能读取，由用户在界面合并。"
+        }
         val entries = arguments["entries"] as? JsonArray
             ?: throw IllegalArgumentException("缺少 entries 数组")
         require(entries.isNotEmpty()) { "entries 不能为空" }
@@ -711,6 +732,9 @@ internal class CreationToolBox(initial: CreationSession) {
         } else emptyList()
 
     private fun removeLore(arguments: JsonObject): ToolResult {
+        require(session.kind == CreationKind.WorldBook || session.allowAgentLoreEdits) {
+            "用户未允许修改角色卡世界书，不能删除条目。"
+        }
         val ids = arguments.argStringArray("ids")
         require(ids.isNotEmpty()) { "ids 不能为空" }
         val removed = session.lore.filter { it.id in ids }

@@ -61,6 +61,7 @@ import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import app.tellev.core.provider.ComfyWorkflowTemplate
 import app.tellev.core.provider.NovelAiImageSettings
+import app.tellev.core.provider.NovelAiImageRelay
 import app.tellev.core.provider.ProviderCatalog
 
 /** 主设置页生图入口卡片的摘要行：当前引擎与各引擎配置状态。 */
@@ -73,7 +74,8 @@ internal fun imageGenSummary(state: SettingsUiState): String {
     val unconfigured = UiStrings.get(S.setimg_state_unconfigured)
     val parts = listOf(
         "ComfyUI " + if (state.comfySettings.workflowJson.isNotBlank()) configured else unconfigured,
-        "NovelAI " + if (state.novelAiToken.isNotBlank()) configured else unconfigured,
+        "NovelAI " + if ((if (state.novelAiSettings.useRelay) state.novelAiRelayToken else state.novelAiToken).isNotBlank() &&
+            runCatching { NovelAiImageRelay.validate(state.novelAiSettings) }.isSuccess) configured else unconfigured,
     )
     return UiStrings.get(S.setimg_entry_summary, engineName, parts.joinToString(" · "))
 }
@@ -327,11 +329,53 @@ internal fun LazyListScope.imageGenDetailsItems(
             title = stringResource(R.string.setimg_novelai_header),
         )
     }
+    item(key = "novelai_source") {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = !state.novelAiSettings.useRelay,
+                onClick = { viewModel.updateNovelAiSettings { it.copy(useRelay = false) } },
+                label = { Text(stringResource(R.string.setimg_novelai_official)) })
+            FilterChip(selected = state.novelAiSettings.useRelay,
+                onClick = { viewModel.updateNovelAiSettings { it.copy(useRelay = true) } },
+                label = { Text(stringResource(R.string.setimg_novelai_relay)) })
+        }
+    }
+    if (state.novelAiSettings.useRelay) {
+        item(key = "novelai_relay_url") {
+            OutlinedTextField(
+                value = state.novelAiSettings.relayBaseUrl,
+                onValueChange = { value -> viewModel.updateNovelAiSettings { it.copy(relayBaseUrl = value) } },
+                label = { Text(stringResource(R.string.setimg_novelai_relay_url)) },
+                supportingText = { Text(stringResource(R.string.setimg_novelai_relay_help)) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                modifier = Modifier.fillMaxWidth(), singleLine = true,
+            )
+        }
+        item(key = "novelai_relay_paths") {
+            var expanded by remember { mutableStateOf(false) }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { expanded = !expanded }) { Text(stringResource(R.string.setimg_novelai_relay_paths)) }
+                if (expanded) {
+                    OutlinedTextField(value = state.novelAiSettings.relayGeneratePath,
+                        onValueChange = { value -> viewModel.updateNovelAiSettings { it.copy(relayGeneratePath = value) } },
+                        label = { Text(stringResource(R.string.setimg_novelai_generate_path)) },
+                        placeholder = { Text("/ai/generate-image") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    OutlinedTextField(value = state.novelAiSettings.relayStatusPath,
+                        onValueChange = { value -> viewModel.updateNovelAiSettings { it.copy(relayStatusPath = value) } },
+                        label = { Text(stringResource(R.string.setimg_novelai_status_path)) },
+                        placeholder = { Text("/user/subscription") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    OutlinedTextField(value = state.novelAiSettings.relayUpscalePath,
+                        onValueChange = { value -> viewModel.updateNovelAiSettings { it.copy(relayUpscalePath = value) } },
+                        label = { Text(stringResource(R.string.setimg_novelai_upscale_path)) },
+                        placeholder = { Text("/ai/upscale") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                }
+            }
+        }
+    }
     item(key = "novelai_token") {
         OutlinedTextField(
-            value = state.novelAiToken,
-            onValueChange = viewModel::updateNovelAiToken,
-            label = { Text(stringResource(R.string.setimg_novelai_token_label)) },
+            value = if (state.novelAiSettings.useRelay) state.novelAiRelayToken else state.novelAiToken,
+            onValueChange = if (state.novelAiSettings.useRelay) viewModel::updateNovelAiRelayToken else viewModel::updateNovelAiToken,
+            label = { Text(stringResource(if (state.novelAiSettings.useRelay) R.string.setimg_novelai_relay_key else R.string.setimg_novelai_token_label)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             visualTransformation = if (novelAiTokenVisible) VisualTransformation.None
@@ -346,7 +390,7 @@ internal fun LazyListScope.imageGenDetailsItems(
                 }
             },
             supportingText = {
-                Text(stringResource(R.string.setimg_novelai_token_help))
+                Text(stringResource(if (state.novelAiSettings.useRelay) R.string.setimg_novelai_relay_key_help else R.string.setimg_novelai_token_help))
             },
         )
     }
@@ -387,6 +431,15 @@ internal fun LazyListScope.imageGenDetailsItems(
             }
         }
     }
+    if (state.novelAiSettings.useRelay) {
+        item(key = "novelai_relay_model") {
+            OutlinedTextField(value = state.novelAiSettings.relayModel,
+                onValueChange = { value -> viewModel.updateNovelAiSettings { it.copy(relayModel = value) } },
+                label = { Text(stringResource(R.string.setimg_novelai_relay_model)) },
+                supportingText = { Text(stringResource(R.string.setimg_novelai_relay_model_help)) },
+                modifier = Modifier.fillMaxWidth(), singleLine = true)
+        }
+    }
     item(key = "novelai_params") {
         OutlinedButton(
             onClick = onOpenNovelAiParamsDialog,
@@ -412,7 +465,8 @@ internal fun LazyListScope.imageGenDetailsItems(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                 }
-                Text(if (state.isTestingNovelAi) stringResource(R.string.setimg_testing) else stringResource(R.string.setimg_test_token))
+                Text(stringResource(if (state.isTestingNovelAi) R.string.setimg_testing
+                    else if (state.novelAiSettings.useRelay) R.string.setimg_test_connection else R.string.setimg_test_token))
             }
             FilledTonalButton(
                 onClick = viewModel::saveNovelAiImageConfig,
@@ -436,7 +490,8 @@ internal fun LazyListScope.imageGenDetailsItems(
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text(
-                        text = if (status.available) stringResource(R.string.setimg_token_ok) else stringResource(R.string.setimg_token_unavailable),
+                        text = if (state.novelAiSettings.useRelay) stringResource(R.string.setimg_test_connection)
+                            else if (status.available) stringResource(R.string.setimg_token_ok) else stringResource(R.string.setimg_token_unavailable),
                         style = MaterialTheme.typography.titleSmall,
                         color = if (status.available) MaterialTheme.colorScheme.onPrimaryContainer
                         else MaterialTheme.colorScheme.onErrorContainer,

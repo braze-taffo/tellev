@@ -11,10 +11,13 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
 /** Drafts and source manuscripts live in app-private storage, outside ST card directories. */
 class CreationRepository(private val root: File) {
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+    // Windows readers can prevent an atomic replacement; also serialize the shared temp path.
+    private val sessionLock = sessionLocks.computeIfAbsent(root.absoluteFile.normalize().path) { Any() }
 
     /** Streaming decode target: turns/lore elements count only, bodies are skipped. */
     @Serializable
@@ -37,44 +40,48 @@ class CreationRepository(private val root: File) {
     private class CountOnlyDto
 
     suspend fun list(): List<CreationSessionSummary> = withContext(Dispatchers.IO) {
-        root.listFiles { file -> file.isFile && file.name.endsWith(".json") }
-            ?.mapNotNull { file ->
-                // ignoreUnknownKeys makes unknown fields (including whole lore
-                // bodies and merge bases) stream past without being retained.
-                runCatching {
-                    val dto = json.decodeFromString<SessionSummaryDto>(file.readText())
-                    CreationSessionSummary(
-                        id = dto.id.ifBlank { file.nameWithoutExtension },
-                        kind = dto.kind,
-                        cardName = dto.card.name,
-                        worldName = dto.worldName,
-                        turnsCount = dto.turns.size,
-                        loreCount = dto.lore.size,
-                        sourceCursor = dto.sourceCursor,
-                        sourceLength = dto.sourceLength,
-                        updatedAt = dto.updatedAt,
-                    )
-                }.getOrNull()
-            }
-            ?.sortedByDescending(CreationSessionSummary::updatedAt).orEmpty()
+        synchronized(sessionLock) {
+            root.listFiles { file -> file.isFile && file.name.endsWith(".json") }
+                ?.mapNotNull { file ->
+                    // ignoreUnknownKeys makes unknown fields (including whole lore
+                    // bodies and merge bases) stream past without being retained.
+                    runCatching {
+                        val dto = json.decodeFromString<SessionSummaryDto>(file.readText())
+                        CreationSessionSummary(
+                            id = dto.id.ifBlank { file.nameWithoutExtension },
+                            kind = dto.kind,
+                            cardName = dto.card.name,
+                            worldName = dto.worldName,
+                            turnsCount = dto.turns.size,
+                            loreCount = dto.lore.size,
+                            sourceCursor = dto.sourceCursor,
+                            sourceLength = dto.sourceLength,
+                            updatedAt = dto.updatedAt,
+                        )
+                    }.getOrNull()
+                }
+                ?.sortedByDescending(CreationSessionSummary::updatedAt).orEmpty()
+        }
     }
 
     suspend fun load(id: String): CreationSession = withContext(Dispatchers.IO) {
-        json.decodeFromString<CreationSession>(sessionFile(id).readText())
+        synchronized(sessionLock) { json.decodeFromString<CreationSession>(sessionFile(id).readText()) }
     }
 
     suspend fun save(session: CreationSession) = withContext(Dispatchers.IO) {
-        root.mkdirs()
-        val destination = sessionFile(session.id)
-        val temporary = File(root, "${safeId(session.id)}.json.tmp")
-        temporary.writeText(json.encodeToString(session))
-        try {
-            Files.move(
-                temporary.toPath(), destination.toPath(),
-                StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE,
-            )
-        } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
-            Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        synchronized(sessionLock) {
+            root.mkdirs()
+            val destination = sessionFile(session.id)
+            val temporary = File(root, "${safeId(session.id)}.json.tmp")
+            temporary.writeText(json.encodeToString(session))
+            try {
+                Files.move(
+                    temporary.toPath(), destination.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE,
+                )
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
         }
     }
 
@@ -125,7 +132,7 @@ class CreationRepository(private val root: File) {
     }
 
     suspend fun delete(id: String) = withContext(Dispatchers.IO) {
-        sessionFile(id).delete()
+        synchronized(sessionLock) { sessionFile(id).delete() }
         root.listFiles { file -> file.name.startsWith("${safeId(id)}.") && file.name.endsWith(".source.txt") }
             ?.forEach(File::delete)
         pruneCovers(id, "")
@@ -147,4 +154,8 @@ class CreationRepository(private val root: File) {
 
     private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
         .digest(bytes).joinToString("") { "%02x".format(it) }
+
+    private companion object {
+        val sessionLocks = ConcurrentHashMap<String, Any>()
+    }
 }

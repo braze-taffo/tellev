@@ -79,6 +79,7 @@ data class SettingsUiState(
     // ── 生图引擎选择与 NovelAI 生图（远程）──
     val imageEngine: String = ProviderCatalog.COMFYUI,
     val novelAiToken: String = "",
+    val novelAiRelayToken: String = "",
     val novelAiSettings: NovelAiImageSettings = NovelAiImageSettings(),
     val novelAiStatus: ProviderStatus? = null,
     val isTestingNovelAi: Boolean = false,
@@ -204,6 +205,7 @@ class SettingsViewModel(
                 val novelAiSettings = ProviderConfigPersistence.loadNovelAiImageSettings(secretStore)
                 val novelAiToken =
                     secretStore.readSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey") ?: ""
+                val novelAiRelayToken = secretStore.readSecret(NovelAiImageSettings.RELAY_TOKEN_SECRET_ID).orEmpty()
 
                 _uiState.update {
                     it.copy(
@@ -232,6 +234,7 @@ class SettingsViewModel(
                         comfySettings = comfySettings,
                         imageEngine = imageEngine,
                         novelAiToken = novelAiToken,
+                        novelAiRelayToken = novelAiRelayToken,
                         novelAiSettings = novelAiSettings,
                     )
                 }
@@ -281,6 +284,7 @@ class SettingsViewModel(
     fun saveComfyConfig() = imageGenController.saveComfyConfig()
     fun selectImageEngine(engine: String) = imageGenController.selectImageEngine(engine)
     fun updateNovelAiToken(value: String) = imageGenController.updateNovelAiToken(value)
+    fun updateNovelAiRelayToken(value: String) = imageGenController.updateNovelAiRelayToken(value)
     fun updateNovelAiSettings(transform: (NovelAiImageSettings) -> NovelAiImageSettings) = imageGenController.updateNovelAiSettings(transform)
     fun testNovelAiImage() = imageGenController.testNovelAiImage()
     fun saveNovelAiImageConfig() = imageGenController.saveNovelAiImageConfig()

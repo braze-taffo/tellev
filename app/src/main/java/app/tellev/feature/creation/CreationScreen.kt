@@ -82,10 +82,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -585,13 +588,15 @@ private fun Long?.orZeroSeconds(): Long = (this ?: 0L) / 1_000
 @Composable
 private fun CreationConversation(session: CreationSession, state: CreationUiState, viewModel: CreationViewModel) {
     var input by remember(session.id) { mutableStateOf("") }
+    val inputFocusRequester = remember(session.id) { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
     val busy = state.busy
     val listState = rememberLazyListState()
     var showCompletedDetails by remember(session.id, state.operationStartedAtMillis) { mutableStateOf(false) }
     val questionPending = state.pendingQuestion != null
     LaunchedEffect(session.id, session.turns.size, state.operationStartedAtMillis, busy, questionPending) {
         // Follow the in-flight message, then return focus to the saved agent reply.
-        listState.scrollToItem(session.turns.size +
+        listState.scrollToItem(1 + session.turns.size +
             (if (busy) 1 else 0) + (if (questionPending) 1 else 0))
     }
     Column(Modifier.fillMaxSize().padding(12.dp)) {
@@ -602,6 +607,9 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                     stringResource(R.string.crs_conversation_intro),
                     style = MaterialTheme.typography.bodyMedium,
                 )
+            }
+            item(key = "creation-workflow") {
+                CreationWorkflowPanel(session, busy, viewModel)
             }
             if (session.turns.isEmpty()) {
                 item(key = "creation-brief") {
@@ -692,6 +700,15 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                                     }
                                 }
                             }
+                            OutlinedButton(
+                                onClick = {
+                                    inputFocusRequester.requestFocus()
+                                    keyboardController?.show()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(stringResource(R.string.crs_question_custom_answer))
+                            }
                         }
                     }
                 }
@@ -705,7 +722,9 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
                 AssistChip(onClick = { viewModel.send("这一部分交给你决定。请结合已确定设定写入草稿，并说明你的选择。") },
                     enabled = !busy, label = { Text(stringResource(R.string.crs_btn_ai_decide)) })
                 AssistChip(onClick = { viewModel.send(if (session.kind == CreationKind.Character)
-                    "请根据目前已有信息立即完成可编辑的角色卡初稿和适用的世界书条目，缺口用合理设定补齐并标明待核对处。"
+                    "请根据目前已有信息立即完成可编辑的角色卡初稿，若有关联的参考世界书则先读取；" +
+                        (if (session.allowAgentLoreEdits) "可以填写适用的世界书条目；" else "不要新增或修改世界书条目；") +
+                        "缺口用合理设定补齐并标明待核对处。"
                     else "请根据目前已有信息立即完成可编辑的世界书条目初稿，区分已确定事实与待核对设定。") },
                     enabled = !busy, label = { Text(stringResource(R.string.crs_btn_generate_draft)) })
                 if (session.kind == CreationKind.WorldBook) {
@@ -721,16 +740,116 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
         Row(Modifier.fillMaxWidth().padding(top = 6.dp),
             verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
-                value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f),
-                label = { Text(stringResource(R.string.crs_input_label)) }, minLines = 1, maxLines = 6,
+                value = input, onValueChange = { input = it },
+                modifier = Modifier.weight(1f).focusRequester(inputFocusRequester),
+                label = { Text(stringResource(if (questionPending) R.string.crs_question_answer_label else R.string.crs_input_label)) },
+                supportingText = if (questionPending) {
+                    { Text(stringResource(R.string.crs_question_answer_hint)) }
+                } else null,
+                minLines = 1, maxLines = 6,
                 shape = RoundedCornerShape(24.dp),
             )
             FilledIconButton(
                 onClick = { viewModel.send(input); input = "" },
-                enabled = !busy && input.isNotBlank(),
+                enabled = (!busy || questionPending) && input.isNotBlank(),
                 modifier = Modifier.padding(bottom = 2.dp),
             ) {
                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.crs_send))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CreationWorkflowPanel(session: CreationSession, busy: Boolean, viewModel: CreationViewModel) {
+    val scope = rememberCoroutineScope()
+    var showPicker by remember(session.id) { mutableStateOf(false) }
+    var loadingSources by remember(session.id) { mutableStateOf(false) }
+    var sources by remember(session.id) { mutableStateOf<List<CreationWorldBookSource>>(emptyList()) }
+    var confirmMerge by remember(session.id) { mutableStateOf(false) }
+    val context = LocalContext.current
+    if (showPicker) {
+        AlertDialog(
+            onDismissRequest = { showPicker = false },
+            title = { Text(stringResource(R.string.crs_link_worldbook)) },
+            text = {
+                if (loadingSources) CircularProgressIndicator()
+                else if (sources.isEmpty()) Text(stringResource(R.string.crs_link_worldbook_empty))
+                else LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(sources, key = { "${it.fromDraft}:${it.id}" }) { source ->
+                        OutlinedButton(
+                            onClick = { viewModel.associateWorldBook(source); showPicker = false },
+                            enabled = !busy && source.entryCount > 0,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(source.name.ifBlank { stringResource(R.string.crs_unnamed_worldbook) })
+                                Text(stringResource(R.string.crs_link_worldbook_source,
+                                    stringResource(if (source.fromDraft) R.string.crs_link_source_draft else R.string.crs_link_source_saved),
+                                    source.entryCount), style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showPicker = false }) { Text(stringResource(R.string.crs_cancel)) } },
+        )
+    }
+    if (confirmMerge && session.referenceBook != null) {
+        AlertDialog(
+            onDismissRequest = { confirmMerge = false },
+            title = { Text(stringResource(R.string.crs_merge_worldbook)) },
+            text = { Text(stringResource(R.string.crs_merge_worldbook_confirm,
+                session.referenceBook.name, session.referenceBook.entries.size)) },
+            confirmButton = {
+                TextButton(onClick = { viewModel.embedReferenceWorldBook(); confirmMerge = false }, enabled = !busy) {
+                    Text(stringResource(R.string.crs_merge_worldbook))
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmMerge = false }) { Text(stringResource(R.string.crs_cancel)) } },
+        )
+    }
+    PanelCard {
+        Text(stringResource(R.string.crs_workflow_title), style = MaterialTheme.typography.titleSmall)
+        if (session.kind == CreationKind.WorldBook) {
+            if (session.originalCard != null) Text(stringResource(R.string.crs_workflow_source_card,
+                session.originalCard.name), style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.crs_world_to_card_hint), style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = { viewModel.startRelatedDraft(CreationKind.Character) },
+                enabled = !busy && session.lore.isNotEmpty()) {
+                Text(stringResource(R.string.crs_world_to_card))
+            }
+        } else {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    showPicker = true
+                    loadingSources = true
+                    scope.launch {
+                        try { sources = viewModel.worldBookSources() }
+                        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                        catch (e: Exception) { viewModel.showError(e.message ?: context.getString(R.string.crs_import_failed)) }
+                        finally { loadingSources = false }
+                    }
+                }, enabled = !busy) { Text(stringResource(R.string.crs_link_worldbook)) }
+                OutlinedButton(onClick = { viewModel.startRelatedDraft(CreationKind.WorldBook) },
+                    enabled = !busy && session.card.name.isNotBlank()) {
+                    Text(stringResource(R.string.crs_card_to_world))
+                }
+            }
+            session.referenceBook?.let { book ->
+                Text(stringResource(R.string.crs_reference_worldbook, book.name, book.entries.size),
+                    style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.crs_reference_worldbook_hint), style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = { confirmMerge = true }, enabled = !busy && book.entries.isNotEmpty()) {
+                    Text(stringResource(R.string.crs_merge_worldbook))
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(checked = session.allowAgentLoreEdits,
+                    onCheckedChange = viewModel::setAgentLoreEdits, enabled = !busy)
+                Text(stringResource(R.string.crs_allow_agent_lore_edits), modifier = Modifier.padding(start = 8.dp),
+                    style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -970,6 +1089,7 @@ private fun WorldDraftEditor(
     LazyColumn(Modifier.fillMaxSize().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item(key = "header") {
+            CreationWorkflowPanel(session, busy, viewModel)
             PanelCard {
             DraftField(stringResource(R.string.crs_field_worldbook_name), session.worldName, busy) { viewModel.editWorldName(it) }
             OutlinedButton(onClick = onExportJson, enabled = !busy) {

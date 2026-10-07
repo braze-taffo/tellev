@@ -30,7 +30,7 @@ internal data class CreationBrief(
             append("请先根据已提供的信息写出能确定的部分，再只问当前最关键的 1 至 2 个问题；不要重复询问已经填写的内容。")
         } else {
             append(if (kind == CreationKind.Character) {
-                "请现在实际填写角色卡草稿字段；有必要时再写可用的世界书条目。"
+                "请现在实际填写角色卡草稿字段；只有我允许 AI 修改世界书条目时才写条目。"
             } else if (loreOneByOne) {
                 "请先提议第一条世界书条目，等我确认后再写入草稿。"
             } else {

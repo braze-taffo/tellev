@@ -136,3 +136,15 @@ setprov_status_connected	已连接
 setprov_status_failed	连接失败
 setprov_test_connection	测试连接
 setprov_testing	测试中...
+setimg_novelai_official	官方
+setimg_novelai_relay	第三方中转（官方格式）
+setimg_novelai_relay_url	中转 API 地址
+setimg_novelai_relay_help	填写中转站地址，可包含路径前缀或完整生图地址。请求使用 NovelAI 官方格式。
+setimg_novelai_relay_paths	自定义接口路径（可选）
+setimg_novelai_generate_path	生图路径
+setimg_novelai_status_path	连接检查路径
+setimg_novelai_upscale_path	放大路径
+setimg_novelai_relay_key	中转 API 密钥
+setimg_novelai_relay_key_help	使用中转站提供的密钥，与官方 Token 分开保存。
+setimg_novelai_relay_model	中转模型名称（可选）
+setimg_novelai_relay_model_help	留空使用上方模型；中转站要求别名时填写。
