@@ -11,3 +11,8 @@ backup-*/
 .keystore/
 
 nul
+
+# Signing material (plaintext passwords) must never be tracked.
+keystore.properties
+*.jks
+*.keystore
