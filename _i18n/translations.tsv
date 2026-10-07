@@ -1629,3 +1629,210 @@ ctx_label_world	World books	ワールドブック	월드북
 ctx_label_messages	Messages	メッセージ	메시지
 time_hours_short	%1$dh	%1$d時間	%1$d시간
 time_days_short	%1$dd	%1$d日	%1$d일
+model_group_current	Current	現在のモデル	현재 모델
+model_group_recent	Recent	最近使用	최근 사용
+model_group_suggested	Common	よく使うモデル	자주 쓰는 모델
+model_group_manual	Manual	手動入力	직접 입력
+setprov_model_pick	Pick from model list	モデル一覧から選択	목록에서 모델 선택
+chat_edit_message	Edit message	メッセージを編集	메시지 편집
+chat_fork_from_here	Branch from here	ここから分岐	여기서 분기
+chat_delete_message	Delete message	メッセージを削除	메시지 삭제
+chat_manage_world_books	Manage world books…	ワールドブックを管理…	월드북 관리…
+chat_panel_preset_entry	Preset	プリセット	프리셋
+chat_panel_persona_entry	User persona	ペルソナ	사용자 페르소나
+chat_panel_world_entry	World book	ワールドブック	월드북
+chat_drawer_ungrouped	Ungrouped	未分類	미분류
+chatvm_fork_session_failed	Failed to create branch: %1$s	分岐の作成に失敗しました：%1$s	분기 생성 실패: %1$s
+tts_custom_endpoint	Custom TTS endpoint	カスタムTTSエンドポイント	사용자 지정 TTS 엔드포인트
+tts_custom_endpoint_desc	Use a separate OpenAI-compatible /v1/audio/speech service instead of the chat provider.	チャットプロバイダに依存しない独立したOpenAI互換/v1/audio/speechサービスを使用します。	채팅 공급자 대신 별도의 OpenAI 호환 /v1/audio/speech 서비스를 사용합니다.
+tts_base_url	Endpoint base URL	エンドポイントBase URL	엔드포인트 Base URL
+tts_base_url_hint	e.g. https://api.example.com	例: https://api.example.com	예: https://api.example.com
+tts_api_key	API Key (optional)	APIキー（任意）	API 키(선택)
+tts_custom_voice	Custom voice	カスタム音声	사용자 지정 음성
+tts_custom_voice_hint	When set, overrides the voice picker above	設定すると上の音声選択を上書きします	설정하면 위의 음성 선택을 덮어씁니다
+tts_custom_voice_active	Active voice: %1$s	現在の音声：%1$s	현재 음성: %1$s
+tts_custom_model	Custom model	カスタムモデル	사용자 지정 모델
+tts_custom_model_hint	When set, overrides the model picker above	設定すると上のモデル選択を上書きします	설정하면 위의 모델 선택을 덮어씁니다
+tts_test_connection	Test connection	接続テスト	연결 테스트
+tts_test_ok	Connection successful	接続成功	연결 성공
+tts_test_failed	Connection failed: %1$s	接続失敗：%1$s	연결 실패: %1$s
+tts_test_follows_chat	Following the chat provider endpoint. Set a custom base URL to test.	現在はチャットプロバイダのエンドポイントに従います。カスタムBase URLを設定するとテストできます。	현재 채팅 공급자 엔드포인트를 따릅니다. 사용자 지정 Base URL을 설정하면 테스트할 수 있습니다.
+chat_collections_title	Collections	コレクション	컬렉션
+chat_empty_presets	No presets yet	プリセットがありません	프리셋이 없습니다
+persona_editor_title	User persona	ペルソナ	사용자 페르소나
+persona_editor_name	Name	名前	이름
+persona_editor_desc	Persona description	設定内容	설정 내용
+persona_editor_save	Save	保存	저장
+world_select_book	World book	ワールドブック	월드북
+world_no_entries	This book has no entries	この本にはエントリがありません	이 책에는 항목이 없습니다
+world_entry_order	Order %1$d	順序 %1$d	순서 %1$d
+world_entry_constant	Constant	常駐	상시
+world_pos_before	Before char	キャラの前	캐릭터 앞
+world_pos_after	After char	キャラの後	캐릭터 뒤
+world_pos_an_top	AN top	ANの上	주석 위
+world_pos_an_bottom	AN bottom	ANの下	주석 아래
+world_pos_at_depth	@Depth	@深さ	@깊이
+world_pos_em_top	Sys top	システムの上	시스템 위
+world_pos_em_bottom	Sys bottom	システムの下	시스템 아래
+chatvm_save_persona_failed	Failed to save persona: %1$s	ペルソナの保存に失敗しました：%1$s	페르소나 저장 실패: %1$s
+chatvm_toggle_world_entry_failed	Failed to update world entry: %1$s	ワールドエントリの更新に失敗しました：%1$s	월드 항목 업데이트 실패: %1$s
+chatvm_world_entry_embedded	Character-embedded world books are edited in the character editor.	キャラ埋め込みのワールドブックはキャラエディタで編集してください。	캐릭터 내장 월드북은 캐릭터 편집기에서 수정하세요.
+chat_rename_session	Rename session	セッション名を変更	세션 이름 변경
+chat_save_archive	Save session archive	セッションアーカイブを保存	세션 아카이브 저장
+chatvm_rename_session_failed	Failed to rename session: %1$s	セッション名の変更に失敗しました：%1$s	세션 이름 변경 실패: %1$s
+model_group_assign_title	Add %1$s to a group	%1$s をグループに追加	%1$s을(를) 그룹에 추가
+model_group_none_hint	No groups yet — create one below	グループがありません。下で作成してください	아직 그룹이 없습니다. 아래에서 만드세요
+model_group_new_hint	New group name (custom id)	新しいグループ名（自定义ID）	새 그룹 이름(사용자 지정 ID)
+model_group_create	Create	作成	만들기
+chat_save	Save	保存	저장
+preset_adjust_entry	Adjust preset	プリセットを調整	프리셋 조정
+preset_adjust_hint	Temp / Top P / Top K…	Temp / Top P / Top K…	온도 / Top P / Top K…
+preset_editor_title	Adjust preset: %1$s	プリセットを調整：%1$s	프리셋 조정: %1$s
+preset_editor_hint	Blank clears a field. Applies globally on save.	空欄でその項目を消去。保存すると全体に反映されます。	비워 두면 해당 항목을 지웁니다. 저장하면 전역 적용.
+preset_editor_temperature	Temperature	温度	온도
+preset_editor_top_p	Top P	Top P	Top P
+preset_editor_top_k	Top K	Top K	Top K
+preset_editor_rep_pen	Repetition penalty	繰り返しペナルティ	반복 페널티
+preset_editor_max_tokens	Max reply tokens	最大返答トークン	최대 응답 토큰
+world_edit_title	Title	タイトル	제목
+world_edit_keys	Keywords (comma separated)	キーワード（カンマ区切り）	키워드(쉼표 구분)
+world_edit_content	Content	内容	내용
+world_edit_order	Order	順序	순서
+world_edit_depth	Depth	深さ	깊이
+world_edit_prob	Probability%	確率%	확률%
+world_edit_constant	Constant (always injected)	常駐（常に注入）	상시(항상 주입)
+world_edit_save	Save	保存	저장
+chatvm_save_preset_failed	Failed to save preset: %1$s	プリセットの保存に失敗しました：%1$s	프리셋 저장 실패: %1$s
+chatvm_save_world_entry_failed	Failed to save world entry: %1$s	ワールドエントリの保存に失敗しました：%1$s	월드 항목 저장 실패: %1$s
+chat_reasoning_effort_on	On	オン	켜기
+model_catalog_loading	Loading models…	モデル一覧を取得中…	모델 목록 가져오는 중…
+model_catalog_failed	Failed: %1$s	取得失敗：%1$s	가져오기 실패: %1$s
+model_catalog_retry	Retry	再試行	재시도
+model_catalog_empty	No models available	利用可能なモデルがありません	사용 가능한 모델이 없습니다
+chat_voice_no_match	Did not catch that — try again	聞き取れませんでした。もう一度お試しください	잘 들리지 않았습니다. 다시 시도해 주세요
+chat_voice_error_generic	Speech recognition error (code %1$d)	音声認識エラー（コード %1$d）	음성 인식 오류 (코드 %1$d)
+chat_voice_permission	Microphone permission is required for voice input	音声入力にはマイク権限が必要です	음성 입력에는 마이크 권한이 필요합니다
+dsh_attach_file	Add file	ファイルを追加	파일 추가
+dsh_attach_pending	Pending attachments	送信待ちの添付	전송 대기 첨부
+dsh_attach_remove	Remove attachment	添付を削除	첨부 제거
+dsh_optimize_prompt	Optimize prompt	プロンプトを最適化	프롬프트 최적화
+dsh_menu_generate_image	Generate image	画像を生成	이미지 생성
+dsh_menu_usage_stats	Token usage	トークン使用量	토큰 사용량
+dsh_menu_background	Chat background	チャット背景	채팅 배경
+dsh_menu_clear_background	Clear background	背景をクリア	배경 지우기
+dsh_menu_preset_full	Preset settings	プリセット設定	프리셋 설정
+dsh_usage_title	Token usage	トークン使用量	토큰 사용량
+dsh_usage_clear	Clear statistics	統計をクリア	통계 지우기
+dsh_usage_clear_confirm	Clear all token usage statistics? This cannot be undone.	すべてのトークン使用統計をクリアしますか？元に戻せません。	모든 토큰 사용 통계를 지울까요? 되돌릴 수 없습니다.
+dsh_usage_cleared	Statistics cleared	統計をクリアしました	통계를 지웠습니다
+dsh_usage_session	This chat	このチャット	이 채팅
+dsh_usage_today	Today	今日	오늘
+dsh_usage_total	All time	累計	누적
+dsh_usage_input	Input	入力	입력
+dsh_usage_cache_read	Cache read	キャッシュ読取	캐시 읽기
+dsh_usage_output	Output	出力	출력
+dsh_usage_reasoning	of which reasoning %1$s	うち推論 %1$s	그중 추론 %1$s
+dsh_usage_requests	Requests	リクエスト数	요청 수
+dsh_usage_estimated	Estimated	推定	추정
+dsh_usage_empty	No usage recorded yet	使用記録はまだありません	아직 사용 기록이 없습니다
+dsh_user_edit_resend	Edit and resend	編集して再送信	편집 후 다시 보내기
+dsh_user_resend	Resend	再送信	다시 보내기
+dsh_model_config_title	Model configuration	モデル設定	모델 구성
+dsh_model_config_open	Configure models	モデルを設定	모델 구성
+dsh_model_provider	Provider	プロバイダー	제공자
+dsh_model_base_url	Base URL	ベースURL	기본 URL
+dsh_model_api_key	API key	APIキー	API 키
+dsh_model_name	Model name	モデル名	모델 이름
+dsh_model_levels	Reasoning effort levels	推論強度レベル	추론 강도 단계
+dsh_model_default_effort	Default reasoning effort	既定の推論強度	기본 추론 강도
+dsh_model_follow_memory	Follow memory	記憶に従う	기억 따르기
+dsh_model_test	Test connection	接続テスト	연결 테스트
+dsh_model_save	Save	保存	저장
+dsh_model_saved	Model configuration saved	モデル設定を保存しました	모델 구성을 저장했습니다
+dsh_model_advanced	Advanced settings	詳細設定	고급 설정
+dsh_preset_full_title	Preset settings	プリセット設定	프리셋 설정
+dsh_drawer_open_cd	Open sessions	セッション一覧を開く	세션 목록 열기
+dsh_bg_set_failed	Failed to set background: %1$s	背景の設定に失敗: %1$s	배경 설정 실패: %1$s
+dsh_bg_picker_hint	Pick an image as this chat's background	このチャットの背景画像を選択	이 채팅의 배경 이미지를 선택
+dsh_drawer_clear_search	Clear search	検索をクリア	검색 지우기
+dsh_user_edit_resend_desc	Trim this message and everything after, then put its text back in the input box	このメッセージ以降を切り詰め、本文を入力欄へ戻す	이 메시지와 이후를 잘라내고 본문을 입력창에 되돌립니다
+dsh_preset_full_desc	All generation parameters of this preset. Blank keeps the current value.	このプリセットの全生成パラメータ。空欄は現行値を維持。	이 프리셋의 모든 생성 파라미터입니다. 빈 칸은 현재 값 유지.
+preset_editor_presence_penalty	Presence penalty	存在ペナルティ	프레즌스 페널티
+preset_editor_frequency_penalty	Frequency penalty	頻度ペナルティ	빈도 페널티
+preset_editor_max_context	Context limit	コンテキスト上限	컨텍스트 상한
+preset_editor_seed	Seed	シード	시드
+dsh_usage_buffer_note	Statistics keep the most recent %1$s generations on device; older records are summarized in Settings → Usage.	端末には直近%1$s件の生成記録のみ保持されます。それ以前は設定→使用統計の集計に含まれます。	기기에는 최근 %1$s건의 생성 기록만 보관됩니다. 이전 기록은 설정→사용 통계 집계에 포함됩니다.
+dsh_preset_page_params	Parameters	パラメータ	파라미터
+dsh_preset_page_json	JSON	JSON	JSON
+dsh_usage_cache_write	Cache write	キャッシュ書き込み	캐시 쓰기
+dsh_usage_cache_hit	Cache hit	キャッシュヒット	캐시 히트
+dsh_profile_entry	Thinking profile	推論プロファイル	추론 프로필
+dsh_profile_none	None	未設定	없음
+dsh_profile_title	Thinking profile: %1$s	推論プロファイル：%1$s	추론 프로필: %1$s
+dsh_profile_auto_adapt	Auto-adapt	自動適応	자동 적용
+dsh_profile_hint	Declare which effort levels this model accepts and the exact wire spelling per level. Empty spelling sends nothing for that level. Clearing all levels unsets the profile (auto-adapt will not overwrite it).	このモデルが受け付ける思考档位と各档位の実際の送信値を宣言します。空欄はその档位を送らないことを意味し、全档位を消すとプロファイル未設定（自動適応の上書き禁止）になります。	이 모델이 받는 사고 레벨과 레벨별 실제 전송값을 선언합니다. 빈 칸은 해당 레벨을 전송하지 않음을 뜻하고, 모두 비우면 프로필 미설정(자동 적용이 덮어쓰지 않음)이 됩니다.
+dsh_profile_wire_placeholder	wire value (empty = send nothing)	送信値（空=送らない）	전송값(빈칸=전송 안 함)
+dsh_profile_unset	Unset	未設定にする	설정 해제
+dsh_profile_suggestion	Suggestion · %1$s	提案 · %1$s	제안 · %1$s
+dsh_profile_conf_high	knowledge base	知識ベース	지식베이스
+dsh_profile_conf_low	no match	該当なし	일치 없음
+dsh_profile_capacity	ctx %1$s · out %2$s	コンテキスト %1$s · 出力 %2$s	컨텍스트 %1$s · 출력 %2$s
+chat_reasoning_effort_minimal	Minimal	最小	최소
+chat_reasoning_effort_xhigh	XHigh	超高	매우 높음
+dsh_preset_page_prompts	Prompts	プロンプト	프롬프트
+dsh_preset_prompts_hint	Prompt stack order (ST prompt_order). Reorder, enable/disable, and edit each slot. Save writes prompts + prompt_order together.	プロンプトスタックの順序（ST prompt_order）。並べ替え・有効無効・各項目の編集ができます。保存で prompts と prompt_order をまとめて書き込みます。	프롬프트 스택 순서(ST prompt_order). 순서 변경, 활성/비활성, 각 항목 편집이 가능합니다. 저장 시 prompts와 prompt_order가 함께 기록됩니다.
+dsh_preset_prompts_empty	No enabled prompts	有効なプロンプトなし	활성 프롬프트 없음
+dsh_prompt_move_up	Move up	上へ	위로 이동
+dsh_prompt_move_down	Move down	下へ	아래로 이동
+dsh_prompt_edit	Edit	編集	편집
+dsh_prompt_disable	Disable	無効化	비활성화
+dsh_prompt_enable	Enable	有効化	활성화
+dsh_prompt_unused	Unused	未使用	미사용
+dsh_prompt_name	Name	名前	이름
+dsh_prompt_role	Role	役割	역할
+dsh_prompt_content	Content	内容	내용
+dsh_prompt_depth	Depth	深度	깊이
+dsh_prompt_injection_order	Injection order	注入順	주입 순서
+dsh_prompt_relative	Relative position	相対位置	상대 위치
+dsh_prompt_forbid_overrides	Forbid card overrides	角色卡上書き禁止	카드 덮어쓰기 금지
+dsh_preset_raw_empty	No additional raw keys	追加の raw キーなし	추가 raw 키 없음
+dsh_preset_raw_hint	All other preset keys (raw) — switches, numbers, text. Tap ⋯ to edit or delete a key. Sampling fields are on the Parameters page.	その他のプリセットキー(raw)。スイッチ・数値・テキスト。⋯ で編集/削除。サンプリング項目は「パラメータ」页にあります。	프리셋의 나머지 키(raw)—스위치/숫자/텍스트. ⋯을 눌러 편집 또는 삭제. 샘플링 항목은 파라미터 페이지에 있습니다.
+dsh_preset_raw_json_kind	JSON	JSON	JSON
+dsh_preset_raw_value_label	Value (bool / number / JSON / text)	値（真偽/数値/JSON/文字列）	값(불리언/숫자/JSON/문자열)
+dsh_preset_raw_delete_key	Delete key	キーを削除	키 삭제
+dsh_preset_raw_current_type	Type: %1$s	型: %1$s	유형: %1$s
+dsh_preset_raw_type_switch	switch	スイッチ	스위치
+dsh_preset_raw_type_number	number	数値	숫자
+dsh_preset_raw_type_text	text	テキスト	텍스트
+dsh_preset_raw_type_json	JSON	JSON	JSON
+chat_optimize_strategy	Optimization strategy	最適化戦略	최적화 전략
+chat_optimize_iterate_input	Iteration requirement (merged into the prompt, not executed)	反復要件（プロンプトに反映、実行はしない）	반복 요구(프롬프트에 반영, 실행 아님)
+chat_optimize_iterate_hint	Fill in a requirement to iterate on the last result (version chain); leave empty for a first-pass optimization.	要件を入れると直前の結果を反復改善します（バージョンチェーン）。空欄なら初回最適化。	요구를 입력하면 직전 결과를 반복 개선합니다(버전 체인). 비우면 1차 최적화.
+chat_optimize_version_chain	Version chain: iterating on your last applied result	バージョンチェーン: 直前に適用した結果を反復改善します	버전 체인: 직전에 적용한 결과를 반복 개선합니다
+dsh_card_unnamed	Unnamed character	名前未設定	이름 없음
+dsh_card_ready	Ready to chat	チャット可能	채팅 가능
+dsh_card_draft	Draft · missing: %1$s	下書き · 未記入: %1$s	초안 · 누락: %1$s
+dsh_card_expand	More	もっと見る	더 보기
+dsh_card_collapse	Collapse	折りたたむ	접기
+dsh_card_missing	Missing: %1$s	未記入: %1$s	누락: %1$s
+dsh_card_field_personality	Personality	性格	성격
+dsh_card_field_scenario	Scenario	シナリオ	시나리오
+dsh_card_field_first_message	First message	最初のメッセージ	첫 메시지
+dsh_card_field_examples	Example dialogue	例文対話	예시 대화
+dsh_creation_lore_count	%1$s entries	条目 %1$s 条	항목 %1$s개
+dsh_creation_phase_busy	Creating…	作成中…	작성 중…
+dsh_creation_phase_idle	Say what kind of character you want	作りたい役を一言で	원하는 캐릭터를 한마디로
+dsh_creation_completion	%1$s%% complete	完成度 %1$s%%	완성도 %1$s%%
+dsh_creation_empty_title	What shall we create?	何を作りましょうか？	무엇을 만들까요?
+dsh_creation_empty_hint	Describe it in one sentence, or let me roll a random one. You can also switch to manual editing any time.	一言で説明するか、ランダム生成もできます。手動編集へはいつでも切り替えられます。	한 마디로 설명하거나 랜덤 생성을 할 수 있습니다. 수동 편집은 언제든 전환 가능.
+dsh_creation_quick_random	Random	ランダム	랜덤
+dsh_creation_quick_guide	Guide me	ガイド	가이드
+dsh_creation_random_prompt	帮我随机生成一个有特色的角色卡，先给我一版完整草稿，再告诉我要不要调整。	ランダムで特色ある役のカード案を一組作成し、調整が必要か教えてください。	랜덤으로 개성 있는 캐릭터 카드 초안을 하나 만들고, 조정 필요 여부를 알려주세요.
+dsh_creation_guide_prompt	进入引导模式：每次只问我最关键的一个问题，我可以直接回答、让你生成或跳过。	ガイドモード：最も重要な質問を一度に一つだけし、回答・生成・スキップができます。	가이드 모드: 가장 중요한 질문을 한 번에 하나만 하고, 답변/생성/건너뛰기가 가능합니다.
+dsh_creation_designer	Character designer	キャラクターデザイナー	캐릭터 디자이너
+dsh_creation_reasoning_toggle	Thinking	思考過程	사고 과정
+dsh_creation_menu_manual	Manual edit	手動編集	수동 편집
+dsh_creation_menu_save	Save to library	ライブラリに保存	라이브러리에 저장
+dsh_creation_menu_export	Export JSON	JSON で書き出し	JSON 내보내기
+crs_chat_create_title	Chat-style creation	チャット式作成	채팅 방식 생성
+crs_chat_create_desc	Describe the character in one sentence, or let the AI guide you	一言で説明するか、AI にガイドさせます	한 마디로 설명하거나 AI 가이드를 받습니다

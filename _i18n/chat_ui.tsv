@@ -261,7 +261,6 @@ time_now	刚刚
 time_minutes_ago	%1$d 分钟前
 time_hours_ago	%1$d 小时前
 time_days_ago	%1$d 天前
-chat_input_placeholder	发消息或创建任务, / 调用指令, @ 文件或对话
 ctx_used_pct	上下文已用 %1$s
 ctx_total	~%1$s / %2$s
 ctx_segment_system	系统提示词
@@ -277,3 +276,11 @@ ctx_label_world	世界书
 ctx_label_messages	对话消息
 time_hours_short	%1$d小时
 time_days_short	%1$d天
+chat_reasoning_effort_on	开
+model_catalog_loading	正在获取模型列表…
+model_catalog_failed	获取失败：%1$s
+model_catalog_retry	重试
+model_catalog_empty	没有可用模型
+chat_voice_no_match	没有听清，请再试一次
+chat_voice_error_generic	语音识别出错（代码 %1$d）
+chat_voice_permission	需要麦克风权限才能语音输入

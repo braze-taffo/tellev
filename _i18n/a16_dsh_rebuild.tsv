@@ -1,0 +1,185 @@
+model_group_current	当前模型
+model_group_recent	最近使用
+model_group_suggested	常用模型
+model_group_manual	手动输入
+setprov_model_pick	从列表选择模型
+chat_edit_message	编辑消息
+chat_fork_from_here	从此消息分支
+chat_delete_message	删除消息
+chat_manage_world_books	管理世界书…
+chat_panel_preset_entry	预设
+chat_panel_persona_entry	用户设定
+chat_panel_world_entry	世界书
+chat_drawer_ungrouped	未分组
+chatvm_fork_session_failed	分支创建失败：%1$s
+chat_collections_title	集合
+chat_empty_presets	还没有预设
+persona_editor_title	用户设定
+persona_editor_name	名称
+persona_editor_desc	设定内容
+persona_editor_save	保存
+world_select_book	世界书
+world_no_entries	该书没有条目
+world_entry_order	顺序 %1$d
+world_entry_constant	常驻
+world_pos_before	角色前
+world_pos_after	角色后
+world_pos_an_top	注释顶
+world_pos_an_bottom	注释底
+world_pos_at_depth	@深度
+world_pos_em_top	系统顶
+world_pos_em_bottom	系统底
+chatvm_save_persona_failed	保存用户设定失败：%1$s
+chatvm_toggle_world_entry_failed	世界书条目更新失败：%1$s
+chatvm_world_entry_embedded	角色卡内嵌世界书请在角色卡编辑器中修改
+chat_rename_session	重命名会话
+chat_save_archive	保存会话存档
+chatvm_rename_session_failed	重命名会话失败：%1$s
+model_group_assign_title	把 %1$s 加入分组
+model_group_none_hint	还没有分组，先在下方新建
+model_group_new_hint	新分组名（自定义 id）
+model_group_create	新建
+chat_save	保存
+preset_adjust_entry	调整预设
+preset_adjust_hint	温度 / Top P / Top K…
+preset_editor_title	调整预设：%1$s
+preset_editor_hint	留空 = 保持原值，保存后对本会话与预设全局生效。
+preset_editor_temperature	温度
+preset_editor_top_p	Top P
+preset_editor_top_k	Top K
+preset_editor_rep_pen	重复惩罚
+preset_editor_max_tokens	最大回复
+world_edit_title	标题
+world_edit_keys	关键词（逗号分隔）
+world_edit_content	内容
+world_edit_order	顺序
+world_edit_depth	深度
+world_edit_prob	概率%
+world_edit_constant	常驻（每次都注入）
+world_edit_save	保存
+chatvm_save_preset_failed	保存预设失败：%1$s
+chatvm_save_world_entry_failed	保存世界书条目失败：%1$s
+dsh_attach_file	添加文件
+dsh_attach_pending	待发送附件
+dsh_attach_remove	移除附件
+dsh_optimize_prompt	优化提示词
+dsh_menu_generate_image	生成图片
+dsh_menu_usage_stats	Token 使用统计
+dsh_menu_background	聊天背景
+dsh_menu_clear_background	清除背景
+dsh_menu_preset_full	预设设置
+dsh_usage_title	Token 使用统计
+dsh_usage_clear	清除统计
+dsh_usage_clear_confirm	清除全部 token 使用统计？此操作不可撤销。
+dsh_usage_cleared	统计已清除
+dsh_usage_session	本会话
+dsh_usage_today	今日
+dsh_usage_total	累计
+dsh_usage_input	输入
+dsh_usage_cache_read	缓存命中
+dsh_usage_output	输出
+dsh_usage_reasoning	其中思考 %1$s
+dsh_usage_requests	请求数
+dsh_usage_estimated	估算
+dsh_usage_empty	暂无使用记录
+dsh_user_edit_resend	编辑并重新发送
+dsh_user_resend	重新发送
+dsh_model_config_title	模型配置
+dsh_model_config_open	配置模型
+dsh_model_provider	服务商
+dsh_model_base_url	接口地址
+dsh_model_api_key	API 密钥
+dsh_model_name	模型名称
+dsh_model_levels	思考强度档位
+dsh_model_default_effort	默认思考强度
+dsh_model_follow_memory	跟随记忆
+dsh_model_test	测试连接
+dsh_model_save	保存
+dsh_model_saved	模型配置已保存
+dsh_model_advanced	高级设置
+dsh_preset_full_title	预设设置
+dsh_drawer_open_cd	打开会话列表
+dsh_bg_set_failed	设置背景失败：%1$s
+dsh_bg_picker_hint	选择一张图片作为本会话背景
+dsh_drawer_clear_search	清空搜索
+dsh_user_edit_resend_desc	裁掉此消息及之后所有消息，把正文放回输入框
+dsh_preset_full_desc	本预设的全部生成参数。留空保持当前值。
+preset_editor_presence_penalty	存在惩罚
+preset_editor_frequency_penalty	频率惩罚
+preset_editor_max_context	上下文上限
+preset_editor_seed	种子
+dsh_usage_buffer_note	统计仅保留最近 %1$s 条生成记录；更早记录在设置→使用统计的汇总中。
+dsh_preset_page_params	参数
+dsh_preset_page_json	JSON
+dsh_usage_cache_write	缓存写入
+dsh_usage_cache_hit	缓存命中
+dsh_profile_entry	思考档案
+dsh_profile_none	未设置
+dsh_profile_title	思考档案：%1$s
+dsh_profile_auto_adapt	自动适配
+dsh_profile_hint	声明该模型接受哪些思考档位、每个档位在线上发什么。拼写留空=该档不发字段；清空全部档位=取消档案（自动适配不再覆盖）。
+dsh_profile_wire_placeholder	拼写（空=不发）
+dsh_profile_unset	取消档案
+dsh_profile_suggestion	建议 · %1$s
+dsh_profile_conf_high	知识库命中
+dsh_profile_conf_low	无命中
+dsh_profile_capacity	上下文 %1$s · 输出 %2$s
+chat_reasoning_effort_minimal	最小
+chat_reasoning_effort_xhigh	超高
+dsh_preset_page_prompts	提示词
+dsh_preset_prompts_hint	提示词栈顺序（ST prompt_order）。可重排、停用/启用、逐条编辑；保存时 prompts 与 prompt_order 一起写回。
+dsh_preset_prompts_empty	暂无启用的提示词
+dsh_prompt_move_up	上移
+dsh_prompt_move_down	下移
+dsh_prompt_edit	编辑
+dsh_prompt_disable	停用
+dsh_prompt_enable	启用
+dsh_prompt_unused	未使用
+dsh_prompt_name	名称
+dsh_prompt_role	角色
+dsh_prompt_content	内容
+dsh_prompt_depth	深度
+dsh_prompt_injection_order	注入序
+dsh_prompt_relative	相对位置
+dsh_prompt_forbid_overrides	禁用角色卡覆盖
+dsh_preset_raw_empty	没有其他 raw 键
+dsh_preset_raw_hint	预设其余键（raw 全量）——开关/数字/文本。点「⋯」编辑或删除。采样参数在参数页。
+dsh_preset_raw_json_kind	JSON
+dsh_preset_raw_value_label	值（布尔/数字/JSON/文本）
+dsh_preset_raw_delete_key	删除此键
+dsh_preset_raw_current_type	类型：%1$s
+dsh_preset_raw_type_switch	开关
+dsh_preset_raw_type_number	数字
+dsh_preset_raw_type_text	文本
+dsh_preset_raw_type_json	JSON
+chat_optimize_strategy	优化策略
+chat_optimize_iterate_input	迭代需求（融入提示词，不执行）
+chat_optimize_iterate_hint	填写需求即基于上一版结果迭代（版本链）；留空则首轮优化。
+chat_optimize_version_chain	版本链：将基于上次应用的结果迭代
+dsh_card_unnamed	未命名角色
+dsh_card_ready	可用于聊天
+dsh_card_draft	草稿 · 缺：%1$s
+dsh_card_expand	展开
+dsh_card_collapse	收起
+dsh_card_missing	缺失：%1$s
+dsh_card_field_personality	性格
+dsh_card_field_scenario	场景
+dsh_card_field_first_message	开场白
+dsh_card_field_examples	示例对话
+dsh_creation_lore_count	条目 %1$s 条
+dsh_creation_phase_busy	创建中…
+dsh_creation_phase_idle	一句话说说你想创建的角色
+dsh_creation_completion	完成度 %1$s%%
+dsh_creation_empty_title	想创建什么角色？
+dsh_creation_empty_hint	一句话描述，或让我随机生成；也可以随时切到手动编辑。
+dsh_creation_quick_random	随机
+dsh_creation_quick_guide	引导创建
+dsh_creation_random_prompt	帮我随机生成一个有特色的角色卡，先给我一版完整草稿，再告诉我要不要调整。
+dsh_creation_guide_prompt	进入引导模式：每次只问我最关键的一个问题，我可以直接回答、让你生成或跳过。
+dsh_creation_designer	角色设计师
+dsh_creation_reasoning_toggle	思考过程
+dsh_creation_menu_manual	手动编辑
+dsh_creation_menu_save	保存到角色库
+dsh_creation_menu_export	导出 JSON
+crs_chat_create_title	聊天式创建
+crs_chat_create_desc	一句话描述角色，或让 AI 逐步引导

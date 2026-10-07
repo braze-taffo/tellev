@@ -26,3 +26,17 @@ tts_network_failed	无法连接语音服务，请检查网络后重试。
 tts_cache_failed	无法保存语音音频，请检查设备可用存储空间。
 tts_no_audio	语音服务没有返回有效音频，请重试。
 tts_playback_failed	音频无法播放或暂时无法取得音频焦点，请重试。
+tts_custom_endpoint	自定义 TTS 端点
+tts_custom_endpoint_desc	使用独立的 OpenAI 兼容 /v1/audio/speech 服务，不跟随聊天服务商。
+tts_base_url	端点 Base URL
+tts_base_url_hint	例如 https://api.example.com
+tts_api_key	API Key（可选）
+tts_custom_voice	自定义音色
+tts_custom_voice_hint	非空时覆盖上方音色下拉
+tts_custom_voice_active	当前生效音色：%1$s
+tts_custom_model	自定义模型
+tts_custom_model_hint	非空时覆盖上方模型下拉
+tts_test_connection	测试连接
+tts_test_ok	连接成功
+tts_test_failed	连接失败：%1$s
+tts_test_follows_chat	当前跟随聊天服务商端点；填写自定义 Base URL 后可测试。
