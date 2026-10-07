@@ -12,6 +12,7 @@ import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.UUID
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CancellationException
 
 class ChatMessageRenderCacheTest {
@@ -114,6 +115,70 @@ class ChatMessageRenderCacheTest {
         }.awaitAll()
         assertTrue(results.all { it == listOf(TavernRenderSegment.Text("one")) })
         assertTrue("compute ran more than twice: ${calls.get()}", calls.get() <= 2)
+    }
+
+    @Test
+    fun `render queued behind busy workers still gets its execution budget`() = runBlocking {
+        // Occupy both workers with computes that outlive the budget: they
+        // degrade at 1s but keep their threads busy until they finish (~1.25s).
+        val started = java.util.concurrent.CountDownLatch(2)
+        val occupiers = (1..2).map { n ->
+            async {
+                ChatMessageRenderCache.computeStateAndAwait(
+                    inputs("占用$n-${UUID.randomUUID()}"), "busy-$n-${UUID.randomUUID()}",
+                ) {
+                    started.countDown()
+                    Thread.sleep(1250)
+                    listOf(TavernRenderSegment.Text("busy"))
+                }
+            }
+        }
+        // Earlier tests in this class can leave a slow compute occupying a
+        // worker for a while; admission waits for a free thread. Wait with a
+        // SUSPENDING loop — a blocking latch await here would starve the
+        // runBlocking event loop and the occupiers would never run — and
+        // bound it so a regression fails loudly instead of hanging.
+        val allStarted = withTimeoutOrNull(30_000) {
+            while (started.count > 0) delay(10)
+            true
+        } ?: false
+        assertTrue(
+            "occupier compute never started — admission starved past 30s",
+            allStarted,
+        )
+        // Submitted while both slots are busy: the budget must start only once
+        // the pipeline actually executes, so this fast render still goes
+        // through the real pipeline instead of degrading in the queue.
+        val probe = ChatMessageRenderCache.computeStateAndAwait(
+            inputs("排队-${UUID.randomUUID()}"), "probe-${UUID.randomUUID()}",
+        ) {
+            listOf(TavernRenderSegment.Text("real pipeline"))
+        }
+        assertEquals(MessageRenderPhase.Ready, probe.phase)
+        assertEquals(listOf(TavernRenderSegment.Text("real pipeline")), probe.segments)
+        occupiers.forEach { assertTrue(it.await().segments.isNotEmpty()) }
+    }
+
+    @Test
+    fun `degraded entry is recomputed after the retry window`() = runBlocking {
+        ChatMessageRenderCache.degradedRetryMs = 0L
+        try {
+            val in1 = inputs("重试-${UUID.randomUUID()}")
+            val first = ChatMessageRenderCache.computeStateAndAwait(in1, "retry-slow-${UUID.randomUUID()}") {
+                Thread.sleep(1250)
+                listOf(TavernRenderSegment.Text("slow"))
+            }
+            assertEquals(MessageRenderPhase.Degraded, first.phase)
+            // Window is zero: the next lookup drops the degraded entry and
+            // recomputes with the real pipeline instead of serving it forever.
+            val second = ChatMessageRenderCache.computeStateAndAwait(in1, "retry-fast-${UUID.randomUUID()}") {
+                listOf(TavernRenderSegment.Text("fast"))
+            }
+            assertEquals(MessageRenderPhase.Ready, second.phase)
+            assertEquals(listOf(TavernRenderSegment.Text("fast")), second.segments)
+        } finally {
+            ChatMessageRenderCache.degradedRetryMs = 10_000L
+        }
     }
 
     @Test
