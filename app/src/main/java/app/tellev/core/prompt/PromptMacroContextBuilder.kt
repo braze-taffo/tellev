@@ -13,7 +13,8 @@ import kotlinx.serialization.json.jsonPrimitive
 internal object PromptMacroContextBuilder {
 
     fun buildMacroContext(request: PromptBuildRequest): MacroContext {
-        val visible = request.messages.filterNot { it.isHidden }
+        val macroMessages = request.macroMessages ?: request.messages
+        val visible = macroMessages.filterNot { it.isHidden }
         val lastMessage = visible.lastOrNull()?.let(::messageContent).orEmpty()
         val lastUserMessage = visible
             .lastOrNull { it.role == MessageRole.User }

@@ -185,7 +185,7 @@ tellev 的扩展运行环境是 SillyTavern / 酒馆助手兼容层的一个**�
 
 - 应用名：`tellev`
 - 包名：`app.tellev`
-- 当前源码版本：1.7.0.3（versionCode 40）
+- 当前源码版本：1.7.1.5（versionCode 47）
 - 最低系统：Android 12 / API 31
 - 目标/编译 SDK：API 36
 - UI：Kotlin + Jetpack Compose + Material 3

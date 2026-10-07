@@ -9,6 +9,7 @@ import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.MessageReasoning
 import app.tellev.core.model.MessageRole
+import app.tellev.core.model.reasoningParts
 import app.tellev.core.model.withGenerationReasoning
 import app.tellev.core.memory.MemoryService
 import app.tellev.core.prompt.PromptBuildRequest
@@ -231,6 +232,23 @@ internal class ChatGenerationCoordinator(
                 sessionRuntime.flushSessionWrites(updatedSession.id, extensionHost)
                 val promptSession = requireNotNull(uiState.value.currentSession?.takeIf { it.id == updatedSession.id })
                 val promptMessages = promptSession.messages
+                // Hooks may edit or insert floors. Resolve the accepted input by
+                // stable identity after flushing, never by its pre-hook index/text.
+                val promptInputIndex = promptMessages.indexOfFirst { it.id == inputMessage.id }
+                check(promptInputIndex >= 0) { "生成前输入消息已被删除，请重新发送" }
+                check(promptMessages.count { it.id == inputMessage.id } == 1) {
+                    "输入消息标识重复，无法确定生成上下文，请重新发送"
+                }
+                val promptInput = promptMessages[promptInputIndex]
+                val promptInputText = promptInput.reasoningParts().body
+                if (isRegeneration || messageRole == MessageRole.User) {
+                    check(promptInput.role == MessageRole.User && !promptInput.isHidden) {
+                        "生成前输入消息已被隐藏或改变角色，请重新发送"
+                    }
+                    check(isRegeneration || promptInputIndex == promptMessages.lastIndex) {
+                        "生成前输入消息已不在会话末尾，请重新发送"
+                    }
+                }
                 val possibleRawIds = mutableSetOf<String>()
                 val rawBudget = ((preset.maxContextTokens ?: DEFAULT_MAX_CONTEXT_TOKENS) -
                     (preset.maxCompletionTokens ?: preset.maxTokens ?: 0)).coerceAtLeast(0)
@@ -242,7 +260,7 @@ internal class ChatGenerationCoordinator(
                 }
                 val memoryContext = try {
                     memoryService.context(
-                        promptSession, inputMessage.content,
+                        promptSession, promptInputText,
                         possibleRawIds,
                     )
                 } catch (cancelled: CancellationException) {
@@ -259,18 +277,25 @@ internal class ChatGenerationCoordinator(
                     supportingCharacters = supportingCast,
                     persona = runtime.persona,
                     messages = if (isRegeneration) {
-                        promptMessages.take(regenerationInputIndex!!)
+                        promptMessages.take(promptInputIndex)
                     } else if (messageRole == MessageRole.User) {
-                        promptHistoryBeforeCurrentMessage(promptMessages, inputMessage.id)
+                        promptHistoryBeforeCurrentMessage(promptMessages, promptInput.id)
                     } else {
                         promptMessages
                     },
                     worldBooks = (ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession) + supportingBooks).distinctBy { it.id },
                     preset = preset,
                     userInput = when {
-                        isRegeneration -> inputMessage.content
-                        messageRole == MessageRole.User -> inputMessage.content
+                        isRegeneration -> promptInputText
+                        messageRole == MessageRole.User -> promptInputText
                         else -> ""
+                    },
+                    // ST macros see the saved current input even though wire history
+                    // excludes it. A swipe must not see the reply it is replacing.
+                    macroMessages = if (isRegeneration) {
+                        promptMessages.take(promptInputIndex + 1)
+                    } else {
+                        promptMessages
                     },
                     providerType = config.providerType,
                     metadata = JsonObject(
@@ -283,7 +308,7 @@ internal class ChatGenerationCoordinator(
                             dataStore = dataStore,
                             promptEngine = promptEngine,
                         ) + ("userInputNormalProcessed" to JsonPrimitive(
-                            CharacterRegexApplier.isNormalProcessed(inputMessage),
+                            CharacterRegexApplier.isNormalProcessed(promptInput),
                         )) + ("tellevMemoryContext" to JsonPrimitive(memoryContext)),
                     ),
                 )
@@ -305,7 +330,7 @@ internal class ChatGenerationCoordinator(
                 val prepared = ChatCompletionEvents.prepare(extensionHost, config, GenerateRequest(
                     prompt = promptResult,
                     preset = preset,
-                    attachments = if (isRegeneration) inputMessage.attachments else attachments,
+                    attachments = promptInput.attachments,
                     stream = true,
                 ), adapter)
                 val flow = adapter.streamGenerate(prepared.config, prepared.request)

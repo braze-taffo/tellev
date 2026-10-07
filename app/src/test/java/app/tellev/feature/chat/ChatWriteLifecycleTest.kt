@@ -141,6 +141,93 @@ class ChatWriteLifecycleTest {
         }
     }
 
+    @Test fun `first send exposes saved input to macros without duplicating wire history`() = verifyInputMacroScope(first = true)
+    @Test fun `correction exposes new saved input to macros without duplicating wire history`() = verifyInputMacroScope()
+    @Test fun `swipe macros include the corrected user input and exclude the replaced reply`() = verifyInputMacroScope(regenerate = true)
+    @Test fun `script edits after send reach both macros and wire input`() = verifyInputMacroScope(scriptEdit = true)
+    @Test fun `script insertion before swipe does not shift its selected input`() = verifyInputMacroScope(regenerate = true, scriptEdit = true)
+    @Test fun `script deletion of input stops before building a contradictory request`() = verifyInputMacroScope(invalidInput = "deleted")
+    @Test fun `script hiding of input stops before building a contradictory request`() = verifyInputMacroScope(invalidInput = "hidden")
+    @Test fun `script appending a new turn stops before duplicating the accepted input`() = verifyInputMacroScope(invalidInput = "appended")
+    @Test fun `ambiguous imported user identity stops before choosing the wrong regeneration input`() = verifyInputMacroScope(regenerate = true, invalidInput = "ambiguous")
+
+    private fun verifyInputMacroScope(first: Boolean = false, regenerate: Boolean = false, scriptEdit: Boolean = false,
+        invalidInput: String? = null) = runBlocking {
+        val root = Files.createTempDirectory("tellev-input-macro-")
+        val disk = FileStDataStore(StDirectoryLayout.fromRoot(root))
+        val runtime = ChatSessionRuntime(disk)
+        try {
+            disk.bootstrap()
+            val character = CharacterCard("fixture", "斗破苍穹")
+            disk.saveCharacter(character)
+            val prior = if (first) emptyList() else listOf(
+                ChatMessage("u1", MessageRole.User, "User", "我是李三", 1L),
+                ChatMessage("a1", MessageRole.Character, character.name, "李三走向集市。", 2L),
+            )
+            val current = ChatMessage("u2", MessageRole.User, "User", "不，我是李四", 3L)
+            val replaced = ChatMessage("a2", MessageRole.Character, character.name, "被重新生成的旧回复", 4L)
+            disk.saveChatSession(ChatSession("audit", "Audit", character.id, null,
+                prior + if (regenerate) listOf(current, replaced) else emptyList()))
+            val session = disk.readChatSession("audit")
+            runtime.activateSessionWrites(session)
+            val state = MutableStateFlow(ChatUiState(selectedCharacter = character, currentSession = session, messages = session.messages))
+            val captured = CompletableDeferred<PromptBuildRequest>()
+            val registry = ProviderRegistry(emptyList())
+            val secrets = TestSecrets()
+            val inserted = ChatMessage("script-floor", MessageRole.System, "System", "脚本插入的设定", 0L)
+            val expectedInput = if (scriptEdit) "脚本修正：我是李五" else current.content
+            val host = HostProbe { event ->
+                if ((scriptEdit || invalidInput != null) && event.name == StEventCatalog.GENERATION_AFTER_COMMANDS) {
+                    val active = state.value.currentSession!!
+                    val revised = active.messages.map { message ->
+                        if (message.role == MessageRole.User && message.id != "u1") message.copy(content = expectedInput) else message
+                    }
+                    val changed = when (invalidInput) {
+                        "deleted" -> revised.filterNot { it.role == MessageRole.User && it.id != "u1" }
+                        "hidden" -> revised.map { if (it.role == MessageRole.User && it.id != "u1") it.copy(isHidden = true) else it }
+                        "appended" -> revised + inserted
+                        "ambiguous" -> revised.map { if (it.id == "u1") it.copy(id = current.id) else it }
+                        else -> if (regenerate) listOf(inserted) + revised else revised
+                    }
+                    state.value = state.value.copy(messages = changed, currentSession = active.copy(messages = changed))
+                }
+            }
+            val coordinator = ChatGenerationCoordinator(disk, registry, object : PromptEngine {
+                override fun build(request: PromptBuildRequest): PromptBuildResult {
+                    captured.complete(request)
+                    throw CancellationException("Stop after recording the real request; no provider calls")
+                }
+            }, host.api, runtime, app.tellev.core.provider.GenerationRuntimeResolver(disk, registry, secrets),
+                MemoryService(disk, registry, secrets))
+            assertTrue(coordinator.sendMessageWithRole(current.content, emptyList(), MessageRole.User,
+                regenerationMessageId = if (regenerate) replaced.id else null,
+                uiState = state, scope = CoroutineScope(coroutineContext), characterScriptJob = null))
+            coordinator.generationJob?.join()
+            if (invalidInput != null) {
+                assertFalse(captured.isCompleted)
+                assertNotNull(state.value.error)
+                assertFalse(state.value.isGenerating)
+                return@runBlocking
+            }
+            val request = withTimeout(5_000) { captured.await() }
+            val expectedHistory = if (regenerate && scriptEdit) listOf(inserted) + prior else prior
+            assertEquals(expectedHistory.map { it.id }, request.messages.map { it.id })
+            assertEquals(expectedInput, request.userInput)
+            val context = PromptMacroContextBuilder.buildMacroContext(request)
+            assertEquals(expectedInput, context.lastUserMessage)
+            assertEquals(expectedInput, context.lastMessage)
+            assertEquals(expectedHistory.size, context.lastUserMessageId)
+            assertEquals(prior.lastOrNull()?.content.orEmpty(), context.lastCharMessage)
+            assertFalse(request.macroMessages!!.any { it.id == replaced.id })
+            val prompt = DefaultPromptEngine().build(request)
+            assertEquals(1, prompt.messages.count { it.content == expectedInput })
+            assertFalse(prompt.messages.any { it.content == replaced.content })
+        } finally {
+            runtime.sessionWriteScope.cancel()
+            root.toFile().deleteRecursively()
+        }
+    }
+
     @Test fun `switch waits for accepted edit and variables and cannot overwrite the destination`() = exercise(failCount = 0)
     @Test fun `failed save no longer blocks switching and rolls back on re-entry`() = exercise(failCount = Int.MAX_VALUE)
     @Test fun `failed user edit save is reported without launching generation or crashing`() = exercise(failCount = Int.MAX_VALUE, userEdit = true)
@@ -332,7 +419,7 @@ class ChatWriteLifecycleTest {
         override suspend fun listSecretIds(): List<String> = values.keys.toList()
     }
 
-    private class HostProbe {
+    private class HostProbe(private val onEvent: (ExtensionEvent) -> Unit = {}) {
         val editEvents = java.util.concurrent.atomic.AtomicInteger()
         @Volatile var local: LocalVariableBackend? = null
         @Volatile var failFlush = false
@@ -346,6 +433,7 @@ class ChatWriteLifecycleTest {
                 "getEvents" -> events
                 "emit", "reportHostEvent" -> {
                     val event = args[0] as ExtensionEvent
+                    onEvent(event)
                     if (event.name == StEventCatalog.MESSAGE_EDITED) editEvents.incrementAndGet()
                     events.tryEmit(event)
                     Unit

@@ -47,6 +47,10 @@ data class PromptBuildRequest(
     val quietPrompt: String? = null,
     /** Live direct cast members; embedded snapshots remain a portable fallback. */
     val supportingCharacters: List<CharacterCard> = emptyList(),
+    /** Saved chat floors visible to macros, including the current user floor in normal/swipe generation.
+     * [messages] remains the wire history without that floor, which is sent once via [userInput].
+     * Null keeps quiet/helper requests scoped to their supplied history rather than their instructions. */
+    val macroMessages: List<ChatMessage>? = null,
 )
 
 @Serializable
