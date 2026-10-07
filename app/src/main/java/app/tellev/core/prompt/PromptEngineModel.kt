@@ -38,8 +38,6 @@ internal val EXAMPLE_CHAT_SPLIT = Regex("<START>", RegexOption.IGNORE_CASE)
 @Serializable
 data class PromptBuildRequest(
     val character: CharacterCard,
-    /** 附属角色（群像）：主卡统一叙事，这些卡提供人物设定（1.7.1.4 角色卡演员绑定）。 */
-    val supportingCharacters: List<CharacterCard> = emptyList(),
     val persona: Persona?,
     val messages: List<ChatMessage>,
     val worldBooks: List<WorldBook>,
@@ -49,6 +47,12 @@ data class PromptBuildRequest(
     val metadata: JsonObject = buildJsonObject { },
     /** Background instruction, separate from chat history and pending user input (ST quiet generation). */
     val quietPrompt: String? = null,
+    /** Live direct cast members; embedded snapshots remain a portable fallback. */
+    val supportingCharacters: List<CharacterCard> = emptyList(),
+    /** Saved chat floors visible to macros, including the current user floor in normal/swipe generation.
+     * [messages] remains the wire history without that floor, which is sent once via [userInput].
+     * Null keeps quiet/helper requests scoped to their supplied history rather than their instructions. */
+    val macroMessages: List<ChatMessage>? = null,
 )
 
 @Serializable

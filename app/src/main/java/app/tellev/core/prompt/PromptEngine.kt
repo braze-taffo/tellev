@@ -235,15 +235,18 @@ class DefaultPromptEngine(
                 macroEngine.expand(body, macroContext)
             } else body
         }
-        // Expose the same processed floors to templates and the model, retaining
-        // ST's message shape and its special handling of the original first floor.
-        val chatSnippets = visibleHistory.mapIndexed { index, message ->
+        // Templates read saved chat floors, including the current input. Reuse
+        // history expansions so side-effecting macros are not evaluated twice.
+        val expandedHistoryByMessage = IdentityHashMap<ChatMessage, String>().apply {
+            visibleHistory.forEachIndexed { index, message -> put(message, expandedHistory[index]) }
+        }
+        val chatSnippets = (request.macroMessages ?: request.messages).filterNot { it.isHidden }.mapIndexed { index, message ->
             PromptTemplateChatMessage(
                 id = index,
                 isUser = message.role == MessageRole.User,
                 isSystem = message.role == MessageRole.System,
                 name = message.name,
-                content = expandedHistory[index],
+                content = expandedHistoryByMessage[message] ?: message.reasoningParts().body,
             )
         }
         val groupNames = PromptMacroContextBuilder.groupMemberNamesList(request.metadata)

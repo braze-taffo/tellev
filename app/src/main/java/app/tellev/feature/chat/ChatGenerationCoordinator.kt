@@ -9,6 +9,7 @@ import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.ChatSession
 import app.tellev.core.model.MessageReasoning
 import app.tellev.core.model.MessageRole
+import app.tellev.core.model.reasoningParts
 import app.tellev.core.model.withGenerationReasoning
 import app.tellev.core.memory.MemoryService
 import app.tellev.core.metrics.GenerationMetricsCalculator
@@ -318,6 +319,30 @@ internal class ChatGenerationCoordinator(
                 sessionRuntime.flushSessionWrites(updatedSession.id, extensionHost)
                 val promptSession = requireNotNull(uiState.value.currentSession?.takeIf { it.id == updatedSession.id })
                 val promptMessages = promptSession.messages
+                // Hooks may edit or insert floors. Resolve the accepted input by
+                // stable identity after flushing, never by its pre-hook index/text.
+                val promptInputIndex = inputMessage
+                    ?.let { promptMessages.indexOfFirst { m -> m.id == it.id } } ?: -1
+                val promptInput = if (promptInputIndex >= 0) {
+                    check(promptMessages.count { it.id == inputMessage!!.id } == 1) {
+                        "输入消息标识重复，无法确定生成上下文，请重新发送"
+                    }
+                    promptMessages[promptInputIndex].also { resolved ->
+                        if (isRegeneration || messageRole == MessageRole.User) {
+                            check(resolved.role == MessageRole.User && !resolved.isHidden) {
+                                "生成前输入消息已被隐藏或改变角色，请重新发送"
+                            }
+                            check(isRegeneration || promptInputIndex == promptMessages.lastIndex) {
+                                "生成前输入消息已不在会话末尾，请重新发送"
+                            }
+                        }
+                    }
+                } else {
+                    // 继续生成：没有新的输入楼层，宏上下文沿用既有历史。
+                    check(isContinue) { "生成前输入消息已被删除，请重新发送" }
+                    promptMessages.lastOrNull()
+                }
+                val promptInputText = promptInput?.reasoningParts()?.body.orEmpty()
                 val possibleRawIds = mutableSetOf<String>()
                 val rawBudget = ((preset.maxContextTokens ?: DEFAULT_MAX_CONTEXT_TOKENS) -
                     (preset.maxCompletionTokens ?: preset.maxTokens ?: 0)).coerceAtLeast(0)
@@ -329,7 +354,7 @@ internal class ChatGenerationCoordinator(
                 }
                 val memoryDetail = try {
                     memoryService.contextDetail(
-                        promptSession, inputMessage?.content.orEmpty(),
+                        promptSession, promptInputText,
                         possibleRawIds,
                     )
                 } catch (cancelled: CancellationException) {
@@ -363,18 +388,25 @@ internal class ChatGenerationCoordinator(
                         // 继续生成：目标回复留在提示词末尾，模型据此续写。
                         isContinue -> promptMessages
                         messageRole == MessageRole.User ->
-                            promptHistoryBeforeCurrentMessage(promptMessages, inputMessage?.id.orEmpty())
+                            promptHistoryBeforeCurrentMessage(promptMessages, promptInput?.id.orEmpty())
                         else -> promptMessages
                     },
                     worldBooks = (ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession) + supportingBooks).distinctBy { it.id },
                     preset = preset,
                     userInput = when {
-                        isRegeneration -> inputMessage?.content.orEmpty()
+                        isRegeneration -> promptInputText
                         // 继续生成没有新输入：续写上文由目标回复承担。
                         isContinue -> ""
                         messageRole == MessageRole.User ->
-                            (inputMessage?.content.orEmpty()) + promptUserInputSuffix
+                            promptInputText + promptUserInputSuffix
                         else -> ""
+                    },
+                    // ST macros see the saved current input even though wire history
+                    // excludes it. A swipe must not see the reply it is replacing.
+                    macroMessages = if (isRegeneration) {
+                        promptMessages.take(promptInputIndex + 1)
+                    } else {
+                        promptMessages
                     },
                     providerType = config.providerType,
                     metadata = JsonObject(
@@ -387,7 +419,7 @@ internal class ChatGenerationCoordinator(
                             dataStore = dataStore,
                             promptEngine = promptEngine,
                         ) + ("userInputNormalProcessed" to JsonPrimitive(
-                            inputMessage?.let { CharacterRegexApplier.isNormalProcessed(it) } ?: true,
+                            promptInput?.let { CharacterRegexApplier.isNormalProcessed(it) } ?: true,
                         )) + ("tellevMemoryContext" to JsonPrimitive(memoryContext)),
                     ),
                 )
@@ -442,7 +474,11 @@ internal class ChatGenerationCoordinator(
                 val prepared = ChatCompletionEvents.prepare(extensionHost, config, GenerateRequest(
                     prompt = promptResult,
                     preset = preset,
-                    attachments = if (isRegeneration) inputMessage?.attachments ?: emptyList() else attachments,
+                    attachments = if (isRegeneration || messageRole == MessageRole.User) {
+                        promptInput?.attachments.orEmpty()
+                    } else {
+                        attachments
+                    },
                     stream = true,
                     // Per-session reasoning effort override rides on request
                     // metadata; adapters resolve it ahead of the preset field.
