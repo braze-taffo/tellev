@@ -45,6 +45,8 @@ data class PromptBuildRequest(
     val metadata: JsonObject = buildJsonObject { },
     /** Background instruction, separate from chat history and pending user input (ST quiet generation). */
     val quietPrompt: String? = null,
+    /** Live direct cast members; embedded snapshots remain a portable fallback. */
+    val supportingCharacters: List<CharacterCard> = emptyList(),
 )
 
 @Serializable

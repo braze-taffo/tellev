@@ -15,6 +15,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CreationToolProtocolTest {
+    @Test fun relayMayOmitNativeNameOnlyWhenCreationWrapperIsComplete() {
+        for (encoded in listOf(false, true)) {
+            val envelope = buildJsonObject { put("name", "list_reference_books"); put("arguments", buildJsonObject {}) }
+            val valid = parseNativeCreationCalls(JsonArray(listOf(buildJsonObject {
+                put("function", buildJsonObject {
+                    put("name", "")
+                    put("arguments", if (encoded) JsonPrimitive(envelope.toString()) else envelope)
+                })
+            }))).single() as ToolCallBlock.Valid
+            assertEquals("list_reference_books", valid.call.name)
+        }
+        val invalid = parseNativeCreationCalls(JsonArray(listOf(buildJsonObject {
+            put("function", buildJsonObject { put("arguments", "{\"source\":\"reference\"}") })
+        }))).single()
+        assertTrue(invalid is ToolCallBlock.Invalid)
+    }
 
     @Test
     fun nativeToolArgumentsAcceptObjectFromCompatibleRelay() {

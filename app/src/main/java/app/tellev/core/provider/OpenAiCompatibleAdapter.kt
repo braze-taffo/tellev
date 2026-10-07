@@ -236,7 +236,7 @@ class OpenAiCompatibleAdapter(
                                 ToolCallAccumulator(id = tc.id.orEmpty(), name = tc.name.orEmpty())
                             }
                             if (tc.id != null) existing.id = tc.id
-                            if (tc.name != null) existing.name = tc.name
+                            if (!tc.name.isNullOrBlank()) existing.name = tc.name
                             existing.arguments += tc.arguments.orEmpty()
                         }
 

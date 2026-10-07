@@ -1208,4 +1208,19 @@
     <string name="novai_relay_status_connected">Relay connection check succeeded. Image generation and upscaling still require an actual generation test.</string>
     <string name="novai_relay_invalid_url">Invalid relay URL: enter a complete http:// or https:// URL without credentials, query parameters, or fragments.</string>
     <string name="novai_relay_invalid_path">Invalid endpoint path: start with a single / and omit query parameters and fragments.</string>
+    <string name="cast_picker_title">Select supporting character cards</string>
+    <string name="cast_picker_hint">Select multiple cards. The main card narrates using their character settings.</string>
+    <string name="cast_search">Search characters</string>
+    <string name="cast_selected_count">%1$d characters selected</string>
+    <string name="cast_apply">Apply selection</string>
+    <string name="cast_cancel">Cancel</string>
+    <string name="cast_binding_title">Supporting cast</string>
+    <string name="cast_binding_hint">Character, director, and world cards can bind multiple characters. The main card narrates while keeping each person’s personality, goals, relationships, and voice. Supporting-card scripts do not run.</string>
+    <string name="crs_multi_worldbooks">Select reference lorebooks (multiple)</string>
+    <string name="crs_multi_worldbooks_hint">Select a primary lorebook and supporting references. The primary defines the world. References stay read-only; faction generation creates a separate draft.</string>
+    <string name="crs_primary_worldbook">Primary lorebook</string>
+    <string name="crs_make_primary_worldbook">Set as primary</string>
+    <string name="crs_primary_reference">Primary: %1$s (%2$d entries)</string>
+    <string name="crs_aux_reference">Reference: %1$s (%2$d entries)</string>
+    <string name="crs_create_faction_book">Create a reusable faction lorebook with AI</string>
 </resources>

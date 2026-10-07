@@ -3,6 +3,7 @@ package app.tellev.feature.creation
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.CharacterCard
+import app.tellev.core.model.CharacterCastBinding
 import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
 import kotlinx.serialization.Serializable
@@ -131,6 +132,9 @@ data class CreationSession(
     val originalBook: WorldBook? = null,
     /** User-selected reference material; never embedded merely by being associated. */
     val referenceBook: WorldBook? = null,
+    /** Additional read-only references; referenceBook remains the primary world and legacy field. */
+    val additionalReferenceBooks: List<WorldBook> = emptyList(),
+    val referenceSourceIds: List<String> = emptyList(),
     /** Existing drafts retain their prior behavior; new card sessions opt out by default. */
     val allowAgentLoreEdits: Boolean = true,
     /** Editable SillyTavern extension tree; unknown keys remain untouched. */
@@ -197,10 +201,13 @@ internal fun CreationSession.relatedDraft(target: CreationKind): CreationSession
     require(target != kind)
     return if (target == CreationKind.Character) {
         val base = originalCard?.let(CreationSession::fromCharacter) ?: CreationSession(kind = target)
+        val sourceBook = toWorldBook()
         base.copy(
             savedArtifactId = "",
             worldName = worldName,
-            referenceBook = toWorldBook(),
+            referenceBook = referenceBook ?: sourceBook,
+            additionalReferenceBooks = if (referenceBook == null) emptyList() else
+                (additionalReferenceBooks + sourceBook).distinctBy { it.id },
             allowAgentLoreEdits = false,
         )
     } else {
@@ -213,10 +220,29 @@ internal fun CreationSession.relatedDraft(target: CreationKind): CreationSession
             originalCard = toCharacterCard(),
             originalBook = originalBook,
             referenceBook = referenceBook,
+            additionalReferenceBooks = additionalReferenceBooks,
+            referenceSourceIds = referenceSourceIds,
             advancedExtensions = advancedExtensions,
             nextLoreNumber = nextLoreNumber,
         ).withAssignedLoreIds()
     }
+}
+
+internal fun CreationSession.referenceBooks(): List<WorldBook> =
+    (listOfNotNull(referenceBook) + additionalReferenceBooks).distinctBy { it.id }
+
+internal fun CreationSession.castMembers(): List<CharacterCard> {
+    val data = originalCard?.raw?.get("data") as? JsonObject ?: originalCard?.raw ?: JsonObject(emptyMap())
+    val extensions = advancedExtensions.takeIf { it.isNotEmpty() } ?: data["extensions"] as? JsonObject ?: JsonObject(emptyMap())
+    return CharacterCastBinding.members(CharacterCard(savedArtifactId.ifBlank { id }, card.name,
+        raw = buildJsonObject { put("data", buildJsonObject { put("extensions", extensions) }) }))
+}
+
+internal fun CreationSession.factionDraft(): CreationSession {
+    val primary = requireNotNull(referenceBook) { "请先选择主世界书" }
+    return CreationSession(kind = CreationKind.WorldBook, worldName = "${primary.name}·势力",
+        referenceBook = primary, additionalReferenceBooks = additionalReferenceBooks,
+        referenceSourceIds = referenceSourceIds, sourceName = primary.name)
 }
 
 /** Explicit user merge. Keep existing entries and remap imported identities to avoid uid collisions. */
@@ -246,6 +272,11 @@ internal fun CreationSession.embedReferenceBook(): CreationSession {
     }
     return copy(lore = working, worldName = worldName.ifBlank { book.name },
         nextLoreNumber = cursor, updatedAt = System.currentTimeMillis())
+}
+
+internal fun CreationSession.embedReferenceBooks(): CreationSession {
+    val merged = referenceBooks().fold(this) { draft, book -> draft.copy(referenceBook = book).embedReferenceBook() }
+    return merged.copy(referenceBook = referenceBook, additionalReferenceBooks = additionalReferenceBooks)
 }
 
 fun WorldBookEntry.toLoreDraft(): LoreDraft = LoreDraft(

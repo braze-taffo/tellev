@@ -93,7 +93,9 @@ class DefaultPromptEngine(
         }
     }
 
-    override fun build(request: PromptBuildRequest): PromptBuildResult {
+    override fun build(request: PromptBuildRequest): PromptBuildResult = buildWithCast(CharacterCastPrompt.enrich(request, macroEngine))
+
+    private fun buildWithCast(request: PromptBuildRequest): PromptBuildResult {
         val rawGeneration = request.metadata["tavernRawGeneration"]?.jsonPrimitive?.booleanOrNull == true
         // 1. Build MacroContext from request data
         val macroContext = PromptMacroContextBuilder.buildMacroContext(request)

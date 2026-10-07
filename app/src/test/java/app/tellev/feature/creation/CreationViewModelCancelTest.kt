@@ -244,6 +244,61 @@ class CreationViewModelCancelTest {
     }
 
     @Test
+    fun multiBookReferencesAndCastPersistAndFactionGenerationUsesSeparateDraft() = runBlocking {
+        val root = Files.createTempDirectory("creation-multi-world-cast-")
+        val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        Dispatchers.setMain(main)
+        val store = FileStDataStore(StDirectoryLayout.fromRoot(root))
+        val repository = CreationRepository(root.resolve("drafts").toFile())
+        val fixture = Fixture().also { it.release.complete(Unit) }
+        val models = ViewModelStore()
+        try {
+            store.bootstrap()
+            val primary = WorldBook("main", "潮港主世界", listOf(WorldBookEntry("0", listOf("旧港"), content = "退潮才能入港。")))
+            val auxiliary = WorldBook("trade", "航运规则", listOf(WorldBookEntry("0", listOf("商会"), content = "商会掌握航运。")))
+            store.saveWorldBook(primary); store.saveWorldBook(auxiliary)
+            store.saveCharacter(app.tellev.core.model.CharacterCard("sailor", "舟青", personality = "想摆脱商会。"))
+            val vm = CreationViewModel(repository, store, noSecrets(), ProviderRegistry(listOf(fixture.provider)))
+                .also { models.put("creation", it) }
+            withContext(main) {
+                vm.start(CreationKind.Character)
+                vm.editCard { it.copy(name = "潮港导演") }
+                vm.associateWorldBooks(listOf(CreationWorldBookSource("main", primary.name, 1, false),
+                    CreationWorldBookSource("trade", auxiliary.name, 1, false))).join()
+                vm.associateCast(listOf("sailor", "sailor")).join()
+                assertEquals(1, vm.state.value.current!!.castMembers().size)
+                val characterId = vm.state.value.current!!.id
+                vm.close(); vm.open(characterId).join()
+                assertEquals(listOf("main", "trade"), vm.state.value.current!!.referenceBooks().map { it.id })
+                assertEquals("想摆脱商会。", vm.state.value.current!!.castMembers().single().personality)
+                val exported = CharacterImporter().importFromBytes(vm.exportCharacter(CharacterExportFormat.Json), "director.json")
+                assertEquals("舟青", app.tellev.core.model.CharacterCastBinding.members(exported).single().name)
+                vm.associateCast(emptyList()).join()
+                assertTrue(vm.state.value.current!!.castMembers().isEmpty())
+                assertTrue(app.tellev.core.model.CharacterCastBinding.members(
+                    CharacterImporter().importFromBytes(vm.exportCharacter(CharacterExportFormat.Json), "director.json")).isEmpty())
+                vm.startFactionWorldBook().join()
+                waitUntil { !vm.state.value.busy && vm.state.value.current!!.turns.lastOrNull()?.role == "agent" }
+                assertEquals(null, vm.state.value.error)
+                val faction = vm.state.value.current!!
+                assertEquals(CreationKind.WorldBook, faction.kind)
+                assertTrue(faction.id != characterId)
+                assertEquals("潮港主世界·势力", faction.worldName)
+                assertTrue(faction.lore.isNotEmpty())
+                assertEquals(listOf("main", "trade"), faction.referenceBooks().map { it.id })
+                assertTrue(fixture.requests.first().prompt.messages.any { it.content.contains("潮港主世界") && it.content.contains("航运规则") })
+                assertEquals(primary.entries.single().content, store.readWorldBook("main").entries.single().content)
+                assertTrue(repository.load(characterId).lore.isEmpty())
+                vm.associateWorldBooks(emptyList()).join()
+                assertTrue(vm.state.value.current!!.referenceBooks().isEmpty())
+            }
+        } finally {
+            withContext(main) { models.clear() }
+            Dispatchers.resetMain(); main.close(); root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun typedCustomAnswerResumesPendingQuestion() = verifyQuestionAnswer("我想换成冒险题材。")
 
     @Test

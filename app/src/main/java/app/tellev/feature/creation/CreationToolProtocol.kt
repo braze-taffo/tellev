@@ -303,7 +303,10 @@ internal fun parseNativeCreationCalls(calls: JsonArray?): List<ToolCallBlock> = 
         else runCatching { Json.parseToJsonElement(rawArguments) as? JsonObject }.getOrNull()
     if (arguments == null) {
         ToolCallBlock.Invalid("原生工具 $nativeName 的 arguments 不是完整 JSON 对象", rawArguments.take(200))
-    } else if (nativeName == "creation_tool") {
+    } else if (nativeName == "creation_tool" || (nativeName.isBlank() &&
+        arguments["name"] is JsonPrimitive && arguments["arguments"] is JsonObject)) {
+        // Some relays omit function.name but retain our unambiguous wrapper.
+        // Require both wrapper fields; never guess a name for arbitrary arguments.
         val name = (arguments["name"] as? JsonPrimitive)?.contentOrNull
         val nested = arguments["arguments"] as? JsonObject
         if (name.isNullOrBlank() || nested == null) {
@@ -463,6 +466,27 @@ internal class CreationToolBox(initial: CreationSession) {
     fun execute(call: ToolCallRequest): ToolResult = try {
         when (call.name) {
             "read_card" -> readCard()
+            "list_cast" -> ToolResult(true, "list_cast", buildJsonObject { put("members", JsonArray(session.castMembers().map {
+                buildJsonObject { put("id", it.id); put("name", it.name); put("read_only", true) }
+            })) })
+            "read_cast" -> {
+                val id = call.arguments.argString("id", "")
+                val member = requireNotNull(session.castMembers().firstOrNull { it.id == id }) { "附属角色不存在：$id" }
+                ToolResult(true, "read_cast", buildJsonObject {
+                    put("id", member.id); put("name", member.name); put("description", member.description)
+                    put("personality", member.personality); put("scenario", member.scenario)
+                    put("firstMessage", member.firstMessage); put("exampleMessages", member.exampleMessages)
+                    put("creatorNotes", member.creatorNotes); put("systemPrompt", member.systemPrompt)
+                    put("postHistoryInstructions", member.postHistoryInstructions)
+                    put("character_book", member.characterBook?.let { Json.encodeToJsonElement(app.tellev.core.model.WorldBook.serializer(), it) } ?: kotlinx.serialization.json.JsonNull)
+                })
+            }
+            "list_reference_books" -> ToolResult(true, "list_reference_books", buildJsonObject {
+                put("books", JsonArray(session.referenceBooks().mapIndexed { index, book -> buildJsonObject {
+                    put("id", book.id); put("name", book.name); put("entry_count", book.entries.size)
+                    put("primary", index == 0); put("read_only", true)
+                } }))
+            })
             "list_lore" -> listLore(call.arguments)
             "read_lore" -> readLore(call.arguments)
             "set_card_fields" -> setCardFields(call.arguments)
@@ -500,6 +524,9 @@ internal class CreationToolBox(initial: CreationSession) {
             put("world_name", session.worldName)
             put("lore_count", session.lore.size)
             put("allow_lore_edits", session.kind == CreationKind.WorldBook || session.allowAgentLoreEdits)
+            put("reference_books", JsonArray(session.referenceBooks().mapIndexed { index, book -> buildJsonObject {
+                put("id", book.id); put("name", book.name); put("entry_count", book.entries.size); put("primary", index == 0)
+            } }))
             session.referenceBook?.let { book ->
                 put("reference_world_name", book.name)
                 put("reference_lore_count", book.entries.size)
@@ -533,8 +560,17 @@ internal class CreationToolBox(initial: CreationSession) {
 
     private fun loreSource(arguments: JsonObject): List<LoreDraft> = when (arguments.argString("source", "draft")) {
         "draft" -> session.lore
-        "reference" -> requireNotNull(session.referenceBook) { "没有关联参考世界书" }.entries.mapIndexed { index, entry ->
-            entry.toLoreDraft().copy(id = "R${index + 1}")
+        "reference" -> {
+            val books = session.referenceBooks()
+            require(books.isNotEmpty()) { "没有关联参考世界书" }
+            val bookId = arguments.argString("book_id", "")
+            require(bookId.isBlank() || books.any { it.id == bookId }) { "参考世界书不存在：$bookId" }
+            books.flatMapIndexed { bookIndex, book ->
+                if (bookId.isNotBlank() && book.id != bookId) emptyList()
+                else book.entries.mapIndexed { index, entry ->
+                    entry.toLoreDraft().copy(id = if (bookIndex == 0) "R${index + 1}" else "R${bookIndex + 1}_${index + 1}")
+                }
+            }
         }
         else -> throw IllegalArgumentException("source 只能是 draft 或 reference")
     }
@@ -564,6 +600,7 @@ internal class CreationToolBox(initial: CreationSession) {
                             put("keys", JsonArray(entry.keys.map(::JsonPrimitive)))
                             put("constant", entry.constant)
                             put("insertionOrder", entry.insertionOrder)
+                            if (arguments.argString("source", "draft") == "reference") referenceBookFields(entry.id).forEach { (key, value) -> put(key, value) }
                         }
                     }),
                 )
@@ -598,11 +635,18 @@ internal class CreationToolBox(initial: CreationSession) {
         return ToolResult(
             ok = true, name = "read_lore",
             payload = buildJsonObject {
-                put("found", JsonArray(found.map(::loreModelView)))
+                put("found", JsonArray(found.map { entry -> JsonObject(loreModelView(entry) +
+                    if (arguments.argString("source", "draft") == "reference") referenceBookFields(entry.id) else emptyMap()) }))
                 put("not_found", JsonArray(notFound.map(::JsonPrimitive)))
                 put("source", arguments.argString("source", "draft"))
             },
         )
+    }
+
+    private fun referenceBookFields(id: String): JsonObject {
+        val bookIndex = if ('_' in id) id.substringBefore('_').removePrefix("R").toInt() - 1 else 0
+        val book = session.referenceBooks()[bookIndex]
+        return buildJsonObject { put("book_id", book.id); put("book_name", book.name); put("primary", bookIndex == 0) }
     }
 
     private fun setCardFields(patch: JsonObject): ToolResult {

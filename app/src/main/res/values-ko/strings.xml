@@ -1208,4 +1208,19 @@
     <string name="novai_relay_status_connected">중계 연결 확인에 성공했습니다. 이미지 생성 및 업스케일은 실제 생성으로 확인해야 합니다.</string>
     <string name="novai_relay_invalid_url">잘못된 중계 주소입니다. 인증 정보, 쿼리, 프래그먼트가 없는 전체 http:// 또는 https:// URL을 입력하세요.</string>
     <string name="novai_relay_invalid_path">잘못된 API 경로입니다. 하나의 /로 시작하고 쿼리나 프래그먼트는 제외하세요.</string>
+    <string name="cast_picker_title">부속 캐릭터 카드 선택</string>
+    <string name="cast_picker_hint">여러 카드를 선택할 수 있습니다. 메인 카드가 각 인물 설정을 바탕으로 이야기를 진행합니다.</string>
+    <string name="cast_search">캐릭터 검색</string>
+    <string name="cast_selected_count">캐릭터 %1$d명 선택됨</string>
+    <string name="cast_apply">선택 적용</string>
+    <string name="cast_cancel">취소</string>
+    <string name="cast_binding_title">부속 캐릭터 / 군상</string>
+    <string name="cast_binding_hint">캐릭터·감독·세계 카드에 여러 인물을 연결할 수 있습니다. 메인 카드가 각자의 성격, 목표, 관계, 말투를 유지하며 이야기를 진행합니다. 부속 카드의 스크립트는 실행하지 않습니다.</string>
+    <string name="crs_multi_worldbooks">참고 세계관 책 선택 (복수)</string>
+    <string name="crs_multi_worldbooks_hint">주 세계관 책과 보조 참고서를 선택하세요. 주 책의 세계관을 우선합니다. 참고서는 읽기 전용이며 세력 생성은 별도 초안으로 저장됩니다.</string>
+    <string name="crs_primary_worldbook">주 세계관 책</string>
+    <string name="crs_make_primary_worldbook">주 책으로 설정</string>
+    <string name="crs_primary_reference">주 책: %1$s (%2$d개 항목)</string>
+    <string name="crs_aux_reference">보조 참고: %1$s (%2$d개 항목)</string>
+    <string name="crs_create_faction_book">AI로 범용 세력 세계관 책 만들기</string>
 </resources>

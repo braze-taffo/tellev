@@ -18,6 +18,7 @@ import app.tellev.core.prompt.DEFAULT_MAX_CONTEXT_TOKENS
 import app.tellev.core.provider.GenerateChunk
 import app.tellev.core.provider.GenerateRequest
 import app.tellev.core.provider.GenerationRuntimeResolver
+import app.tellev.core.provider.resolveCharacterCast
 import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.prompt.ChatTextProcessing
@@ -249,8 +250,13 @@ internal class ChatGenerationCoordinator(
                 } catch (_: Exception) {
                     "" // Memory retrieval cannot prevent a normal chat reply.
                 }
+                val supportingCast = resolveCharacterCast(character, dataStore)
+                val supportingBooks = supportingCast.flatMap { member ->
+                    ChatTavernStorage.activeWorldBooks(emptyList(), runtime.worldBooks, member, null)
+                }
                 val promptRequest = PromptBuildRequest(
                     character = character,
+                    supportingCharacters = supportingCast,
                     persona = runtime.persona,
                     messages = if (isRegeneration) {
                         promptMessages.take(regenerationInputIndex!!)
@@ -259,7 +265,7 @@ internal class ChatGenerationCoordinator(
                     } else {
                         promptMessages
                     },
-                    worldBooks = ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession),
+                    worldBooks = (ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession) + supportingBooks).distinctBy { it.id },
                     preset = preset,
                     userInput = when {
                         isRegeneration -> inputMessage.content
@@ -672,11 +678,14 @@ internal class ChatGenerationCoordinator(
         return try {
             ChatTavernAdapter.emitStEvent(extensionHost, "js_generation_started", generationId)
 
+            val supportingCast = resolveCharacterCast(character, dataStore)
+            val supportingBooks = supportingCast.flatMap { member -> ChatTavernStorage.activeWorldBooks(emptyList(), runtime.worldBooks, member, null) }
             val promptRequest = ExtensionGenerationOptions.promptRequest(options, PromptBuildRequest(
                 character = character,
+                supportingCharacters = supportingCast,
                 persona = runtime.persona,
                 messages = state.messages,
-                worldBooks = ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession),
+                worldBooks = (ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession) + supportingBooks).distinctBy { it.id },
                 preset = preset,
                 userInput = userInput,
                 providerType = config.providerType,

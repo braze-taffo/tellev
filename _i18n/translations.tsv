@@ -1191,3 +1191,18 @@ novai_relay_status_unsupported	The relay does not support the connection check e
 novai_relay_status_connected	Relay connection check succeeded. Image generation and upscaling still require an actual generation test.	中継の接続確認に成功しました。生成・拡大の動作は実際の画像生成で確認してください。	중계 연결 확인에 성공했습니다. 이미지 생성 및 업스케일은 실제 생성으로 확인해야 합니다.
 novai_relay_invalid_url	Invalid relay URL: enter a complete http:// or https:// URL without credentials, query parameters, or fragments.	中継 URL が無効です。認証情報・クエリ・フラグメントを含まない完全な http:// または https:// URL を入力してください。	잘못된 중계 주소입니다. 인증 정보, 쿼리, 프래그먼트가 없는 전체 http:// 또는 https:// URL을 입력하세요.
 novai_relay_invalid_path	Invalid endpoint path: start with a single / and omit query parameters and fragments.	パスが無効です。単一の / で始め、クエリやフラグメントを含めないでください。	잘못된 API 경로입니다. 하나의 /로 시작하고 쿼리나 프래그먼트는 제외하세요.
+cast_picker_title	Select supporting character cards	サブキャラクターカードを選択	부속 캐릭터 카드 선택
+cast_picker_hint	Select multiple cards. The main card narrates using their character settings.	複数選択できます。メインカードが各人物の設定を使って物語を進めます。	여러 카드를 선택할 수 있습니다. 메인 카드가 각 인물 설정을 바탕으로 이야기를 진행합니다.
+cast_search	Search characters	キャラクターを検索	캐릭터 검색
+cast_selected_count	%1$d characters selected	%1$d 人を選択中	캐릭터 %1$d명 선택됨
+cast_apply	Apply selection	選択を適用	선택 적용
+cast_cancel	Cancel	キャンセル	취소
+cast_binding_title	Supporting cast	サブキャラクター / 群像	부속 캐릭터 / 군상
+cast_binding_hint	Character, director, and world cards can bind multiple characters. The main card narrates while keeping each person’s personality, goals, relationships, and voice. Supporting-card scripts do not run.	キャラクター・監督・世界カードに複数の人物を関連付けられます。メインカードが各人の性格・目的・関係・口調を保って物語を進めます。サブカードのスクリプトは実行しません。	캐릭터·감독·세계 카드에 여러 인물을 연결할 수 있습니다. 메인 카드가 각자의 성격, 목표, 관계, 말투를 유지하며 이야기를 진행합니다. 부속 카드의 스크립트는 실행하지 않습니다.
+crs_multi_worldbooks	Select reference lorebooks (multiple)	参考ロアブックを複数選択	참고 세계관 책 선택 (복수)
+crs_multi_worldbooks_hint	Select a primary lorebook and supporting references. The primary defines the world. References stay read-only; faction generation creates a separate draft.	メインと補助のロアブックを選びます。世界観はメインを優先します。参考資料は読み取り専用で、勢力生成は別の下書きになります。	주 세계관 책과 보조 참고서를 선택하세요. 주 책의 세계관을 우선합니다. 참고서는 읽기 전용이며 세력 생성은 별도 초안으로 저장됩니다.
+crs_primary_worldbook	Primary lorebook	メインロアブック	주 세계관 책
+crs_make_primary_worldbook	Set as primary	メインに設定	주 책으로 설정
+crs_primary_reference	Primary: %1$s (%2$d entries)	メイン：%1$s（%2$d 件）	주 책: %1$s (%2$d개 항목)
+crs_aux_reference	Reference: %1$s (%2$d entries)	補助：%1$s（%2$d 件）	보조 참고: %1$s (%2$d개 항목)
+crs_create_faction_book	Create a reusable faction lorebook with AI	AI で汎用の勢力ロアブックを作成	AI로 범용 세력 세계관 책 만들기

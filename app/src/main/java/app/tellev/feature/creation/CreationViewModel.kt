@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.CharacterCard
+import app.tellev.core.model.CharacterCastBinding
+import app.tellev.core.model.CharacterSummary
 import app.tellev.core.model.WorldBook
 import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.security.SecretStore
@@ -28,6 +30,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.io.File
 import java.util.UUID
 
@@ -217,28 +221,51 @@ class CreationViewModel(
     }
 
     suspend fun worldBookSources(): List<CreationWorldBookSource> = withContext(Dispatchers.IO) {
-        val drafts = repository.list().filter { it.kind == CreationKind.WorldBook }.map {
+        val drafts = repository.list().filter { it.kind == CreationKind.WorldBook && it.id != _state.value.current?.id }.map {
             CreationWorldBookSource(it.id, it.worldName, it.loreCount, fromDraft = true)
         }
         val saved = store.listWorldBookSummaries().map {
             CreationWorldBookSource(it.id, it.name, it.entryCount, fromDraft = false)
         }
-        drafts + saved
+        val available = drafts + saved
+        val current = _state.value.current
+        val retained = current?.referenceBooks().orEmpty().mapIndexedNotNull { index, book ->
+            val key = current?.referenceSourceIds?.getOrNull(index)
+            val source = if (key != null) CreationWorldBookSource(key.substringAfter(':'), book.name, book.entries.size,
+                fromDraft = key.substringBefore(':') == "true") else CreationWorldBookSource(book.id, book.name, book.entries.size, false)
+            source.takeUnless { retained -> available.any { "${it.fromDraft}:${it.id}" == "${retained.fromDraft}:${retained.id}" ||
+                (key == null && (it.id == book.id || it.name == book.name)) } }
+        }
+        available + retained
     }
 
     /** Associate a read-only book. Existing embedded entries stay in the card until an explicit merge. */
-    fun associateWorldBook(source: CreationWorldBookSource) = viewModelScope.launch {
+    fun associateWorldBook(source: CreationWorldBookSource) = associateWorldBooks(listOf(source))
+
+    fun associateWorldBooks(sources: List<CreationWorldBookSource>) = viewModelScope.launch {
         val current = _state.value.current ?: return@launch
-        if (_state.value.busy || current.kind != CreationKind.Character) return@launch
+        if (_state.value.busy) return@launch
         _state.update { it.copy(busy = true, error = null) }
         try {
-            val book = if (source.fromDraft) {
+            val loaded = sources.distinctBy { "${it.fromDraft}:${it.id}" }.map { source ->
+                val key = "${source.fromDraft}:${source.id}"
+                val book = try { if (source.fromDraft) {
                 // Wait for earlier editor writes before reading the chosen draft.
                 val draft = writeMutex.withLock { repository.load(source.id) }
                 require(draft.kind == CreationKind.WorldBook)
                 checkedWorldBook(draft)
-            } else store.readWorldBook(source.id)
-            val next = current.copy(referenceBook = book, allowAgentLoreEdits = false,
+            } else store.readWorldBook(source.id) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) {
+                    val index = current.referenceSourceIds.indexOf(key)
+                    current.referenceBooks().getOrNull(index) ?: current.referenceBooks().firstOrNull { it.id == source.id } ?: throw error
+                }
+                source to book
+            }.distinctBy { it.second.id }
+            val books = loaded.map { it.second }
+            val next = current.copy(referenceBook = books.firstOrNull(), additionalReferenceBooks = books.drop(1),
+                referenceSourceIds = loaded.map { "${it.first.fromDraft}:${it.first.id}" },
+                allowAgentLoreEdits = current.kind == CreationKind.WorldBook,
                 updatedAt = System.currentTimeMillis())
             write(next)
             _state.update { it.copy(current = next) }
@@ -252,10 +279,32 @@ class CreationViewModel(
         }
     }
 
+    fun startFactionWorldBook() = viewModelScope.launch {
+        val source = _state.value.current ?: return@launch
+        if (_state.value.busy || source.referenceBook == null) return@launch
+        _state.update { it.copy(busy = true, error = null) }
+        var created = false
+        try {
+            write(source)
+            val next = source.factionDraft()
+            write(next)
+            _state.update { CreationUiState(sessions = it.sessions, current = next, busy = true) }
+            refresh().join()
+            created = true
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { fail(e) }
+        finally { _state.update { it.copy(busy = false) } }
+        if (created) send("【创作起点】依据已选主世界书的世界观，以及辅助参考世界书，创作独立、可复用的通用势力世界书。" +
+            "先分页读取各参考书的设定，遵守主世界书的时代、力量体系、历史与地理；辅助书有冲突时先向用户提问。" +
+            "写出有差异的主要势力：起源、目标、组织与权力结构、代表人物、资源与势力范围、对外关系、内部矛盾、行动方式、加入条件及剧情钩子。" +
+            "各条目独立可理解，配置可触发的关键词，区分既有事实和新创作。避免依赖某一玩家、单一角色或开场剧情，不改写参考书。" +
+            "信息不足先询问用户，完成后说明哪些设定来自参考书、哪些是新增设计。")
+    }
+
     fun embedReferenceWorldBook() {
         val current = _state.value.current ?: return
         if (_state.value.busy || current.kind != CreationKind.Character || current.referenceBook == null) return
-        val next = current.embedReferenceBook()
+        val next = current.embedReferenceBooks()
         _state.update { it.copy(current = next) }
         persist(next)
     }
@@ -266,6 +315,34 @@ class CreationViewModel(
         val next = current.copy(allowAgentLoreEdits = allowed, updatedAt = System.currentTimeMillis())
         _state.update { it.copy(current = next) }
         persist(next)
+    }
+
+    suspend fun castSources(): List<CharacterSummary> = store.listCharacters()
+
+    fun associateCast(ids: List<String>) = viewModelScope.launch {
+        val current = _state.value.current ?: return@launch
+        if (_state.value.busy || current.kind != CreationKind.Character) return@launch
+        _state.update { it.copy(busy = true, error = null) }
+        try {
+            val fallback = current.castMembers()
+            val members = ids.distinct().filterNot { it == current.savedArtifactId }.map { id ->
+                try { store.readCharacter(id) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) { fallback.firstOrNull { it.id == id } ?: throw error }
+            }
+            val originalData = current.originalCard?.raw?.get("data") as? JsonObject ?: current.originalCard?.raw
+            val extensions = current.advancedExtensions.takeIf { it.isNotEmpty() }
+                ?: originalData?.get("extensions") as? JsonObject ?: JsonObject(emptyMap())
+            val proxy = CharacterCard(current.savedArtifactId.ifBlank { current.id }, current.card.name,
+                raw = buildJsonObject { put("data", buildJsonObject { put("extensions", extensions) }) })
+            val raw = CharacterCastBinding.withMembers(proxy, members).raw["data"] as JsonObject
+            val next = current.copy(advancedExtensions = raw["extensions"] as JsonObject, updatedAt = System.currentTimeMillis())
+            write(next)
+            _state.update { it.copy(current = next) }
+            refresh().join()
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) { fail(error) }
+        finally { _state.update { it.copy(busy = false) } }
     }
 
     fun send(text: String) {

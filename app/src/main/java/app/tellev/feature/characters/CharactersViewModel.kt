@@ -136,6 +136,12 @@ class CharactersViewModel(
         }
     }
 
+    suspend fun readCastCharacters(ids: List<String>, fallback: List<CharacterCard>): List<CharacterCard> = ids.distinct().map { id ->
+        try { dataStore.readCharacter(id) }
+        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (error: Exception) { fallback.firstOrNull { it.id == id } ?: throw error }
+    }
+
     suspend fun createCharacter(card: CharacterCard, avatarPng: ByteArray?): Boolean {
         if (card.name.isBlank()) return false
         _uiState.update { it.copy(isLoading = true, error = null) }

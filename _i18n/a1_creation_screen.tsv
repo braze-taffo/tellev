@@ -157,3 +157,10 @@ crs_reference_worldbook_hint	AI 可读取参考设定，合并后才会添加到
 crs_merge_worldbook	合并到角色卡
 crs_merge_worldbook_confirm	将「%1$s」的 %2$d 条参考条目合并到角色卡，并随 PNG/JSON 导出。现有条目保留，已合并的相同条目不会重复添加。
 crs_allow_agent_lore_edits	允许 AI 修改世界书条目
+crs_multi_worldbooks	选择参考世界书（多选）
+crs_multi_worldbooks_hint	勾选主世界书与辅助参考书，可指定一本主世界书。以主书世界观为准；参考书保持只读，生成内容另存为新草稿。
+crs_primary_worldbook	主世界书
+crs_make_primary_worldbook	设为主世界书
+crs_primary_reference	主世界书：%1$s（%2$d 条）
+crs_aux_reference	辅助参考：%1$s（%2$d 条）
+crs_create_faction_book	AI 创作通用势力世界书

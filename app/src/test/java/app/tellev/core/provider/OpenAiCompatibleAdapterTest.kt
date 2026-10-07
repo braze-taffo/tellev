@@ -30,6 +30,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OpenAiCompatibleAdapterTest {
+    @Test fun `blank names in later tool deltas preserve the original function name`() = runBlocking {
+        val wire = """
+            data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call1","function":{"name":"creation_tool","arguments":""}}]}}]}
+            data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"","arguments":"{\"name\":\"read_card\",\"arguments\":{}}"}}]},"finish_reason":"tool_calls"}]}
+            data: [DONE]
+        """.trimIndent()
+        val adapter = OpenAiCompatibleAdapter(client = client { response(it, 200, wire, "text/event-stream") })
+        val result = adapter.streamGenerate(config("test"),
+            generateRequest(true, GenerationPreset("p", "p", "openai-compatible"))).toList()
+            .filterIsInstance<GenerateChunk.Completed>().single()
+        assertEquals("creation_tool", result.toolCalls!!.single().jsonObject["function"]!!.jsonObject["name"]!!.jsonPrimitive.content)
+    }
     @Test
     fun `creation stream reports EOF during reasoning instead of completing partial reply`() = runBlocking {
         val wire = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"还在思考\"}}]}\n"

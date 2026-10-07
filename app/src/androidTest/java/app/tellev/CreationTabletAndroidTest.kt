@@ -10,6 +10,10 @@ import androidx.test.platform.app.InstrumentationRegistry
 import app.tellev.core.model.PresetCategory
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageRole
+import app.tellev.core.model.CharacterCard
+import app.tellev.core.model.CharacterCastBinding
+import app.tellev.core.model.WorldBook
+import app.tellev.core.model.WorldBookEntry
 import app.tellev.core.prompt.PromptBuildResult
 import app.tellev.core.prompt.PromptDiagnostics
 import app.tellev.core.prompt.PromptMessage
@@ -17,12 +21,18 @@ import app.tellev.core.provider.*
 import app.tellev.core.storage.CharacterImporter
 import app.tellev.core.storage.PngCardParser
 import app.tellev.core.storage.StDataStore
+import app.tellev.core.storage.FileStDataStore
 import app.tellev.feature.creation.*
+import app.tellev.feature.characters.CharactersViewModel
+import app.tellev.feature.characters.CharacterDetailScreen
+import app.tellev.feature.chat.ChatViewModel
+import app.tellev.feature.chat.ChatScreen
 import app.tellev.ui.theme.TellevTheme
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -32,6 +42,265 @@ class CreationTabletAndroidTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
     private val evidence get() = context.cacheDir.resolve("tablet-creation-evidence").also { it.mkdirs() }
+
+    private suspend fun installCastAndBookFixtures(graph: TellevGraph): List<WorldBook> {
+        val books = listOf(
+            WorldBook("tablet-cast-canon", "00平板主世界·潮港", listOf(WorldBookEntry("0", listOf("潮港"),
+                content = "潮港处于无电力的帆船时代，仅退潮开放。青檐是官方登记口令。禁止现代科技与超自然法术。", constant = true))),
+            WorldBook("tablet-cast-economy", "00平板辅助·航运", listOf(WorldBookEntry("0", listOf("商会"),
+                content = "潮港航运以盐票结算。青帆商会垄断盐票，渡船公会维护小船户权益，两方既合作又争夺码头。", constant = true))),
+        )
+        books.forEach { graph.dataStore.saveWorldBook(it) }
+        graph.dataStore.saveCharacter(CharacterCard("tablet-cast-zhou", "00舟青·平板附属", description = "舟青是潮港渡船人，随身带潮位册。",
+            personality = "谨慎寡言，目标是摆脱青帆商会债务。", scenario = "舟青知道青檐口令，但不知道商会金库位置。",
+            exampleMessages = "舟青：先看潮位，别急着上船。"))
+        graph.dataStore.saveCharacter(CharacterCard("tablet-cast-shen", "00沈砚·平板附属", description = "沈砚是青帆商会账房，用算盘核验盐票。",
+            personality = "精明多话，目标是保住商会航运垄断。", scenario = "沈砚知道金库位置，想招募舟青为商会效力。",
+            exampleMessages = "沈砚：潮水会退，账可不会自己清。"))
+        return books.map { graph.dataStore.readWorldBook(it.id) }
+    }
+
+    @Test fun multiWorldBooksAndCastUseVisiblePickerAndSurviveReopen(): Unit = withEditor(null) { vm, graph, activity ->
+        val books = installCastAndBookFixtures(graph)
+        withContext(Dispatchers.Main) {
+            vm.start(CreationKind.Character)
+            vm.editCard { it.copy(name = "平板群像导演", description = "由导演统一叙事，按附属人物设定表现潮港群像。", firstMessage = "潮港退潮，渡船靠岸。") }
+        }
+        val draftId = vm.state.value.current!!.id
+        tapScrolled(activity.getString(R.string.crs_multi_worldbooks))
+        toggleBook(books[0].name)
+        toggleBook(books[1].name)
+        tapScrolled(activity.getString(R.string.crs_make_primary_worldbook))
+        screenshot("cast-01-two-books-primary-changed")
+        tap(activity.getString(R.string.cast_apply))
+        waitUntil { !vm.state.value.busy && vm.state.value.current!!.referenceBooks().size == 2 }
+        assertEquals(books[1].id, vm.state.value.current!!.referenceBook!!.id)
+        tapScrolled(activity.getString(R.string.crs_multi_worldbooks))
+        tapScrolled(activity.getString(R.string.crs_make_primary_worldbook))
+        tap(activity.getString(R.string.cast_apply))
+        waitUntil { !vm.state.value.busy && vm.state.value.current!!.referenceBook!!.id == books[0].id }
+        tapScrolled(activity.getString(R.string.cast_picker_title))
+        tapScrolled("00舟青·平板附属")
+        tapScrolled("00沈砚·平板附属")
+        screenshot("cast-02-two-actors-selected")
+        tap(activity.getString(R.string.cast_apply))
+        waitUntil { !vm.state.value.busy && vm.state.value.current!!.castMembers().size == 2 }
+        withContext(Dispatchers.Main) { vm.open(draftId).join() }
+        assertEquals(listOf(books[0].id, books[1].id), vm.state.value.current!!.referenceBooks().map { it.id })
+        assertEquals(2, vm.state.value.current!!.castMembers().size)
+        withContext(Dispatchers.Main) { vm.setCoverPng(PngCardParser.createMinimalPng()) }
+        waitUntil { !vm.state.value.busy && vm.state.value.current!!.coverSha256.isNotBlank() }
+        for (format in CharacterExportFormat.entries) {
+            val bytes = vm.exportCharacter(format)
+            val name = if (format == CharacterExportFormat.Png) "cast-card.png" else "cast-card.json"
+            val roundtrip = CharacterImporter().importFromBytes(bytes, name)
+            assertEquals(2, CharacterCastBinding.members(roundtrip).size)
+            assertTrue(CharacterCastBinding.members(roundtrip).first().personality.contains("摆脱"))
+            evidence.resolve(name).writeBytes(bytes)
+        }
+        tapScrolled(activity.getString(R.string.crs_merge_worldbook))
+        screenshot("cast-03-multi-book-merge-confirmation")
+        tap(activity.getString(R.string.crs_merge_worldbook))
+        waitUntil { vm.state.value.current!!.lore.size == 2 }
+        assertEquals(2, vm.state.value.current!!.lore.map { it.id }.distinct().size)
+        tap(activity.getString(R.string.crs_save_to_character_list))
+        waitUntil { !vm.state.value.busy && vm.state.value.current!!.savedArtifactId.isNotBlank() }
+        assertNull(vm.state.value.error)
+        val stored = graph.dataStore.readCharacter(vm.state.value.current!!.savedArtifactId)
+        assertEquals(2, CharacterCastBinding.members(stored).size)
+        assertEquals(2, stored.characterBook!!.entries.size)
+        for (book in books) assertEquals(book.entries, graph.dataStore.readWorldBook(book.id).entries)
+        screenshot("cast-04-restored-and-merged")
+        report("cast-multi-ui", buildJsonObject {
+            put("two_reference_books", true); put("primary_switched_twice", true); put("two_supporting_cards", true)
+            put("reopen_preserves_all", true); put("png_json_cast_roundtrip", true); put("merge_unique_ids", true)
+            put("source_books_unchanged", true); put("draft_id", draftId)
+            put("saved_card_id", stored.id); put("saved_card_cast_and_lore", true)
+        })
+    }
+
+    @Test fun liveFactionBookReadsTwoSourcesAndWritesIndependentDraft(): Unit = withEditor(recordingLiveProvider()) { vm, graph, activity ->
+        val books = installCastAndBookFixtures(graph)
+        withContext(Dispatchers.Main) {
+            vm.start(CreationKind.WorldBook)
+            vm.editWorldName("平板势力创作源草稿")
+            vm.associateWorldBooks(books.map { CreationWorldBookSource(it.id, it.name, it.entries.size, false) }).join()
+        }
+        val sourceId = vm.state.value.current!!.id
+        tapScrolled(activity.getString(R.string.crs_create_faction_book))
+        waitUntil { vm.state.value.current!!.id != sourceId }
+        val factionId = vm.state.value.current!!.id
+        try {
+            waitUntil(600_000) {
+                progress(vm)
+                if (vm.state.value.pendingQuestion != null) {
+                    screenshot("faction-live-question")
+                    tap(activity.getString(R.string.crs_question_custom_answer))
+                    typeAnswer("用于通用群像叙事，请写三到四个相互制衡的势力，每个势力写完整的起源、目标、组织、代表人物、资源、地盘、关系、内部矛盾、加入条件和剧情钩子。坚持主世界无电力无超自然设定，辅助航运设定完全采纳。不依赖玩家，缺失历史人物可合理新增并标明新增设计。现在直接完成并写入世界书条目。")
+                    tapDescription(activity.getString(R.string.crs_send))
+                }
+                !vm.state.value.busy
+            }
+            assertNull(vm.state.value.error)
+            val result = vm.state.value.current!!
+            assertTrue("No faction entries created", result.lore.size >= 3)
+            val events = vm.state.value.toolEvents
+            assertTrue(events.any { it.name == "list_lore" && it.ok })
+            assertTrue(events.any { it.name == "read_lore" && it.ok })
+            val contents = result.lore.joinToString("\n") { it.content }
+            assertTrue(contents.contains("盐票"))
+            assertTrue(contents.contains("退潮") || contents.contains("潮位"))
+            assertTrue(result.lore.all { it.keys.isNotEmpty() && it.content.length >= 150 })
+            val repository = CreationRepository(context.filesDir.resolve("ai-creation"))
+            assertTrue(repository.load(sourceId).lore.isEmpty())
+            for (book in books) assertEquals(book.entries, graph.dataStore.readWorldBook(book.id).entries)
+            evidence.resolve("live-faction-worldbook.json").writeBytes(worldBookExportBytes(result.toWorldBook()))
+            evidence.resolve("live-faction-session.json").writeText(FileStDataStore.defaultJson.encodeToString(CreationSession.serializer(), result))
+            screenshot("faction-live-completed")
+            withContext(Dispatchers.Main) { vm.open(factionId).join() }
+            assertEquals(result.lore, vm.state.value.current!!.lore)
+            report("live-faction", buildJsonObject {
+                put("model", "step-5-preview"); put("entry_count", result.lore.size); put("independent_draft", factionId != sourceId)
+                put("sources_unchanged", true); put("reopen_preserves_result", true)
+                put("tool_events", JsonArray(events.map { buildJsonObject { put("name", it.name); put("ok", it.ok); put("detail", it.detail) } }))
+            })
+        } finally { withContext(Dispatchers.Main) { vm.cancelGeneration() } }
+    }
+
+    @Test fun liveNarrationUsesFullCastOnTablet(): Unit = withEditor(null) { _, graph, activity ->
+        installCastAndBookFixtures(graph)
+        val actors = listOf("tablet-cast-zhou", "tablet-cast-shen").map { graph.dataStore.readCharacter(it) }
+        val card = CharacterCastBinding.withMembers(CharacterCard("tablet-cast-director-${java.util.UUID.randomUUID()}", "潮港导演",
+            description = "由你统一叙事。保持各角色知识边界，不替玩家决定行动。", firstMessage = "潮港退潮，渡船靠岸，商会账房等在码头。"), actors)
+        graph.dataStore.saveCharacter(card)
+        val selected = requireNotNull(graph.secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID))
+        val config = ProviderConfigPersistence.loadProviderConfig(graph.secretStore, selected)
+        val previousPreset = graph.dataStore.readSelectedPresetName(PresetCategory.OpenAi)
+        val preset = GenerationPreset("tablet-cast-live", "平板群像测试", config.providerType,
+            category = PresetCategory.OpenAi, maxContextTokens = 64000, maxCompletionTokens = 16384)
+        graph.dataStore.savePreset(preset)
+        graph.dataStore.selectPreset(PresetCategory.OpenAi, preset.id)
+        val models = ViewModelStore()
+        val vm = withContext(Dispatchers.Main) {
+            ChatViewModel(graph.dataStore, recordingLiveProvider(http1 = false, label = "cast"), graph.promptEngine, graph.secretStore,
+                graph.extensionHost, graph.permissionManager).also {
+                models.put("tablet-cast-chat", it)
+                activity.setContent { CompositionLocalProvider(LocalTellevGraph provides graph) {
+                    TellevTheme { ChatScreen(it) }
+                } }
+            }
+        }
+        try {
+            waitUntil { !vm.uiState.value.isLoading && vm.uiState.value.providerConfig != null }
+            withContext(Dispatchers.Main) { vm.selectCharacter(card.id) }
+            waitUntil { !vm.uiState.value.isLoading && vm.uiState.value.selectedCharacter?.id == card.id && vm.uiState.value.currentSession != null }
+            waitUntil { nodes().any { it.className?.toString() == "android.widget.EditText" } }
+            assertTrue(nodes().first { it.className?.toString() == "android.widget.EditText" }
+                .performAction(AccessibilityNodeInfo.ACTION_FOCUS))
+            typeAnswer("请用约500字演出舟青与沈砚在潮港码头谈判的一幕，包含各自台词，体现两人的目标、说话方式和知识边界。不要让舟青突然知道金库位置，不替旅人做选择。")
+            tapDescription(activity.getString(R.string.chat_send_message))
+            waitUntil(400_000) {
+                report("live-cast-progress", buildJsonObject { put("generating", vm.uiState.value.isGenerating); put("stream_chars", vm.uiState.value.streamingText.length); put("reasoning_chars", vm.uiState.value.streamingReasoning.length); put("error", vm.uiState.value.error.orEmpty()) })
+                val state = vm.uiState.value
+                val userIndex = state.messages.indexOfLast { it.role == MessageRole.User }
+                !state.isGenerating && (state.error != null ||
+                    (userIndex >= 0 && state.messages.indexOfLast { it.role == MessageRole.Character } > userIndex))
+            }
+            assertNull(vm.uiState.value.error)
+            val output = vm.uiState.value.messages.last { it.role == MessageRole.Character }.content
+            evidence.resolve("live-cast-narration.txt").writeText(output)
+            assertTrue(output.contains("舟青") && output.contains("沈砚"))
+            assertTrue(output.contains("盐票") || output.contains("债"))
+            val stored = graph.dataStore.readChatSession(vm.uiState.value.currentSession!!.id)
+            assertEquals(output, stored.messages.last { it.role == MessageRole.Character }.content)
+            screenshot("cast-chat-live-completed")
+            report("live-cast", buildJsonObject { put("completed", true); put("real_chat_screen", true); put("model", config.model); put("characters", 2); put("output_chars", output.length); put("saved", true) })
+        } catch (error: Throwable) {
+            report("cast-chat-failure", buildJsonObject {
+                put("error", error.message.orEmpty()); put("app_error", vm.uiState.value.error.orEmpty())
+                put("loading", vm.uiState.value.isLoading); put("provider_configured", vm.uiState.value.providerConfig != null)
+                put("character_id", vm.uiState.value.selectedCharacter?.id.orEmpty())
+                put("roles", vm.uiState.value.messages.joinToString { it.role.name })
+            })
+            throw error
+        } finally {
+            withContext(Dispatchers.Main) { vm.stopGeneration(); models.clear() }
+            previousPreset?.let { graph.dataStore.selectPreset(PresetCategory.OpenAi, it) }
+        }
+    }
+
+    @Test fun savedCardDetailCanChangeAndClearCastThroughUi(): Unit = withEditor(null) { _, graph, activity ->
+        installCastAndBookFixtures(graph)
+        val actors = listOf("tablet-cast-zhou", "tablet-cast-shen").map { graph.dataStore.readCharacter(it) }
+        val main = CharacterCastBinding.withMembers(CharacterCard("tablet-detail-cast-main", "平板详情群像导演",
+            description = "主卡统一叙事。", firstMessage = "请进入潮港。"), actors)
+        graph.dataStore.saveCharacter(main)
+        val models = ViewModelStore()
+        var vm = withContext(Dispatchers.Main) {
+            CharactersViewModel(graph.dataStore, MutableStateFlow(0L)).also {
+                models.put("tablet-details", it)
+                it.selectCharacter(main.id)
+                activity.setContent { TellevTheme { CharacterDetailScreen(it, {}) } }
+            }
+        }
+        var stage = "initial-load"
+        try {
+            waitUntil { vm.uiState.value.selectedCharacter?.id == main.id && !vm.uiState.value.isLoading }
+            tapScrolled(activity.getString(R.string.cast_picker_title))
+            tapScrolled("00沈砚·平板附属")
+            tap(activity.getString(R.string.cast_apply))
+            tapScrolled(activity.getString(R.string.chars_save_changes))
+            waitUntil { CharacterCastBinding.members(graph.dataStore.readCharacter(main.id)).size == 1 }
+            assertEquals(listOf("tablet-cast-zhou"), CharacterCastBinding.members(graph.dataStore.readCharacter(main.id)).map { it.id })
+            screenshot("cast-detail-01-one-member-saved")
+            stage = "reopen-load"
+            vm = withContext(Dispatchers.Main) {
+                CharactersViewModel(graph.dataStore, MutableStateFlow(0L)).also {
+                    models.put("tablet-details-reopened", it)
+                    it.selectCharacter(main.id)
+                    activity.setContent { androidx.compose.runtime.key("reopened") {
+                        TellevTheme { CharacterDetailScreen(it, {}) }
+                    } }
+                }
+            }
+            waitUntil { vm.uiState.value.selectedCharacter?.id == main.id && !vm.uiState.value.isLoading }
+            stage = "open-picker-after-reopen"
+            tapScrolled(activity.getString(R.string.cast_picker_title))
+            stage = "clear-last-member"
+            tapScrolled("00舟青·平板附属")
+            tap(activity.getString(R.string.cast_apply))
+            stage = "save-empty-cast"
+            tapScrolled(activity.getString(R.string.chars_save_changes))
+            stage = "verify-empty-cast"
+            waitUntil { CharacterCastBinding.members(graph.dataStore.readCharacter(main.id)).isEmpty() }
+            val result = graph.dataStore.readCharacter(main.id)
+            assertEquals(main.description, result.description)
+            assertEquals(main.firstMessage, result.firstMessage)
+            screenshot("cast-detail-02-all-members-cleared")
+            report("cast-detail-ui", buildJsonObject { put("remove_one", true); put("reopen", true); put("clear_all", true); put("main_fields_preserved", true) })
+        } catch (error: Throwable) {
+            report("cast-detail-failure", buildJsonObject {
+                put("stage", stage); put("error", error.message.orEmpty()); put("app_error", vm.uiState.value.error.orEmpty())
+                put("loading", vm.uiState.value.isLoading); put("selected", vm.uiState.value.selectedCharacter?.id.orEmpty())
+                put("stored_cast", CharacterCastBinding.members(graph.dataStore.readCharacter(main.id)).joinToString { it.id })
+            })
+            throw error
+        } finally { withContext(Dispatchers.Main) { models.clear() } }
+    }
+
+    @Test fun saveCompletedFactionDraftThroughUi(): Unit = withEditor(null) { vm, graph, activity ->
+        val result = FileStDataStore.defaultJson.decodeFromString(CreationSession.serializer(),
+            evidence.resolve("live-faction-session.json").readText())
+        withContext(Dispatchers.Main) { vm.open(result.id).join() }
+        tap(activity.getString(R.string.crs_save_to_worldbook))
+        waitUntil { !vm.state.value.busy && vm.state.value.current!!.savedArtifactId.isNotBlank() }
+        assertNull(vm.state.value.error)
+        val saved = graph.dataStore.readWorldBook(vm.state.value.current!!.savedArtifactId)
+        assertEquals(result.lore.map { it.content }, saved.entries.map { it.content })
+        assertEquals(result.lore.map { it.keys }, saved.entries.map { it.keys })
+        screenshot("faction-library-saved")
+        report("faction-library-save", buildJsonObject { put("saved_to_library", true); put("id", saved.id); put("entry_count", saved.entries.size) })
+    }
 
     @Test fun configureSuppliedFixtures(): Unit = runBlocking {
         check(context.packageName.endsWith(".mvuvalidation"))
@@ -192,8 +461,9 @@ class CreationTabletAndroidTest {
             vm.start(CreationKind.Character)
             vm.editCard { it.copy(name = "真实世界书合并验证", description = "参考玄浑纪设定的导演。", firstMessage = "开始故事。") }
         }
-        tap(activity.getString(R.string.crs_link_worldbook))
-        tap(source.name)
+        tapScrolled(activity.getString(R.string.crs_multi_worldbooks))
+        toggleBook(source.name)
+        tap(activity.getString(R.string.cast_apply))
         waitUntil { vm.state.value.current!!.referenceBook != null && !vm.state.value.busy }
         assertEquals(109, vm.state.value.current!!.referenceBook!!.entries.size)
         assertTrue(vm.state.value.current!!.lore.isEmpty())
@@ -268,6 +538,30 @@ class CreationTabletAndroidTest {
         return ProviderRegistry(listOf(adapter))
     }
 
+    private fun recordingLiveProvider(http1: Boolean = true, label: String = "faction"): ProviderRegistry {
+        val delegate = if (!http1) OpenAiCompatibleAdapter() else OpenAiCompatibleAdapter(client = okhttp3.OkHttpClient.Builder()
+            .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(5, java.util.concurrent.TimeUnit.MINUTES).build())
+        var round = 0
+        val adapter = object : ProviderAdapter by delegate {
+            override fun streamGenerate(config: ProviderConfig, request: GenerateRequest): Flow<GenerateChunk> = kotlinx.coroutines.flow.flow {
+                val currentRound = ++round
+                delegate.streamGenerate(config, request.copy(metadata = JsonObject(request.metadata +
+                    ("capture_response_diagnostics" to JsonPrimitive(true))))).collect { chunk ->
+                    if (chunk is GenerateChunk.Completed) report("$label-native-round-$currentRound", buildJsonObject {
+                        put("finish_reason", chunk.finishReason.orEmpty()); put("text", chunk.text)
+                        put("reasoning_chars", chunk.reasoning.length)
+                        put("tool_calls", chunk.toolCalls ?: JsonArray(emptyList()))
+                        put("response_diagnostics", chunk.providerDiagnostics ?: JsonObject(emptyMap()))
+                    })
+                    emit(chunk)
+                }
+            }
+        }
+        return ProviderRegistry(listOf(adapter))
+    }
+
     private fun withEditor(providers: ProviderRegistry?, block: suspend (CreationViewModel, TellevGraph, MainActivity) -> Unit): Unit = runBlocking {
         check(context.packageName.endsWith(".mvuvalidation"))
         val graph = TellevGraph.create(context)
@@ -305,29 +599,99 @@ class CreationTabletAndroidTest {
     }
 
     private fun nodes(): List<AccessibilityNodeInfo> {
+        instrumentation.uiAutomation.waitForIdle(100, 1000)
         val result = mutableListOf<AccessibilityNodeInfo>()
         fun collect(node: AccessibilityNodeInfo?) {
             if (node == null) return
             result += node
             for (index in 0 until node.childCount) collect(node.getChild(index))
         }
-        collect(instrumentation.uiAutomation.rootInActiveWindow)
+        val root = instrumentation.uiAutomation.rootInActiveWindow
+        root?.refresh()
+        collect(root)
         return result
     }
 
     private suspend fun tap(label: String) = click { it.text?.toString() == label }
+    private suspend fun tapScrolled(label: String) {
+        scrollTo(label)
+        tap(label)
+    }
+
+    private suspend fun scrollTo(label: String) {
+        waitUntil { nodes().any { !it.text.isNullOrBlank() } }
+        repeat(35) {
+            if (nodes().any { it.text?.toString() == label && it.isVisibleToUser }) return
+            val scroll = nodes().filter { it.isScrollable }.firstOrNull()
+            if (scroll == null) {
+                val shot = instrumentation.uiAutomation.takeScreenshot()
+                val x = shot.width * 0.65f
+                val from = shot.height * 0.78f
+                val to = shot.height * 0.25f
+                shot.recycle()
+                val down = android.os.SystemClock.uptimeMillis()
+                for (step in 0..12) {
+                    val action = when (step) { 0 -> android.view.MotionEvent.ACTION_DOWN; 12 -> android.view.MotionEvent.ACTION_UP; else -> android.view.MotionEvent.ACTION_MOVE }
+                    android.view.MotionEvent.obtain(down, android.os.SystemClock.uptimeMillis(), action, x,
+                        from + (to - from) * step / 12, 0).also {
+                        it.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+                        instrumentation.uiAutomation.injectInputEvent(it, true); it.recycle()
+                    }
+                    delay(25)
+                }
+            } else if (!scroll.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+                delay(500)
+                if (nodes().any { it.text?.toString() == label && it.isVisibleToUser }) return
+                repeat(20) {
+                    val back = nodes().firstOrNull { it.isScrollable }
+                    if (back?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) != true) return@repeat
+                    delay(150)
+                }
+            }
+            delay(350)
+        }
+        error("Cannot find $label")
+    }
+
+    private suspend fun toggleBook(name: String) {
+        scrollTo(name)
+        val title = nodes().first { it.text?.toString() == name }
+        val bounds = android.graphics.Rect().also { title.getBoundsInScreen(it) }
+        val x = bounds.left - 24 * context.resources.displayMetrics.density
+        val y = bounds.centerY().toFloat()
+        val now = android.os.SystemClock.uptimeMillis()
+        for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+            android.view.MotionEvent.obtain(now, android.os.SystemClock.uptimeMillis(), action, x, y, 0).also {
+                it.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+                assertTrue(instrumentation.uiAutomation.injectInputEvent(it, true)); it.recycle()
+            }
+        }
+        delay(400)
+    }
     private suspend fun tapDescription(label: String) = click { it.contentDescription?.toString() == label }
     private suspend fun click(matches: (AccessibilityNodeInfo) -> Boolean) {
         fun clickable(): AccessibilityNodeInfo? = nodes().filter(matches).firstNotNullOfOrNull { candidate ->
             var node = candidate
             while (!node.isClickable && node.parent != null) node = node.parent
-            node.takeIf { it.isClickable }
+            node.takeIf { it.isClickable && it.isEnabled && it.isVisibleToUser }
         }
         waitUntil { clickable() != null }
         val node = requireNotNull(clickable())
         assertTrue("Button is disabled: ${node.text}", node.isEnabled)
-        assertTrue("Click failed: ${node.text}", node.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        val target = nodes().first { matches(it) && it.isVisibleToUser }
+        val bounds = android.graphics.Rect().also { target.getBoundsInScreen(it) }
+        touch(bounds.exactCenterX(), bounds.exactCenterY())
         delay(400)
+    }
+
+    private fun touch(x: Float, y: Float) {
+        val now = android.os.SystemClock.uptimeMillis()
+        for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+            android.view.MotionEvent.obtain(now, android.os.SystemClock.uptimeMillis(), action, x, y, 0).also {
+                it.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+                assertTrue(instrumentation.uiAutomation.injectInputEvent(it, true)); it.recycle()
+            }
+        }
     }
 
     private suspend fun typeAnswer(text: String) {

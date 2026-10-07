@@ -1208,4 +1208,19 @@
     <string name="novai_relay_status_connected">中継の接続確認に成功しました。生成・拡大の動作は実際の画像生成で確認してください。</string>
     <string name="novai_relay_invalid_url">中継 URL が無効です。認証情報・クエリ・フラグメントを含まない完全な http:// または https:// URL を入力してください。</string>
     <string name="novai_relay_invalid_path">パスが無効です。単一の / で始め、クエリやフラグメントを含めないでください。</string>
+    <string name="cast_picker_title">サブキャラクターカードを選択</string>
+    <string name="cast_picker_hint">複数選択できます。メインカードが各人物の設定を使って物語を進めます。</string>
+    <string name="cast_search">キャラクターを検索</string>
+    <string name="cast_selected_count">%1$d 人を選択中</string>
+    <string name="cast_apply">選択を適用</string>
+    <string name="cast_cancel">キャンセル</string>
+    <string name="cast_binding_title">サブキャラクター / 群像</string>
+    <string name="cast_binding_hint">キャラクター・監督・世界カードに複数の人物を関連付けられます。メインカードが各人の性格・目的・関係・口調を保って物語を進めます。サブカードのスクリプトは実行しません。</string>
+    <string name="crs_multi_worldbooks">参考ロアブックを複数選択</string>
+    <string name="crs_multi_worldbooks_hint">メインと補助のロアブックを選びます。世界観はメインを優先します。参考資料は読み取り専用で、勢力生成は別の下書きになります。</string>
+    <string name="crs_primary_worldbook">メインロアブック</string>
+    <string name="crs_make_primary_worldbook">メインに設定</string>
+    <string name="crs_primary_reference">メイン：%1$s（%2$d 件）</string>
+    <string name="crs_aux_reference">補助：%1$s（%2$d 件）</string>
+    <string name="crs_create_faction_book">AI で汎用の勢力ロアブックを作成</string>
 </resources>

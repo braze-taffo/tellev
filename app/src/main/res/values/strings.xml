@@ -1208,4 +1208,19 @@
     <string name="novai_relay_status_connected">中转站连接检查成功。生图及放大是否可用仍需实际生成验证。</string>
     <string name="novai_relay_invalid_url">中转地址无效：请输入完整的 http:// 或 https:// 地址，不含账号密码、查询参数或片段。</string>
     <string name="novai_relay_invalid_path">接口路径无效：须以单个 / 开头，不含查询参数或片段。</string>
+    <string name="cast_picker_title">选择附属角色卡</string>
+    <string name="cast_picker_hint">可多选。主卡统一叙事，附属卡提供人物设定。</string>
+    <string name="cast_search">搜索角色</string>
+    <string name="cast_selected_count">已选 %1$d 个角色</string>
+    <string name="cast_apply">应用选择</string>
+    <string name="cast_cancel">取消</string>
+    <string name="cast_binding_title">附属角色 / 群像</string>
+    <string name="cast_binding_hint">角色卡、导演卡和世界卡均可绑定多个角色。聊天由主卡统一叙事，保留各人的性格、目标、关系和说话方式；不执行附属卡的脚本。</string>
+    <string name="crs_multi_worldbooks">选择参考世界书（多选）</string>
+    <string name="crs_multi_worldbooks_hint">勾选主世界书与辅助参考书，可指定一本主世界书。以主书世界观为准；参考书保持只读，生成内容另存为新草稿。</string>
+    <string name="crs_primary_worldbook">主世界书</string>
+    <string name="crs_make_primary_worldbook">设为主世界书</string>
+    <string name="crs_primary_reference">主世界书：%1$s（%2$d 条）</string>
+    <string name="crs_aux_reference">辅助参考：%1$s（%2$d 条）</string>
+    <string name="crs_create_faction_book">AI 创作通用势力世界书</string>
 </resources>

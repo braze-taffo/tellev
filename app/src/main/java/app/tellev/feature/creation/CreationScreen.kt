@@ -50,6 +50,9 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
+import app.tellev.core.model.CharacterSummary
+import app.tellev.ui.CharacterCastPicker
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
@@ -767,40 +770,55 @@ private fun CreationWorkflowPanel(session: CreationSession, busy: Boolean, viewM
     var loadingSources by remember(session.id) { mutableStateOf(false) }
     var sources by remember(session.id) { mutableStateOf<List<CreationWorldBookSource>>(emptyList()) }
     var confirmMerge by remember(session.id) { mutableStateOf(false) }
+    var selectedSources by remember(session.id) { mutableStateOf<List<String>>(emptyList()) }
+    var showCastPicker by remember(session.id) { mutableStateOf(false) }
+    var castSources by remember(session.id) { mutableStateOf<List<CharacterSummary>>(emptyList()) }
     val context = LocalContext.current
     if (showPicker) {
         AlertDialog(
             onDismissRequest = { showPicker = false },
-            title = { Text(stringResource(R.string.crs_link_worldbook)) },
+            title = { Text(stringResource(R.string.crs_multi_worldbooks)) },
             text = {
                 if (loadingSources) CircularProgressIndicator()
                 else if (sources.isEmpty()) Text(stringResource(R.string.crs_link_worldbook_empty))
-                else LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.crs_multi_worldbooks_hint), style = MaterialTheme.typography.bodySmall)
+                    LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(sources, key = { "${it.fromDraft}:${it.id}" }) { source ->
-                        OutlinedButton(
-                            onClick = { viewModel.associateWorldBook(source); showPicker = false },
-                            enabled = !busy && source.entryCount > 0,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Column(Modifier.fillMaxWidth()) {
+                        val key = "${source.fromDraft}:${source.id}"
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = key in selectedSources, onCheckedChange = { checked ->
+                                selectedSources = if (checked) selectedSources + key else selectedSources - key
+                            }, enabled = !busy && source.entryCount > 0)
+                            Column(Modifier.weight(1f)) {
                                 Text(source.name.ifBlank { stringResource(R.string.crs_unnamed_worldbook) })
                                 Text(stringResource(R.string.crs_link_worldbook_source,
                                     stringResource(if (source.fromDraft) R.string.crs_link_source_draft else R.string.crs_link_source_saved),
                                     source.entryCount), style = MaterialTheme.typography.bodySmall)
+                                if (key in selectedSources) TextButton(onClick = {
+                                    selectedSources = listOf(key) + selectedSources.filterNot { it == key }
+                                }) { Text(stringResource(if (selectedSources.firstOrNull() == key) R.string.crs_primary_worldbook else R.string.crs_make_primary_worldbook)) }
                             }
                         }
                     }
+                    }
                 }
             },
-            confirmButton = { TextButton(onClick = { showPicker = false }) { Text(stringResource(R.string.crs_cancel)) } },
+            confirmButton = { TextButton(onClick = {
+                viewModel.associateWorldBooks(selectedSources.mapNotNull { key -> sources.firstOrNull { "${it.fromDraft}:${it.id}" == key } })
+                showPicker = false
+            }, enabled = !busy && !loadingSources) { Text(stringResource(R.string.cast_apply)) } },
+            dismissButton = { TextButton(onClick = { showPicker = false }) { Text(stringResource(R.string.crs_cancel)) } },
         )
     }
+    if (showCastPicker) CharacterCastPicker(castSources, session.castMembers(), session.savedArtifactId,
+        onApply = { ids -> viewModel.associateCast(ids); showCastPicker = false }, onDismiss = { showCastPicker = false })
     if (confirmMerge && session.referenceBook != null) {
         AlertDialog(
             onDismissRequest = { confirmMerge = false },
             title = { Text(stringResource(R.string.crs_merge_worldbook)) },
             text = { Text(stringResource(R.string.crs_merge_worldbook_confirm,
-                session.referenceBook.name, session.referenceBook.entries.size)) },
+                session.referenceBooks().joinToString("、") { it.name }, session.referenceBooks().sumOf { it.entries.size })) },
             confirmButton = {
                 TextButton(onClick = { viewModel.embedReferenceWorldBook(); confirmMerge = false }, enabled = !busy) {
                     Text(stringResource(R.string.crs_merge_worldbook))
@@ -811,6 +829,28 @@ private fun CreationWorkflowPanel(session: CreationSession, busy: Boolean, viewM
     }
     PanelCard {
         Text(stringResource(R.string.crs_workflow_title), style = MaterialTheme.typography.titleSmall)
+        OutlinedButton(onClick = {
+            showPicker = true
+            loadingSources = true
+            scope.launch {
+                try {
+                    sources = viewModel.worldBookSources()
+                    selectedSources = session.referenceSourceIds.ifEmpty { session.referenceBooks().mapNotNull { book ->
+                        sources.firstOrNull { it.id == book.id || it.name == book.name }?.let { "${it.fromDraft}:${it.id}" }
+                    } }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (error: Exception) { viewModel.showError(error.message ?: context.getString(R.string.crs_import_failed)) }
+                finally { loadingSources = false }
+            }
+        }, enabled = !busy) { Text(stringResource(R.string.crs_multi_worldbooks)) }
+        session.referenceBooks().forEachIndexed { index, book ->
+            Text(stringResource(if (index == 0) R.string.crs_primary_reference else R.string.crs_aux_reference, book.name, book.entries.size),
+                style = MaterialTheme.typography.bodySmall)
+        }
+        if (session.referenceBook != null) {
+            Text(stringResource(R.string.crs_reference_worldbook_hint), style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = { viewModel.startFactionWorldBook() }, enabled = !busy) { Text(stringResource(R.string.crs_create_faction_book)) }
+        }
         if (session.kind == CreationKind.WorldBook) {
             if (session.originalCard != null) Text(stringResource(R.string.crs_workflow_source_card,
                 session.originalCard.name), style = MaterialTheme.typography.bodySmall)
@@ -822,25 +862,22 @@ private fun CreationWorkflowPanel(session: CreationSession, busy: Boolean, viewM
         } else {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = {
-                    showPicker = true
-                    loadingSources = true
-                    scope.launch {
-                        try { sources = viewModel.worldBookSources() }
-                        catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                        catch (e: Exception) { viewModel.showError(e.message ?: context.getString(R.string.crs_import_failed)) }
-                        finally { loadingSources = false }
-                    }
-                }, enabled = !busy) { Text(stringResource(R.string.crs_link_worldbook)) }
                 OutlinedButton(onClick = { viewModel.startRelatedDraft(CreationKind.WorldBook) },
                     enabled = !busy && session.card.name.isNotBlank()) {
                     Text(stringResource(R.string.crs_card_to_world))
                 }
             }
+            Text(stringResource(R.string.cast_binding_title), style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.cast_binding_hint), style = MaterialTheme.typography.bodySmall)
+            if (session.castMembers().isNotEmpty()) Text(session.castMembers().joinToString("、") { it.name })
+            OutlinedButton(onClick = {
+                scope.launch {
+                    try { castSources = viewModel.castSources(); showCastPicker = true }
+                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (error: Exception) { viewModel.showError(error.message ?: context.getString(R.string.crs_import_failed)) }
+                }
+            }, enabled = !busy) { Text(stringResource(R.string.cast_picker_title)) }
             session.referenceBook?.let { book ->
-                Text(stringResource(R.string.crs_reference_worldbook, book.name, book.entries.size),
-                    style = MaterialTheme.typography.bodySmall)
-                Text(stringResource(R.string.crs_reference_worldbook_hint), style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick = { confirmMerge = true }, enabled = !busy && book.entries.isNotEmpty()) {
                     Text(stringResource(R.string.crs_merge_worldbook))
                 }

@@ -102,6 +102,8 @@ import androidx.compose.ui.unit.dp
 import app.tellev.R
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.CharacterWorldBinding
+import app.tellev.core.model.CharacterCastBinding
+import app.tellev.ui.CharacterCastPicker
 import app.tellev.core.model.WorldBook
 import app.tellev.ui.CharacterAvatar
 import app.tellev.util.UriUtils
@@ -510,6 +512,8 @@ fun CharacterDetailScreen(
         mutableStateOf(character?.let { CharacterWorldBinding.linkedWorldBookName(it) } ?: "")
     }
     var showWorldPicker by remember { mutableStateOf(false) }
+    var castMembers by remember(character?.id) { mutableStateOf(character?.let(CharacterCastBinding::members).orEmpty()) }
+    var showCastPicker by remember { mutableStateOf(false) }
 
     fun updatedCard(c: CharacterCard): CharacterCard {
         val rawData = c.raw["data"] as? JsonObject ?: JsonObject(emptyMap())
@@ -540,10 +544,11 @@ fun CharacterDetailScreen(
     fun saveCard() {
         saveAttempted = true
         if (name.isBlank() || state.isLoading) return
-        val card = CharacterWorldBinding.withLinkedWorldBookName(
+        val boundCard = CharacterWorldBinding.withLinkedWorldBookName(
             updatedCard(character ?: return),
             linkedWorldName,
         )
+        val card = CharacterCastBinding.withMembers(boundCard, castMembers)
         if (isCreating) {
             scope.launch {
                 if (viewModel.createCharacter(card, pendingAvatarPng)) onCreated(card.id)
@@ -945,6 +950,17 @@ fun CharacterDetailScreen(
                     }
                 }
 
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(stringResource(R.string.cast_binding_title), style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.cast_binding_hint), style = MaterialTheme.typography.bodySmall)
+                        if (castMembers.isNotEmpty()) Text(castMembers.joinToString("、") { it.name })
+                        FilledTonalButton(onClick = { showCastPicker = true }, enabled = !state.isLoading) {
+                            Text(stringResource(R.string.cast_picker_title))
+                        }
+                    }
+                }
+
                 // Save button
                 FilledTonalButton(
                     onClick = ::saveCard,
@@ -963,6 +979,15 @@ fun CharacterDetailScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
+            if (showCastPicker) {
+                CharacterCastPicker(state.characters, castMembers, character?.id.orEmpty(), onApply = { ids ->
+                    scope.launch {
+                        try { castMembers = viewModel.readCastCharacters(ids, castMembers); showCastPicker = false }
+                        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                        catch (error: Exception) { snackbarHostState.showSnackbar(error.message.orEmpty()) }
+                    }
+                }, onDismiss = { showCastPicker = false })
+            }
             if (showWorldPicker) {
                 AlertDialog(
                     onDismissRequest = { showWorldPicker = false },
