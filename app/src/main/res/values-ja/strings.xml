@@ -427,6 +427,15 @@
     <string name="dsh_creation_menu_export">JSON で書き出し</string>
     <string name="crs_chat_create_title">チャット式作成</string>
     <string name="crs_chat_create_desc">一言で説明するか、AI にガイドさせます</string>
+    <string name="cast_picker_title">出演する役のカードを選択</string>
+    <string name="cast_picker_hint">複数選択可。主卡が統一叙事し、出演卡が人物設定を提供します。</string>
+    <string name="cast_search">役を検색</string>
+    <string name="cast_selected_count">%1$d 件選択</string>
+    <string name="cast_apply">適用</string>
+    <string name="cast_cancel">キャンセル</string>
+    <string name="cast_binding_title">出演・群像</string>
+    <string name="cast_binding_hint">キャラクターカード・監督カード・ワールドカードは複数の役をバインドできます。チャットは主卡が統一叙事し、各自の性格・目標・関係・話し方を保持します。出演卡のスクリプトは実行しません。</string>
+    <string name="chat_render_pending">レンダリング中…</string>
     <string name="crs_add_entry">エントリを追加</string>
     <string name="crs_agent_replying">agentが返信中</string>
     <string name="crs_assets_hint">チャットでAIに依頼してこれらのリソースを作成・編集できます。スクリプトはキャラカードのJSON/PNGと一緒にエクスポートされます。動作はチャット内で確認してください。</string>
@@ -1887,5 +1896,4 @@
     <string name="wblist_search_hint">搜索世界书名称</string>
     <string name="settings_language">言語</string>
     <string name="settings_language_system">システムに従う</string>
-    <string name="chat_render_pending">メッセージを処理中…</string>
 </resources>

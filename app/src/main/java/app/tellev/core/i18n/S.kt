@@ -431,6 +431,15 @@ object S {
     const val dsh_creation_menu_export = "dsh_creation_menu_export"
     const val crs_chat_create_title = "crs_chat_create_title"
     const val crs_chat_create_desc = "crs_chat_create_desc"
+    const val cast_picker_title = "cast_picker_title"
+    const val cast_picker_hint = "cast_picker_hint"
+    const val cast_search = "cast_search"
+    const val cast_selected_count = "cast_selected_count"
+    const val cast_apply = "cast_apply"
+    const val cast_cancel = "cast_cancel"
+    const val cast_binding_title = "cast_binding_title"
+    const val cast_binding_hint = "cast_binding_hint"
+    const val chat_render_pending = "chat_render_pending"
     const val crs_add_entry = "crs_add_entry"
     const val crs_agent_replying = "crs_agent_replying"
     const val crs_assets_hint = "crs_assets_hint"
@@ -2320,6 +2329,15 @@ object S {
         "dsh_creation_menu_export" to R.string.dsh_creation_menu_export,
         "crs_chat_create_title" to R.string.crs_chat_create_title,
         "crs_chat_create_desc" to R.string.crs_chat_create_desc,
+        "cast_picker_title" to R.string.cast_picker_title,
+        "cast_picker_hint" to R.string.cast_picker_hint,
+        "cast_search" to R.string.cast_search,
+        "cast_selected_count" to R.string.cast_selected_count,
+        "cast_apply" to R.string.cast_apply,
+        "cast_cancel" to R.string.cast_cancel,
+        "cast_binding_title" to R.string.cast_binding_title,
+        "cast_binding_hint" to R.string.cast_binding_hint,
+        "chat_render_pending" to R.string.chat_render_pending,
         "crs_add_entry" to R.string.crs_add_entry,
         "crs_agent_replying" to R.string.crs_agent_replying,
         "crs_assets_hint" to R.string.crs_assets_hint,
@@ -4210,6 +4228,15 @@ object S {
         "dsh_creation_menu_export" to "导出 JSON",
         "crs_chat_create_title" to "聊天式创建",
         "crs_chat_create_desc" to "一句话描述角色，或让 AI 逐步引导",
+        "cast_picker_title" to "选择附属角色卡",
+        "cast_picker_hint" to "可多选。主卡统一叙事，附属卡提供人物设定。",
+        "cast_search" to "搜索角色",
+        "cast_selected_count" to "已选 %1\$d 个角色",
+        "cast_apply" to "应用选择",
+        "cast_cancel" to "取消",
+        "cast_binding_title" to "附属角色 / 群像",
+        "cast_binding_hint" to "角色卡、导演卡和世界卡均可绑定多个角色。聊天由主卡统一叙事，保留各人的性格、目标、关系和说话方式；不执行附属卡的脚本。",
+        "chat_render_pending" to "正在渲染…",
         "crs_add_entry" to "添加条目",
         "crs_agent_replying" to "agent 正在回复",
         "crs_assets_hint" to "在对话里让 AI 创建或修改这些资源。脚本会随角色卡 JSON/PNG 导出；运行效果需在聊天中验证。",

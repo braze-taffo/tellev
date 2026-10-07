@@ -1836,3 +1836,12 @@ dsh_creation_menu_save	Save to library	ライブラリに保存	라이브러리�
 dsh_creation_menu_export	Export JSON	JSON で書き出し	JSON 내보내기
 crs_chat_create_title	Chat-style creation	チャット式作成	채팅 방식 생성
 crs_chat_create_desc	Describe the character in one sentence, or let the AI guide you	一言で説明するか、AI にガイドさせます	한 마디로 설명하거나 AI 가이드를 받습니다
+cast_picker_title	Choose cast member cards	出演する役のカードを選択	출연 캐릭터 카드 선택
+cast_picker_hint	Multi-select. The main card narrates; member cards supply character settings.	複数選択可。主卡が統一叙事し、出演卡が人物設定を提供します。	다중 선택 가능. 메인 카드가 통합 서술, 멤버 카드가 인물 설정을 제공합니다.
+cast_search	Search characters	役を検색	캐릭터 검색
+cast_selected_count	%1$d selected	%1$d 件選択	%1$d개 선택
+cast_apply	Apply	適用	적용
+cast_cancel	Cancel	キャンセル	취소
+cast_binding_title	Cast / ensemble	出演・群像	출연 / 군상
+cast_binding_hint	Character cards, director cards and world cards can bind multiple characters. Chat is narrated by the main card, keeping each member's personality, goals, relationships and speech; member scripts are not executed.	キャラクターカード・監督カード・ワールドカードは複数の役をバインドできます。チャットは主卡が統一叙事し、各自の性格・目標・関係・話し方を保持します。出演卡のスクリプトは実行しません。	캐릭터 카드, 디렉터 카드, 월드 카드에 여러 캐릭터를 바인딩할 수 있습니다. 채팅은 메인 카드가 통합 서술하며 각자의 성격, 목표, 관계, 말투를 유지합니다. 출연 카드의 스크립트는 실행되지 않습니다.
+chat_render_pending	Rendering…	レンダリング中…	렌더링 중…

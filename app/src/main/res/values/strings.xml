@@ -427,6 +427,15 @@
     <string name="dsh_creation_menu_export">导出 JSON</string>
     <string name="crs_chat_create_title">聊天式创建</string>
     <string name="crs_chat_create_desc">一句话描述角色，或让 AI 逐步引导</string>
+    <string name="cast_picker_title">选择附属角色卡</string>
+    <string name="cast_picker_hint">可多选。主卡统一叙事，附属卡提供人物设定。</string>
+    <string name="cast_search">搜索角色</string>
+    <string name="cast_selected_count">已选 %1$d 个角色</string>
+    <string name="cast_apply">应用选择</string>
+    <string name="cast_cancel">取消</string>
+    <string name="cast_binding_title">附属角色 / 群像</string>
+    <string name="cast_binding_hint">角色卡、导演卡和世界卡均可绑定多个角色。聊天由主卡统一叙事，保留各人的性格、目标、关系和说话方式；不执行附属卡的脚本。</string>
+    <string name="chat_render_pending">正在渲染…</string>
     <string name="crs_add_entry">添加条目</string>
     <string name="crs_agent_replying">agent 正在回复</string>
     <string name="crs_assets_hint">在对话里让 AI 创建或修改这些资源。脚本会随角色卡 JSON/PNG 导出；运行效果需在聊天中验证。</string>
@@ -1645,7 +1654,6 @@
     <string name="chat_import_hint">请先在“角色卡”页导入角色卡。</string>
     <string name="chat_character_card_interface">角色卡界面</string>
     <string name="chat_close_character_card_interface">关闭角色卡界面</string>
-    <string name="chat_render_pending">正在处理消息…</string>
     <string name="chat_previous_page">上一页</string>
     <string name="chat_next_page">下一页</string>
     <string name="nav_tab_chat">聊天</string>

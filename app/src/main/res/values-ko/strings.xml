@@ -427,6 +427,15 @@
     <string name="dsh_creation_menu_export">JSON 내보내기</string>
     <string name="crs_chat_create_title">채팅 방식 생성</string>
     <string name="crs_chat_create_desc">한 마디로 설명하거나 AI 가이드를 받습니다</string>
+    <string name="cast_picker_title">출연 캐릭터 카드 선택</string>
+    <string name="cast_picker_hint">다중 선택 가능. 메인 카드가 통합 서술, 멤버 카드가 인물 설정을 제공합니다.</string>
+    <string name="cast_search">캐릭터 검색</string>
+    <string name="cast_selected_count">%1$d개 선택</string>
+    <string name="cast_apply">적용</string>
+    <string name="cast_cancel">취소</string>
+    <string name="cast_binding_title">출연 / 군상</string>
+    <string name="cast_binding_hint">캐릭터 카드, 디렉터 카드, 월드 카드에 여러 캐릭터를 바인딩할 수 있습니다. 채팅은 메인 카드가 통합 서술하며 각자의 성격, 목표, 관계, 말투를 유지합니다. 출연 카드의 스크립트는 실행되지 않습니다.</string>
+    <string name="chat_render_pending">렌더링 중…</string>
     <string name="crs_add_entry">항목 추가</string>
     <string name="crs_agent_replying">agent가 응답 중</string>
     <string name="crs_assets_hint">채팅에서 AI에게 요청하여 이 리소스를 만들거나 수정할 수 있습니다. 스크립트는 캐릭터 카드 JSON/PNG와 함께 내보내집니다. 동작은 채팅에서 확인해 주세요.</string>
@@ -1887,5 +1896,4 @@
     <string name="wblist_search_hint">搜索世界书名称</string>
     <string name="settings_language">언어</string>
     <string name="settings_language_system">시스템 설정 따름</string>
-    <string name="chat_render_pending">메시지 처리 중…</string>
 </resources>

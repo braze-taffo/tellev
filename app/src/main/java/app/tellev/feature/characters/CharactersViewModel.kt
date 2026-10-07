@@ -206,6 +206,14 @@ class CharactersViewModel(
         }
     }
 
+    /** 附属角色读取（1.7.1.4）：读不到的 id 回退到已保存快照，最后兜底抛出。 */
+    suspend fun readCastCharacters(ids: List<String>, fallback: List<CharacterCard>): List<CharacterCard> =
+        ids.distinct().map { id ->
+            try { dataStore.readCharacter(id) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { fallback.firstOrNull { it.id == id } ?: throw error }
+        }
+
     fun saveCharacter(card: CharacterCard) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }

@@ -104,6 +104,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.tellev.R
 import app.tellev.core.model.CharacterCard
+import app.tellev.core.model.CharacterCastBinding
+import app.tellev.ui.CharacterCastPicker
 import app.tellev.core.model.CharacterWorldBinding
 import app.tellev.core.model.WorldBook
 import app.tellev.core.storage.BatchImportSource
@@ -583,6 +585,9 @@ fun CharacterDetailScreen(
     var systemPrompt by rememberSaveable(character?.id) { mutableStateOf(character?.systemPrompt ?: "") }
     var postHistoryInstructions by rememberSaveable(character?.id) { mutableStateOf(character?.postHistoryInstructions ?: "") }
     var creator by rememberSaveable(character?.id) { mutableStateOf(character?.creator ?: "") }
+    // 附属角色/群像（1.7.1.4 角色卡演员绑定）。
+    var castMembers by remember(character?.id) { mutableStateOf(character?.let(CharacterCastBinding::members).orEmpty()) }
+    var showCastPicker by remember { mutableStateOf(false) }
     var characterVersion by rememberSaveable(character?.id) { mutableStateOf(character?.characterVersion ?: "") }
     var tags by remember(character?.id) { mutableStateOf(character?.tags ?: emptyList()) }
     var newTag by remember { mutableStateOf("") }
@@ -622,9 +627,12 @@ fun CharacterDetailScreen(
     fun saveCard() {
         saveAttempted = true
         if (name.isBlank() || state.isLoading) return
-        val card = CharacterWorldBinding.withLinkedWorldBookName(
-            updatedCard(character ?: return),
-            linkedWorldName,
+        val card = CharacterCastBinding.withMembers(
+            CharacterWorldBinding.withLinkedWorldBookName(
+                updatedCard(character ?: return),
+                linkedWorldName,
+            ),
+            castMembers,
         )
         if (isCreating) {
             scope.launch {
@@ -1027,6 +1035,18 @@ fun CharacterDetailScreen(
                     }
                 }
 
+                // 附属角色 / 群像（1.7.1.4）：角色卡可绑定多个角色，聊天由主卡
+                // 统一叙事，附属卡提供人物设定。
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(stringResource(R.string.cast_binding_title), style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.cast_binding_hint), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (castMembers.isNotEmpty()) Text(castMembers.joinToString("、") { it.name })
+                    FilledTonalButton(onClick = { showCastPicker = true }, enabled = !state.isLoading) {
+                        Text(stringResource(R.string.cast_picker_title))
+                    }
+                }
+
                 // Save button
                 FilledTonalButton(
                     onClick = ::saveCard,
@@ -1045,6 +1065,20 @@ fun CharacterDetailScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
+            if (showCastPicker) {
+                CharacterCastPicker(state.characters, castMembers, character?.id.orEmpty(), onApply = { ids ->
+                    scope.launch {
+                        try {
+                            castMembers = viewModel.readCastCharacters(ids, castMembers)
+                            showCastPicker = false
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            snackbarHostState.showSnackbar(error.message.orEmpty())
+                        }
+                    }
+                }, onDismiss = { showCastPicker = false })
+            }
             if (showWorldPicker) {
                 AlertDialog(
                     onDismissRequest = { showWorldPicker = false },

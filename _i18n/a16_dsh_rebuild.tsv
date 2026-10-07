@@ -183,3 +183,12 @@ dsh_creation_menu_save	保存到角色库
 dsh_creation_menu_export	导出 JSON
 crs_chat_create_title	聊天式创建
 crs_chat_create_desc	一句话描述角色，或让 AI 逐步引导
+cast_picker_title	选择附属角色卡
+cast_picker_hint	可多选。主卡统一叙事，附属卡提供人物设定。
+cast_search	搜索角色
+cast_selected_count	已选 %1$d 个角色
+cast_apply	应用选择
+cast_cancel	取消
+cast_binding_title	附属角色 / 群像
+cast_binding_hint	角色卡、导演卡和世界卡均可绑定多个角色。聊天由主卡统一叙事，保留各人的性格、目标、关系和说话方式；不执行附属卡的脚本。
+chat_render_pending	正在渲染…
