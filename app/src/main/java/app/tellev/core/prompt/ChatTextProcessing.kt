@@ -13,25 +13,17 @@ data class ProcessedChatText(val text: String, val localVariables: JsonObject)
 /** Normal regex precedes macro expansion at ST's greeting/user/edit persistence boundary. */
 object ChatTextProcessing {
     fun context(character: CharacterCard, session: ChatSession, userName: String, persona: Persona? = null): MacroContext {
-        val messages = session.messages.filterNot { it.isHidden }
-        return MacroContext(
+        return PromptMacroContextBuilder.withChatSnapshot(MacroContext(
             characterName = character.name, userName = userName,
             characterDescription = character.description, characterPersonality = character.personality,
             characterScenario = character.scenario, exampleMessages = character.exampleMessages,
             firstMessage = character.firstMessage,
             alternateGreetings = character.alternateGreetings, characterId = character.id,
             personaDescription = persona?.description.orEmpty(),
-            lastMessage = messages.lastOrNull()?.content.orEmpty(), lastMessageId = messages.lastIndex.toString(),
-            lastUserMessage = messages.lastOrNull { it.role == MessageRole.User }?.content.orEmpty(),
-            lastCharMessage = messages.lastOrNull { it.role == MessageRole.Assistant || it.role == MessageRole.Character }?.content.orEmpty(),
-            lastUserMessageId = messages.indexOfLast { it.role == MessageRole.User },
-            lastCharMessageId = messages.indexOfLast { it.role == MessageRole.Assistant || it.role == MessageRole.Character },
-            messageVariables = messages.lastOrNull { it.variables.getOrNull(it.swipeIndex) is JsonObject }
-                ?.let { it.variables[it.swipeIndex] as JsonObject },
             characterVariables = PromptMacroContextBuilder.extractCharacterVariables(character),
             groupMemberNames = PromptMacroContextBuilder.extractGroupMemberNames(session.metadata),
             localVariables = session.metadata["variables"] as? JsonObject ?: JsonObject(emptyMap()),
-        )
+        ), session.messages)
     }
 
     fun process(

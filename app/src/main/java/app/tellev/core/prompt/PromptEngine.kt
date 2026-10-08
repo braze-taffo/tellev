@@ -230,14 +230,25 @@ class DefaultPromptEngine(
         val expandedHistoryByMessage = IdentityHashMap<ChatMessage, String>().apply {
             visibleHistory.forEachIndexed { index, message -> put(message, expandedHistory[index]) }
         }
-        val chatSnippets = (request.macroMessages ?: request.messages).filterNot { it.isHidden }.mapIndexed { index, message ->
+        val macroSnapshot = request.macroMessages ?: request.messages
+        val macroFloorIds = IdentityHashMap<ChatMessage, Int>().apply {
+            macroSnapshot.forEachIndexed { index, message -> put(message, index) }
+        }
+        val chatSnippets = macroSnapshot.mapIndexed { index, message ->
             PromptTemplateChatMessage(
                 id = index,
                 isUser = message.role == MessageRole.User,
-                isSystem = message.role == MessageRole.System,
+                isSystem = message.isHidden,
                 name = message.name,
                 content = expandedHistoryByMessage[message] ?: message.reasoningParts().body,
             )
+        }
+        val savedInputFloor = macroSnapshot.lastIndex.takeIf {
+            request.macroMessages != null && !rawGeneration &&
+                macroSnapshot.lastOrNull()?.let { message ->
+                    message.role == MessageRole.User && !message.isHidden &&
+                        message.reasoningParts().body == request.userInput
+                } == true
         }
         val groupNames = PromptMacroContextBuilder.groupMemberNamesList(request.metadata)
         val newChatMarker = if (groupNames.size > 1) {
@@ -282,10 +293,11 @@ class DefaultPromptEngine(
                             macroExpander = { macroEngine.expand(it, macroContext) },
                         ),
                         channel = CHANNEL_CHAT,
+                        chatMessageId = macroFloorIds[message],
                     ),
                 )
             }
-            if (quietPrompt == null) add(
+            if (quietPrompt == null && !request.inputAlreadyInHistory) add(
                 PromptMessage(
                     role = MessageRole.User,
                     name = request.persona?.name,
@@ -301,6 +313,7 @@ class DefaultPromptEngine(
                         macroExpander = { macroEngine.expand(it, macroContext) },
                     ),
                     channel = if (rawGeneration) "user_input" else CHANNEL_CHAT,
+                    chatMessageId = savedInputFloor,
                 ),
             )
         }

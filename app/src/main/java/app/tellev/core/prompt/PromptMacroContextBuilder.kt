@@ -14,26 +14,8 @@ internal object PromptMacroContextBuilder {
 
     fun buildMacroContext(request: PromptBuildRequest): MacroContext {
         val macroMessages = request.macroMessages ?: request.messages
-        val visible = macroMessages.filterNot { it.isHidden }
-        val lastMessage = visible.lastOrNull()?.let(::messageContent).orEmpty()
-        val lastUserMessage = visible
-            .lastOrNull { it.role == MessageRole.User }
-            ?.let(::messageContent)
-            .orEmpty()
-        val lastCharMessage = visible
-            .lastOrNull { it.role == MessageRole.Character || it.role == MessageRole.Assistant }
-            ?.let(::messageContent)
-            .orEmpty()
-
         val groupMemberNames = extractGroupMemberNames(request.metadata)
-        // js-slash-runner message scope: the last message that carries a
-        // variables object at its current swipe.
-        val messageVariables = visible
-            .lastOrNull { it.variables.getOrNull(it.swipeIndex) is JsonObject }
-            ?.let { it.variables[it.swipeIndex] as JsonObject }
-            ?: TavernInitVariables.extractMessageVariables(request.worldBooks)
-
-        return MacroContext(
+        return withChatSnapshot(MacroContext(
             characterName = request.character.name,
             userName = request.persona?.name ?: "User",
             characterDescription = request.character.description,
@@ -41,7 +23,6 @@ internal object PromptMacroContextBuilder {
             characterScenario = request.character.scenario,
             exampleMessages = request.character.exampleMessages,
             firstMessage = request.character.firstMessage,
-            lastMessage = lastMessage,
             groupMemberNames = groupMemberNames,
             maxPromptTokens = request.preset.maxCompletionTokens
                 ?: request.preset.maxTokens
@@ -57,17 +38,29 @@ internal object PromptMacroContextBuilder {
                 ?: request.preset.maxTokens
                 ?: DEFAULT_MAX_COMPLETION_TOKENS,
             inputText = request.userInput,
-            lastUserMessage = lastUserMessage,
-            lastCharMessage = lastCharMessage,
-            lastMessageId = visible.lastIndex.toString(),
-            lastUserMessageId = visible.indexOfLast { it.role == MessageRole.User },
-            lastCharMessageId = visible.indexOfLast {
-                it.role == MessageRole.Character || it.role == MessageRole.Assistant
-            },
             characterId = request.character.id,
             alternateGreetings = request.character.alternateGreetings,
-            messageVariables = messageVariables,
             characterVariables = extractCharacterVariables(request.character),
+        ), macroMessages)
+    }
+
+    /** ST indexes the saved chat, including hidden floors (`is_system`). */
+    fun withChatSnapshot(context: MacroContext, messages: List<ChatMessage>): MacroContext {
+        val userIndex = messages.indexOfLast { it.role == MessageRole.User && !it.isHidden }
+        val charIndex = messages.indexOfLast { it.role != MessageRole.User && !it.isHidden }
+        // TavernHelper macro_like.ts selects the latest active-swipe variables
+        // object, even on a hidden floor. MVU owns initvar initialization; a
+        // missing saved object must not be replaced with uncommitted defaults.
+        val variables = messages.lastOrNull { it.variables.getOrNull(it.swipeIndex) is JsonObject }
+            ?.let { it.variables[it.swipeIndex] as JsonObject }
+        return context.copy(
+            lastMessage = messages.lastOrNull()?.let(::messageContent).orEmpty(),
+            lastMessageId = if (messages.isEmpty()) "" else messages.lastIndex.toString(),
+            lastUserMessage = messages.getOrNull(userIndex)?.let(::messageContent).orEmpty(),
+            lastCharMessage = messages.getOrNull(charIndex)?.let(::messageContent).orEmpty(),
+            lastUserMessageId = userIndex,
+            lastCharMessageId = charIndex,
+            messageVariables = variables,
         )
     }
 

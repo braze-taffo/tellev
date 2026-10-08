@@ -74,8 +74,21 @@ class DefaultPromptTemplateProcessor(
         }
 
         val scopes = PromptTemplateExpressionEvaluator.extractVariableScopes(request.metadata)
+        // ST-Prompt-Template's getters use the saved chat (ejs.ts), not the
+        // filtered core macro view. Its user getter also includes hidden users.
+        val templateContext = if (request.chat.isEmpty()) {
+            request.context.copy(lastMessageId = request.context.lastMessageId.ifEmpty { "-1" })
+        } else {
+            val user = request.chat.lastOrNull { it.isUser }
+            val character = request.chat.lastOrNull { !it.isUser && !it.isSystem }
+            request.context.copy(
+                lastUserMessage = user?.content.orEmpty(), lastUserMessageId = user?.id ?: -1,
+                lastCharMessage = character?.content.orEmpty(), lastCharMessageId = character?.id ?: -1,
+                lastMessageId = request.chat.last().id.toString(),
+            )
+        }
         val state = TemplateState(
-            context = request.context,
+            context = templateContext,
             localVariables = PromptTemplateExpressionEvaluator.deepCopyMap(scopes.local),
             globalVariables = PromptTemplateExpressionEvaluator.deepCopyMap(scopes.global),
             messageVariables = PromptTemplateExpressionEvaluator.deepCopyMap(
@@ -117,7 +130,7 @@ class DefaultPromptTemplateProcessor(
                 val messageContext = if (message.channel == CHANNEL_CHAT && message.role != MessageRole.System) {
                     chatFloor++
                     PromptTemplateMessageContext(
-                        messageId = chatFloor,
+                        messageId = message.chatMessageId ?: chatFloor,
                         isLast = index == lastChatIndex,
                         isUser = message.role == MessageRole.User,
                         isSystem = false,

@@ -1,0 +1,478 @@
+{
+  "scope": "Exact current upstream macro functions and EJS getter bodies; synthetic saved-chat snapshots; no model calls",
+  "upstream": {
+    "SillyTavern": "06bde939fb1e9c4c8d8641d810f0a916b5bce127",
+    "js-slash-runner": "ed8b2360b32d9cfb96770d44e5c4ae45c2071a86",
+    "ST-Prompt-Template": "d6f520d149aba146305b0b781ddd691d449c28d2"
+  },
+  "cases": [
+    {
+      "name": "empty",
+      "floors": [],
+      "expected": {
+        "core": {
+          "lastMessage": "",
+          "lastMessageId": "",
+          "lastUserMessage": "",
+          "lastCharMessage": ""
+        },
+        "template": {
+          "lastUserMessage": "",
+          "lastUserMessageId": -1,
+          "lastCharMessage": "",
+          "lastCharMessageId": -1,
+          "lastMessageId": -1
+        },
+        "formattedStateError": "提供的消息楼层号 '-1' 超出了范围 [0, 0)"
+      }
+    },
+    {
+      "name": "first-input",
+      "floors": [
+        {
+          "role": "User",
+          "content": "first",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        }
+      ],
+      "expected": {
+        "core": {
+          "lastMessage": "first",
+          "lastMessageId": "0",
+          "lastUserMessage": "first",
+          "lastCharMessage": ""
+        },
+        "template": {
+          "lastUserMessage": "first",
+          "lastUserMessageId": 0,
+          "lastCharMessage": "",
+          "lastCharMessageId": -1,
+          "lastMessageId": 0
+        },
+        "formattedState": "null"
+      }
+    },
+    {
+      "name": "correction",
+      "floors": [
+        {
+          "role": "User",
+          "content": "old",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        },
+        {
+          "role": "Character",
+          "content": "reply",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        },
+        {
+          "role": "User",
+          "content": "corrected",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        }
+      ],
+      "expected": {
+        "core": {
+          "lastMessage": "corrected",
+          "lastMessageId": "2",
+          "lastUserMessage": "corrected",
+          "lastCharMessage": "reply"
+        },
+        "template": {
+          "lastUserMessage": "corrected",
+          "lastUserMessageId": 2,
+          "lastCharMessage": "reply",
+          "lastCharMessageId": 1,
+          "lastMessageId": 2
+        },
+        "formattedState": "null"
+      }
+    },
+    {
+      "name": "regeneration-snapshot",
+      "floors": [
+        {
+          "role": "User",
+          "content": "old",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        },
+        {
+          "role": "Character",
+          "content": "reply",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        },
+        {
+          "role": "User",
+          "content": "corrected",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        }
+      ],
+      "expected": {
+        "core": {
+          "lastMessage": "corrected",
+          "lastMessageId": "2",
+          "lastUserMessage": "corrected",
+          "lastCharMessage": "reply"
+        },
+        "template": {
+          "lastUserMessage": "corrected",
+          "lastUserMessageId": 2,
+          "lastCharMessage": "reply",
+          "lastCharMessageId": 1,
+          "lastMessageId": 2
+        },
+        "formattedState": "null"
+      }
+    },
+    {
+      "name": "hidden-interleaved",
+      "floors": [
+        {
+          "role": "User",
+          "content": "old",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        },
+        {
+          "role": "User",
+          "content": "hidden input",
+          "hidden": true,
+          "variables": [],
+          "swipeIndex": 0
+        },
+        {
+          "role": "Character",
+          "content": "reply",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        },
+        {
+          "role": "User",
+          "content": "corrected",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        },
+        {
+          "role": "Character",
+          "content": "hidden reply",
+          "hidden": true,
+          "variables": [],
+          "swipeIndex": 0
+        }
+      ],
+      "expected": {
+        "core": {
+          "lastMessage": "hidden reply",
+          "lastMessageId": "4",
+          "lastUserMessage": "corrected",
+          "lastCharMessage": "reply"
+        },
+        "template": {
+          "lastUserMessage": "corrected",
+          "lastUserMessageId": 3,
+          "lastCharMessage": "reply",
+          "lastCharMessageId": 2,
+          "lastMessageId": 4
+        },
+        "formattedState": "null"
+      }
+    },
+    {
+      "name": "hidden-user-tail",
+      "floors": [
+        {
+          "role": "User",
+          "content": "visible",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        },
+        {
+          "role": "Character",
+          "content": "reply",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        },
+        {
+          "role": "User",
+          "content": "hidden input",
+          "hidden": true,
+          "variables": [],
+          "swipeIndex": 0
+        }
+      ],
+      "expected": {
+        "core": {
+          "lastMessage": "hidden input",
+          "lastMessageId": "2",
+          "lastUserMessage": "visible",
+          "lastCharMessage": "reply"
+        },
+        "template": {
+          "lastUserMessage": "hidden input",
+          "lastUserMessageId": 2,
+          "lastCharMessage": "reply",
+          "lastCharMessageId": 1,
+          "lastMessageId": 2
+        },
+        "formattedState": "null"
+      }
+    },
+    {
+      "name": "hidden-variable-floor",
+      "floors": [
+        {
+          "role": "Character",
+          "content": "reply",
+          "hidden": false,
+          "variables": [
+            {
+              "stat_data": "earlier"
+            }
+          ],
+          "swipeIndex": 0
+        },
+        {
+          "role": "User",
+          "content": "current",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        },
+        {
+          "role": "Character",
+          "content": "hidden",
+          "hidden": true,
+          "variables": [
+            {
+              "stat_data": "latest"
+            }
+          ],
+          "swipeIndex": 0
+        }
+      ],
+      "expected": {
+        "core": {
+          "lastMessage": "hidden",
+          "lastMessageId": "2",
+          "lastUserMessage": "current",
+          "lastCharMessage": "reply"
+        },
+        "template": {
+          "lastUserMessage": "current",
+          "lastUserMessageId": 1,
+          "lastCharMessage": "reply",
+          "lastCharMessageId": 0,
+          "lastMessageId": 2
+        },
+        "formattedState": "latest"
+      }
+    },
+    {
+      "name": "empty-current-variable-object",
+      "floors": [
+        {
+          "role": "Character",
+          "content": "reply",
+          "hidden": false,
+          "variables": [
+            {
+              "stat_data": "earlier"
+            }
+          ],
+          "swipeIndex": 0
+        },
+        {
+          "role": "User",
+          "content": "current",
+          "hidden": false,
+          "variables": [
+            {}
+          ],
+          "swipeIndex": 0
+        }
+      ],
+      "expected": {
+        "core": {
+          "lastMessage": "current",
+          "lastMessageId": "1",
+          "lastUserMessage": "current",
+          "lastCharMessage": "reply"
+        },
+        "template": {
+          "lastUserMessage": "current",
+          "lastUserMessageId": 1,
+          "lastCharMessage": "reply",
+          "lastCharMessageId": 0,
+          "lastMessageId": 1
+        },
+        "formattedState": "null"
+      }
+    },
+    {
+      "name": "selected-swipe",
+      "floors": [
+        {
+          "role": "Character",
+          "content": "active reply",
+          "hidden": false,
+          "variables": [
+            {
+              "stat_data": "old"
+            },
+            {
+              "stat_data": "active"
+            }
+          ],
+          "swipeIndex": 1
+        },
+        {
+          "role": "User",
+          "content": "current",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        }
+      ],
+      "expected": {
+        "core": {
+          "lastMessage": "current",
+          "lastMessageId": "1",
+          "lastUserMessage": "current",
+          "lastCharMessage": "active reply"
+        },
+        "template": {
+          "lastUserMessage": "current",
+          "lastUserMessageId": 1,
+          "lastCharMessage": "active reply",
+          "lastCharMessageId": 0,
+          "lastMessageId": 1
+        },
+        "formattedState": "active"
+      }
+    },
+    {
+      "name": "visible-narrator",
+      "floors": [
+        {
+          "role": "User",
+          "content": "current",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        },
+        {
+          "role": "System",
+          "content": "narrator",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        }
+      ],
+      "expected": {
+        "core": {
+          "lastMessage": "narrator",
+          "lastMessageId": "1",
+          "lastUserMessage": "current",
+          "lastCharMessage": "narrator"
+        },
+        "template": {
+          "lastUserMessage": "current",
+          "lastUserMessageId": 0,
+          "lastCharMessage": "narrator",
+          "lastCharMessageId": 1,
+          "lastMessageId": 1
+        },
+        "formattedState": "null"
+      }
+    },
+    {
+      "name": "hook-appended-character",
+      "floors": [
+        {
+          "role": "User",
+          "content": "accepted",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        },
+        {
+          "role": "Character",
+          "content": "hook floor",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        }
+      ],
+      "expected": {
+        "core": {
+          "lastMessage": "hook floor",
+          "lastMessageId": "1",
+          "lastUserMessage": "accepted",
+          "lastCharMessage": "hook floor"
+        },
+        "template": {
+          "lastUserMessage": "accepted",
+          "lastUserMessageId": 0,
+          "lastCharMessage": "hook floor",
+          "lastCharMessageId": 1,
+          "lastMessageId": 1
+        },
+        "formattedState": "null"
+      }
+    },
+    {
+      "name": "hook-appended-user",
+      "floors": [
+        {
+          "role": "User",
+          "content": "accepted",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        },
+        {
+          "role": "User",
+          "content": "hook input",
+          "hidden": false,
+          "variables": [],
+          "swipeIndex": 0
+        }
+      ],
+      "expected": {
+        "core": {
+          "lastMessage": "hook input",
+          "lastMessageId": "1",
+          "lastUserMessage": "hook input",
+          "lastCharMessage": ""
+        },
+        "template": {
+          "lastUserMessage": "hook input",
+          "lastUserMessageId": 1,
+          "lastCharMessage": "",
+          "lastCharMessageId": -1,
+          "lastMessageId": 1
+        },
+        "formattedState": "null"
+      }
+    }
+  ]
+}

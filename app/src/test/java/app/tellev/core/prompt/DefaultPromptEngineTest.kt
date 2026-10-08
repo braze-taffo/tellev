@@ -87,7 +87,7 @@ class DefaultPromptEngineTest {
     }
 
     @Test
-    fun `initvar entry backs format message variable macro on a new chat`() {
+    fun `uncommitted initvar does not impersonate saved message variables`() {
         val result = DefaultPromptEngine().build(
             PromptBuildRequest(
                 character = CharacterCard(id = "alice", name = "Alice"),
@@ -121,9 +121,9 @@ class DefaultPromptEngineTest {
         )
 
         val prompt = result.messages.joinToString("\n") { it.content }
-        assertTrue(prompt.contains("当前时间: 未知"))
-        assertTrue(prompt.contains("生命: 100"))
-        assertFalse(prompt.contains("<status_current_variables>\nnull"))
+        assertFalse(prompt.contains("当前时间: 未知"))
+        assertFalse(prompt.contains("生命: 100"))
+        assertTrue(prompt.contains("<status_current_variables>\nnull"))
     }
 
     @Test

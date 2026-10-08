@@ -18,7 +18,7 @@ data class PromptTemplateRequest(
      */
     val messageVariables: JsonObject? = null,
     /**
-     * Visible chat floors in ST's message shape for the getChatMessage(s) /
+     * Saved chat floors, including hidden floors, in ST's message shape for the getChatMessage(s) /
      * matchChatMessages template family (ST-Prompt-Template chat.ts).
      */
     val chat: List<PromptTemplateChatMessage> = emptyList(),
@@ -120,6 +120,7 @@ internal data class TemplateState(
         initialMessageVariables = initialMessageVariables,
         worldCatalog = worldCatalog,
         currentWorldBookId = currentWorldBookId,
+        chatMessages = chatMessages,
         variables = PromptTemplateExpressionEvaluator.deepCopyMap(variables),
     )
 }

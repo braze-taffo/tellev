@@ -59,16 +59,16 @@ class PromptMacroContextTest {
         assertEquals("去买东西|去买东西|4|4|3", result.messages.single().content)
     }
 
-    @Test fun `hidden floors remain excluded from visible macro context`() {
+    @Test fun `hidden floors keep saved IDs and only user character macros filter them`() {
         val snapshot = listOf(history[0], message("hidden1", MessageRole.User, "隐藏输入").copy(isHidden = true),
             history[1], message("current", MessageRole.User, "不，我是李四"),
             message("hidden2", MessageRole.Character, "隐藏回复").copy(isHidden = true))
         val context = PromptMacroContextBuilder.buildMacroContext(request(macroMessages = snapshot))
         assertEquals("不，我是李四", context.lastUserMessage)
-        assertEquals("不，我是李四", context.lastMessage)
-        assertEquals("2", context.lastMessageId)
-        assertEquals(2, context.lastUserMessageId)
-        assertEquals(1, context.lastCharMessageId)
+        assertEquals("隐藏回复", context.lastMessage)
+        assertEquals("4", context.lastMessageId)
+        assertEquals(3, context.lastUserMessageId)
+        assertEquals(2, context.lastCharMessageId)
     }
 
     @Test fun `generate templates can read the current input using its macro floor ID`() {

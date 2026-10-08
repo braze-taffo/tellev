@@ -245,9 +245,6 @@ internal class ChatGenerationCoordinator(
                     check(promptInput.role == MessageRole.User && !promptInput.isHidden) {
                         "生成前输入消息已被隐藏或改变角色，请重新发送"
                     }
-                    check(isRegeneration || promptInputIndex == promptMessages.lastIndex) {
-                        "生成前输入消息已不在会话末尾，请重新发送"
-                    }
                 }
                 val possibleRawIds = mutableSetOf<String>()
                 val rawBudget = ((preset.maxContextTokens ?: DEFAULT_MAX_CONTEXT_TOKENS) -
@@ -297,6 +294,10 @@ internal class ChatGenerationCoordinator(
                     } else {
                         promptMessages
                     },
+                    // ST keeps valid hook-added floors in their saved order.
+                    // The history helper retains a non-tail input; do not append it again.
+                    inputAlreadyInHistory = !isRegeneration && messageRole == MessageRole.User &&
+                        promptInputIndex != promptMessages.lastIndex,
                     providerType = config.providerType,
                     metadata = JsonObject(
                         ChatPromptBuilder.buildPromptMetadata(

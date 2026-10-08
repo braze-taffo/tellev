@@ -47,10 +47,12 @@ data class PromptBuildRequest(
     val quietPrompt: String? = null,
     /** Live direct cast members; embedded snapshots remain a portable fallback. */
     val supportingCharacters: List<CharacterCard> = emptyList(),
-    /** Saved chat floors visible to macros, including the current user floor in normal/swipe generation.
+    /** Saved chat floors available to macros, including the current user floor in normal/swipe generation.
      * [messages] remains the wire history without that floor, which is sent once via [userInput].
      * Null keeps quiet/helper requests scoped to their supplied history rather than their instructions. */
     val macroMessages: List<ChatMessage>? = null,
+    /** A hook appended floors after the accepted input: history already contains that input in saved order. */
+    val inputAlreadyInHistory: Boolean = false,
 )
 
 @Serializable
@@ -84,6 +86,8 @@ data class PromptMessage(
     val channel: String? = null,
     /** Structured OpenAI content/tool fields supplied by a request-time script. */
     val wireFields: JsonObject? = null,
+    /** Saved chat floor for EJS render context; never a provider wire field. */
+    val chatMessageId: Int? = null,
 )
 
 @Serializable

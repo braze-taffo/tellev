@@ -148,7 +148,8 @@ class ChatWriteLifecycleTest {
     @Test fun `script insertion before swipe does not shift its selected input`() = verifyInputMacroScope(regenerate = true, scriptEdit = true)
     @Test fun `script deletion of input stops before building a contradictory request`() = verifyInputMacroScope(invalidInput = "deleted")
     @Test fun `script hiding of input stops before building a contradictory request`() = verifyInputMacroScope(invalidInput = "hidden")
-    @Test fun `script appending a new turn stops before duplicating the accepted input`() = verifyInputMacroScope(invalidInput = "appended")
+    @Test fun `script appended floor keeps saved order without duplicating accepted input`() = verifyInputMacroScope(invalidInput = "appended")
+    @Test fun `script appended user becomes latest macro input while accepted input is sent once`() = verifyInputMacroScope(invalidInput = "appended-user")
     @Test fun `ambiguous imported user identity stops before choosing the wrong regeneration input`() = verifyInputMacroScope(regenerate = true, invalidInput = "ambiguous")
 
     private fun verifyInputMacroScope(first: Boolean = false, regenerate: Boolean = false, scriptEdit: Boolean = false,
@@ -174,7 +175,9 @@ class ChatWriteLifecycleTest {
             val captured = CompletableDeferred<PromptBuildRequest>()
             val registry = ProviderRegistry(emptyList())
             val secrets = TestSecrets()
-            val inserted = ChatMessage("script-floor", MessageRole.System, "System", "脚本插入的设定", 0L)
+            val inserted = ChatMessage("script-floor", if (invalidInput == "appended-user") MessageRole.User else MessageRole.System,
+                "System", "脚本插入的设定", 0L)
+            val appended = invalidInput == "appended" || invalidInput == "appended-user"
             val expectedInput = if (scriptEdit) "脚本修正：我是李五" else current.content
             val host = HostProbe { event ->
                 if ((scriptEdit || invalidInput != null) && event.name == StEventCatalog.GENERATION_AFTER_COMMANDS) {
@@ -185,7 +188,7 @@ class ChatWriteLifecycleTest {
                     val changed = when (invalidInput) {
                         "deleted" -> revised.filterNot { it.role == MessageRole.User && it.id != "u1" }
                         "hidden" -> revised.map { if (it.role == MessageRole.User && it.id != "u1") it.copy(isHidden = true) else it }
-                        "appended" -> revised + inserted
+                        "appended", "appended-user" -> revised + inserted
                         "ambiguous" -> revised.map { if (it.id == "u1") it.copy(id = current.id) else it }
                         else -> if (regenerate) listOf(inserted) + revised else revised
                     }
@@ -203,7 +206,7 @@ class ChatWriteLifecycleTest {
                 regenerationMessageId = if (regenerate) replaced.id else null,
                 uiState = state, scope = CoroutineScope(coroutineContext), characterScriptJob = null))
             coordinator.generationJob?.join()
-            if (invalidInput != null) {
+            if (invalidInput != null && !appended) {
                 assertFalse(captured.isCompleted)
                 assertNotNull(state.value.error)
                 assertFalse(state.value.isGenerating)
@@ -211,16 +214,23 @@ class ChatWriteLifecycleTest {
             }
             val request = withTimeout(5_000) { captured.await() }
             val expectedHistory = if (regenerate && scriptEdit) listOf(inserted) + prior else prior
-            assertEquals(expectedHistory.map { it.id }, request.messages.map { it.id })
+            if (appended) {
+                assertTrue(request.inputAlreadyInHistory)
+                assertEquals(prior.size + 2, request.messages.size)
+                assertEquals(expectedInput, request.messages[prior.size].content)
+                assertEquals(inserted.id, request.messages.last().id)
+            } else assertEquals(expectedHistory.map { it.id }, request.messages.map { it.id })
             assertEquals(expectedInput, request.userInput)
             val context = PromptMacroContextBuilder.buildMacroContext(request)
-            assertEquals(expectedInput, context.lastUserMessage)
-            assertEquals(expectedInput, context.lastMessage)
-            assertEquals(expectedHistory.size, context.lastUserMessageId)
-            assertEquals(prior.lastOrNull()?.content.orEmpty(), context.lastCharMessage)
+            assertEquals(if (invalidInput == "appended-user") inserted.content else expectedInput, context.lastUserMessage)
+            assertEquals(if (appended) inserted.content else expectedInput, context.lastMessage)
+            assertEquals(expectedHistory.size + if (invalidInput == "appended-user") 1 else 0, context.lastUserMessageId)
+            assertEquals(if (invalidInput == "appended") inserted.content else prior.lastOrNull()?.content.orEmpty(), context.lastCharMessage)
             assertFalse(request.macroMessages!!.any { it.id == replaced.id })
             val prompt = DefaultPromptEngine().build(request)
             assertEquals(1, prompt.messages.count { it.content == expectedInput })
+            if (appended) assertEquals(prior.map { it.content } + listOf(expectedInput, inserted.content),
+                prompt.messages.filter { it.channel == "chat" }.map { it.content })
             assertFalse(prompt.messages.any { it.content == replaced.content })
         } finally {
             runtime.sessionWriteScope.cancel()
