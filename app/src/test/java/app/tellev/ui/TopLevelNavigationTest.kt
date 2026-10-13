@@ -7,44 +7,49 @@ import org.junit.Test
 
 class TopLevelNavigationTest {
     @Test
-    fun `character and world library leaves retain the bottom navigation`() {
-        assertTrue(isTopLevelScreen("characters/list"))
-        assertTrue(isTopLevelScreen("world/list"))
+    fun `dsh tabs retain the bottom navigation`() {
+        listOf("characters/list", "creation/home", "community", "settings")
+            .forEach { assertTrue(isDshTopLevel(it)) }
     }
 
     @Test
-    fun `other tabs keep their navigation`() {
-        listOf("chat", "extensions", "settings").forEach { assertTrue(isTopLevelScreen(it)) }
+    fun `chat and pushed pages have no bottom bar`() {
+        listOf(
+            "chat",
+            "world/list", "world/book/lore", "world/book/lore/entry/1", "extensions",
+            "characters/create", "characters/detail/alice",
+            "settings/usage",
+            "creation/chat?kind={kind}", "creation/editor",
+            "creation/edit/character/alice", "creation/edit/world/lore",
+            "creation/from-character/world/alice", "future/page", null,
+        ).forEach { assertFalse(isDshTopLevel(it)) }
     }
 
     @Test
-    fun `editors and creation flows do not expose the bottom navigation`() {
-        listOf("characters/detail/alice", "characters/create", "world/book/lore",
-            "world/book/lore/entry/1", "settings/providers", "settings/imagegen",
-            "creation/home", "creation/editor", null).forEach { assertFalse(isTopLevelScreen(it)) }
-    }
-
-    @Test
-    fun `only the chat home confirms exit`() {
-        assertEquals(AppBackAction.ConfirmExit, appBackAction("chat", false))
+    fun `chat back closes the conversation, an empty chat confirms exit`() {
         assertEquals(AppBackAction.CloseConversation, appBackAction("chat", true))
+        assertEquals(AppBackAction.ConfirmExit, appBackAction("chat", false))
     }
 
     @Test
-    fun `other main pages return to chat home even with a retained conversation`() {
-        listOf("characters/list", "world/list", "extensions", "settings").forEach { route ->
-            for (open in listOf(false, true)) assertEquals(route, AppBackAction.ChatHome, appBackAction(route, open))
+    fun `dsh home tabs return to the chat home even with a retained conversation`() {
+        listOf("characters/list", "creation/home", "community", "settings").forEach { route ->
+            for (open in listOf(false, true)) {
+                assertEquals(route, AppBackAction.ChatHome, appBackAction(route, open))
+            }
         }
     }
 
     @Test
-    fun `nested pages return to their parent`() {
-        listOf("characters/detail/alice", "characters/create",
-            "world/book/lore", "world/book/lore/entry/1",
-            "settings/providers", "settings/imagegen", "creation/home",
+    fun `secondary pages return to their parent`() {
+        listOf(
+            "world/list", "world/book/lore", "world/book/lore/entry/1", "extensions",
+            "characters/create", "characters/detail/alice",
+            "settings/usage",
+            "creation/chat?kind={kind}", "creation/editor",
             "creation/edit/character/alice", "creation/edit/world/lore",
-            "creation/from-character/world/alice", "creation/editor", "future/page")
-            .forEach { assertEquals(it, AppBackAction.Parent, appBackAction(it, true)) }
+            "creation/from-character/world/alice", "future/page",
+        ).forEach { assertEquals(it, AppBackAction.Parent, appBackAction(it, true)) }
         listOf(null, "", " ").forEach { assertEquals(AppBackAction.None, appBackAction(it, false)) }
     }
 }

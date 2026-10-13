@@ -1,6 +1,8 @@
 package app.tellev.core.metrics
 
+import android.util.Log
 import app.tellev.core.prompt.TokenBudget
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +24,8 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.io.path.createDirectories
+
+private const val TAG = "GenerationMetrics"
 
 /** One completed text generation and its provider/local accounting. */
 @Serializable
@@ -254,7 +258,7 @@ object GenerationMetricsCalculator {
         val speed = entries.mapNotNull { it.tokensPerSecond }
         val promptTotal = entries.mapNotNull { it.promptTokens?.toLong() }.sum()
         val cachedTotal = entries.mapNotNull { it.cacheReadTokens?.toLong() ?: it.cachedTokens?.toLong() }.sum()
-        val activeDates = entries.mapTo(mutableSetOf()) { LocalDate.ofInstant(Instant.ofEpochMilli(it.timestampMs), zoneId) }
+        val activeDates = entries.mapTo(mutableSetOf()) { Instant.ofEpochMilli(it.timestampMs).atZone(zoneId).toLocalDate() }
         val sortedDates = activeDates.sorted()
         val longest = longestStreak(sortedDates)
         val current = currentStreak(sortedDates, LocalDate.now(zoneId))
@@ -277,7 +281,7 @@ object GenerationMetricsCalculator {
         entries: List<GenerationMetrics>,
         zoneId: ZoneId = ZoneId.systemDefault(),
     ): List<DailyUsageSummary> = entries.groupBy {
-        LocalDate.ofInstant(Instant.ofEpochMilli(it.timestampMs), zoneId).toString()
+        Instant.ofEpochMilli(it.timestampMs).atZone(zoneId).toLocalDate().toString()
     }.map { (date, values) ->
         DailyUsageSummary(
             date = date,
@@ -458,6 +462,9 @@ class GenerationMetricsStore(
     private val root: Path,
     private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
+    private val onDailyRollupFailure: (Exception) -> Unit = { error ->
+        Log.w(TAG, "daily rollup failed after detail write", error)
+    },
 ) {
     private val file: Path = root.resolve(FILE_NAME)
     private val mutex = Mutex()
@@ -496,27 +503,42 @@ class GenerationMetricsStore(
         withContext(Dispatchers.IO) {
             root.createDirectories()
             writeAtomic(file, updated.map { json.encodeToString(GenerationMetrics.serializer(), it) })
-            val existing = readDailySummaries().associateBy { it.date }.toMutableMap()
-            val date = LocalDate.ofInstant(Instant.ofEpochMilli(metrics.timestampMs), ZoneId.systemDefault()).toString()
-            val model = metrics.model?.takeIf(String::isNotBlank) ?: "unknown"
-            val previous = existing[date]
-            existing[date] = DailyUsageSummary(
-                date = date,
-                requestCount = (previous?.requestCount ?: 0) + 1,
-                totalTokens = (previous?.totalTokens ?: 0L) + (metrics.totalTokens?.toLong() ?: 0L),
-                promptTokens = (previous?.promptTokens ?: 0L) + (metrics.promptTokens?.toLong() ?: 0L),
-                completionTokens = (previous?.completionTokens ?: 0L) + (metrics.completionTokens?.toLong() ?: 0L),
-                estimatedCount = (previous?.estimatedCount ?: 0) + if (metrics.isEstimate) 1 else 0,
-                modelTokens = previous?.modelTokens.orEmpty().toMutableMap().apply {
-                    this[model] = (this[model] ?: 0L) + (metrics.totalTokens?.toLong() ?: 0L)
-                },
-                modelRequests = previous?.modelRequests.orEmpty().toMutableMap().apply {
-                    this[model] = (this[model] ?: 0) + 1
-                },
-            )
-            writeAtomic(dailyFile, existing.values.sortedBy { it.date }.map { json.encodeToString(DailyUsageSummary.serializer(), it) })
+            // 明细 jsonl 已落盘才算这条生成入账；日汇总是可由明细重算的导数，
+            // 它失败不能回滚内存流，也不许静默——调用方
+            // （ChatGenerationCoordinator:533）整调用都裹在 runCatching 里。
+            try {
+                writeDailyRollup(metrics)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                onDailyRollupFailure(error)
+            }
         }
         mutableEntries.value = updated
+    }
+
+    /** 读旧日汇总、按当天归并一条、原子覆写。任何一步抛错都只上报，不回滚明细。 */
+    private fun writeDailyRollup(metrics: GenerationMetrics) {
+        val existing = readDailySummaries().associateBy { it.date }.toMutableMap()
+        // LocalDate.ofInstant 需 API 34；atZone().toLocalDate() 为 API 26 等价写法。
+        val date = Instant.ofEpochMilli(metrics.timestampMs).atZone(ZoneId.systemDefault()).toLocalDate().toString()
+        val model = metrics.model?.takeIf(String::isNotBlank) ?: "unknown"
+        val previous = existing[date]
+        existing[date] = DailyUsageSummary(
+            date = date,
+            requestCount = (previous?.requestCount ?: 0) + 1,
+            totalTokens = (previous?.totalTokens ?: 0L) + (metrics.totalTokens?.toLong() ?: 0L),
+            promptTokens = (previous?.promptTokens ?: 0L) + (metrics.promptTokens?.toLong() ?: 0L),
+            completionTokens = (previous?.completionTokens ?: 0L) + (metrics.completionTokens?.toLong() ?: 0L),
+            estimatedCount = (previous?.estimatedCount ?: 0) + if (metrics.isEstimate) 1 else 0,
+            modelTokens = previous?.modelTokens.orEmpty().toMutableMap().apply {
+                this[model] = (this[model] ?: 0L) + (metrics.totalTokens?.toLong() ?: 0L)
+            },
+            modelRequests = previous?.modelRequests.orEmpty().toMutableMap().apply {
+                this[model] = (this[model] ?: 0) + 1
+            },
+        )
+        writeAtomic(dailyFile, existing.values.sortedBy { it.date }.map { json.encodeToString(DailyUsageSummary.serializer(), it) })
     }
 
     private fun readDailySummaries(): List<DailyUsageSummary> {

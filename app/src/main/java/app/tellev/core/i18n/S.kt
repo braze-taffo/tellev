@@ -182,8 +182,6 @@ object S {
     const val metrics_estimated = "metrics_estimated"
     const val metrics_reported = "metrics_reported"
     const val metrics_row = "metrics_row"
-    const val tts_section_title = "tts_section_title"
-    const val tts_section_desc = "tts_section_desc"
     const val tts_enabled = "tts_enabled"
     const val tts_enabled_desc = "tts_enabled_desc"
     const val tts_provider_hint = "tts_provider_hint"
@@ -191,15 +189,6 @@ object S {
     const val tts_speed = "tts_speed"
     const val tts_model = "tts_model"
     const val tts_format = "tts_format"
-    const val tts_voice_alloy = "tts_voice_alloy"
-    const val tts_voice_echo = "tts_voice_echo"
-    const val tts_voice_fable = "tts_voice_fable"
-    const val tts_voice_onyx = "tts_voice_onyx"
-    const val tts_voice_nova = "tts_voice_nova"
-    const val tts_voice_shimmer = "tts_voice_shimmer"
-    const val tts_format_mp3 = "tts_format_mp3"
-    const val tts_format_opus = "tts_format_opus"
-    const val tts_read_aloud = "tts_read_aloud"
     const val tts_stop = "tts_stop"
     const val tts_error = "tts_error"
     const val tts_disabled = "tts_disabled"
@@ -213,13 +202,10 @@ object S {
     const val tts_custom_endpoint = "tts_custom_endpoint"
     const val tts_custom_endpoint_desc = "tts_custom_endpoint_desc"
     const val tts_base_url = "tts_base_url"
-    const val tts_base_url_hint = "tts_base_url_hint"
     const val tts_api_key = "tts_api_key"
     const val tts_custom_voice = "tts_custom_voice"
-    const val tts_custom_voice_hint = "tts_custom_voice_hint"
     const val tts_custom_voice_active = "tts_custom_voice_active"
     const val tts_custom_model = "tts_custom_model"
-    const val tts_custom_model_hint = "tts_custom_model_hint"
     const val tts_test_connection = "tts_test_connection"
     const val tts_test_ok = "tts_test_ok"
     const val tts_test_failed = "tts_test_failed"
@@ -332,18 +318,11 @@ object S {
     const val dsh_usage_empty = "dsh_usage_empty"
     const val dsh_user_edit_resend = "dsh_user_edit_resend"
     const val dsh_user_resend = "dsh_user_resend"
-    const val dsh_model_config_title = "dsh_model_config_title"
-    const val dsh_model_config_open = "dsh_model_config_open"
-    const val dsh_model_provider = "dsh_model_provider"
-    const val dsh_model_base_url = "dsh_model_base_url"
-    const val dsh_model_api_key = "dsh_model_api_key"
-    const val dsh_model_name = "dsh_model_name"
     const val dsh_model_levels = "dsh_model_levels"
     const val dsh_model_default_effort = "dsh_model_default_effort"
     const val dsh_model_follow_memory = "dsh_model_follow_memory"
-    const val dsh_model_test = "dsh_model_test"
-    const val dsh_model_save = "dsh_model_save"
-    const val dsh_model_saved = "dsh_model_saved"
+    const val dsh_model_clear_key = "dsh_model_clear_key"
+    const val dsh_model_clear_key_confirm = "dsh_model_clear_key_confirm"
     const val dsh_model_advanced = "dsh_model_advanced"
     const val dsh_preset_full_title = "dsh_preset_full_title"
     const val dsh_drawer_open_cd = "dsh_drawer_open_cd"
@@ -429,8 +408,9 @@ object S {
     const val dsh_creation_menu_manual = "dsh_creation_menu_manual"
     const val dsh_creation_menu_save = "dsh_creation_menu_save"
     const val dsh_creation_menu_export = "dsh_creation_menu_export"
-    const val crs_chat_create_title = "crs_chat_create_title"
-    const val crs_chat_create_desc = "crs_chat_create_desc"
+    const val dsh_creation_menu_preset = "dsh_creation_menu_preset"
+    const val dsh_creation_preset_title = "dsh_creation_preset_title"
+    const val dsh_creation_preset_follow_chat = "dsh_creation_preset_follow_chat"
     const val cast_picker_title = "cast_picker_title"
     const val cast_picker_hint = "cast_picker_hint"
     const val cast_search = "cast_search"
@@ -440,6 +420,26 @@ object S {
     const val cast_binding_title = "cast_binding_title"
     const val cast_binding_hint = "cast_binding_hint"
     const val chat_render_pending = "chat_render_pending"
+    const val dsh_services_title = "dsh_services_title"
+    const val dsh_services_chat = "dsh_services_chat"
+    const val dsh_services_image = "dsh_services_image"
+    const val dsh_services_voice = "dsh_services_voice"
+    const val dsh_services_img_comfy_row = "dsh_services_img_comfy_row"
+    const val dsh_services_img_novelai_row = "dsh_services_img_novelai_row"
+    const val dsh_services_img_profiles = "dsh_services_img_profiles"
+    const val dsh_services_voice_off = "dsh_services_voice_off"
+    const val dsh_prompt_add = "dsh_prompt_add"
+    const val dsh_prompt_add_limit = "dsh_prompt_add_limit"
+    const val dsh_preset_group_sampling = "dsh_preset_group_sampling"
+    const val dsh_preset_group_penalty = "dsh_preset_group_penalty"
+    const val dsh_preset_group_length = "dsh_preset_group_length"
+    const val dsh_preset_keep_placeholder = "dsh_preset_keep_placeholder"
+    const val dsh_preset_saved = "dsh_preset_saved"
+    const val dsh_preset_raw_add = "dsh_preset_raw_add"
+    const val dsh_preset_raw_path_label = "dsh_preset_raw_path_label"
+    const val dsh_preset_raw_key_blank = "dsh_preset_raw_key_blank"
+    const val dsh_preset_raw_key_exists = "dsh_preset_raw_key_exists"
+    const val dsh_preset_raw_key_reserved = "dsh_preset_raw_key_reserved"
     const val crs_add_entry = "crs_add_entry"
     const val crs_agent_replying = "crs_agent_replying"
     const val crs_assets_hint = "crs_assets_hint"
@@ -836,25 +836,16 @@ object S {
     const val creng_blueprint_worldbook_unsupported = "creng_blueprint_worldbook_unsupported"
     const val setimg_anlas_guard_label = "setimg_anlas_guard_label"
     const val setimg_cancel = "setimg_cancel"
-    const val setimg_comfy_header = "setimg_comfy_header"
     const val setimg_comfy_model_help_count = "setimg_comfy_model_help_count"
     const val setimg_comfy_model_help_empty = "setimg_comfy_model_help_empty"
     const val setimg_comfy_model_label = "setimg_comfy_model_label"
-    const val setimg_comfy_model_placeholder = "setimg_comfy_model_placeholder"
     const val setimg_comfy_params_button = "setimg_comfy_params_button"
-    const val setimg_comfy_url_help = "setimg_comfy_url_help"
     const val setimg_comfy_url_label = "setimg_comfy_url_label"
     const val setimg_decrisper_label = "setimg_decrisper_label"
-    const val setimg_engine_comfy = "setimg_engine_comfy"
     const val setimg_engine_desc = "setimg_engine_desc"
-    const val setimg_engine_header = "setimg_engine_header"
-    const val setimg_engine_novelai = "setimg_engine_novelai"
-    const val setimg_entry_summary = "setimg_entry_summary"
-    const val setimg_entry_title = "setimg_entry_title"
     const val setimg_height_label = "setimg_height_label"
     const val setimg_model_label = "setimg_model_label"
     const val setimg_negative_label = "setimg_negative_label"
-    const val setimg_novelai_header = "setimg_novelai_header"
     const val setimg_novelai_negative_help = "setimg_novelai_negative_help"
     const val setimg_novelai_params_button = "setimg_novelai_params_button"
     const val setimg_novelai_params_dialog_body = "setimg_novelai_params_dialog_body"
@@ -862,7 +853,6 @@ object S {
     const val setimg_novelai_sampler_label = "setimg_novelai_sampler_label"
     const val setimg_novelai_scheduler_label = "setimg_novelai_scheduler_label"
     const val setimg_novelai_steps_help = "setimg_novelai_steps_help"
-    const val setimg_novelai_token_help = "setimg_novelai_token_help"
     const val setimg_novelai_token_label = "setimg_novelai_token_label"
     const val setimg_ok = "setimg_ok"
     const val setimg_params_dialog_body = "setimg_params_dialog_body"
@@ -886,8 +876,6 @@ object S {
     const val setimg_test_connection = "setimg_test_connection"
     const val setimg_test_token = "setimg_test_token"
     const val setimg_testing = "setimg_testing"
-    const val setimg_token_ok = "setimg_token_ok"
-    const val setimg_token_unavailable = "setimg_token_unavailable"
     const val setimg_upscale_help = "setimg_upscale_help"
     const val setimg_upscale_label = "setimg_upscale_label"
     const val setimg_variety_label = "setimg_variety_label"
@@ -974,7 +962,6 @@ object S {
     const val setprov_testing = "setprov_testing"
     const val setnet_cleartext = "setnet_cleartext"
     const val setnet_cleartext_desc = "setnet_cleartext_desc"
-    const val setimg_profile_header = "setimg_profile_header"
     const val setimg_profile_desc = "setimg_profile_desc"
     const val setimg_profile_empty_hint = "setimg_profile_empty_hint"
     const val setimg_profile_add = "setimg_profile_add"
@@ -997,8 +984,6 @@ object S {
     const val setimg_profile_use_engine = "setimg_profile_use_engine"
     const val setimg_profile_in_use = "setimg_profile_in_use"
     const val setimg_profile_delete = "setimg_profile_delete"
-    const val setimg_profile_generic_name = "setimg_profile_generic_name"
-    const val setimg_entry_profiles = "setimg_entry_profiles"
     const val setabout_author = "setabout_author"
     const val setabout_author_bilibili = "setabout_author_bilibili"
     const val setabout_auto_check = "setabout_auto_check"
@@ -1014,9 +999,6 @@ object S {
     const val setabout_qq_group = "setabout_qq_group"
     const val setabout_title = "setabout_title"
     const val setabout_version = "setabout_version"
-    const val setapp_accent_classic = "setapp_accent_classic"
-    const val setapp_accent_label = "setapp_accent_label"
-    const val setapp_accent_warm = "setapp_accent_warm"
     const val setapp_bubble_alpha = "setapp_bubble_alpha"
     const val setapp_font_size = "setapp_font_size"
     const val setapp_preview_text = "setapp_preview_text"
@@ -1024,9 +1006,6 @@ object S {
     const val setapp_theme_light = "setapp_theme_light"
     const val setapp_theme_system = "setapp_theme_system"
     const val setapp_title = "setapp_title"
-    const val setappctl_accent_classic = "setappctl_accent_classic"
-    const val setappctl_accent_switched = "setappctl_accent_switched"
-    const val setappctl_accent_warm = "setappctl_accent_warm"
     const val setappctl_theme_dark = "setappctl_theme_dark"
     const val setappctl_theme_light = "setappctl_theme_light"
     const val setappctl_theme_switched = "setappctl_theme_switched"
@@ -1087,6 +1066,7 @@ object S {
     const val setupd_redownload = "setupd_redownload"
     const val setupd_retry = "setupd_retry"
     const val setupd_up_to_date = "setupd_up_to_date"
+    const val setupd_hash_unverified = "setupd_hash_unverified"
     const val setcomp_import = "setcomp_import"
     const val provctl_switched_to = "provctl_switched_to"
     const val provctl_load_failed = "provctl_load_failed"
@@ -1120,7 +1100,6 @@ object S {
     const val presetctl_export_failed = "presetctl_export_failed"
     const val presetctl_deleted = "presetctl_deleted"
     const val presetctl_delete_failed = "presetctl_delete_failed"
-    const val presetctl_read_file_failed = "presetctl_read_file_failed"
     const val presetctl_imported = "presetctl_imported"
     const val presetctl_imported_with_warnings = "presetctl_imported_with_warnings"
     const val presetctl_import_failed = "presetctl_import_failed"
@@ -1150,9 +1129,7 @@ object S {
     const val setvm_load_failed = "setvm_load_failed"
     const val setscreen_version_unknown = "setscreen_version_unknown"
     const val setscreen_title_provider = "setscreen_title_provider"
-    const val setscreen_title_imagegen = "setscreen_title_imagegen"
     const val setscreen_title_settings = "setscreen_title_settings"
-    const val setscreen_back_cd = "setscreen_back_cd"
     const val setscreen_this_config = "setscreen_this_config"
     const val setscreen_delete_config_title = "setscreen_delete_config_title"
     const val setscreen_delete_config_message = "setscreen_delete_config_message"
@@ -1563,6 +1540,28 @@ object S {
     const val about_card_format = "about_card_format"
     const val about_tech_stack = "about_tech_stack"
     const val about_thanks_community = "about_thanks_community"
+    const val chars_group_cd = "chars_group_cd"
+    const val chars_group_title = "chars_group_title"
+    const val chars_group_all = "chars_group_all"
+    const val chars_group_ungrouped = "chars_group_ungrouped"
+    const val chars_group_new = "chars_group_new"
+    const val chars_group_new_hint = "chars_group_new_hint"
+    const val chars_group_create = "chars_group_create"
+    const val chars_group_rename = "chars_group_rename"
+    const val chars_group_rename_title = "chars_group_rename_title"
+    const val chars_group_delete = "chars_group_delete"
+    const val chars_group_delete_title = "chars_group_delete_title"
+    const val chars_group_delete_confirm = "chars_group_delete_confirm"
+    const val chars_group_none_hint = "chars_group_none_hint"
+    const val chars_assign_group = "chars_assign_group"
+    const val chars_assign_group_title = "chars_assign_group_title"
+    const val chars_scan_cards = "chars_scan_cards"
+    const val chars_add_cards = "chars_add_cards"
+    const val chars_scan_empty = "chars_scan_empty"
+    const val chars_world_add = "chars_world_add"
+    const val chars_world_primary = "chars_world_primary"
+    const val chars_world_multi_hint = "chars_world_multi_hint"
+    const val chars_world_unbind_cd = "chars_world_unbind_cd"
     const val chat_memory_paused = "chat_memory_paused"
     const val chat_memory_label = "chat_memory_label"
     const val chat_back = "chat_back"
@@ -1685,7 +1684,6 @@ object S {
     const val nav_update_apk_size = "nav_update_apk_size"
     const val nav_update_now = "nav_update_now"
     const val nav_update_download_started = "nav_update_download_started"
-    const val ui_placeholder_message = "ui_placeholder_message"
     const val chat_optimize_title = "chat_optimize_title"
     const val chat_optimize_mode_polish = "chat_optimize_mode_polish"
     const val chat_optimize_mode_expand = "chat_optimize_mode_expand"
@@ -1732,8 +1730,6 @@ object S {
     const val ui_settings_appearance = "ui_settings_appearance"
     const val ui_settings_data = "ui_settings_data"
     const val ui_settings_identity = "ui_settings_identity"
-    const val ui_settings_intro = "ui_settings_intro"
-    const val ui_settings_intro_hint = "ui_settings_intro_hint"
     const val ui_settings_models = "ui_settings_models"
     const val ui_world_count = "ui_world_count"
     const val ui_world_disabled = "ui_world_disabled"
@@ -1849,6 +1845,30 @@ object S {
     const val chat_voice_no_match = "chat_voice_no_match"
     const val chat_voice_error_generic = "chat_voice_error_generic"
     const val chat_voice_permission = "chat_voice_permission"
+    const val nav_discard_unsaved_title = "nav_discard_unsaved_title"
+    const val nav_discard_unsaved_message = "nav_discard_unsaved_message"
+    const val nav_discard_unsaved_confirm = "nav_discard_unsaved_confirm"
+    const val chat_drawer_model_services = "chat_drawer_model_services"
+    const val crs_model_saving = "crs_model_saving"
+    const val crs_attachment_reading = "crs_attachment_reading"
+    const val crs_attachment_unsupported = "crs_attachment_unsupported"
+    const val crs_attachment_vision_unavailable = "crs_attachment_vision_unavailable"
+    const val crs_attachment_pending_question = "crs_attachment_pending_question"
+    const val dsh_model_reset = "dsh_model_reset"
+    const val dsh_model_reset_confirm = "dsh_model_reset_confirm"
+    const val dsh_model_reset_done = "dsh_model_reset_done"
+    const val dsh_model_effort_auto_hint = "dsh_model_effort_auto_hint"
+    const val dsh_model_effort_hint = "dsh_model_effort_hint"
+    const val dsh_model_effort_desc_auto = "dsh_model_effort_desc_auto"
+    const val dsh_model_effort_desc_off = "dsh_model_effort_desc_off"
+    const val dsh_model_effort_desc_low = "dsh_model_effort_desc_low"
+    const val dsh_model_effort_desc_medium = "dsh_model_effort_desc_medium"
+    const val dsh_model_effort_desc_high = "dsh_model_effort_desc_high"
+    const val dsh_model_effort_desc_max = "dsh_model_effort_desc_max"
+    const val dsh_model_effort_desc_minimal = "dsh_model_effort_desc_minimal"
+    const val dsh_model_effort_desc_xhigh = "dsh_model_effort_desc_xhigh"
+    const val dsh_creation_usage_requests = "dsh_creation_usage_requests"
+    const val dsh_creation_usage_draft = "dsh_creation_usage_draft"
     const val chat_copy_message = "chat_copy_message"
     const val chatvm_model_blank = "chatvm_model_blank"
     const val chatvm_model_custom_unsupported = "chatvm_model_custom_unsupported"
@@ -1868,8 +1888,6 @@ object S {
     const val model_picker_no_match = "model_picker_no_match"
     const val model_picker_search = "model_picker_search"
     const val model_picker_title = "model_picker_title"
-    const val setapp_accent_ink = "setapp_accent_ink"
-    const val setappctl_accent_ink = "setappctl_accent_ink"
     const val ui_world_count_filtered = "ui_world_count_filtered"
     const val usage_stats_30d = "usage_stats_30d"
     const val usage_stats_7d = "usage_stats_7d"
@@ -2080,8 +2098,6 @@ object S {
         "metrics_estimated" to R.string.metrics_estimated,
         "metrics_reported" to R.string.metrics_reported,
         "metrics_row" to R.string.metrics_row,
-        "tts_section_title" to R.string.tts_section_title,
-        "tts_section_desc" to R.string.tts_section_desc,
         "tts_enabled" to R.string.tts_enabled,
         "tts_enabled_desc" to R.string.tts_enabled_desc,
         "tts_provider_hint" to R.string.tts_provider_hint,
@@ -2089,15 +2105,6 @@ object S {
         "tts_speed" to R.string.tts_speed,
         "tts_model" to R.string.tts_model,
         "tts_format" to R.string.tts_format,
-        "tts_voice_alloy" to R.string.tts_voice_alloy,
-        "tts_voice_echo" to R.string.tts_voice_echo,
-        "tts_voice_fable" to R.string.tts_voice_fable,
-        "tts_voice_onyx" to R.string.tts_voice_onyx,
-        "tts_voice_nova" to R.string.tts_voice_nova,
-        "tts_voice_shimmer" to R.string.tts_voice_shimmer,
-        "tts_format_mp3" to R.string.tts_format_mp3,
-        "tts_format_opus" to R.string.tts_format_opus,
-        "tts_read_aloud" to R.string.tts_read_aloud,
         "tts_stop" to R.string.tts_stop,
         "tts_error" to R.string.tts_error,
         "tts_disabled" to R.string.tts_disabled,
@@ -2111,13 +2118,10 @@ object S {
         "tts_custom_endpoint" to R.string.tts_custom_endpoint,
         "tts_custom_endpoint_desc" to R.string.tts_custom_endpoint_desc,
         "tts_base_url" to R.string.tts_base_url,
-        "tts_base_url_hint" to R.string.tts_base_url_hint,
         "tts_api_key" to R.string.tts_api_key,
         "tts_custom_voice" to R.string.tts_custom_voice,
-        "tts_custom_voice_hint" to R.string.tts_custom_voice_hint,
         "tts_custom_voice_active" to R.string.tts_custom_voice_active,
         "tts_custom_model" to R.string.tts_custom_model,
-        "tts_custom_model_hint" to R.string.tts_custom_model_hint,
         "tts_test_connection" to R.string.tts_test_connection,
         "tts_test_ok" to R.string.tts_test_ok,
         "tts_test_failed" to R.string.tts_test_failed,
@@ -2230,18 +2234,11 @@ object S {
         "dsh_usage_empty" to R.string.dsh_usage_empty,
         "dsh_user_edit_resend" to R.string.dsh_user_edit_resend,
         "dsh_user_resend" to R.string.dsh_user_resend,
-        "dsh_model_config_title" to R.string.dsh_model_config_title,
-        "dsh_model_config_open" to R.string.dsh_model_config_open,
-        "dsh_model_provider" to R.string.dsh_model_provider,
-        "dsh_model_base_url" to R.string.dsh_model_base_url,
-        "dsh_model_api_key" to R.string.dsh_model_api_key,
-        "dsh_model_name" to R.string.dsh_model_name,
         "dsh_model_levels" to R.string.dsh_model_levels,
         "dsh_model_default_effort" to R.string.dsh_model_default_effort,
         "dsh_model_follow_memory" to R.string.dsh_model_follow_memory,
-        "dsh_model_test" to R.string.dsh_model_test,
-        "dsh_model_save" to R.string.dsh_model_save,
-        "dsh_model_saved" to R.string.dsh_model_saved,
+        "dsh_model_clear_key" to R.string.dsh_model_clear_key,
+        "dsh_model_clear_key_confirm" to R.string.dsh_model_clear_key_confirm,
         "dsh_model_advanced" to R.string.dsh_model_advanced,
         "dsh_preset_full_title" to R.string.dsh_preset_full_title,
         "dsh_drawer_open_cd" to R.string.dsh_drawer_open_cd,
@@ -2327,8 +2324,9 @@ object S {
         "dsh_creation_menu_manual" to R.string.dsh_creation_menu_manual,
         "dsh_creation_menu_save" to R.string.dsh_creation_menu_save,
         "dsh_creation_menu_export" to R.string.dsh_creation_menu_export,
-        "crs_chat_create_title" to R.string.crs_chat_create_title,
-        "crs_chat_create_desc" to R.string.crs_chat_create_desc,
+        "dsh_creation_menu_preset" to R.string.dsh_creation_menu_preset,
+        "dsh_creation_preset_title" to R.string.dsh_creation_preset_title,
+        "dsh_creation_preset_follow_chat" to R.string.dsh_creation_preset_follow_chat,
         "cast_picker_title" to R.string.cast_picker_title,
         "cast_picker_hint" to R.string.cast_picker_hint,
         "cast_search" to R.string.cast_search,
@@ -2338,6 +2336,26 @@ object S {
         "cast_binding_title" to R.string.cast_binding_title,
         "cast_binding_hint" to R.string.cast_binding_hint,
         "chat_render_pending" to R.string.chat_render_pending,
+        "dsh_services_title" to R.string.dsh_services_title,
+        "dsh_services_chat" to R.string.dsh_services_chat,
+        "dsh_services_image" to R.string.dsh_services_image,
+        "dsh_services_voice" to R.string.dsh_services_voice,
+        "dsh_services_img_comfy_row" to R.string.dsh_services_img_comfy_row,
+        "dsh_services_img_novelai_row" to R.string.dsh_services_img_novelai_row,
+        "dsh_services_img_profiles" to R.string.dsh_services_img_profiles,
+        "dsh_services_voice_off" to R.string.dsh_services_voice_off,
+        "dsh_prompt_add" to R.string.dsh_prompt_add,
+        "dsh_prompt_add_limit" to R.string.dsh_prompt_add_limit,
+        "dsh_preset_group_sampling" to R.string.dsh_preset_group_sampling,
+        "dsh_preset_group_penalty" to R.string.dsh_preset_group_penalty,
+        "dsh_preset_group_length" to R.string.dsh_preset_group_length,
+        "dsh_preset_keep_placeholder" to R.string.dsh_preset_keep_placeholder,
+        "dsh_preset_saved" to R.string.dsh_preset_saved,
+        "dsh_preset_raw_add" to R.string.dsh_preset_raw_add,
+        "dsh_preset_raw_path_label" to R.string.dsh_preset_raw_path_label,
+        "dsh_preset_raw_key_blank" to R.string.dsh_preset_raw_key_blank,
+        "dsh_preset_raw_key_exists" to R.string.dsh_preset_raw_key_exists,
+        "dsh_preset_raw_key_reserved" to R.string.dsh_preset_raw_key_reserved,
         "crs_add_entry" to R.string.crs_add_entry,
         "crs_agent_replying" to R.string.crs_agent_replying,
         "crs_assets_hint" to R.string.crs_assets_hint,
@@ -2734,25 +2752,16 @@ object S {
         "creng_blueprint_worldbook_unsupported" to R.string.creng_blueprint_worldbook_unsupported,
         "setimg_anlas_guard_label" to R.string.setimg_anlas_guard_label,
         "setimg_cancel" to R.string.setimg_cancel,
-        "setimg_comfy_header" to R.string.setimg_comfy_header,
         "setimg_comfy_model_help_count" to R.string.setimg_comfy_model_help_count,
         "setimg_comfy_model_help_empty" to R.string.setimg_comfy_model_help_empty,
         "setimg_comfy_model_label" to R.string.setimg_comfy_model_label,
-        "setimg_comfy_model_placeholder" to R.string.setimg_comfy_model_placeholder,
         "setimg_comfy_params_button" to R.string.setimg_comfy_params_button,
-        "setimg_comfy_url_help" to R.string.setimg_comfy_url_help,
         "setimg_comfy_url_label" to R.string.setimg_comfy_url_label,
         "setimg_decrisper_label" to R.string.setimg_decrisper_label,
-        "setimg_engine_comfy" to R.string.setimg_engine_comfy,
         "setimg_engine_desc" to R.string.setimg_engine_desc,
-        "setimg_engine_header" to R.string.setimg_engine_header,
-        "setimg_engine_novelai" to R.string.setimg_engine_novelai,
-        "setimg_entry_summary" to R.string.setimg_entry_summary,
-        "setimg_entry_title" to R.string.setimg_entry_title,
         "setimg_height_label" to R.string.setimg_height_label,
         "setimg_model_label" to R.string.setimg_model_label,
         "setimg_negative_label" to R.string.setimg_negative_label,
-        "setimg_novelai_header" to R.string.setimg_novelai_header,
         "setimg_novelai_negative_help" to R.string.setimg_novelai_negative_help,
         "setimg_novelai_params_button" to R.string.setimg_novelai_params_button,
         "setimg_novelai_params_dialog_body" to R.string.setimg_novelai_params_dialog_body,
@@ -2760,7 +2769,6 @@ object S {
         "setimg_novelai_sampler_label" to R.string.setimg_novelai_sampler_label,
         "setimg_novelai_scheduler_label" to R.string.setimg_novelai_scheduler_label,
         "setimg_novelai_steps_help" to R.string.setimg_novelai_steps_help,
-        "setimg_novelai_token_help" to R.string.setimg_novelai_token_help,
         "setimg_novelai_token_label" to R.string.setimg_novelai_token_label,
         "setimg_ok" to R.string.setimg_ok,
         "setimg_params_dialog_body" to R.string.setimg_params_dialog_body,
@@ -2784,8 +2792,6 @@ object S {
         "setimg_test_connection" to R.string.setimg_test_connection,
         "setimg_test_token" to R.string.setimg_test_token,
         "setimg_testing" to R.string.setimg_testing,
-        "setimg_token_ok" to R.string.setimg_token_ok,
-        "setimg_token_unavailable" to R.string.setimg_token_unavailable,
         "setimg_upscale_help" to R.string.setimg_upscale_help,
         "setimg_upscale_label" to R.string.setimg_upscale_label,
         "setimg_variety_label" to R.string.setimg_variety_label,
@@ -2872,7 +2878,6 @@ object S {
         "setprov_testing" to R.string.setprov_testing,
         "setnet_cleartext" to R.string.setnet_cleartext,
         "setnet_cleartext_desc" to R.string.setnet_cleartext_desc,
-        "setimg_profile_header" to R.string.setimg_profile_header,
         "setimg_profile_desc" to R.string.setimg_profile_desc,
         "setimg_profile_empty_hint" to R.string.setimg_profile_empty_hint,
         "setimg_profile_add" to R.string.setimg_profile_add,
@@ -2895,8 +2900,6 @@ object S {
         "setimg_profile_use_engine" to R.string.setimg_profile_use_engine,
         "setimg_profile_in_use" to R.string.setimg_profile_in_use,
         "setimg_profile_delete" to R.string.setimg_profile_delete,
-        "setimg_profile_generic_name" to R.string.setimg_profile_generic_name,
-        "setimg_entry_profiles" to R.string.setimg_entry_profiles,
         "setabout_author" to R.string.setabout_author,
         "setabout_author_bilibili" to R.string.setabout_author_bilibili,
         "setabout_auto_check" to R.string.setabout_auto_check,
@@ -2912,9 +2915,6 @@ object S {
         "setabout_qq_group" to R.string.setabout_qq_group,
         "setabout_title" to R.string.setabout_title,
         "setabout_version" to R.string.setabout_version,
-        "setapp_accent_classic" to R.string.setapp_accent_classic,
-        "setapp_accent_label" to R.string.setapp_accent_label,
-        "setapp_accent_warm" to R.string.setapp_accent_warm,
         "setapp_bubble_alpha" to R.string.setapp_bubble_alpha,
         "setapp_font_size" to R.string.setapp_font_size,
         "setapp_preview_text" to R.string.setapp_preview_text,
@@ -2922,9 +2922,6 @@ object S {
         "setapp_theme_light" to R.string.setapp_theme_light,
         "setapp_theme_system" to R.string.setapp_theme_system,
         "setapp_title" to R.string.setapp_title,
-        "setappctl_accent_classic" to R.string.setappctl_accent_classic,
-        "setappctl_accent_switched" to R.string.setappctl_accent_switched,
-        "setappctl_accent_warm" to R.string.setappctl_accent_warm,
         "setappctl_theme_dark" to R.string.setappctl_theme_dark,
         "setappctl_theme_light" to R.string.setappctl_theme_light,
         "setappctl_theme_switched" to R.string.setappctl_theme_switched,
@@ -2985,6 +2982,7 @@ object S {
         "setupd_redownload" to R.string.setupd_redownload,
         "setupd_retry" to R.string.setupd_retry,
         "setupd_up_to_date" to R.string.setupd_up_to_date,
+        "setupd_hash_unverified" to R.string.setupd_hash_unverified,
         "setcomp_import" to R.string.setcomp_import,
         "provctl_switched_to" to R.string.provctl_switched_to,
         "provctl_load_failed" to R.string.provctl_load_failed,
@@ -3018,7 +3016,6 @@ object S {
         "presetctl_export_failed" to R.string.presetctl_export_failed,
         "presetctl_deleted" to R.string.presetctl_deleted,
         "presetctl_delete_failed" to R.string.presetctl_delete_failed,
-        "presetctl_read_file_failed" to R.string.presetctl_read_file_failed,
         "presetctl_imported" to R.string.presetctl_imported,
         "presetctl_imported_with_warnings" to R.string.presetctl_imported_with_warnings,
         "presetctl_import_failed" to R.string.presetctl_import_failed,
@@ -3048,9 +3045,7 @@ object S {
         "setvm_load_failed" to R.string.setvm_load_failed,
         "setscreen_version_unknown" to R.string.setscreen_version_unknown,
         "setscreen_title_provider" to R.string.setscreen_title_provider,
-        "setscreen_title_imagegen" to R.string.setscreen_title_imagegen,
         "setscreen_title_settings" to R.string.setscreen_title_settings,
-        "setscreen_back_cd" to R.string.setscreen_back_cd,
         "setscreen_this_config" to R.string.setscreen_this_config,
         "setscreen_delete_config_title" to R.string.setscreen_delete_config_title,
         "setscreen_delete_config_message" to R.string.setscreen_delete_config_message,
@@ -3461,6 +3456,28 @@ object S {
         "about_card_format" to R.string.about_card_format,
         "about_tech_stack" to R.string.about_tech_stack,
         "about_thanks_community" to R.string.about_thanks_community,
+        "chars_group_cd" to R.string.chars_group_cd,
+        "chars_group_title" to R.string.chars_group_title,
+        "chars_group_all" to R.string.chars_group_all,
+        "chars_group_ungrouped" to R.string.chars_group_ungrouped,
+        "chars_group_new" to R.string.chars_group_new,
+        "chars_group_new_hint" to R.string.chars_group_new_hint,
+        "chars_group_create" to R.string.chars_group_create,
+        "chars_group_rename" to R.string.chars_group_rename,
+        "chars_group_rename_title" to R.string.chars_group_rename_title,
+        "chars_group_delete" to R.string.chars_group_delete,
+        "chars_group_delete_title" to R.string.chars_group_delete_title,
+        "chars_group_delete_confirm" to R.string.chars_group_delete_confirm,
+        "chars_group_none_hint" to R.string.chars_group_none_hint,
+        "chars_assign_group" to R.string.chars_assign_group,
+        "chars_assign_group_title" to R.string.chars_assign_group_title,
+        "chars_scan_cards" to R.string.chars_scan_cards,
+        "chars_add_cards" to R.string.chars_add_cards,
+        "chars_scan_empty" to R.string.chars_scan_empty,
+        "chars_world_add" to R.string.chars_world_add,
+        "chars_world_primary" to R.string.chars_world_primary,
+        "chars_world_multi_hint" to R.string.chars_world_multi_hint,
+        "chars_world_unbind_cd" to R.string.chars_world_unbind_cd,
         "chat_memory_paused" to R.string.chat_memory_paused,
         "chat_memory_label" to R.string.chat_memory_label,
         "chat_back" to R.string.chat_back,
@@ -3583,7 +3600,6 @@ object S {
         "nav_update_apk_size" to R.string.nav_update_apk_size,
         "nav_update_now" to R.string.nav_update_now,
         "nav_update_download_started" to R.string.nav_update_download_started,
-        "ui_placeholder_message" to R.string.ui_placeholder_message,
         "chat_optimize_title" to R.string.chat_optimize_title,
         "chat_optimize_mode_polish" to R.string.chat_optimize_mode_polish,
         "chat_optimize_mode_expand" to R.string.chat_optimize_mode_expand,
@@ -3630,8 +3646,6 @@ object S {
         "ui_settings_appearance" to R.string.ui_settings_appearance,
         "ui_settings_data" to R.string.ui_settings_data,
         "ui_settings_identity" to R.string.ui_settings_identity,
-        "ui_settings_intro" to R.string.ui_settings_intro,
-        "ui_settings_intro_hint" to R.string.ui_settings_intro_hint,
         "ui_settings_models" to R.string.ui_settings_models,
         "ui_world_count" to R.string.ui_world_count,
         "ui_world_disabled" to R.string.ui_world_disabled,
@@ -3747,6 +3761,30 @@ object S {
         "chat_voice_no_match" to R.string.chat_voice_no_match,
         "chat_voice_error_generic" to R.string.chat_voice_error_generic,
         "chat_voice_permission" to R.string.chat_voice_permission,
+        "nav_discard_unsaved_title" to R.string.nav_discard_unsaved_title,
+        "nav_discard_unsaved_message" to R.string.nav_discard_unsaved_message,
+        "nav_discard_unsaved_confirm" to R.string.nav_discard_unsaved_confirm,
+        "chat_drawer_model_services" to R.string.chat_drawer_model_services,
+        "crs_model_saving" to R.string.crs_model_saving,
+        "crs_attachment_reading" to R.string.crs_attachment_reading,
+        "crs_attachment_unsupported" to R.string.crs_attachment_unsupported,
+        "crs_attachment_vision_unavailable" to R.string.crs_attachment_vision_unavailable,
+        "crs_attachment_pending_question" to R.string.crs_attachment_pending_question,
+        "dsh_model_reset" to R.string.dsh_model_reset,
+        "dsh_model_reset_confirm" to R.string.dsh_model_reset_confirm,
+        "dsh_model_reset_done" to R.string.dsh_model_reset_done,
+        "dsh_model_effort_auto_hint" to R.string.dsh_model_effort_auto_hint,
+        "dsh_model_effort_hint" to R.string.dsh_model_effort_hint,
+        "dsh_model_effort_desc_auto" to R.string.dsh_model_effort_desc_auto,
+        "dsh_model_effort_desc_off" to R.string.dsh_model_effort_desc_off,
+        "dsh_model_effort_desc_low" to R.string.dsh_model_effort_desc_low,
+        "dsh_model_effort_desc_medium" to R.string.dsh_model_effort_desc_medium,
+        "dsh_model_effort_desc_high" to R.string.dsh_model_effort_desc_high,
+        "dsh_model_effort_desc_max" to R.string.dsh_model_effort_desc_max,
+        "dsh_model_effort_desc_minimal" to R.string.dsh_model_effort_desc_minimal,
+        "dsh_model_effort_desc_xhigh" to R.string.dsh_model_effort_desc_xhigh,
+        "dsh_creation_usage_requests" to R.string.dsh_creation_usage_requests,
+        "dsh_creation_usage_draft" to R.string.dsh_creation_usage_draft,
         "chat_copy_message" to R.string.chat_copy_message,
         "chatvm_model_blank" to R.string.chatvm_model_blank,
         "chatvm_model_custom_unsupported" to R.string.chatvm_model_custom_unsupported,
@@ -3766,8 +3804,6 @@ object S {
         "model_picker_no_match" to R.string.model_picker_no_match,
         "model_picker_search" to R.string.model_picker_search,
         "model_picker_title" to R.string.model_picker_title,
-        "setapp_accent_ink" to R.string.setapp_accent_ink,
-        "setappctl_accent_ink" to R.string.setappctl_accent_ink,
         "ui_world_count_filtered" to R.string.ui_world_count_filtered,
         "usage_stats_30d" to R.string.usage_stats_30d,
         "usage_stats_7d" to R.string.usage_stats_7d,
@@ -3979,8 +4015,6 @@ object S {
         "metrics_estimated" to "本地估算",
         "metrics_reported" to "服务商上报",
         "metrics_row" to "%1\$s · %2\$s · 输入 %3\$s · 输出 %4\$s · TTFT %5\$s ms · %6\$s tokens/秒 · 缓存 %7\$s (%8\$s) · 成本 %9\$s · %10\$s",
-        "tts_section_title" to "语音播报",
-        "tts_section_desc" to "使用已配置的 OpenAI 兼容服务播报聊天消息。",
         "tts_enabled" to "启用语音播报",
         "tts_enabled_desc" to "在消息操作菜单中显示朗读，并缓存生成的音频。",
         "tts_provider_hint" to "请先在模型服务设置中配置 OpenAI 兼容服务，才能使用语音播报。",
@@ -3988,15 +4022,6 @@ object S {
         "tts_speed" to "语速：%1\$.2fx",
         "tts_model" to "模型",
         "tts_format" to "音频格式",
-        "tts_voice_alloy" to "alloy",
-        "tts_voice_echo" to "echo",
-        "tts_voice_fable" to "fable",
-        "tts_voice_onyx" to "onyx",
-        "tts_voice_nova" to "nova",
-        "tts_voice_shimmer" to "shimmer",
-        "tts_format_mp3" to "MP3",
-        "tts_format_opus" to "Opus",
-        "tts_read_aloud" to "朗读",
         "tts_stop" to "停止朗读",
         "tts_error" to "朗读失败：%1\$s",
         "tts_disabled" to "语音播报未启用",
@@ -4010,13 +4035,10 @@ object S {
         "tts_custom_endpoint" to "自定义 TTS 端点",
         "tts_custom_endpoint_desc" to "使用独立的 OpenAI 兼容 /v1/audio/speech 服务，不跟随聊天服务商。",
         "tts_base_url" to "端点 Base URL",
-        "tts_base_url_hint" to "例如 https://api.example.com",
         "tts_api_key" to "API Key（可选）",
         "tts_custom_voice" to "自定义音色",
-        "tts_custom_voice_hint" to "非空时覆盖上方音色下拉",
         "tts_custom_voice_active" to "当前生效音色：%1\$s",
         "tts_custom_model" to "自定义模型",
-        "tts_custom_model_hint" to "非空时覆盖上方模型下拉",
         "tts_test_connection" to "测试连接",
         "tts_test_ok" to "连接成功",
         "tts_test_failed" to "连接失败：%1\$s",
@@ -4129,18 +4151,11 @@ object S {
         "dsh_usage_empty" to "暂无使用记录",
         "dsh_user_edit_resend" to "编辑并重新发送",
         "dsh_user_resend" to "重新发送",
-        "dsh_model_config_title" to "模型配置",
-        "dsh_model_config_open" to "配置模型",
-        "dsh_model_provider" to "服务商",
-        "dsh_model_base_url" to "接口地址",
-        "dsh_model_api_key" to "API 密钥",
-        "dsh_model_name" to "模型名称",
         "dsh_model_levels" to "思考强度档位",
         "dsh_model_default_effort" to "默认思考强度",
         "dsh_model_follow_memory" to "跟随记忆",
-        "dsh_model_test" to "测试连接",
-        "dsh_model_save" to "保存",
-        "dsh_model_saved" to "模型配置已保存",
+        "dsh_model_clear_key" to "清除 API 密钥",
+        "dsh_model_clear_key_confirm" to "清除后需重新输入密钥才能调用该服务商。",
         "dsh_model_advanced" to "高级设置",
         "dsh_preset_full_title" to "预设设置",
         "dsh_drawer_open_cd" to "打开会话列表",
@@ -4169,8 +4184,8 @@ object S {
         "dsh_profile_conf_high" to "知识库命中",
         "dsh_profile_conf_low" to "无命中",
         "dsh_profile_capacity" to "上下文 %1\$s · 输出 %2\$s",
-        "chat_reasoning_effort_minimal" to "最小",
-        "chat_reasoning_effort_xhigh" to "超高",
+        "chat_reasoning_effort_minimal" to "Minimal",
+        "chat_reasoning_effort_xhigh" to "XHigh",
         "dsh_preset_page_prompts" to "提示词",
         "dsh_preset_prompts_hint" to "提示词栈顺序（ST prompt_order）。可重排、停用/启用、逐条编辑；保存时 prompts 与 prompt_order 一起写回。",
         "dsh_preset_prompts_empty" to "暂无启用的提示词",
@@ -4226,8 +4241,9 @@ object S {
         "dsh_creation_menu_manual" to "手动编辑",
         "dsh_creation_menu_save" to "保存到角色库",
         "dsh_creation_menu_export" to "导出 JSON",
-        "crs_chat_create_title" to "聊天式创建",
-        "crs_chat_create_desc" to "一句话描述角色，或让 AI 逐步引导",
+        "dsh_creation_menu_preset" to "预设：%1\$s",
+        "dsh_creation_preset_title" to "生成预设",
+        "dsh_creation_preset_follow_chat" to "跟随聊天",
         "cast_picker_title" to "选择附属角色卡",
         "cast_picker_hint" to "可多选。主卡统一叙事，附属卡提供人物设定。",
         "cast_search" to "搜索角色",
@@ -4237,6 +4253,26 @@ object S {
         "cast_binding_title" to "附属角色 / 群像",
         "cast_binding_hint" to "角色卡、导演卡和世界卡均可绑定多个角色。聊天由主卡统一叙事，保留各人的性格、目标、关系和说话方式；不执行附属卡的脚本。",
         "chat_render_pending" to "正在渲染…",
+        "dsh_services_title" to "模型服务",
+        "dsh_services_chat" to "对话",
+        "dsh_services_image" to "生图",
+        "dsh_services_voice" to "语音",
+        "dsh_services_img_comfy_row" to "ComfyUI 配置",
+        "dsh_services_img_novelai_row" to "NovelAI 配置",
+        "dsh_services_img_profiles" to "自定义生图端点",
+        "dsh_services_voice_off" to "未启用",
+        "dsh_prompt_add" to "新增提示词",
+        "dsh_prompt_add_limit" to "自定义提示词已达上限（%1\$d 条）",
+        "dsh_preset_group_sampling" to "采样",
+        "dsh_preset_group_penalty" to "惩罚",
+        "dsh_preset_group_length" to "长度",
+        "dsh_preset_keep_placeholder" to "留空保持",
+        "dsh_preset_saved" to "预设已保存",
+        "dsh_preset_raw_add" to "新增键",
+        "dsh_preset_raw_path_label" to "键名（点分路径）",
+        "dsh_preset_raw_key_blank" to "无效的键名",
+        "dsh_preset_raw_key_exists" to "键已存在，请编辑列表中对应行",
+        "dsh_preset_raw_key_reserved" to "该键由参数页或提示词页管理",
         "crs_add_entry" to "添加条目",
         "crs_agent_replying" to "agent 正在回复",
         "crs_assets_hint" to "在对话里让 AI 创建或修改这些资源。脚本会随角色卡 JSON/PNG 导出；运行效果需在聊天中验证。",
@@ -4633,36 +4669,26 @@ object S {
         "creng_blueprint_worldbook_unsupported" to "世界书会话不支持标准蓝图。",
         "setimg_anlas_guard_label" to "Anlas 防护（免费额度内生成）",
         "setimg_cancel" to "取消",
-        "setimg_comfy_header" to "生图模型（ComfyUI）",
         "setimg_comfy_model_help_count" to "已获取 %1\$d 个模型，可输入筛选",
         "setimg_comfy_model_help_empty" to "测试连接后可从 ComfyUI 获取模型列表",
         "setimg_comfy_model_label" to "模型（Checkpoint）",
-        "setimg_comfy_model_placeholder" to "填入工作流 %model% 占位符对应的模型名，可留空",
         "setimg_comfy_params_button" to "生成参数与默认负面提示词",
-        "setimg_comfy_url_help" to "电脑上运行的 ComfyUI 地址；配置工作流并保存后，对话输入栏会出现“生成图片”入口",
         "setimg_comfy_url_label" to "ComfyUI 服务地址",
         "setimg_decrisper_label" to "Decrisper（高 CFG 去伪影）",
-        "setimg_engine_comfy" to "ComfyUI（远程）",
         "setimg_engine_desc" to "聊天输入栏「生成图片」按钮使用的引擎（立即生效，无需保存）；各引擎的连接与参数在下方对应区块配置。",
-        "setimg_engine_header" to "生图引擎",
-        "setimg_engine_novelai" to "NovelAI（远程）",
-        "setimg_entry_summary" to "当前引擎：%1\$s（%2\$s）",
-        "setimg_entry_title" to "生图（引擎与模型）",
         "setimg_height_label" to "高度",
         "setimg_model_label" to "模型",
         "setimg_negative_label" to "默认负面提示词",
-        "setimg_novelai_header" to "NovelAI 生图（远程）",
         "setimg_novelai_negative_help" to "酒馆默认负面会拼接在每次请求的负面之后",
         "setimg_novelai_params_button" to "生成参数、采样器与提示词前缀",
-        "setimg_novelai_params_dialog_body" to "与酒馆（SillyTavern）NovelAI 源一致：前缀与负面会自动拼进每次请求。修改后请回到设置页点击「保存」。",
+        "setimg_novelai_params_dialog_body" to "与酒馆（SillyTavern）NovelAI 源一致：前缀与负面会自动拼进每次请求。修改后点击下方「保存」。",
         "setimg_novelai_params_dialog_title" to "NovelAI 生图参数",
         "setimg_novelai_sampler_label" to "采样器",
         "setimg_novelai_scheduler_label" to "调度器",
         "setimg_novelai_steps_help" to "上限 50；开 Anlas 防护时限 28",
-        "setimg_novelai_token_help" to "novelai.net → 账户设置 → Persistent Token；需要有效订阅（如 Opus）",
         "setimg_novelai_token_label" to "NovelAI 令牌（Persistent Token）",
         "setimg_ok" to "确定",
-        "setimg_params_dialog_body" to "参数会替换工作流中对应的占位符；采样器与调度器留空表示沿用工作流自身的值。修改后请回到设置页点击「保存」。",
+        "setimg_params_dialog_body" to "参数会替换工作流中对应的占位符；采样器与调度器留空表示沿用工作流自身的值。修改后点击下方「保存」。",
         "setimg_params_dialog_title" to "生图参数",
         "setimg_prefix_help" to "酒馆默认：best quality, absurdres, aesthetic；支持 {prompt} 占位",
         "setimg_prefix_label" to "提示词前缀",
@@ -4683,14 +4709,12 @@ object S {
         "setimg_test_connection" to "测试连接",
         "setimg_test_token" to "测试令牌",
         "setimg_testing" to "测试中...",
-        "setimg_token_ok" to "令牌可用",
-        "setimg_token_unavailable" to "不可用",
         "setimg_upscale_help" to "1 为不放大",
         "setimg_upscale_label" to "放大倍数",
         "setimg_variety_label" to "Variety+（多样性增强）",
         "setimg_width_label" to "宽度",
         "setimg_workflow_configured" to "工作流 JSON（已配置，点击编辑）",
-        "setimg_workflow_dialog_body" to "在 ComfyUI 网页开启开发者模式，用「保存（API 格式）」导出工作流并粘贴到此处，再把正向/负向提示词节点的文本改为占位符 \"%prompt%\" 与 \"%negative_prompt%\"。可选占位符：\"%model%\"、\"%seed%\"、\"%steps%\"、\"%scale%\"、\"%width%\"、\"%height%\"、\"%sampler%\"、\"%scheduler%\"、\"%denoise%\"、\"%clip_skip%\"（工作流中不含对应占位符时参数不生效）。修改后请回到设置页点击「保存」。",
+        "setimg_workflow_dialog_body" to "在 ComfyUI 网页开启开发者模式，用「保存（API 格式）」导出工作流并粘贴到此处，再把正向/负向提示词节点的文本改为占位符 \"%prompt%\" 与 \"%negative_prompt%\"。可选占位符：\"%model%\"、\"%seed%\"、\"%steps%\"、\"%scale%\"、\"%width%\"、\"%height%\"、\"%sampler%\"、\"%scheduler%\"、\"%denoise%\"、\"%clip_skip%\"（工作流中不含对应占位符时参数不生效）。修改后点击下方「保存」。",
         "setimg_workflow_dialog_title" to "ComfyUI 工作流 JSON",
         "setimg_workflow_field_label" to "API 格式工作流",
         "setimg_workflow_json_error" to "JSON 无法解析，请检查后再确定",
@@ -4771,7 +4795,6 @@ object S {
         "setprov_testing" to "测试中...",
         "setnet_cleartext" to "允许明文 HTTP（局域网后端）",
         "setnet_cleartext_desc" to "关闭时仅允许本机（localhost）使用未加密连接；开启后才允许向其他地址发送明文 HTTP。仅建议在自建后端位于局域网且无法启用 HTTPS 时开启。",
-        "setimg_profile_header" to "自定义生图端口",
         "setimg_profile_desc" to "添加任意多个 OpenAI Images 兼容端点（中转或自建服务），聊天生图与封面生成均可切换使用。",
         "setimg_profile_empty_hint" to "尚未添加自定义端口。",
         "setimg_profile_add" to "添加端口",
@@ -4794,8 +4817,6 @@ object S {
         "setimg_profile_use_engine" to "设为当前引擎",
         "setimg_profile_in_use" to "当前引擎",
         "setimg_profile_delete" to "删除",
-        "setimg_profile_generic_name" to "自定义端口",
-        "setimg_entry_profiles" to "自定义端口 ×%1\$d",
         "setabout_author" to "作者",
         "setabout_author_bilibili" to "B站：迷迭香のねこ",
         "setabout_auto_check" to "启动时自动检查更新",
@@ -4811,9 +4832,6 @@ object S {
         "setabout_qq_group" to "QQ 交流群：tellev酒馆交流群",
         "setabout_title" to "关于",
         "setabout_version" to "tellev v%1\$s",
-        "setapp_accent_classic" to "经典蓝紫",
-        "setapp_accent_label" to "主题色",
-        "setapp_accent_warm" to "暖橘",
         "setapp_bubble_alpha" to "气泡不透明度：%1\$d%%",
         "setapp_font_size" to "对话字号：%1\$d sp",
         "setapp_preview_text" to "预览：这是一段对话文字",
@@ -4821,9 +4839,6 @@ object S {
         "setapp_theme_light" to "浅色",
         "setapp_theme_system" to "跟随系统",
         "setapp_title" to "主题",
-        "setappctl_accent_classic" to "经典蓝紫",
-        "setappctl_accent_switched" to "主题色已切换为%1\$s。",
-        "setappctl_accent_warm" to "暖橘",
         "setappctl_theme_dark" to "深色",
         "setappctl_theme_light" to "浅色",
         "setappctl_theme_switched" to "主题已切换为%1\$s。",
@@ -4884,6 +4899,7 @@ object S {
         "setupd_redownload" to "重新下载更新",
         "setupd_retry" to "重试",
         "setupd_up_to_date" to "已是最新版本",
+        "setupd_hash_unverified" to "本次更新未校验哈希：发行未提供 sha256，仅校验了签名证书。",
         "setcomp_import" to "导入",
         "provctl_switched_to" to "已切换到“%1\$s”。",
         "provctl_load_failed" to "加载服务商配置失败：%1\$s",
@@ -4917,7 +4933,6 @@ object S {
         "presetctl_export_failed" to "导出预设失败：%1\$s",
         "presetctl_deleted" to "预设已删除。",
         "presetctl_delete_failed" to "删除预设失败：%1\$s",
-        "presetctl_read_file_failed" to "无法读取所选文件",
         "presetctl_imported" to "预设「%1\$s」已导入并启用。",
         "presetctl_imported_with_warnings" to "预设「%1\$s」已导入并启用；%2\$s。",
         "presetctl_import_failed" to "导入预设失败：%1\$s",
@@ -4947,9 +4962,7 @@ object S {
         "setvm_load_failed" to "加载设置失败：%1\$s",
         "setscreen_version_unknown" to "未知",
         "setscreen_title_provider" to "模型服务配置",
-        "setscreen_title_imagegen" to "生图设置",
         "setscreen_title_settings" to "设置",
-        "setscreen_back_cd" to "返回",
         "setscreen_this_config" to "该配置",
         "setscreen_delete_config_title" to "删除自定义配置",
         "setscreen_delete_config_message" to "确定删除“%1\$s”吗？该配置的接口地址与密钥将被清除，且无法撤销。",
@@ -5360,6 +5373,28 @@ object S {
         "about_card_format" to "角色卡格式基于 SillyTavern V2/V3 规格。",
         "about_tech_stack" to "网络层使用 OkHttp，JSON 处理使用 kotlinx.serialization。",
         "about_thanks_community" to "感谢 SillyTavern 社区。",
+        "chars_group_cd" to "分组",
+        "chars_group_title" to "角色分组",
+        "chars_group_all" to "全部角色",
+        "chars_group_ungrouped" to "未分组",
+        "chars_group_new" to "新建分组",
+        "chars_group_new_hint" to "分组名称",
+        "chars_group_create" to "创建",
+        "chars_group_rename" to "重命名",
+        "chars_group_rename_title" to "重命名分组",
+        "chars_group_delete" to "删除分组",
+        "chars_group_delete_title" to "删除分组",
+        "chars_group_delete_confirm" to "删除分组“%1\$s”？角色卡本身不会被删除，只会回到未分组。",
+        "chars_group_none_hint" to "还没有分组。在下方输入名称即可创建第一个。",
+        "chars_assign_group" to "分组",
+        "chars_assign_group_title" to "将“%1\$s”归入分组",
+        "chars_scan_cards" to "扫描角色卡",
+        "chars_add_cards" to "添加角色卡",
+        "chars_scan_empty" to "所选目录里没有找到角色卡（png / webp / json）。",
+        "chars_world_add" to "添加世界书",
+        "chars_world_primary" to "%1\$s（主绑定）",
+        "chars_world_multi_hint" to "可绑定多个世界书；列表中第一个为主绑定。",
+        "chars_world_unbind_cd" to "解除绑定 %1\$s",
         "chat_memory_paused" to "已暂停",
         "chat_memory_label" to "记忆：%1\$s",
         "chat_back" to "返回",
@@ -5482,7 +5517,6 @@ object S {
         "nav_update_apk_size" to "安装包约 %1\$s MB",
         "nav_update_now" to "立即更新",
         "nav_update_download_started" to "开始下载新版本…",
-        "ui_placeholder_message" to "架构入口已就绪，具体功能实现放在当前模块。",
         "chat_optimize_title" to "优化提示词",
         "chat_optimize_mode_polish" to "润色",
         "chat_optimize_mode_expand" to "扩写",
@@ -5506,12 +5540,12 @@ object S {
         "chat_optimize_unavailable" to "当前服务商不支持文本生成，无法优化",
         "chatimgco_invalid_image_data" to "返回内容不是有效图片",
         "chat_reasoning_effort" to "思考强度",
-        "chat_reasoning_effort_auto" to "跟随预设",
-        "chat_reasoning_effort_off" to "关闭",
-        "chat_reasoning_effort_low" to "低",
-        "chat_reasoning_effort_medium" to "中",
-        "chat_reasoning_effort_high" to "高",
-        "chat_reasoning_effort_max" to "最大",
+        "chat_reasoning_effort_auto" to "Auto",
+        "chat_reasoning_effort_off" to "Off",
+        "chat_reasoning_effort_low" to "Low",
+        "chat_reasoning_effort_medium" to "Medium",
+        "chat_reasoning_effort_high" to "High",
+        "chat_reasoning_effort_max" to "Max",
         "chat_reasoning_set_failed" to "设置思考强度失败：%1\$s",
         "ui_character_count" to "%1\$d 位角色",
         "ui_character_library" to "你的角色收藏",
@@ -5529,8 +5563,6 @@ object S {
         "ui_settings_appearance" to "外观",
         "ui_settings_data" to "资料",
         "ui_settings_identity" to "身份",
-        "ui_settings_intro" to "让故事更合心意",
-        "ui_settings_intro_hint" to "模型、预设、外观与资料，都在这里管理。",
         "ui_settings_models" to "模型与预设",
         "ui_world_count" to "%1\$d 本世界书",
         "ui_world_disabled" to "未启用",
@@ -5638,7 +5670,7 @@ object S {
         "ctx_label_messages" to "对话消息",
         "time_hours_short" to "%1\$d小时",
         "time_days_short" to "%1\$d天",
-        "chat_reasoning_effort_on" to "开",
+        "chat_reasoning_effort_on" to "On",
         "model_catalog_loading" to "正在获取模型列表…",
         "model_catalog_failed" to "获取失败：%1\$s",
         "model_catalog_retry" to "重试",
@@ -5646,6 +5678,30 @@ object S {
         "chat_voice_no_match" to "没有听清，请再试一次",
         "chat_voice_error_generic" to "语音识别出错（代码 %1\$d）",
         "chat_voice_permission" to "需要麦克风权限才能语音输入",
+        "nav_discard_unsaved_title" to "放弃未保存的更改？",
+        "nav_discard_unsaved_message" to "离开后，未保存的修改会丢失。",
+        "nav_discard_unsaved_confirm" to "放弃",
+        "chat_drawer_model_services" to "模型服务",
+        "crs_model_saving" to "正在保存模型选择…",
+        "crs_attachment_reading" to "正在读取附件…",
+        "crs_attachment_unsupported" to "该文件暂不支持发送给创作模型，请选择非空的 UTF-8 文本或图片。",
+        "crs_attachment_vision_unavailable" to "当前连接或模型不支持图片，请启用视觉能力或移除图片后重试。",
+        "crs_attachment_pending_question" to "当前正在等待文字回答，请移除附件后回答，或停止本轮创作再发送附件。",
+        "dsh_model_reset" to "恢复默认",
+        "dsh_model_reset_confirm" to "将清空当前服务商在此应用内保存的接口地址、API 密钥、模型名，随后读取时回落到该服务商的默认值。高级兼容设置与思考档案不受影响。此操作不可撤销。",
+        "dsh_model_reset_done" to "已恢复默认模型配置",
+        "dsh_model_effort_auto_hint" to "Auto：不指定强度，由默认设置与模型决定。",
+        "dsh_model_effort_hint" to "当前档位：%1\$s",
+        "dsh_model_effort_desc_auto" to "Auto 不发送思考强度字段，按默认设置和模型自身行为处理。",
+        "dsh_model_effort_desc_off" to "关闭思考：直接给出结论，不输出思考过程。",
+        "dsh_model_effort_desc_low" to "轻量思考：快速收敛，适合简单任务。",
+        "dsh_model_effort_desc_medium" to "均衡思考：在速度与推理深度之间取中。",
+        "dsh_model_effort_desc_high" to "深度思考：更充分的推理，耗时更长。",
+        "dsh_model_effort_desc_max" to "极限思考：尽最大努力推理，耗时最长。",
+        "dsh_model_effort_desc_minimal" to "Minimal：用最少的思考预算处理简单任务。",
+        "dsh_model_effort_desc_xhigh" to "XHigh：在模型支持的范围内使用更高的思考强度。",
+        "dsh_creation_usage_requests" to "%1\$d 次请求",
+        "dsh_creation_usage_draft" to "本草稿",
         "chat_copy_message" to "复制",
         "chatvm_model_blank" to "模型名称不能为空",
         "chatvm_model_custom_unsupported" to "自定义端点的模型请在「设置 → 服务商」中修改",
@@ -5665,8 +5721,6 @@ object S {
         "model_picker_no_match" to "没有匹配的模型，可在下方手动输入",
         "model_picker_search" to "搜索模型…",
         "model_picker_title" to "选择模型",
-        "setapp_accent_ink" to "墨色蓝",
-        "setappctl_accent_ink" to "墨色蓝",
         "ui_world_count_filtered" to "%1\$d / %2\$d 本世界书",
         "usage_stats_30d" to "近 30 日",
         "usage_stats_7d" to "近 7 日",

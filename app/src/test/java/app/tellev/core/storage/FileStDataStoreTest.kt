@@ -12,6 +12,7 @@ import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.GroupChat
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.PresetCategory
+import app.tellev.core.model.PresetPrompt
 import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
 import app.tellev.core.model.WorldInfoSettings
@@ -1117,6 +1118,71 @@ class FileStDataStoreTest {
         assertEquals("true", savedRaw["unknown_vendor"]!!.jsonObject["keep"]!!.jsonPrimitive.content)
     }
 
+    @Test
+    fun `added custom prompt saves into prompts and prompt_order and reads back`() = runBlocking {
+        val raw = """
+            {
+              "prompts": [{"identifier":"main","name":"Main","role":"system","content":"main text"}],
+              "prompt_order": [{"character_id":100001,"order":[{"identifier":"main","enabled":true}]}]
+            }
+        """.trimIndent()
+        val imported = store.importPreset(raw.toByteArray(), "openai", "custom-add.json").preset
+        val custom = PresetPrompt(
+            identifier = "custom-1",
+            name = "",
+            role = "system",
+            content = "stay in character",
+            order = 1,
+        )
+
+        // savePresetPrompts 的落盘路径：prompts+prompts_unused+prompt_order 一次写回，随后同步 in_use。
+        store.savePreset(imported.copy(prompts = imported.prompts + custom))
+        store.selectPreset(PresetCategory.OpenAi, imported.id)
+
+        val named = requireNotNull(store.readPreset(PresetCategory.OpenAi, imported.id))
+        assertEquals(listOf("main", "custom-1"), named.prompts.map { it.identifier })
+        assertEquals("stay in character", named.prompts.last().content)
+        val order = named.raw["prompt_order"]!!.jsonArray.first().jsonObject["order"]!!.jsonArray
+        assertEquals(
+            listOf("main", "custom-1"),
+            order.map { it.jsonObject["identifier"]!!.jsonPrimitive.content },
+        )
+        // 生成链读的工作副本同样带上新增条目（保存即生效）。
+        val working = requireNotNull(store.readPreset(PresetCategory.OpenAi, "in_use"))
+        assertEquals(listOf("main", "custom-1"), working.prompts.map { it.identifier })
+    }
+
+    @Test
+    fun `raw key edit of extensions round trips to disk instead of being clobbered`() = runBlocking {
+        val raw = """
+            {"temperature":0.8,
+             "extensions":{"SPreset":{"MacroNest":false}},
+             "prompts":[{"identifier":"main","name":"Main","role":"system","content":"main text"}]}
+        """.trimIndent()
+        val imported = store.importPreset(raw.toByteArray(), "openai", "ext-edit.json").preset
+
+        // ChatViewModel.savePresetRawKey 的落盘路径：applyEdit 产出（raw 与 typed
+        // extensions 同步）→ savePreset 合并回 raw。旧实现里 typed extensions 是
+        // 旧值，savePreset 会用它将刚写入的改动顶回去。
+        val edited = app.tellev.feature.chat.PresetRawKeys.applyEdit(
+            imported,
+            "extensions.SPreset.MacroNest",
+            JsonPrimitive(true),
+        )
+        store.savePreset(edited)
+
+        val back = requireNotNull(store.readPreset(PresetCategory.OpenAi, "ext-edit"))
+        assertEquals(
+            "true",
+            back.raw["extensions"]!!.jsonObject["SPreset"]!!.jsonObject["MacroNest"]!!.jsonPrimitive.content,
+        )
+        // 兄弟键原样保留。
+        assertEquals(
+            "main text",
+            back.raw["prompts"]!!.jsonArray.first().jsonObject["content"]!!.jsonPrimitive.content,
+        )
+    }
+
 
     @Test
     fun `savePreset routes to correct directory based on providerType`() = runBlocking {
@@ -1521,6 +1587,12 @@ class FileStDataStoreTest {
         store.importCharacter(card, embedded, "asset.png")
 
         assertTrue(layout.worlds.resolve("asset_card_character_book.json").exists())
+        // The book is materialized so it stays editable in the world screen, but an
+        // import must not bind it: it lands in the disabled set.
+        assertEquals(
+            setOf("asset_card_character_book"),
+            runBlocking { store.readDisabledWorldIds() },
+        )
         assertTrue(layout.extensions.resolve("character-assets/asset_card/extensions.json").exists())
         assertTrue(layout.extensions.resolve("character-assets/asset_card/regex_scripts.json").exists())
         assertTrue(layout.extensions.resolve("character-assets/asset_card/TavernHelper_scripts.json").exists())
@@ -1529,5 +1601,112 @@ class FileStDataStoreTest {
         val reloaded = store.readCharacter("asset_card")
         val extensions = reloaded.raw["data"]!!.jsonObject["extensions"]!!.jsonObject
         assertEquals("Render", extensions["regex_scripts"]!!.jsonArray.first().jsonObject["scriptName"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `importCharacter leaves embedded world book disabled until the user enables it`() = runBlocking {
+        val cardJson = """
+        {
+            "spec": "chara_card_v3",
+            "spec_version": "3.0",
+            "data": {
+                "name": "Lore Card",
+                "description": "Has an embedded book",
+                "first_mes": "hi",
+                "character_book": {
+                    "name": "Lore Book",
+                    "entries": [
+                        { "keys": ["lore"], "content": "Lore text", "enabled": true }
+                    ]
+                }
+            }
+        }
+        """.trimIndent()
+        val png = PngCardParser.embedCardJson(PngCardParser.createMinimalPng(), cardJson)
+        val card = CharacterImporter().importFromBytes(png, "lore.png")
+
+        store.importCharacter(card, png, "lore.png")
+        val bookId = "lore_card_character_book"
+        assertTrue(layout.worlds.resolve("$bookId.json").exists())
+        assertEquals(setOf(bookId), store.readDisabledWorldIds())
+
+        // Opting in is a plain toggle: the id leaves the disabled set and stays out.
+        store.saveDisabledWorldIds(store.readDisabledWorldIds() - bookId)
+        assertEquals(emptySet<String>(), store.readDisabledWorldIds())
+
+        // A re-import is a fresh import, so the book goes back to disabled.
+        store.importCharacter(card, png, "lore.png")
+        assertEquals(setOf(bookId), store.readDisabledWorldIds())
+    }
+
+    @Test
+    fun `saveCharacter keeps materialized world book active`() = runBlocking {
+        // Cards written through the save path (not import) keep the legacy
+        // behaviour: their embedded book is active and never disabled.
+        val book = WorldBook(
+            id = "saved_book",
+            name = "Saved",
+            entries = listOf(WorldBookEntry(id = "e1", keys = listOf("k"), content = "c", enabled = true)),
+        )
+        store.saveWorldBook(book)
+
+        store.saveCharacter(
+            CharacterCard(
+                id = "saved_card",
+                name = "Saved Card",
+                description = "d",
+                firstMessage = "hi",
+                characterBook = book.copy(id = "saved_card_character_book", name = "Saved Card 角色书"),
+            ),
+        )
+
+        assertTrue(layout.worlds.resolve("saved_card_character_book.json").exists())
+        assertEquals(emptySet<String>(), store.readDisabledWorldIds())
+    }
+
+    @Test
+    fun `imported card without character book does not disable anything`() = runBlocking {
+        val cardJson = """
+        {
+            "spec": "chara_card_v3",
+            "spec_version": "3.0",
+            "data": { "name": "Plain", "description": "d", "first_mes": "hi" }
+        }
+        """.trimIndent()
+        val png = PngCardParser.embedCardJson(PngCardParser.createMinimalPng(), cardJson)
+        val card = CharacterImporter().importFromBytes(png, "plain.png")
+
+        store.importCharacter(card, png, "plain.png")
+
+        assertEquals(emptySet<String>(), store.readDisabledWorldIds())
+        assertTrue(layout.worlds.resolve("plain_card_character_book.json").exists().not())
+    }
+
+    @Test
+    fun `importCharacter can opt into binding the embedded world book`() = runBlocking {
+        // In-app creation generates the card and its lorebook together, so it asks
+        // for the legacy bind-everything behaviour instead of the import default.
+        val cardJson = """
+        {
+            "spec": "chara_card_v3",
+            "spec_version": "3.0",
+            "data": {
+                "name": "Made Here",
+                "description": "d",
+                "first_mes": "hi",
+                "character_book": {
+                    "name": "Made Book",
+                    "entries": [{ "keys": ["k"], "content": "c", "enabled": true }]
+                }
+            }
+        }
+        """.trimIndent()
+        val png = PngCardParser.embedCardJson(PngCardParser.createMinimalPng(), cardJson)
+        val card = CharacterImporter().importFromBytes(png, "made.png")
+
+        store.importCharacter(card, png, "made.png", bindEmbeddedWorldBook = true)
+
+        assertTrue(layout.worlds.resolve("${card.id}_character_book.json").exists())
+        assertEquals(emptySet<String>(), store.readDisabledWorldIds())
     }
 }

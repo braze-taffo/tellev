@@ -3,6 +3,7 @@ package app.tellev.core.security
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -35,12 +36,22 @@ class AndroidKeystoreSecretStore(
     override suspend fun readSecret(id: String): String? = withContext(Dispatchers.IO) {
         val payload = prefs.getString(id, null) ?: return@withContext null
         val parts = payload.split(':', limit = 2)
-        if (parts.size != 2) return@withContext null
-        val iv = decoder.decode(parts[0])
-        val cipherText = decoder.decode(parts[1])
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(TAG_BITS, iv))
-        String(cipher.doFinal(cipherText), Charsets.UTF_8)
+        if (parts.size != 2) {
+            Log.w(TAG, "Ignoring malformed secret entry for $id")
+            return@withContext null
+        }
+        // 「值或 null」契约：Base64 损坏（IllegalArgumentException）、主密钥丢失或被
+        // 重置（InvalidKeyException 等 GeneralSecurityException）、密文被改动
+        // （AEADBadTagException）都必须读成不存在。调用方普遍先读后写，这里抛异常
+        // 会让单个损坏条目变成 UI 内既读不出也覆盖不掉的失锁状态。
+        runCatching {
+            val iv = decoder.decode(parts[0])
+            val cipherText = decoder.decode(parts[1])
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(TAG_BITS, iv))
+            String(cipher.doFinal(cipherText), Charsets.UTF_8)
+        }.onFailure { Log.w(TAG, "Ignoring undecryptable secret entry for $id", it) }
+            .getOrNull()
     }
 
     override suspend fun deleteSecret(id: String): Unit = withContext(Dispatchers.IO) {
@@ -71,6 +82,7 @@ class AndroidKeystoreSecretStore(
     }
 
     private companion object {
+        const val TAG = "tellev-secret-store"
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val MASTER_KEY_ALIAS = "tellev-master-key"
         const val TRANSFORMATION = "AES/GCM/NoPadding"

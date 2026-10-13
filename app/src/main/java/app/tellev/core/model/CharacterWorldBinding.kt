@@ -58,6 +58,33 @@ object CharacterWorldBinding {
     }
 
     /**
+     * 追加绑定的世界书（primary 之后的那些），按写入顺序返回。
+     * 只读 `tellev_additional_worldbooks`，不含 primary——调用方若要完整列表
+     * 用 [linkedWorldBookNames]。
+     */
+    fun additionalWorldBookNames(card: CharacterCard): List<String> {
+        val data = (card.raw["data"] as? JsonObject) ?: card.raw
+        val raw = (data["extensions"] as? JsonObject)?.get("tellev_additional_worldbooks") as? JsonArray
+        val primary = linkedWorldBookName(card)
+        return raw?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }
+            .orEmpty()
+            .distinct()
+            .filterNot { it == primary }
+    }
+
+    /**
+     * 一次性写入完整绑定列表：`names.first()` 落 `data.extensions.world`（主绑定，
+     * 保持 ST 兼容），其余落 `tellev_additional_worldbooks`。空列表清除全部绑定。
+     *
+     * 与逐字段调用 [withLinkedWorldBookName] 相比，这个入口不会在保存时丢掉追加项
+     * ——角色卡编辑器此前只写主绑定，追加列表被静默覆盖，是绑定丢失的根因。
+     */
+    fun withWorldBookList(card: CharacterCard, names: List<String>): CharacterCard {
+        val clean = names.mapNotNull { it.trim().takeIf(String::isNotEmpty) }.distinct()
+        return withWorldBookNames(card, clean.firstOrNull(), clean.drop(1))
+    }
+
+    /**
      * Returns a copy of [card] whose raw JSON has `data.extensions.world` set to
      * [name] (ST's per-character lorebook binding). A blank/null [name] clears
      * the binding. Legacy bare `data.world` and top-level `world` fields are

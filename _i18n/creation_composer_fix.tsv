@@ -1,0 +1,20 @@
+crs_model_saving	正在保存模型选择…
+crs_attachment_reading	正在读取附件…
+crs_attachment_unsupported	该文件暂不支持发送给创作模型，请选择非空的 UTF-8 文本或图片。
+crs_attachment_vision_unavailable	当前连接或模型不支持图片，请启用视觉能力或移除图片后重试。
+crs_attachment_pending_question	当前正在等待文字回答，请移除附件后回答，或停止本轮创作再发送附件。
+dsh_model_reset	恢复默认
+dsh_model_reset_confirm	将清空当前服务商在此应用内保存的接口地址、API 密钥、模型名，随后读取时回落到该服务商的默认值。高级兼容设置与思考档案不受影响。此操作不可撤销。
+dsh_model_reset_done	已恢复默认模型配置
+dsh_model_effort_auto_hint	Auto：不指定强度，由默认设置与模型决定。
+dsh_model_effort_hint	当前档位：%1$s
+dsh_model_effort_desc_auto	Auto 不发送思考强度字段，按默认设置和模型自身行为处理。
+dsh_model_effort_desc_off	关闭思考：直接给出结论，不输出思考过程。
+dsh_model_effort_desc_low	轻量思考：快速收敛，适合简单任务。
+dsh_model_effort_desc_medium	均衡思考：在速度与推理深度之间取中。
+dsh_model_effort_desc_high	深度思考：更充分的推理，耗时更长。
+dsh_model_effort_desc_max	极限思考：尽最大努力推理，耗时最长。
+dsh_model_effort_desc_minimal	Minimal：用最少的思考预算处理简单任务。
+dsh_model_effort_desc_xhigh	XHigh：在模型支持的范围内使用更高的思考强度。
+dsh_creation_usage_requests	%1$d 次请求
+dsh_creation_usage_draft	本草稿

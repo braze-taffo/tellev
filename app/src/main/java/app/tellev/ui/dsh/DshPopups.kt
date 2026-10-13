@@ -40,19 +40,26 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -77,6 +84,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -84,6 +93,12 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import app.tellev.R
 import app.tellev.core.model.ReasoningEffort
+import app.tellev.core.provider.ReasoningSupport
+import app.tellev.core.storage.PRESET_CUSTOM_PROMPT_LIMIT
+import app.tellev.core.storage.canAddCustomPrompt
+import app.tellev.core.storage.nextCustomPromptIdentifier
+import app.tellev.core.storage.presetPromptEditorStack
+import app.tellev.core.storage.withoutUntouchedCustomPrompts
 import app.tellev.feature.chat.ModelOption
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -119,10 +134,10 @@ internal fun DshModelEffortMenu(
     onAssignGroup: (modelId: String, groupId: String, member: Boolean) -> Unit,
     onCreateGroup: (label: String) -> Unit,
     onDismiss: () -> Unit,
+    modelsOnly: Boolean = false,
+    selectionEnabled: Boolean = true,
 ) {
-    var pane by remember { mutableStateOf("root") }
-    var query by remember { mutableStateOf("") }
-    var assignFor by remember { mutableStateOf<String?>(null) }
+    var pane by remember { mutableStateOf(if (modelsOnly) "models" else "root") }
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
     val cardWidth = minOf(280.dp, configuration.screenWidthDp.dp - 32.dp).coerceAtLeast(220.dp)
@@ -203,211 +218,339 @@ internal fun DshModelEffortMenu(
                     }
                 }
             } else if (pane == "effort") {
-                Column {
-                    DshDrillHeader(onBack = { pane = "root" }, title = stringResource(R.string.dsh_model_levels))
-                    val autoLabel = stringResource(R.string.chat_reasoning_effort_auto)
-                    val effortLabels = effortLevels.filter { it != ReasoningEffort.Auto }.associateWith { dshEffortLabel(it) }
-                    LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp)) {
-                        val rows = buildList {
-                            add(null to autoLabel)
-                            effortLabels.forEach { (lvl, lbl) -> add(lvl to lbl) }
+                DshEffortPane(
+                    currentEffort = currentEffort,
+                    effortLevels = effortLevels,
+                    selectionEnabled = selectionEnabled,
+                    onBack = { pane = "root" },
+                    onSelectEffort = onSelectEffort,
+                )
+            } else {
+                DshModelListPane(
+                    options = options,
+                    groups = groups,
+                    catalog = catalog,
+                    currentModel = currentModel,
+                    allowGroupAssign = !modelsOnly,
+                    selectionEnabled = selectionEnabled,
+                    onBack = { if (modelsOnly) onDismiss() else pane = "root" },
+                    onSelectModel = onSelectModel,
+                    onRefreshCatalog = onRefreshCatalog,
+                    onAssignGroup = onAssignGroup,
+                    onCreateGroup = onCreateGroup,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 档位钻入面板（bre ComposerSlider 复刻）：可拖滑杆 + 档位刻度，拖动过程中弹层不关，
+ * 松手才提交（与上游「滑杆提交后弹层保持打开」一致）。Auto 是最左一档。
+ * 由 DshModelEffortMenu 与模型服务统一弹层共用。
+ */
+@Composable
+internal fun DshEffortPane(
+    currentEffort: ReasoningEffort,
+    effortLevels: List<ReasoningEffort>,
+    selectionEnabled: Boolean,
+    onBack: () -> Unit,
+    onSelectEffort: (ReasoningEffort) -> Unit,
+) {
+    Column {
+        DshDrillHeader(onBack = onBack, title = stringResource(R.string.dsh_model_levels))
+        val steps = remember(effortLevels) {
+            listOf(ReasoningEffort.Auto) + effortLevels.filter { it != ReasoningEffort.Auto }.distinct()
+        }
+        val currentIndex = ReasoningSupport.uiIndexOf(steps, currentEffort).coerceIn(0, steps.lastIndex)
+        var dragIndex by remember(steps, currentEffort) { mutableIntStateOf(-1) }
+        val shownIndex = if (dragIndex >= 0) dragIndex else currentIndex
+        val shownEffort = steps[shownIndex.coerceIn(0, steps.lastIndex)]
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Text(
+                text = dshEffortLabel(shownEffort),
+                fontSize = 15.sp,
+                lineHeight = 20.sp,
+                fontWeight = FontWeight.Medium,
+                color = Dsh.textPrimary,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = if (shownEffort == ReasoningEffort.Auto) {
+                    stringResource(R.string.dsh_model_effort_auto_hint)
+                } else {
+                    stringResource(R.string.dsh_model_effort_hint, dshEffortLabel(shownEffort))
+                },
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+                color = Dsh.textTertiary,
+            )
+            Spacer(Modifier.height(10.dp))
+            steps.chunked(4).forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    row.forEach { level ->
+                        Box(
+                            modifier = Modifier.weight(1f).heightIn(min = 40.dp)
+                                .clip(RoundedCornerShape(Dsh.RADIUS_MD.dp))
+                                .background(if (level == shownEffort) Dsh.blue.copy(alpha = 0.12f) else Color.Transparent)
+                                .clickable(enabled = selectionEnabled) {
+                                    onSelectEffort(level)
+                                    dragIndex = -1
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = dshEffortShortLabel(level),
+                                fontSize = 10.sp,
+                                lineHeight = 14.sp,
+                                maxLines = 1,
+                                color = if (level == shownEffort) Dsh.blue else Dsh.textTertiary,
+                            )
                         }
-                        items(rows, key = { it.second }) { (level, label) ->
-                            val selected = level == currentEffort || (level == null && currentEffort == ReasoningEffort.Auto)
+                    }
+                    repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+            DshEffortSlider(
+                index = currentIndex,
+                levelCount = steps.size,
+                enabled = selectionEnabled,
+                valueLabel = dshEffortLabel(shownEffort),
+                onPreview = { next -> dragIndex = next },
+                onCommit = { next ->
+                    onSelectEffort(steps[next])
+                    dragIndex = -1
+                },
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = stringResource(
+                    when (shownEffort) {
+                        ReasoningEffort.Auto -> R.string.dsh_model_effort_desc_auto
+                        ReasoningEffort.Off -> R.string.dsh_model_effort_desc_off
+                        ReasoningEffort.Minimal -> R.string.dsh_model_effort_desc_minimal
+                        ReasoningEffort.Low -> R.string.dsh_model_effort_desc_low
+                        ReasoningEffort.Medium -> R.string.dsh_model_effort_desc_medium
+                        ReasoningEffort.High -> R.string.dsh_model_effort_desc_high
+                        ReasoningEffort.XHigh -> R.string.dsh_model_effort_desc_xhigh
+                        ReasoningEffort.Max -> R.string.dsh_model_effort_desc_max
+                    },
+                ),
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                color = Dsh.textTertiary,
+                modifier = Modifier.heightIn(min = 48.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 模型列表钻入面板：搜索 + 自定义供应商分组 → 提供者目录（真实 listModels）→
+ * 未入目录的当前/最近兜底；长按模型行指派供应商分组。
+ * 由 DshModelEffortMenu 与模型服务统一弹层共用。
+ */
+@Composable
+internal fun DshModelListPane(
+    options: List<ModelOption>,
+    groups: List<app.tellev.feature.chat.DshModelGroup>,
+    catalog: app.tellev.feature.chat.ModelCatalogState,
+    currentModel: String?,
+    allowGroupAssign: Boolean,
+    onBack: () -> Unit,
+    onSelectModel: (String) -> Unit,
+    onRefreshCatalog: () -> Unit,
+    onAssignGroup: (modelId: String, groupId: String, member: Boolean) -> Unit,
+    onCreateGroup: (label: String) -> Unit,
+    selectionEnabled: Boolean = true,
+) {
+    var query by remember { mutableStateOf("") }
+    var assignFor by remember { mutableStateOf<String?>(null) }
+    Column {
+        DshDrillHeader(onBack = onBack, title = stringResource(R.string.model_picker_title))
+        if (!selectionEnabled) {
+            Text(
+                stringResource(R.string.crs_model_saving),
+                color = Dsh.textTertiary,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Dsh.textTertiary, modifier = Modifier.size(14.dp)) },
+                placeholder = { Text(stringResource(R.string.model_picker_search), fontSize = 14.sp, color = Dsh.textTertiary) },
+                shape = RoundedCornerShape(Dsh.RADIUS_MD.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Dsh.bgLayer1,
+                    unfocusedContainerColor = Dsh.bgLayer1,
+                    unfocusedBorderColor = Dsh.borderL2,
+                    focusedBorderColor = Dsh.borderL3,
+                ),
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = Dsh.textPrimary),
+                modifier = Modifier.weight(1f),
+            )
+        }
+        // 搜索用官方 rankByName：查询须为模型名的有序子序列，前缀命中在前、
+        // 然后对齐分数、最后源顺序（比 contains 子串更耐错，且同源实现）。
+        val catalogModels = remember(catalog) { catalog.groups.flatMap { it.models }.toSet() }
+        val inGroupIds = groups.flatMap { it.models }.toSet()
+        val listed = remember(groups, options, catalogModels) {
+            options.filter { it.id !in inGroupIds && it.id !in catalogModels }
+        }
+        val visibleGroups = remember(groups, query) {
+            if (query.isBlank()) groups
+            else groups.mapNotNull { group ->
+                val hit = app.tellev.feature.chat.ModelSearchRanking.rankByName(
+                    group.models.map { app.tellev.feature.chat.SimpleCandidate(it) },
+                    query.trim(),
+                ).map { it.name }
+                if (hit.isEmpty()) null else group.copy(models = hit)
+            }
+        }
+        val visibleCatalog = remember(catalog, query) {
+            if (query.isBlank()) catalog.groups
+            else catalog.groups.mapNotNull { group ->
+                val hit = app.tellev.feature.chat.ModelSearchRanking.rankByName(
+                    group.models.map { app.tellev.feature.chat.SimpleCandidate(it) },
+                    query.trim(),
+                ).map { it.name }
+                if (hit.isEmpty() && group.error == null) null else group.copy(models = hit)
+            }
+        }
+        val visibleListed = remember(listed, query) {
+            if (query.isBlank()) listed
+            else {
+                val byId = listed.associateBy { it.id }
+                app.tellev.feature.chat.ModelSearchRanking.rankByName(
+                    listed.map { app.tellev.feature.chat.SimpleCandidate(it.id) },
+                    query.trim(),
+                ).mapNotNull { byId[it.name] }
+            }
+        }
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
+        ) {
+            if (catalog.isLoading) {
+                item(key = "catalog-loading") {
+                    Text(
+                        stringResource(R.string.model_catalog_loading),
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        color = Dsh.textTertiary,
+                        modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 2.dp),
+                    )
+                }
+            }
+            visibleGroups.forEach { group ->
+                item(key = "h-${group.id}") {
+                    Text(
+                        group.label,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        color = Dsh.textTertiary,
+                        modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 2.dp),
+                    )
+                }
+                items(group.models, key = { "g-${group.id}/${it}" }) { modelId ->
+                    DshModelRow(
+                        modelId = modelId,
+                        isCurrent = modelId == currentModel,
+                        onSelect = { onSelectModel(modelId) },
+                        onLongPress = { if (allowGroupAssign) assignFor = modelId },
+                        enabled = selectionEnabled,
+                    )
+                }
+            }
+            visibleCatalog.forEach { group ->
+                item(key = "h-cat-${group.id}") {
+                    Column {
+                        Text(
+                            group.label,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                            color = Dsh.textTertiary,
+                            modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 2.dp),
+                        )
+                        if (group.isFailed) {
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(Dsh.RADIUS_MD.dp))
-                                    .background(if (selected) Dsh.hover else Color.Transparent)
-                                    .clickable {
-                                        onSelectEffort(level ?: ReasoningEffort.Auto)
-                                        onDismiss()
-                                    }
-                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                                modifier = Modifier.padding(start = 16.dp, bottom = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    label,
-                                    fontSize = 15.sp,
-                                    lineHeight = 20.sp,
-                                    color = Dsh.textPrimary,
-                                    modifier = Modifier.weight(1f),
+                                    stringResource(R.string.model_catalog_failed, group.error.orEmpty()),
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp,
+                                    color = Dsh.errorPrimary,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
                                 )
-                                if (selected) {
-                                    Icon(
-                                        Icons.Default.Check,
-                                        contentDescription = null,
-                                        tint = Dsh.textPrimary,
-                                        modifier = Modifier.size(17.dp),
-                                    )
-                                }
+                                Text(
+                                    stringResource(R.string.model_catalog_retry),
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp,
+                                    color = Dsh.blue,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(Dsh.RADIUS_SM.dp))
+                                        .clickable(onClick = onRefreshCatalog)
+                                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                                )
                             }
                         }
                     }
                 }
-            } else {
-                Column {
-                    DshDrillHeader(onBack = { pane = "root" }, title = stringResource(R.string.model_picker_search))
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            singleLine = true,
-                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Dsh.textTertiary, modifier = Modifier.size(14.dp)) },
-                            placeholder = { Text(stringResource(R.string.model_picker_search), fontSize = 14.sp, color = Dsh.textTertiary) },
-                            shape = RoundedCornerShape(Dsh.RADIUS_MD.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = Dsh.bgLayer1,
-                                unfocusedContainerColor = Dsh.bgLayer1,
-                                unfocusedBorderColor = Dsh.borderL2,
-                                focusedBorderColor = Dsh.borderL3,
-                            ),
-                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = Dsh.textPrimary),
-                            modifier = Modifier.weight(1f),
+                if (!group.isFailed) {
+                    items(group.models, key = { "c-${group.id}/${it}" }) { modelId ->
+                        DshModelRow(
+                            modelId = modelId,
+                            isCurrent = modelId == currentModel,
+                            onSelect = { onSelectModel(modelId) },
+                            onLongPress = { if (allowGroupAssign) assignFor = modelId },
+                            enabled = selectionEnabled,
                         )
                     }
-                    // 分区：自定义供应商分组 → 提供者目录（真实 listModels）→
-                    // 未入目录的当前/最近兜底。目录分组失败时在组头下标注并可重试。
-                    val catalogModels = remember(catalog) { catalog.groups.flatMap { it.models }.toSet() }
-                    val inGroupIds = groups.flatMap { it.models }.toSet()
-                    val listed = remember(groups, options, catalogModels) {
-                        options.filter { it.id !in inGroupIds && it.id !in catalogModels }
-                    }
-                    val visibleGroups = remember(groups, query) {
-                        if (query.isBlank()) groups
-                        else groups.mapNotNull { group ->
-                            val hit = group.models.filter { it.contains(query.trim(), ignoreCase = true) }
-                            if (hit.isEmpty()) null else group.copy(models = hit)
-                        }
-                    }
-                    val visibleCatalog = remember(catalog, query) {
-                        if (query.isBlank()) catalog.groups
-                        else catalog.groups.mapNotNull { group ->
-                            val hit = group.models.filter { it.contains(query.trim(), ignoreCase = true) }
-                            if (hit.isEmpty() && group.error == null) null else group.copy(models = hit)
-                        }
-                    }
-                    val visibleListed = remember(listed, query) {
-                        if (query.isBlank()) listed
-                        else listed.filter { it.id.contains(query.trim(), ignoreCase = true) }
-                    }
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
-                    ) {
-                        if (catalog.isLoading) {
-                            item(key = "catalog-loading") {
-                                Text(
-                                    stringResource(R.string.model_catalog_loading),
-                                    fontSize = 12.sp,
-                                    lineHeight = 16.sp,
-                                    color = Dsh.textTertiary,
-                                    modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 2.dp),
-                                )
-                            }
-                        }
-                        visibleGroups.forEach { group ->
-                            item(key = "h-${group.id}") {
-                                Text(
-                                    group.label,
-                                    fontSize = 12.sp,
-                                    lineHeight = 16.sp,
-                                    color = Dsh.textTertiary,
-                                    modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 2.dp),
-                                )
-                            }
-                            items(group.models, key = { "g-${group.id}/${it}" }) { modelId ->
-                                DshModelRow(
-                                    modelId = modelId,
-                                    isCurrent = modelId == currentModel,
-                                    onSelect = { onSelectModel(modelId) },
-                                    onLongPress = { assignFor = modelId },
-                                )
-                            }
-                        }
-                        visibleCatalog.forEach { group ->
-                            item(key = "h-cat-${group.id}") {
-                                Column {
-                                    Text(
-                                        group.label,
-                                        fontSize = 12.sp,
-                                        lineHeight = 16.sp,
-                                        color = Dsh.textTertiary,
-                                        modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 2.dp),
-                                    )
-                                    if (group.isFailed) {
-                                        Row(
-                                            modifier = Modifier.padding(start = 16.dp, bottom = 2.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                        ) {
-                                            Text(
-                                                stringResource(R.string.model_catalog_failed, group.error.orEmpty()),
-                                                fontSize = 12.sp,
-                                                lineHeight = 16.sp,
-                                                color = Dsh.errorPrimary,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis,
-                                                modifier = Modifier.weight(1f, fill = false),
-                                            )
-                                            Text(
-                                                stringResource(R.string.model_catalog_retry),
-                                                fontSize = 12.sp,
-                                                lineHeight = 16.sp,
-                                                color = Dsh.blue,
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(Dsh.RADIUS_SM.dp))
-                                                    .clickable(onClick = onRefreshCatalog)
-                                                    .padding(horizontal = 8.dp, vertical = 2.dp),
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            if (!group.isFailed) {
-                                items(group.models, key = { "c-${group.id}/${it}" }) { modelId ->
-                                    DshModelRow(
-                                        modelId = modelId,
-                                        isCurrent = modelId == currentModel,
-                                        onSelect = { onSelectModel(modelId) },
-                                        onLongPress = { assignFor = modelId },
-                                    )
-                                }
-                            }
-                        }
-                        if (visibleListed.isNotEmpty()) {
-                            item(key = "h-recent") {
-                                Text(
-                                    stringResource(R.string.model_group_recent),
-                                    fontSize = 12.sp,
-                                    lineHeight = 16.sp,
-                                    color = Dsh.textTertiary,
-                                    modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 2.dp),
-                                )
-                            }
-                            items(visibleListed, key = { "r-${it.id}" }) { option ->
-                                DshModelRow(
-                                    modelId = option.id,
-                                    isCurrent = option.isCurrent,
-                                    onSelect = { onSelectModel(option.id) },
-                                    onLongPress = { assignFor = option.id },
-                                )
-                            }
-                        }
-                        if (!catalog.isLoading && visibleGroups.isEmpty() && visibleListed.isEmpty() &&
-                            visibleCatalog.all { it.isFailed || it.models.isEmpty() }
-                        ) {
-                            item(key = "empty") {
-                                Text(
-                                    stringResource(R.string.model_catalog_empty),
-                                    fontSize = 13.sp,
-                                    color = Dsh.textTertiary,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                                )
-                            }
-                        }
-                    }
+                }
+            }
+            if (visibleListed.isNotEmpty()) {
+                item(key = "h-recent") {
+                    Text(
+                        stringResource(R.string.model_group_recent),
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        color = Dsh.textTertiary,
+                        modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 2.dp),
+                    )
+                }
+                items(visibleListed, key = { "r-${it.id}" }) { option ->
+                    DshModelRow(
+                        modelId = option.id,
+                        isCurrent = option.isCurrent,
+                        onSelect = { onSelectModel(option.id) },
+                        onLongPress = { if (allowGroupAssign) assignFor = option.id },
+                        enabled = selectionEnabled,
+                    )
+                }
+            }
+            if (!catalog.isLoading && visibleGroups.isEmpty() && visibleListed.isEmpty() &&
+                visibleCatalog.all { it.isFailed || it.models.isEmpty() }
+            ) {
+                item(key = "empty") {
+                    Text(
+                        stringResource(R.string.model_catalog_empty),
+                        fontSize = 13.sp,
+                        color = Dsh.textTertiary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    )
                 }
             }
         }
@@ -425,7 +568,7 @@ internal fun DshModelEffortMenu(
 
 /** 钻入面板头部：‹ 返回 + 标题。 */
 @Composable
-private fun DshDrillHeader(onBack: () -> Unit, title: String) {
+internal fun DshDrillHeader(onBack: () -> Unit, title: String) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -458,13 +601,14 @@ private fun DshModelRow(
     isCurrent: Boolean,
     onSelect: () -> Unit,
     onLongPress: () -> Unit,
+    enabled: Boolean = true,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(Dsh.RADIUS_MD.dp))
             .background(if (isCurrent) Dsh.hover else Color.Transparent)
-            .combinedClickable(onClick = onSelect, onLongClick = onLongPress)
+            .combinedClickable(enabled = enabled, onClick = onSelect, onLongClick = onLongPress)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -583,6 +727,21 @@ internal fun DshModelGroupDialog(
 /** 滑杆上的档位短标（上游 off/minimal/…/max 风格，用 tellev 档位资源）。 */
 @Composable
 internal fun dshEffortLabel(effort: ReasoningEffort): String = stringResource(
+    when (effort) {
+        ReasoningEffort.Auto -> R.string.chat_reasoning_effort_auto
+        ReasoningEffort.Off -> R.string.chat_reasoning_effort_off
+        ReasoningEffort.Minimal -> R.string.chat_reasoning_effort_minimal
+        ReasoningEffort.Low -> R.string.chat_reasoning_effort_low
+        ReasoningEffort.Medium -> R.string.chat_reasoning_effort_medium
+        ReasoningEffort.High -> R.string.chat_reasoning_effort_high
+        ReasoningEffort.XHigh -> R.string.chat_reasoning_effort_xhigh
+        ReasoningEffort.Max -> R.string.chat_reasoning_effort_max
+    },
+)
+
+/** 滑杆刻度用的短标签：同一批档位的紧凑写法，避免刻度行溢出。 */
+@Composable
+internal fun dshEffortShortLabel(effort: ReasoningEffort): String = stringResource(
     when (effort) {
         ReasoningEffort.Auto -> R.string.chat_reasoning_effort_auto
         ReasoningEffort.Off -> R.string.chat_reasoning_effort_off
@@ -1292,7 +1451,7 @@ private fun DshWorldEntryEditor(
 }
 
 @Composable
-private fun DshSheetField(
+internal fun DshSheetField(
     value: String,
     onChange: (String) -> Unit,
     label: String,
@@ -1317,17 +1476,67 @@ private fun DshSheetField(
     )
 }
 
+/**
+ * 密钥输入行（dsh 模型配置弹层）：默认遮罩，trailing 键切换明文可见。
+ * 与 SettingsProviderSection 的 apiKey 行同构——旁观/投屏/录屏场景下密钥
+ * 不随画面外流。通用 [DshSheetField] 仍服务 base_url/model/世界书/提示词等
+ * 非密钥字段，不走遮罩。
+ */
+@Composable
+internal fun DshSecretField(
+    value: String,
+    onChange: (String) -> Unit,
+    label: String,
+) {
+    var visible by remember { mutableStateOf(false) }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        label = { Text(label, fontSize = 11.sp) },
+        singleLine = true,
+        visualTransformation = if (visible) VisualTransformation.None
+        else PasswordVisualTransformation(),
+        trailingIcon = {
+            IconButton(onClick = { visible = !visible }) {
+                Icon(
+                    if (visible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                    contentDescription = if (visible) {
+                        stringResource(R.string.setprov_cd_hide_api_key)
+                    } else {
+                        stringResource(R.string.setprov_cd_show_api_key)
+                    },
+                )
+            }
+        },
+        shape = RoundedCornerShape(Dsh.RADIUS_SM.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = Color.Transparent,
+            unfocusedContainerColor = Color.Transparent,
+            unfocusedBorderColor = Dsh.borderL2,
+            focusedBorderColor = Dsh.borderL3,
+        ),
+        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, color = Dsh.textPrimary),
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
 @Composable
 private fun DshNumberField(
     value: String,
     onChange: (String) -> Unit,
     label: String,
     modifier: Modifier = Modifier,
+    placeholder: String? = null,
 ) {
+    val hint = placeholder
+    val placeholderText: (@Composable () -> Unit)? = if (hint == null) null else {
+        { Text(hint, fontSize = 10.sp, color = Dsh.textTertiary) }
+    }
     OutlinedTextField(
         value = value,
         onValueChange = { text -> onChange(text.filter { it.isDigit() }.take(6)) },
         label = { Text(label, fontSize = 10.sp) },
+        placeholder = placeholderText,
         singleLine = true,
         shape = RoundedCornerShape(Dsh.RADIUS_SM.dp),
         colors = OutlinedTextFieldDefaults.colors(
@@ -1500,42 +1709,43 @@ internal fun DshPresetEditorSheet(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                val keepHint = stringResource(R.string.dsh_preset_keep_placeholder)
                 // 采样族
-                DshFieldLabel(stringResource(R.string.preset_editor_temperature))
+                DshFieldLabel(stringResource(R.string.dsh_preset_group_sampling))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    DshDecimalField(temperature, { temperature = it }, stringResource(R.string.preset_editor_temperature), Modifier.weight(1f))
+                    DshDecimalField(temperature, { temperature = it }, stringResource(R.string.preset_editor_temperature), Modifier.weight(1f), keepHint)
                     Spacer(Modifier.width(8.dp))
-                    DshDecimalField(topP, { topP = it }, stringResource(R.string.preset_editor_top_p), Modifier.weight(1f))
+                    DshDecimalField(topP, { topP = it }, stringResource(R.string.preset_editor_top_p), Modifier.weight(1f), keepHint)
                     Spacer(Modifier.width(8.dp))
-                    DshNumberField(topK, { topK = it }, stringResource(R.string.preset_editor_top_k), Modifier.weight(1f))
+                    DshNumberField(topK, { topK = it }, stringResource(R.string.preset_editor_top_k), Modifier.weight(1f), keepHint)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    DshDecimalField(topA, { topA = it }, "Top A", Modifier.weight(1f))
+                    DshDecimalField(topA, { topA = it }, "Top A", Modifier.weight(1f), keepHint)
                     Spacer(Modifier.width(8.dp))
-                    DshDecimalField(minP, { minP = it }, "Min P", Modifier.weight(1f))
+                    DshDecimalField(minP, { minP = it }, "Min P", Modifier.weight(1f), keepHint)
                 }
                 // 惩罚族
-                DshFieldLabel(stringResource(R.string.preset_editor_rep_pen))
+                DshFieldLabel(stringResource(R.string.dsh_preset_group_penalty))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    DshDecimalField(repPen, { repPen = it }, stringResource(R.string.preset_editor_rep_pen), Modifier.weight(1f))
+                    DshDecimalField(repPen, { repPen = it }, stringResource(R.string.preset_editor_rep_pen), Modifier.weight(1f), keepHint)
                     Spacer(Modifier.width(8.dp))
-                    DshNumberField(repPenRange, { repPenRange = it }, "Range", Modifier.weight(1f))
+                    DshNumberField(repPenRange, { repPenRange = it }, "Range", Modifier.weight(1f), keepHint)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    DshDecimalField(presencePen, { presencePen = it }, stringResource(R.string.preset_editor_presence_penalty), Modifier.weight(1f))
+                    DshDecimalField(presencePen, { presencePen = it }, stringResource(R.string.preset_editor_presence_penalty), Modifier.weight(1f), keepHint)
                     Spacer(Modifier.width(8.dp))
-                    DshDecimalField(freqPen, { freqPen = it }, stringResource(R.string.preset_editor_frequency_penalty), Modifier.weight(1f))
+                    DshDecimalField(freqPen, { freqPen = it }, stringResource(R.string.preset_editor_frequency_penalty), Modifier.weight(1f), keepHint)
                 }
                 // 长度族
-                DshFieldLabel(stringResource(R.string.preset_editor_max_tokens))
+                DshFieldLabel(stringResource(R.string.dsh_preset_group_length))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    DshNumberField(maxTokens, { maxTokens = it }, stringResource(R.string.preset_editor_max_tokens), Modifier.weight(1f))
+                    DshNumberField(maxTokens, { maxTokens = it }, stringResource(R.string.preset_editor_max_tokens), Modifier.weight(1f), keepHint)
                     Spacer(Modifier.width(8.dp))
-                    DshNumberField(maxContext, { maxContext = it }, stringResource(R.string.preset_editor_max_context), Modifier.weight(1f))
+                    DshNumberField(maxContext, { maxContext = it }, stringResource(R.string.preset_editor_max_context), Modifier.weight(1f), keepHint)
                 }
                 // 种子 + 思考强度
                 DshFieldLabel(stringResource(R.string.preset_editor_seed))
-                DshSeedField(seed, { seed = it }, Modifier.fillMaxWidth())
+                DshSeedField(seed, { seed = it }, Modifier.fillMaxWidth(), keepHint)
                 Spacer(Modifier.height(2.dp))
                 Text(
                     stringResource(R.string.dsh_model_levels),
@@ -1619,11 +1829,17 @@ private fun DshSeedField(
     value: String,
     onChange: (String) -> Unit,
     modifier: Modifier = Modifier,
+    placeholder: String? = null,
 ) {
+    val hint = placeholder
+    val placeholderText: (@Composable () -> Unit)? = if (hint == null) null else {
+        { Text(hint, fontSize = 10.sp, color = Dsh.textTertiary) }
+    }
     OutlinedTextField(
         value = value,
         onValueChange = { text -> onChange(text.filter { it.isDigit() }.take(19)) },
         label = { Text(stringResource(R.string.preset_editor_seed), fontSize = 10.sp) },
+        placeholder = placeholderText,
         singleLine = true,
         shape = RoundedCornerShape(Dsh.RADIUS_SM.dp),
         colors = OutlinedTextFieldDefaults.colors(
@@ -1643,11 +1859,17 @@ private fun DshDecimalField(
     onChange: (String) -> Unit,
     label: String,
     modifier: Modifier = Modifier,
+    placeholder: String? = null,
 ) {
+    val hint = placeholder
+    val placeholderText: (@Composable () -> Unit)? = if (hint == null) null else {
+        { Text(hint, fontSize = 10.sp, color = Dsh.textTertiary) }
+    }
     OutlinedTextField(
         value = value,
         onValueChange = { text -> onChange(text.filter { it.isDigit() || it == '.' || it == '-' }.take(9)) },
         label = { Text(label, fontSize = 10.sp) },
+        placeholder = placeholderText,
         singleLine = true,
         shape = RoundedCornerShape(Dsh.RADIUS_SM.dp),
         colors = OutlinedTextFieldDefaults.colors(
@@ -1664,11 +1886,12 @@ private fun DshDecimalField(
 // ── Token 使用面板（harness TurnUsagePanel 布局：总量精确值 + 输入/缓存/输出分行） ──
 
 /**
- * 当前会话的 token 使用统计。口径：三个分区（本会话/今日/累计）全部来自同一份
- * 明细记录（generation-metrics.jsonl 最近 100 条）按范围过滤——本会话再按
- * sessionId 过滤、今日按本地日期过滤、累计=全量。输入/缓存命中/输出三行与标题
- * 总量同源相加，杜绝「总量来自日汇总、分项来自明细」的双口径与重复计数。
- * 右上角删除图标清空全部统计。
+ * 当前会话的 token 使用统计。口径：本会话=会话账本桶（桶读会话 metadata，
+ * 思考读消息级账本——均不受明细缓冲截断）；今日=自然日内全部会话、累计=
+ * 明细缓冲全量（generation-metrics.jsonl 最近 100 条）。估算徽标是唯一例外：
+ * 聊天账本没有估算计数（兼容优先，不改持久化格式），只能由明细缓冲判定。
+ * 输入/缓存命中/输出三行与标题总量同源相加，杜绝「总量来自日汇总、分项来自
+ * 明细」的双口径与重复计数。右上角删除图标清空全部统计。
  */
 @Composable
 internal fun DshUsagePanel(
@@ -1926,202 +2149,6 @@ private fun DshUsageRow(label: String, tokens: Long) {
     }
 }
 
-// ── 模型配置弹层（dsh Models 页布局 + bre EffortEditor 档位网格） ─────────
-
-/**
- * 模型配置（不再跳设置页）：服务商选择 + 接口地址 / API 密钥 / 模型名称 +
- * 默认思考强度（bre 档位胶囊网格）+ 高级 JSON。保存走 ChatViewModel.saveModelConfig。
- */
-@Composable
-internal fun DshModelConfigSheet(
-    providerLabel: String,
-    baseUrl: String,
-    apiKey: String,
-    model: String,
-    effortLevels: List<ReasoningEffort>,
-    defaultEffort: ReasoningEffort?,
-    profileSummary: String,
-    onOpenProfile: () -> Unit,
-    onTest: () -> Unit,
-    onSave: (baseUrl: String, apiKey: String, model: String, defaultEffort: ReasoningEffort?) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var url by remember { mutableStateOf(baseUrl) }
-    var key by remember { mutableStateOf(apiKey) }
-    var modelName by remember { mutableStateOf(model) }
-    var effort by remember { mutableStateOf(defaultEffort) }
-    val density = LocalDensity.current
-    val configuration = LocalConfiguration.current
-    val sheetMaxHeight = minOf((configuration.screenHeightDp * 0.72f).dp, 560.dp)
-    Popup(
-        alignment = Alignment.BottomCenter,
-        offset = androidx.compose.ui.unit.IntOffset(0, -with(density) { 12.dp.roundToPx() }),
-        onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true),
-    ) {
-        Column(
-            modifier = Modifier
-                .widthIn(max = 400.dp)
-                .fillMaxWidth(0.96f)
-                .clip(RoundedCornerShape(Dsh.RADIUS_LG.dp))
-                .background(Dsh.menuSurface)
-                .padding(start = 10.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .padding(top = 2.dp, bottom = 8.dp)
-                    .size(width = 36.dp, height = 4.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(Dsh.borderL2)
-                    .align(Alignment.CenterHorizontally),
-            )
-            Text(
-                stringResource(R.string.dsh_model_config_title),
-                fontSize = 13.sp,
-                lineHeight = 18.sp,
-                fontWeight = FontWeight.Medium,
-                color = Dsh.textPrimary,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-            )
-            // 服务商（当前选中，只读展示——切换走模型菜单的目录）。
-            DshModelConfigRow(stringResource(R.string.dsh_model_provider), providerLabel)
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = sheetMaxHeight)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                DshSheetField(url, { url = it }, stringResource(R.string.dsh_model_base_url), singleLine = true)
-                DshSheetField(key, { key = it }, stringResource(R.string.dsh_model_api_key), singleLine = true)
-                DshSheetField(modelName, { modelName = it }, stringResource(R.string.dsh_model_name), singleLine = true)
-                // 每模型思考档案钻入行（bre EffortEditor 入口）。
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(Dsh.RADIUS_MD.dp))
-                        .clickable { onOpenProfile() }
-                        .padding(horizontal = 10.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        stringResource(R.string.dsh_profile_entry),
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp,
-                        color = Dsh.textPrimary,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        profileSummary,
-                        fontSize = 12.sp,
-                        color = Dsh.textTertiary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.widthIn(max = 130.dp),
-                    )
-                    Text(
-                        "›",
-                        fontSize = 18.sp,
-                        color = Dsh.textTertiary.copy(alpha = 0.42f),
-                        modifier = Modifier.padding(start = 6.dp),
-                    )
-                }
-                Spacer(Modifier.height(2.dp))
-                // 默认思考强度（bre effort-grid：档位胶囊，未设=跟随预设）。
-                Text(
-                    stringResource(R.string.dsh_model_default_effort),
-                    fontSize = 11.sp,
-                    color = Dsh.textTertiary,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    val levels = listOf<ReasoningEffort?>(null) + effortLevels
-                    levels.forEach { level ->
-                        Surface(
-                            onClick = { effort = level },
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (effort == level) Dsh.hover else Color.Transparent,
-                            border = androidx.compose.foundation.BorderStroke(0.5.dp, Dsh.borderL2),
-                        ) {
-                            Text(
-                                level?.let { dshEffortLabel(it) } ?: stringResource(R.string.chat_reasoning_effort_auto),
-                                fontSize = 11.sp,
-                                color = if (effort == level) Dsh.textPrimary else Dsh.textTertiary,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Surface(
-                        onClick = onTest,
-                        shape = RoundedCornerShape(Dsh.RADIUS_MD.dp),
-                        color = Dsh.hover,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text(
-                            stringResource(R.string.dsh_model_test),
-                            fontSize = 13.sp,
-                            color = Dsh.textSecondary,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            modifier = Modifier.padding(vertical = 9.dp).fillMaxWidth(),
-                        )
-                    }
-                    Surface(
-                        onClick = {
-                            onSave(url.trim(), key.trim(), modelName.trim(), effort)
-                            onDismiss()
-                        },
-                        shape = RoundedCornerShape(Dsh.RADIUS_MD.dp),
-                        color = Dsh.hover,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text(
-                            stringResource(R.string.dsh_model_save),
-                            fontSize = 13.sp,
-                            color = Dsh.blue,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            modifier = Modifier.padding(vertical = 9.dp).fillMaxWidth(),
-                        )
-                    }
-                }
-                Spacer(Modifier.height(4.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun DshModelConfigRow(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            label,
-            fontSize = 12.sp,
-            lineHeight = 18.sp,
-            color = Dsh.textSecondary,
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            value,
-            fontSize = 12.sp,
-            lineHeight = 18.sp,
-            color = Dsh.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 200.dp),
-        )
-    }
-}
-
 // ── 模型思考档案编辑（bre EffortEditor 复刻：档位网格 + 线上拼写 + 默认档） ──
 
 /**
@@ -2138,15 +2165,24 @@ internal fun DshModelProfileEditor(
     onSave: (app.tellev.core.provider.ModelReasoningProfile?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    // 档位行草稿：tellev 档位词汇（off/low/medium/high/max；Auto 不入档案）。
+    // 档位行草稿：bre THINKING_LEVELS 七档，语义用共享的
+    // profileDraftFrom / buildProfileIntent（有单测覆盖），与 DshEffortProfileEditor 同源。
     data class Row(val on: Boolean, val wire: String)
-    val levels = listOf("off", "low", "medium", "high", "max")
+    val levels = listOf("off", "minimal", "low", "medium", "high", "xhigh", "max")
+    // false 声明（reasoning 关闭）在档案里是「只有 off 一键」。
+    val isDisabledDeclaration = initial != null && initial.efforts.keys == setOf("off")
     val initialMap = initial?.efforts.orEmpty()
     var rows by remember(modelId) {
-        mutableStateOf(levels.associateWith { level ->
-            val wire = initialMap[level]
-            Row(on = wire != null, wire = wire.orEmpty())
-        })
+        mutableStateOf(
+            levels.associateWith { level ->
+                if (isDisabledDeclaration) {
+                    Row(on = level == "off", wire = "")
+                } else {
+                    val wire = initialMap[level]
+                    Row(on = wire != null, wire = wire.orEmpty())
+                }
+            },
+        )
     }
     var defaultEffort by remember(modelId) { mutableStateOf(initial?.defaultEffort.orEmpty()) }
     val density = LocalDensity.current
@@ -2264,45 +2300,61 @@ internal fun DshModelProfileEditor(
                     }
                     Spacer(Modifier.height(2.dp))
                 }
-                // 档位网格（bre effort-grid）：每行 勾选 + 档位名 + 拼写输入。
-                levels.forEach { level ->
-                    val row = rows.getValue(level)
+                // 档位网格（bre .bre-effort-grid）：两列等宽，奇数行时左列多一格。
+                // 行几何按上游：勾选 18dp、档位名列 76dp、拼写输入占满余量。
+                levels.chunked(2).forEach { rowLevels ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        androidx.compose.material3.Checkbox(
-                            checked = row.on,
-                            onCheckedChange = { checked ->
-                                rows = rows + (level to row.copy(on = checked))
-                            },
-                            modifier = Modifier.size(32.dp),
-                        )
-                        Text(
-                            level,
-                            fontSize = 13.sp,
-                            color = Dsh.textPrimary,
-                            modifier = Modifier.width(58.dp),
-                        )
-                        OutlinedTextField(
-                            value = row.wire,
-                            onValueChange = { wire ->
-                                rows = rows + (level to row.copy(wire = wire.take(24)))
-                            },
-                            enabled = row.on,
-                            singleLine = true,
-                            placeholder = { Text(stringResource(R.string.dsh_profile_wire_placeholder), fontSize = 11.sp, color = Dsh.textTertiary) },
-                            shape = RoundedCornerShape(Dsh.RADIUS_SM.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent,
-                                unfocusedBorderColor = Dsh.borderL2,
-                                focusedBorderColor = Dsh.borderL3,
-                            ),
-                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, color = Dsh.textPrimary),
-                            modifier = Modifier.weight(1f),
-                        )
+                        rowLevels.forEach { level ->
+                            val row = rows.getValue(level)
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                androidx.compose.material3.Checkbox(
+                                    checked = row.on,
+                                    onCheckedChange = { checked ->
+                                        rows = rows + (level to row.copy(on = checked))
+                                    },
+                                    enabled = true,
+                                    modifier = Modifier.size(18.dp),
+                                    colors = CheckboxDefaults.colors(checkedColor = Dsh.blue),
+                                )
+                                Text(
+                                    dshProfileLevelLabel(level),
+                                    fontSize = 12.sp,
+                                    color = Dsh.textTertiary,
+                                    modifier = Modifier.width(76.dp),
+                                )
+                                if (row.on) {
+                                    OutlinedTextField(
+                                        value = row.wire,
+                                        onValueChange = { wire ->
+                                            rows = rows + (level to row.copy(wire = wire.take(24)))
+                                        },
+                                        enabled = true,
+                                        singleLine = true,
+                                        placeholder = { Text(stringResource(R.string.dsh_profile_wire_placeholder), fontSize = 11.sp, color = Dsh.textTertiary) },
+                                        shape = RoundedCornerShape(4.dp),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedContainerColor = Color.Transparent,
+                                            unfocusedContainerColor = Color.Transparent,
+                                            unfocusedBorderColor = Dsh.borderL4,
+                                            focusedBorderColor = Dsh.blue,
+                                        ),
+                                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, color = Dsh.textPrimary),
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                } else {
+                                    Spacer(Modifier.weight(1f))
+                                }
+                            }
+                        }
+                        if (rowLevels.size == 1) Spacer(Modifier.weight(1f))
                     }
+                    Spacer(Modifier.height(4.dp))
                 }
                 Spacer(Modifier.height(4.dp))
                 // 默认档下拉（bre defaultEffort）：新会话起点。
@@ -2343,14 +2395,28 @@ internal fun DshModelProfileEditor(
                     }
                     Surface(
                         onClick = {
-                            val efforts = rows.filterValues { it.on }
-                                .mapValues { (_, row) -> row.wire.trim().ifEmpty { null } }
-                            if (efforts.isEmpty()) {
+                            // 与上游 buildIntent 同规则：只有 off 勾选时写「关闭」，
+                            // 而不是留下一个只有一个键的字典。
+                            val armed = rows.filterValues { it.on }
+                            val thinkingLevels = armed.keys - "off"
+                            if (armed.isEmpty()) {
                                 onSave(null)
+                            } else if (thinkingLevels.isEmpty()) {
+                                onSave(
+                                    app.tellev.core.provider.ModelReasoningProfile(
+                                        efforts = mapOf("off" to null),
+                                        defaultEffort = defaultEffort.ifBlank { null },
+                                        contextWindow = initial?.contextWindow,
+                                        maxTokens = initial?.maxTokens,
+                                        source = "user",
+                                    ),
+                                )
                             } else {
                                 onSave(
                                     app.tellev.core.provider.ModelReasoningProfile(
-                                        efforts = efforts,
+                                        efforts = armed.mapValues { (_, row) ->
+                                            row.wire.trim().ifEmpty { null }
+                                        },
                                         defaultEffort = defaultEffort.ifBlank { null },
                                         contextWindow = initial?.contextWindow,
                                         maxTokens = initial?.maxTokens,
@@ -2375,6 +2441,18 @@ internal fun DshModelProfileEditor(
             }
         }
     }
+}
+
+/** bre level_* 的中文标签。 */
+private fun dshProfileLevelLabel(level: String): String = when (level) {
+    "off" -> "关闭"
+    "minimal" -> "最小"
+    "low" -> "低"
+    "medium" -> "中"
+    "high" -> "高"
+    "xhigh" -> "极高"
+    "max" -> "最大"
+    else -> level
 }
 
 /** 默认档小下拉（胶囊 + 菜单）。 */
@@ -2555,9 +2633,15 @@ private fun DshPresetPromptsPage(
     onSave: (active: List<app.tellev.core.model.PresetPrompt>, unused: List<app.tellev.core.model.PresetPrompt>) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var active by remember(preset.id) { mutableStateOf(preset.prompts) }
-    var unused by remember(preset.id) { mutableStateOf(preset.promptsUnused) }
+    var active by remember(preset.id) {
+        mutableStateOf(presetPromptEditorStack(preset.prompts, preset.promptsUnused).first)
+    }
+    var unused by remember(preset.id) {
+        mutableStateOf(presetPromptEditorStack(preset.prompts, preset.promptsUnused).second)
+    }
     var editingIndex by remember(preset.id) { mutableStateOf<Int?>(null) }
+    // 「可选添加」：本次编辑新增的自定义提示词 identifier——加了没填的空行保存时不落盘。
+    var addedIds by remember(preset.id) { mutableStateOf(emptySet<String>()) }
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             stringResource(R.string.dsh_preset_prompts_hint),
@@ -2693,6 +2777,37 @@ private fun DshPresetPromptsPage(
                     }
                 }
             }
+            // 「可选添加」：新增一条自定义提示词。新增行允许编辑；保存时仍为空
+            // （name 与 content 都空）的行不落盘。上限按 custom- 前缀计数，
+            // ST 原生条目再多也不挡新增入口。
+            if (canAddCustomPrompt(active + unused)) {
+                Text(
+                    "＋ " + stringResource(R.string.dsh_prompt_add),
+                    fontSize = 12.sp,
+                    color = Dsh.blue,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(Dsh.RADIUS_XS.dp))
+                        .clickable {
+                            val identifier = nextCustomPromptIdentifier((active + unused).map { it.identifier })
+                            active = active + app.tellev.core.model.PresetPrompt(
+                                identifier = identifier,
+                                name = "",
+                                role = "system",
+                                content = "",
+                            )
+                            addedIds = addedIds + identifier
+                            editingIndex = active.lastIndex
+                        }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+            } else {
+                Text(
+                    stringResource(R.string.dsh_prompt_add_limit, PRESET_CUSTOM_PROMPT_LIMIT),
+                    fontSize = 11.sp,
+                    color = Dsh.textTertiary,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+                )
+            }
             if (unused.isNotEmpty()) {
                 Text(
                     stringResource(R.string.dsh_prompt_unused),
@@ -2735,7 +2850,9 @@ private fun DshPresetPromptsPage(
             Surface(
                 onClick = {
                     // 未参与编辑的 un 项保留；active 顺序即 prompt_order。
-                    onSave(active, unused)
+                    // 本次新增且没填的空行不落盘（空值语义）；既有空 content 条目不动。
+                    val (activeToSave, unusedToSave) = withoutUntouchedCustomPrompts(active, unused, addedIds)
+                    onSave(activeToSave, unusedToSave)
                     onDismiss()
                 },
                 shape = RoundedCornerShape(Dsh.RADIUS_MD.dp),
@@ -2858,6 +2975,7 @@ internal fun DshPresetRawKeysSection(
 ) {
     val rows = remember(preset.raw) { app.tellev.feature.chat.PresetRawKeys.rows(preset.raw) }
     var editing by remember(preset.id) { mutableStateOf<String?>(null) }
+    var adding by remember(preset.id) { mutableStateOf(false) }
     if (rows.isEmpty()) {
         Text(
             stringResource(R.string.dsh_preset_raw_empty),
@@ -2865,14 +2983,15 @@ internal fun DshPresetRawKeysSection(
             color = Dsh.textTertiary,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
         )
-        return
     }
-    Text(
-        stringResource(R.string.dsh_preset_raw_hint),
-        fontSize = 11.sp,
-        color = Dsh.textTertiary,
-        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-    )
+    if (rows.isNotEmpty()) {
+        Text(
+            stringResource(R.string.dsh_preset_raw_hint),
+            fontSize = 11.sp,
+            color = Dsh.textTertiary,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+    }
     rows.forEach { row ->
         Row(
             modifier = Modifier
@@ -2954,6 +3073,26 @@ internal fun DshPresetRawKeysSection(
             }
         }
     }
+    // 「可选添加」：新增一个 raw 键；空/重复/保留键在对话框里被拦下（不落盘）。
+    Text(
+        "＋ " + stringResource(R.string.dsh_preset_raw_add),
+        fontSize = 12.sp,
+        color = Dsh.blue,
+        modifier = Modifier
+            .clip(RoundedCornerShape(Dsh.RADIUS_XS.dp))
+            .clickable { adding = true }
+            .padding(horizontal = 6.dp, vertical = 8.dp),
+    )
+    if (adding) {
+        DshRawKeyAddDialog(
+            raw = preset.raw,
+            onSave = { path, text ->
+                onSaveKey(path, app.tellev.feature.chat.PresetRawKeys.parseUserValue(text))
+                adding = false
+            },
+            onDismiss = { adding = false },
+        )
+    }
     editing?.let { path ->
         val current = rows.firstOrNull { it.path == path }
         DshRawKeyEditorDialog(
@@ -2987,6 +3126,93 @@ private fun DshRawRowMenu(onEdit: () -> Unit) {
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
     }
+}
+
+/**
+ * 新增 raw 键对话框：键名（点分路径）+ 值。键名经 [PresetRawKeys.checkNewKey]
+ * 校验——空路径不落盘（保存键禁用），已存在/整段覆盖/保留键给出原因提示。
+ */
+@Composable
+private fun DshRawKeyAddDialog(
+    raw: kotlinx.serialization.json.JsonObject,
+    onSave: (path: String, value: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var path by remember { mutableStateOf("") }
+    var text by remember { mutableStateOf("") }
+    val check = app.tellev.feature.chat.PresetRawKeys.checkNewKey(raw, path)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.dsh_preset_raw_add)) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = path,
+                    onValueChange = { path = it },
+                    label = { Text(stringResource(R.string.dsh_preset_raw_path_label), fontSize = 11.sp) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(Dsh.RADIUS_SM.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        unfocusedBorderColor = Dsh.borderL2,
+                        focusedBorderColor = Dsh.borderL3,
+                    ),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, color = Dsh.textPrimary),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (path.isNotBlank()) {
+                    when (check) {
+                        app.tellev.feature.chat.PresetRawKeys.NewKeyCheck.Blank -> Text(
+                            stringResource(R.string.dsh_preset_raw_key_blank),
+                            fontSize = 11.sp,
+                            color = Dsh.errorPrimary,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                        app.tellev.feature.chat.PresetRawKeys.NewKeyCheck.Duplicate -> Text(
+                            stringResource(R.string.dsh_preset_raw_key_exists),
+                            fontSize = 11.sp,
+                            color = Dsh.errorPrimary,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                        app.tellev.feature.chat.PresetRawKeys.NewKeyCheck.Reserved -> Text(
+                            stringResource(R.string.dsh_preset_raw_key_reserved),
+                            fontSize = 11.sp,
+                            color = Dsh.errorPrimary,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                        app.tellev.feature.chat.PresetRawKeys.NewKeyCheck.Ok -> Unit
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text(stringResource(R.string.dsh_preset_raw_value_label), fontSize = 11.sp) },
+                    minLines = 2,
+                    maxLines = 8,
+                    shape = RoundedCornerShape(Dsh.RADIUS_SM.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        unfocusedBorderColor = Dsh.borderL2,
+                        focusedBorderColor = Dsh.borderL3,
+                    ),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, color = Dsh.textPrimary),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = check == app.tellev.feature.chat.PresetRawKeys.NewKeyCheck.Ok,
+                onClick = { onSave(path.trim(), text) },
+            ) { Text(stringResource(R.string.world_edit_save)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_cancel)) }
+        },
+    )
 }
 
 /** 单键编辑对话框：值文本框（类型提示）+ 保存 + 删除键。 */

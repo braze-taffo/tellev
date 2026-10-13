@@ -8,9 +8,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.test.platform.app.InstrumentationRegistry
 import app.tellev.core.storage.CharacterImporter
-import app.tellev.feature.chat.ChatScreen
+import app.tellev.ui.dsh.DshChatScreen
 import app.tellev.feature.chat.ChatViewModel
-import app.tellev.ui.theme.TellevTheme
+import app.tellev.ui.dsh.DshTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -44,7 +44,7 @@ class XuanhunChatUiAndroidTest {
                     graph.extensionHost, graph.permissionManager).also {
                     models.put("xuanhun-ui", it)
                     activity.setContent { CompositionLocalProvider(LocalTellevGraph provides graph) {
-                        TellevTheme { ChatScreen(it) }
+                        DshTheme { DshChatScreen(viewModel = it, onBack = {}, onOpenWorldBooks = {}, onOpenPlugins = {}, onOpenUsageStats = {}) }
                     } }
                 }
             }

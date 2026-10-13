@@ -1,5 +1,3 @@
-tts_section_title	语音播报
-tts_section_desc	使用已配置的 OpenAI 兼容服务播报聊天消息。
 tts_enabled	启用语音播报
 tts_enabled_desc	在消息操作菜单中显示朗读，并缓存生成的音频。
 tts_provider_hint	请先在模型服务设置中配置 OpenAI 兼容服务，才能使用语音播报。
@@ -7,15 +5,6 @@ tts_voice	音色
 tts_speed	语速：%1$.2fx
 tts_model	模型
 tts_format	音频格式
-tts_voice_alloy	alloy
-tts_voice_echo	echo
-tts_voice_fable	fable
-tts_voice_onyx	onyx
-tts_voice_nova	nova
-tts_voice_shimmer	shimmer
-tts_format_mp3	MP3
-tts_format_opus	Opus
-tts_read_aloud	朗读
 tts_stop	停止朗读
 tts_error	朗读失败：%1$s
 tts_disabled	语音播报未启用
@@ -29,13 +18,10 @@ tts_playback_failed	音频无法播放或暂时无法取得音频焦点，请重
 tts_custom_endpoint	自定义 TTS 端点
 tts_custom_endpoint_desc	使用独立的 OpenAI 兼容 /v1/audio/speech 服务，不跟随聊天服务商。
 tts_base_url	端点 Base URL
-tts_base_url_hint	例如 https://api.example.com
 tts_api_key	API Key（可选）
 tts_custom_voice	自定义音色
-tts_custom_voice_hint	非空时覆盖上方音色下拉
 tts_custom_voice_active	当前生效音色：%1$s
 tts_custom_model	自定义模型
-tts_custom_model_hint	非空时覆盖上方模型下拉
 tts_test_connection	测试连接
 tts_test_ok	连接成功
 tts_test_failed	连接失败：%1$s

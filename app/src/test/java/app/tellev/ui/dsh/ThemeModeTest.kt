@@ -1,4 +1,4 @@
-package app.tellev.ui.theme
+package app.tellev.ui.dsh
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

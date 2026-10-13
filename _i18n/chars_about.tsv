@@ -86,3 +86,25 @@ about_built_with	使用 Jetpack Compose 和 Material 3 构建。
 about_card_format	角色卡格式基于 SillyTavern V2/V3 规格。
 about_tech_stack	网络层使用 OkHttp，JSON 处理使用 kotlinx.serialization。
 about_thanks_community	感谢 SillyTavern 社区。
+chars_group_cd	分组
+chars_group_title	角色分组
+chars_group_all	全部角色
+chars_group_ungrouped	未分组
+chars_group_new	新建分组
+chars_group_new_hint	分组名称
+chars_group_create	创建
+chars_group_rename	重命名
+chars_group_rename_title	重命名分组
+chars_group_delete	删除分组
+chars_group_delete_title	删除分组
+chars_group_delete_confirm	删除分组“%1$s”？角色卡本身不会被删除，只会回到未分组。
+chars_group_none_hint	还没有分组。在下方输入名称即可创建第一个。
+chars_assign_group	分组
+chars_assign_group_title	将“%1$s”归入分组
+chars_scan_cards	扫描角色卡
+chars_add_cards	添加角色卡
+chars_scan_empty	所选目录里没有找到角色卡（png / webp / json）。
+chars_world_add	添加世界书
+chars_world_primary	%1$s（主绑定）
+chars_world_multi_hint	可绑定多个世界书；列表中第一个为主绑定。
+chars_world_unbind_cd	解除绑定 %1$s

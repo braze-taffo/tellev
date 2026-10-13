@@ -76,6 +76,11 @@ internal object PresetCodec {
         merged["relative"] = JsonPrimitive(prompt.relative)
         merged["depth"] = JsonPrimitive(prompt.depth)
         merged["order"] = JsonPrimitive(prompt.order)
+        // 注入序与禁用角色卡覆盖也是编辑器可改的类型化字段，必须显式写回，
+        // 否则保存后静默回滚（读取侧回落 100/false 与 ST 默认一致，旧预设
+        // 缺键仍按同一默认加载；落盘后写显式等值键，语义不变）。
+        merged["injection_order"] = JsonPrimitive(prompt.injectionOrder)
+        merged["forbid_overrides"] = JsonPrimitive(prompt.forbidOverrides)
         return JsonObject(merged)
     }
 

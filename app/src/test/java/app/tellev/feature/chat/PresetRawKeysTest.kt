@@ -3,6 +3,7 @@ package app.tellev.feature.chat
 import app.tellev.core.model.GenerationPreset
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -144,5 +145,55 @@ class PresetRawKeysTest {
         // 类型化键与 prompts 不重复出现。
         assertTrue("temperature" !in paths)
         assertTrue("prompts" !in paths)
+    }
+
+    @Test
+    fun `checkNewKey refuses blank duplicate container and reserved paths`() {
+        assertEquals(PresetRawKeys.NewKeyCheck.Blank, PresetRawKeys.checkNewKey(raw, "   "))
+        assertEquals(PresetRawKeys.NewKeyCheck.Blank, PresetRawKeys.checkNewKey(raw, "a..b"))
+        // 已存在的叶子行。
+        assertEquals(PresetRawKeys.NewKeyCheck.Duplicate, PresetRawKeys.checkNewKey(raw, "n"))
+        // 已存在的容器（子叶在列，整段写入会覆盖子树）。
+        assertEquals(PresetRawKeys.NewKeyCheck.Duplicate, PresetRawKeys.checkNewKey(raw, "extensions"))
+        assertEquals(PresetRawKeys.NewKeyCheck.Duplicate, PresetRawKeys.checkNewKey(raw, "extensions.SPreset"))
+        // 往叶子里下钻（写入会把它改写成对象）。
+        assertEquals(
+            PresetRawKeys.NewKeyCheck.Duplicate,
+            PresetRawKeys.checkNewKey(raw, "extensions.SPreset.MacroNest.x"),
+        )
+        // 类型化/提示词键预留（raw 侧写回会被合并覆盖或清掉）。
+        assertEquals(PresetRawKeys.NewKeyCheck.Reserved, PresetRawKeys.checkNewKey(raw, "temperature"))
+        assertEquals(PresetRawKeys.NewKeyCheck.Reserved, PresetRawKeys.checkNewKey(raw, "prompt_order"))
+        // 全新键与现存容器下的新叶允许添加。
+        assertEquals(PresetRawKeys.NewKeyCheck.Ok, PresetRawKeys.checkNewKey(raw, "continue_nudge_prompt"))
+        assertEquals(PresetRawKeys.NewKeyCheck.Ok, PresetRawKeys.checkNewKey(raw, "extensions.SPreset.NewFlag"))
+    }
+
+    @Test
+    fun `applyEdit keeps typed extensions in sync with the edited raw`() {
+        val preset = GenerationPreset(
+            id = "p",
+            name = "p",
+            providerType = "openai",
+            extensions = raw["extensions"]!!.jsonObject,
+            raw = raw,
+        )
+        val edited = PresetRawKeys.applyEdit(preset, "extensions.SPreset.MacroNest", JsonPrimitive(true))
+        assertEquals(
+            JsonPrimitive(true),
+            (edited.raw["extensions"] as kotlinx.serialization.json.JsonObject)["SPreset"]!!
+                .let { it as kotlinx.serialization.json.JsonObject }["MacroNest"],
+        )
+        // raw 与 typed extensions 逐字一致：savePreset 合并时旧 typed 值不会顶掉这次编辑。
+        assertEquals(edited.raw["extensions"], edited.extensions)
+        // 删除嵌套叶同样同步（空壳清理后 raw 与 typed 仍一致）。
+        val removed = PresetRawKeys.applyEdit(edited, "extensions.SPreset.RegexBinding.regexes", null)
+        assertEquals(removed.raw["extensions"], removed.extensions)
+        assertTrue(
+            "兄弟叶不得被删除波及",
+            (removed.raw["extensions"] as kotlinx.serialization.json.JsonObject)["SPreset"]!!
+                .let { it as kotlinx.serialization.json.JsonObject }
+                .containsKey("MacroNest"),
+        )
     }
 }

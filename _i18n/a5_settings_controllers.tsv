@@ -30,7 +30,6 @@ presetctl_exported	预设“%1$s”已导出。
 presetctl_export_failed	导出预设失败：%1$s
 presetctl_deleted	预设已删除。
 presetctl_delete_failed	删除预设失败：%1$s
-presetctl_read_file_failed	无法读取所选文件
 presetctl_imported	预设「%1$s」已导入并启用。
 presetctl_imported_with_warnings	预设「%1$s」已导入并启用；%2$s。
 presetctl_import_failed	导入预设失败：%1$s
@@ -60,9 +59,7 @@ bkpctl_import_failed	导入备份失败：%1$s
 setvm_load_failed	加载设置失败：%1$s
 setscreen_version_unknown	未知
 setscreen_title_provider	模型服务配置
-setscreen_title_imagegen	生图设置
 setscreen_title_settings	设置
-setscreen_back_cd	返回
 setscreen_this_config	该配置
 setscreen_delete_config_title	删除自定义配置
 setscreen_delete_config_message	确定删除“%1$s”吗？该配置的接口地址与密钥将被清除，且无法撤销。

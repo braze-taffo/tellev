@@ -105,7 +105,11 @@ private fun UsageStatsContent(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.fillMaxSize().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+        // 注意：此处不得加 horizontalScroll——它会给整棵子树无限宽约束，
+        // 与 SummaryCards 内自己的水平滚动嵌套后会在测量阶段抛
+        // "Horizontally scrollable component was measured with an infinity
+        // maximum width constraints" 并崩溃（2026-10-13 用户报告闪退的根因）。
+        modifier = modifier.fillMaxSize().padding(horizontal = 16.dp),
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             UsageRange.entries.forEach { range ->
@@ -175,7 +179,12 @@ private fun ActivityHeatmap(days: List<DailyUsageSummary>) {
         Column(Modifier.padding(16.dp)) {
             Text(stringResource(R.string.usage_stats_activity), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            // 30 格 × (18dp + 4dp spacing) ≈ 660dp，超出屏宽；滚动放在自身
+            // （父 Card 宽度有界，合法），替代原根级横向滚动方案。
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+            ) {
                 (0 until 30).forEach { offset ->
                     val date = java.time.LocalDate.now().minusDays((29 - offset).toLong()).toString()
                     val ratio = (byDate[date]?.totalTokens ?: 0L).toFloat() / maxTokens.toFloat()

@@ -139,7 +139,7 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
-    testBuildType = "mvuValidation"
+    testBuildType = providers.gradleProperty("tellevTestBuildType").orElse("mvuValidation").get()
     sourceSets.getByName("androidTest").assets.srcDir(layout.buildDirectory.dir("mvu-fixtures"))
 
     compileOptions {

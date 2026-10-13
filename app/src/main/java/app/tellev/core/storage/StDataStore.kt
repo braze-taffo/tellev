@@ -40,7 +40,21 @@ interface StDataStore {
     suspend fun readCharacter(id: String): CharacterCard
     suspend fun saveCharacter(card: CharacterCard)
     suspend fun deleteCharacter(id: String)
-    suspend fun importCharacter(card: CharacterCard, sourceBytes: ByteArray, sourceFileName: String) {
+    /**
+     * Imports a card from [sourceBytes]. The card's embedded `character_book` is
+     * materialized but left disabled, so an import never binds a lorebook the
+     * user did not ask for; it can be switched on from the world-book screen.
+     *
+     * [bindEmbeddedWorldBook] is the opt-in for callers that build the card
+     * themselves (in-app creation) and want the generated book active straight
+     * away, matching what `saveCharacter` does.
+     */
+    suspend fun importCharacter(
+        card: CharacterCard,
+        sourceBytes: ByteArray,
+        sourceFileName: String,
+        bindEmbeddedWorldBook: Boolean = false,
+    ) {
         saveCharacter(card)
     }
 

@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.channels.FileChannel
@@ -16,8 +17,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.stream.Collectors
 import kotlin.io.path.exists
 import kotlin.io.path.inputStream
-
-import kotlin.io.path.readBytes
 import kotlin.io.path.readText
 
 /**
@@ -62,19 +61,42 @@ class JournaledFileWriter(
         bytes: ByteArray,
         operationId: String = UUID.randomUUID().toString(),
         expectedRevision: Long? = null,
-    ): Receipt = commit(target, bytes, operationId, expectedRevision)
+    ): Receipt = commit(target, bytes, null, operationId, expectedRevision)
+
+    /**
+     * Streamed twin of [write]: the payload is staged into the journal as it
+     * arrives instead of being materialized as a [ByteArray] first, so a large
+     * file never occupies memory twice. The commit sequence — payload, pending
+     * record, tmp+fsync+ATOMIC_MOVE into place, receipt — is the byte variant's.
+     */
+    fun write(
+        target: Path,
+        input: InputStream,
+        operationId: String = UUID.randomUUID().toString(),
+        expectedRevision: Long? = null,
+    ): Receipt = commit(target, null, input, operationId, expectedRevision)
 
     fun delete(target: Path, operationId: String = UUID.randomUUID().toString(), expectedRevision: Long? = null): Receipt =
-        commit(target, null, operationId, expectedRevision)
+        commit(target, null, null, operationId, expectedRevision)
 
-    private fun commit(target: Path, bytes: ByteArray?, operationId: String, expectedRevision: Long?): Receipt = synchronized(lock) {
+    private fun commit(
+        target: Path,
+        bytes: ByteArray?,
+        input: InputStream?,
+        operationId: String,
+        expectedRevision: Long?,
+    ): Receipt = synchronized(lock) {
         require(operationId.isNotBlank()) { "A storage operation must have an ID" }
+        require(bytes == null || input == null) { "A write carries either bytes or a stream" }
         val path = checked(target)
-        val digest = bytes?.let(::sha)
         val completed = completedFile(path, operationId)
         if (completed.exists()) {
             val receipt = json.decodeFromString<Receipt>(completed.readText())
-            check(receipt.sha256 == digest) { "Operation ID reused with different data: $operationId" }
+            // A stream is not re-staged on a replay, so its bytes are drained
+            // purely to compute the digest the idempotency check needs.
+            check(receipt.sha256 == (bytes?.let(::sha) ?: input?.let(::drainDigest))) {
+                "Operation ID reused with different data: $operationId"
+            }
             return@synchronized receipt
         }
         val pending = pendingFile(path)
@@ -85,15 +107,20 @@ class JournaledFileWriter(
         }
         Files.createDirectories(path.parent)
         Files.createDirectories(journal)
-        val payload = bytes?.let { key(path) + ".payload" }
-        val receipt = Receipt(operationId, revision + 1, digest)
+        val payloadName = key(path) + ".payload"
+        // A stream has to reach the journal before the receipt can name its
+        // digest; the byte case still stages after the .original copy.
+        val payload = if (bytes != null || input != null) payloadName else null
+        val streamed = input?.let { stagePayload(journal.resolve(payloadName), it) }
+        val receipt = Receipt(operationId, revision + 1, bytes?.let(::sha) ?: streamed)
         val beforeSha = shaOf(path)
         // Retain the exact pre-migration file (manual-recovery artifact,
         // test-pinned by JournaledFileWriterTest). Subsequent commits do not
         // overwrite it; the sweep bounds its age.
         val backup = journal.resolve(key(path) + ".original")
-        if (beforeSha != null && !backup.exists()) atomicWrite(backup, path.readBytes())
-        if (payload != null) atomicWrite(journal.resolve(payload), bytes)
+        // Copied, not read: the pre-migration file can be a large live payload.
+        if (beforeSha != null && !backup.exists()) atomicCopy(path, backup)
+        if (bytes != null) atomicWrite(journal.resolve(payloadName), bytes)
         fault(Stage.PAYLOAD_SYNCED)
         val prepared = Prepared(root.relativize(path).toString(), beforeSha, payload, receipt)
         atomicWrite(pending, json.encodeToString(prepared).toByteArray(Charsets.UTF_8))
@@ -101,7 +128,7 @@ class JournaledFileWriter(
         finish(prepared, path, pending)
         // The state file survives deletion so revisions stay monotonic across recreate cycles;
         // legacy `.original` copies (no longer written) are dropped with the delete.
-        if (bytes == null) Files.deleteIfExists(journal.resolve(key(path) + ".original"))
+        if (bytes == null && input == null) Files.deleteIfExists(journal.resolve(key(path) + ".original"))
         trimCommits(path, completed)
         receipt
     }
@@ -193,8 +220,8 @@ class JournaledFileWriter(
 
     private fun finish(prepared: Prepared, path: Path, pending: Path) {
         val payloadPath = prepared.payload?.let(journal::resolve)
-        val bytes = payloadPath?.readBytes()
-        check(bytes?.let(::sha) == prepared.receipt.sha256) { "Corrupt write payload for ${prepared.target}" }
+        val payloadSha = payloadPath?.let { shaOf(it) }
+        check(payloadSha == prepared.receipt.sha256) { "Corrupt write payload for ${prepared.target}" }
         val currentSha = shaOf(path)
         val currentRevision = revision(path)
         check(currentRevision <= prepared.receipt.revision) { "Refusing to recover an obsolete write: ${prepared.target}" }
@@ -202,7 +229,9 @@ class JournaledFileWriter(
             "Recovery conflict: ${prepared.target} was changed outside the accepted operation"
         }
         if (currentSha != prepared.receipt.sha256) {
-            if (bytes != null) atomicWrite(path, bytes)
+            // Copied rather than read: a restored payload is never held whole
+            // next to the copy already staged in the journal.
+            if (payloadPath != null) atomicCopy(payloadPath, path)
             else { Files.deleteIfExists(path); syncDirectory(path.parent) }
         }
         fault(Stage.REPLACED)
@@ -239,8 +268,59 @@ class JournaledFileWriter(
 
     private fun atomicWrite(path: Path, bytes: ByteArray) {
         Files.createDirectories(path.parent)
-        val temp = path.resolveSibling(path.fileName.toString() + ".new")
+        val temp = tempSibling(path)
         FileOutputStream(temp.toFile()).use { stream -> stream.write(bytes); stream.fd.sync() }
+        replaceWith(temp, path)
+    }
+
+    /** Same tmp+fsync+ATOMIC_MOVE contract as [atomicWrite], fed by a stream. */
+    private fun atomicCopy(from: Path, to: Path) {
+        Files.createDirectories(to.parent)
+        val temp = tempSibling(to)
+        from.inputStream().use { input ->
+            FileOutputStream(temp.toFile()).use { stream -> input.copyTo(stream); stream.fd.sync() }
+        }
+        replaceWith(temp, to)
+    }
+
+    /** Stages [input] as the journal payload and returns the digest of what arrived. */
+    private fun stagePayload(payload: Path, input: InputStream): String {
+        Files.createDirectories(payload.parent)
+        val temp = tempSibling(payload)
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileOutputStream(temp.toFile()).use { stream ->
+            input.use { source ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val read = source.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                    stream.write(buffer, 0, read)
+                }
+                stream.fd.sync()
+            }
+        }
+        replaceWith(temp, payload)
+        return digest.digest().hex()
+    }
+
+    /** Reads [input] to its end without storing it, keeping only the digest. */
+    private fun drainDigest(input: InputStream): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        input.use { source ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = source.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().hex()
+    }
+
+    private fun tempSibling(path: Path) = path.resolveSibling(path.fileName.toString() + ".new")
+
+    private fun replaceWith(temp: Path, path: Path) {
         // Do not fall back to a truncate/copy if atomic replacement is unsupported.
         Files.move(temp, path, ATOMIC_MOVE, REPLACE_EXISTING)
         syncDirectory(path.parent)
@@ -278,7 +358,7 @@ class JournaledFileWriter(
         private const val COMMITS_RETAINED = 8
         private const val ORIGINAL_MAX_AGE_MILLIS = 30L * 24 * 60 * 60 * 1000
         private val locks = ConcurrentHashMap<String, Any>()
-        private fun sha(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        private fun sha(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).hex()
         private fun shaOf(path: Path): String? = path.takeIf { it.exists() }?.inputStream()?.use { input ->
             val digest = MessageDigest.getInstance("SHA-256")
             val buffer = ByteArray(64 * 1024)
@@ -287,7 +367,9 @@ class JournaledFileWriter(
                 if (read < 0) break
                 digest.update(buffer, 0, read)
             }
-            digest.digest().joinToString("") { "%02x".format(it) }
+            digest.digest().hex()
         }
     }
 }
+
+private fun ByteArray.hex() = joinToString("") { "%02x".format(it) }

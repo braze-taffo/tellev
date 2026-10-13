@@ -17,8 +17,6 @@ model_picker_manual	手动输入模型名
 model_picker_no_match	没有匹配的模型，可在下方手动输入
 model_picker_search	搜索模型…
 model_picker_title	选择模型
-setapp_accent_ink	墨色蓝
-setappctl_accent_ink	墨色蓝
 ui_world_count_filtered	%1$d / %2$d 本世界书
 usage_stats_30d	近 30 日
 usage_stats_7d	近 7 日

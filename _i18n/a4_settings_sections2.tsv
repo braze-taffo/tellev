@@ -13,9 +13,6 @@ setabout_qq_copied	已复制群号 754350480
 setabout_qq_group	QQ 交流群：tellev酒馆交流群
 setabout_title	关于
 setabout_version	tellev v%1$s
-setapp_accent_classic	经典蓝紫
-setapp_accent_label	主题色
-setapp_accent_warm	暖橘
 setapp_bubble_alpha	气泡不透明度：%1$d%%
 setapp_font_size	对话字号：%1$d sp
 setapp_preview_text	预览：这是一段对话文字
@@ -23,9 +20,6 @@ setapp_theme_dark	深色
 setapp_theme_light	浅色
 setapp_theme_system	跟随系统
 setapp_title	主题
-setappctl_accent_classic	经典蓝紫
-setappctl_accent_switched	主题色已切换为%1$s。
-setappctl_accent_warm	暖橘
 setappctl_theme_dark	深色
 setappctl_theme_light	浅色
 setappctl_theme_switched	主题已切换为%1$s。
@@ -86,4 +80,5 @@ setupd_new_version	发现新版本 v%1$s
 setupd_redownload	重新下载更新
 setupd_retry	重试
 setupd_up_to_date	已是最新版本
+setupd_hash_unverified	本次更新未校验哈希：发行未提供 sha256，仅校验了签名证书。
 setcomp_import	导入

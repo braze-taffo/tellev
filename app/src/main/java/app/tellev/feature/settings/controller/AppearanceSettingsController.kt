@@ -4,15 +4,13 @@ import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import app.tellev.core.storage.AppPreferences
 import app.tellev.feature.settings.SettingsUiState
-import app.tellev.ui.theme.ThemeAccent
-import app.tellev.ui.theme.ThemeMode
+import app.tellev.ui.dsh.ThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 
 internal class AppearanceSettingsController(
     private val appPreferences: AppPreferences,
     private val themeModeFlow: MutableStateFlow<ThemeMode>,
-    private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
     private val chatBubbleAlphaFlow: MutableStateFlow<Float>,
     private val chatFontSizeSpFlow: MutableStateFlow<Int>,
     private val stateFlow: MutableStateFlow<SettingsUiState>,
@@ -24,17 +22,6 @@ internal class AppearanceSettingsController(
             it.copy(
                 themeMode = mode,
                 info = UiStrings.get(S.setappctl_theme_switched, mode.displayName()),
-            )
-        }
-    }
-
-    fun setThemeAccent(accent: ThemeAccent) {
-        appPreferences.themeAccentName = accent.name
-        themeAccentFlow.value = accent
-        stateFlow.update {
-            it.copy(
-                themeAccent = accent,
-                info = UiStrings.get(S.setappctl_accent_switched, accent.displayName()),
             )
         }
     }
@@ -88,11 +75,5 @@ internal class AppearanceSettingsController(
         ThemeMode.Light -> UiStrings.get(S.setappctl_theme_light)
         ThemeMode.Dark -> UiStrings.get(S.setappctl_theme_dark)
         ThemeMode.System -> UiStrings.get(S.setappctl_theme_system)
-    }
-
-    private fun ThemeAccent.displayName(): String = when (this) {
-        ThemeAccent.Warm -> UiStrings.get(S.setappctl_accent_warm)
-        ThemeAccent.Classic -> UiStrings.get(S.setappctl_accent_classic)
-        ThemeAccent.Ink -> UiStrings.get(S.setappctl_accent_ink)
     }
 }

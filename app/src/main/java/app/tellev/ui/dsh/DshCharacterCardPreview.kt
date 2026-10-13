@@ -149,11 +149,29 @@ internal fun DshCharacterCardPreview(
                     }
                 }
             }
-            // 展开：完整字段摘要 + 缺失项 + 建议。
-            if (expanded) {
-                Spacer(Modifier.height(8.dp))
+            // 展开：完整字段摘要 + 缺失项 + 建议。用 dsh 时长档的 160-180ms
+            // 展开/收起，避免整卡高度瞬跳（此前是硬切换）。
+            androidx.compose.animation.AnimatedVisibility(
+                visible = expanded,
+                enter = androidx.compose.animation.expandVertically(
+                    animationSpec = androidx.compose.animation.core.tween(180),
+                ) + androidx.compose.animation.fadeIn(
+                    animationSpec = androidx.compose.animation.core.tween(160),
+                ),
+                exit = androidx.compose.animation.shrinkVertically(
+                    animationSpec = androidx.compose.animation.core.tween(160),
+                ) + androidx.compose.animation.fadeOut(
+                    animationSpec = androidx.compose.animation.core.tween(120),
+                ),
+            ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp).verticalScroll(rememberScrollState()),
+                    // 原展开块的 8dp 前置间距移进滚动内容（top padding），
+                    // 随展开/收起一起动画。
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 240.dp)
+                        .verticalScroll(rememberScrollState())
+                        .padding(top = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     CardFieldRow(stringResource(R.string.dsh_card_field_personality), card.personality)

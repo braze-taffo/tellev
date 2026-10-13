@@ -10,7 +10,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import app.tellev.core.extension.RuntimeToken
 import app.tellev.feature.chat.TavernHtmlPanel
 import app.tellev.feature.chat.TavernMessageRuntime
-import app.tellev.ui.theme.TellevTheme
+import app.tellev.ui.dsh.DshTheme
 import kotlinx.coroutines.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -38,7 +38,7 @@ class TavernPanelSizingTest {
         try {
             withContext(Dispatchers.Main) {
                 activity.setContent {
-                    TellevTheme {
+                    DshTheme {
                         TavernHtmlPanel(html, 500.dp, tavernRuntime = TavernMessageRuntime(
                             RuntimeToken("sizing-test", 1, "test"), 0, { "{}" }, { "{}" }, { _, _, _ -> },
                         ), onBoundaryDrag = {})

@@ -15,6 +15,14 @@ import java.security.MessageDigest
  * re-signed APK fails the comparison. This is the same evidence the system
  * installer uses for upgrade consistency, moved *before* the installer so a
  * mismatched package is deleted instead of shown to the user.
+ *
+ * Known limit (TELLER-3-5): the baseline is the *installed* build's signer
+ * set, so the gate proves "this APK is signed like the build you are running",
+ * not "this APK comes from the official publisher". A user who installed a
+ * forged build once has taught the gate the wrong baseline. Catching that case
+ * needs an official fingerprint baked into the app, and which fingerprint is
+ * authoritative has not been verified by anyone, so no such constant is
+ * invented here.
  */
 object UpdateApkVerifier {
 

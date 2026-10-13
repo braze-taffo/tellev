@@ -153,6 +153,26 @@ object ReasoningSupport {
         }
 
     /**
+     * 档位列表按模型档案声明收窄（bre：滑杆只提供该模型真正接受的档位）。
+     *
+     * 档案用 `efforts` 的键声明档位；没有档案或档案没声明时回落到 [uiLevels] 的
+     * 家族档位——无档案行为与旧版完全一致。Auto 永远保留：它是「跟随预设」，
+     * 不属于端点能力。Off 也保留：关闭思考不需要端点支持。
+     */
+    fun uiLevelsForModel(
+        family: ReasoningFamily,
+        profile: ModelReasoningProfile?,
+    ): List<ReasoningEffort> {
+        val familyLevels = uiLevels(family)
+        val declared = profile?.efforts?.keys
+            ?.mapNotNull { name -> ReasoningEffort.fromStored(name) }
+            ?.toSet()
+            ?: return familyLevels
+        if (declared.isEmpty()) return familyLevels
+        return familyLevels.filter { it == ReasoningEffort.Auto || it == ReasoningEffort.Off || it in declared }
+    }
+
+    /**
      * Applies the override chain. [presetEffort] is the preset's own serialized
      * field; preset raw fields are handled at injection time so [ReasoningEffort.Auto]
      * preserves the legacy passthrough exactly.

@@ -63,6 +63,27 @@ internal data class TavernMessageRuntime(
 /** How long the message WebView's JS thread waits for a main-thread draft read. */
 private const val INPUT_READ_TIMEOUT_MILLIS = 500L
 
+/** 同步桥降级时的空变量载荷；message-host.js:37 的 parseJson 以 {} 兜底。 */
+private const val EMPTY_VARIABLES_JSON = "{}"
+
+/** message.js:7-11 把 null 读成「没有 compact 通道」并回落到 getContext() 的空数据。 */
+private const val NO_COMPACT_VARIABLES_JSON = "null"
+
+private const val RETIRED_READ_VARIABLES_JSON = """{"ok":false,"error":"Page retired"}"""
+
+/**
+ * getContext 的降级载荷：结构完整、没有数据。
+ *
+ * 切换/删除会话时 retireSessionRuntime() 先把 token 打成非活动
+ * （ChatSessionRuntime.kt:203-210），而 _uiState.update 换掉 currentSession/messages
+ * 之前旧消息面板仍在渲染、桥接口也还没摘除；这段窗口内 JS 的同步 getContext() 会走到
+ * requireMessageRuntime 的 check 抛 IllegalStateException（ChatSessionRuntime.kt:235）。
+ * message.js 读 c.chat 与 c.variableScopes（:17/:19/:30/:35/:37），所以载荷不能是
+ * {}——那样只是把 Java 异常换成 JS TypeError。键名与 ChatTavernAdapter
+ * .tavernMessageContextJson 的 variableScopes 一致。
+ */
+private val DEGRADED_CONTEXT_JSON: String = ChatTavernAdapter.emptyMessageContextJson()
+
 internal class TavernMessageBridge(
     private val onHeightChanged: (Int) -> Unit,
     private val onBoundaryDrag: (Float) -> Unit,
@@ -70,7 +91,9 @@ internal class TavernMessageBridge(
     val documentId: String = "",
     private val onDocumentReady: () -> Unit = {},
 ) {
-    private val mainHandler = Handler(Looper.getMainLooper())
+    // 只在跨线程派发时才需要；同步桥读路径（getContext/getAllVariables/readVariables）
+    // 完全不碰主线程，延迟取 Looper 让这些读入口可以在无主 Looper 的环境下被构造。
+    private val mainHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
     private var webView = java.lang.ref.WeakReference<WebView>(null)
 
     @Volatile
@@ -182,13 +205,31 @@ internal class TavernMessageBridge(
         mainHandler.post { if (!closed) onHeightChanged(height) }
     }
 
-    @JavascriptInterface
-    fun getAllVariables(): String =
-        if (closed) "{}" else runtime.variablesJson()
+    /**
+     * 同步读入口的统一兜底：读值失败（会话已 retirement、requireMessageRuntime 抛错）
+     * 与关闭态都给出降级载荷，而不是把异常抛回 JS 线程。
+     *
+     * 只覆盖读路径。写路径的完整性门禁仍在 requireMessageRuntime
+     * （ChatSessionRuntime.kt:235）——把会话失配吞成降级载荷会让异步 request
+     * 的错误语义失效，所以那里保持 fail-fast。
+     */
+    private fun <T> bridgeRead(degraded: T, read: () -> T): T =
+        if (closed) degraded else runCatching(read).getOrElse { degraded }
 
     @JavascriptInterface
-    fun readVariables(payload: String): String = if (closed) "{\"ok\":false,\"error\":\"Page retired\"}"
-        else runtime.readVariables?.invoke(payload) ?: "null"
+    fun getAllVariables(): String = bridgeRead(EMPTY_VARIABLES_JSON) { runtime.variablesJson() }
+
+    @JavascriptInterface
+    fun readVariables(payload: String): String = if (closed) {
+        RETIRED_READ_VARIABLES_JSON
+    } else {
+        // 读值失败（会话已 retirement）降级成 null 而不是 {"ok":false}：message.js:7-11 把
+        // null 当作「没有 compact 通道」并回落到 getContext() 的空数据，{"ok":false} 则会让
+        // compact 抛错，卡片侧连空数据都拿不到。Kotlin 侧无人传 readVariables 运行时，
+        // 这里恒为 null（死路径，保留并加固）。
+        runCatching { runtime.readVariables?.invoke(payload) ?: NO_COMPACT_VARIABLES_JSON }
+            .getOrElse { NO_COMPACT_VARIABLES_JSON }
+    }
 
     @JavascriptInterface
     fun getCurrentMessageId(): Int = if (closed) -1 else runtime.messageIndex
@@ -221,7 +262,7 @@ internal class TavernMessageBridge(
     }
 
     @JavascriptInterface
-    fun getContext(): String = if (closed) "{}" else runtime.contextJson()
+    fun getContext(): String = bridgeRead(DEGRADED_CONTEXT_JSON) { runtime.contextJson() }
 
     @JavascriptInterface
     fun request(requestId: String, operation: String, payloadJson: String) {

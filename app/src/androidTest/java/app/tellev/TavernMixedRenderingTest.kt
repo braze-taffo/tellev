@@ -14,10 +14,9 @@ import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import app.tellev.core.extension.RuntimeToken
 import app.tellev.feature.chat.*
-import app.tellev.ui.theme.TellevTheme
-import app.tellev.ui.theme.ThemeAccent
-import app.tellev.ui.theme.darkColors
-import app.tellev.ui.theme.lightColors
+import app.tellev.ui.dsh.DshDarkPalette
+import app.tellev.ui.dsh.DshLightPalette
+import app.tellev.ui.dsh.DshTheme
 import kotlinx.serialization.json.JsonPrimitive
 import android.graphics.Bitmap
 import kotlinx.coroutines.*
@@ -39,7 +38,7 @@ class TavernMixedRenderingTest {
             for (dark in listOf(false, true)) {
                 withContext(Dispatchers.Main) {
                     activity.setContent {
-                        TellevTheme(darkTheme = dark) {
+                        DshTheme(darkTheme = dark) {
                             Surface(modifier = Modifier.fillMaxSize()) { Column {
                                 segments.forEachIndexed { index, segment ->
                                     when (segment) {
@@ -56,7 +55,7 @@ class TavernMixedRenderingTest {
                 }
                 instrumentation.waitForIdleSync()
                 var views = emptyList<WebView>()
-                val foreground = (if (dark) ThemeAccent.Warm.darkColors() else ThemeAccent.Warm.lightColors()).onSurface.toCssHex()
+                val foreground = (if (dark) DshDarkPalette else DshLightPalette).textPrimary.toCssHex()
                 waitUntil {
                     views = withContext(Dispatchers.Main) { frames(activity.window.decorView) }
                     views.size == 2 && evaluate(views[0], "!!document.getElementById('choice')") == "true" &&
@@ -101,7 +100,7 @@ class TavernMixedRenderingTest {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
         try {
             withContext(Dispatchers.Main) { activity.setContent {
-                TellevTheme { Surface {
+                DshTheme { Surface {
                     TavernHtmlPanel(log, 500.dp, tavernRuntime = TavernMessageRuntime(RuntimeToken("supplied-log", 1, "test"),
                         0, { "{}" }, { "{}" }, { _, _, _ -> }), onBoundaryDrag = {})
                 } }

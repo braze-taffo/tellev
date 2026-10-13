@@ -1,4 +1,9 @@
 # key<TAB>en<TAB>ja<TAB>ko — zh comes from module TSVs; missing/untranslated keys fall back to zh.
+crs_model_saving	Saving model selection...	モデル選択を保存中…	모델 선택 저장 중...
+crs_attachment_reading	Reading attachment...	添付ファイルを読み込み中…	첨부 파일 읽는 중...
+crs_attachment_unsupported	This file cannot be sent to the creation model. Choose a nonempty UTF-8 text file or image.	このファイルは創作モデルに送信できません。空でない UTF-8 テキストまたは画像を選択してください。	이 파일은 창작 모델에 전송할 수 없습니다. 비어 있지 않은 UTF-8 텍스트 또는 이미지를 선택하세요.
+crs_attachment_vision_unavailable	The current connection or model does not support images. Enable vision or remove the image and retry.	現在の接続またはモデルは画像に対応していません。画像対応を有効にするか画像を削除して再試行してください。	현재 연결 또는 모델은 이미지를 지원하지 않습니다. 이미지 지원을 활성화하거나 이미지를 제거한 후 다시 시도하세요.
+crs_attachment_pending_question	A text answer is needed. Remove attachments before answering, or stop this creation turn before sending attachments.	現在はテキストでの回答が必要です。添付ファイルを削除して回答するか、この創作を停止してから送信してください。	지금은 텍스트 답변이 필요합니다. 첨부 파일을 제거하고 답변하거나 이 창작을 중지한 후 첨부 파일을 전송하세요.
 settings_language	Language	言語	언어
 settings_language_system	Follow system	システムに従う	시스템 설정 따름
 chars_export_write_failed	Could not write to the selected location	選択した場所に書き込めませんでした	선택한 위치에 쓸 수 없습니다
@@ -206,7 +211,6 @@ nav_update_message	New version %1$s is available (current: v%2$s).	新バージ�
 nav_update_apk_size	Download is about %1$s MB	ダウンロードは約%1$s MBです	설치 파일은 약 %1$s MB입니다
 nav_update_now	Update now	今すぐアップデート	지금 업데이트
 nav_update_download_started	Downloading new version...	新バージョンをダウンロード中…	새 버전 다운로드 중…
-ui_placeholder_message	Architecture entry point ready; features live in their own modules.	アーキテクチャのエントリポイントです。機能は各モジュールに実装します。	아키텍처 진입점이 준비되었습니다. 기능은 각 모듈에 구현합니다.
 chatvm_recover_unsaved	Unsaved changes were recovered from the last saved session	保存できなかった変更を復元し、最後に保存したセッションに戻しました	저장되지 않은 변경 사항이 마지막 저장 세션으로 복구되었습니다
 chatvm_reread_character_failed	Failed to re-read character card: %1$s	キャラカードの再読み込みに失敗しました：%1$s	캐릭터 카드 다시 읽기 실패: %1$s
 chatvm_reread_preset_failed	Failed to re-read preset: %1$s	プリセットの再読み込みに失敗しました：%1$s	프리셋 다시 읽기 실패: %1$s
@@ -560,25 +564,16 @@ creng_error_stream_interrupted	The model request was interrupted at %1$s (%2$d c
 creng_error_no_content	The model returned no content	モデルがコンテンツを返しませんでした	모델이 콘텐츠를 반환하지 않았습니다
 setimg_anlas_guard_label	Anlas guard (stay within the free tier)	Anlasガード（無料枠内で生成）	Anlas 가드(무료 한도 내 생성)
 setimg_cancel	Cancel	キャンセル	취소
-setimg_comfy_header	Image model (ComfyUI)	生図モデル（ComfyUI）	이미지 모델(ComfyUI)
 setimg_comfy_model_help_count	Fetched %1$d models; type to filter	%1$d個のモデルを取得しました。入力で絞り込めます	모델 %1$d개를 가져왔습니다. 입력하여 필터링하세요
 setimg_comfy_model_help_empty	Test the connection to fetch the model list from ComfyUI	接続テスト後にComfyUIからモデル一覧を取得できます	연결 테스트 후 ComfyUI에서 모델 목록을 가져올 수 있습니다
 setimg_comfy_model_label	Model (Checkpoint)	モデル（Checkpoint）	모델(Checkpoint)
-setimg_comfy_model_placeholder	Enter the model name bound to the %model% placeholder in your workflow; optional	ワークフローの%model%プレースホルダに対応するモデル名。空欄可	워크플로의 %model% 자리 표시자에 해당하는 모델 이름, 비워 둘 수 있음
 setimg_comfy_params_button	Generation params & default negative prompt	生成パラメータとデフォルトネガティブ	생성 매개변수 및 기본 부정 프롬프트
-setimg_comfy_url_help	Address of the ComfyUI running on your computer. Once a workflow is configured and saved, a "Generate image" entry appears in the chat input bar.	PC上で動いているComfyUIのアドレス。ワークフローを設定して保存すると、チャット入力欄に「画像を生成」が現れます。	PC에서 실행 중인 ComfyUI 주소입니다. 워크플로를 구성하고 저장하면 채팅 입력창에 "이미지 생성" 항목이 나타납니다.
 setimg_comfy_url_label	ComfyUI server address	ComfyUIサーバーアドレス	ComfyUI 서버 주소
 setimg_decrisper_label	Decrisper (reduces high-CFG artifacts)	Decrisper（高CFGのアーティファクト低減）	Decrisper(고 CFG 아티팩트 감소)
-setimg_engine_comfy	ComfyUI (remote)	ComfyUI（リモート）	ComfyUI(원격)
 setimg_engine_desc	The engine used by the "Generate image" button in the chat input bar (applies immediately, no save needed). Configure each engine's connection and parameters in its section below.	チャット入力欄の「画像を生成」ボタンが使うエンジンです（即時反映、保存不要）。各エンジンの接続とパラメータは下の対応ブロックで設定します。	채팅 입력창의 "이미지 생성" 버튼이 사용하는 엔진입니다(즉시 적용, 저장 불필요). 각 엔진의 연결과 매개변수는 아래 해당 블록에서 설정합니다.
-setimg_engine_header	Image engine	生図エンジン	이미지 엔진
-setimg_engine_novelai	NovelAI (remote)	NovelAI（リモート）	NovelAI(원격)
-setimg_entry_summary	Current engine: %1$s (%2$s)	現在のエンジン：%1$s（%2$s）	현재 엔진: %1$s(%2$s)
-setimg_entry_title	Image gen (engine & model)	生図（エンジンとモデル）	이미지 생성(엔진 및 모델)
 setimg_height_label	Height	高さ	높이
 setimg_model_label	Model	モデル	모델
 setimg_negative_label	Default negative prompt	デフォルトネガティブプロンプト	기본 부정 프롬프트
-setimg_novelai_header	NovelAI image gen (remote)	NovelAI生図（リモート）	NovelAI 이미지 생성(원격)
 setimg_novelai_negative_help	The Tavern default negative is appended after each request's negative	酒館のデフォルトネガティブは、毎回のリクエストのネガティブの後に連結されます	Tavern 기본 부정 프롬프트는 매 요청의 부정 프롬프트 뒤에 붙습니다
 setimg_novelai_params_button	Generation params, sampler & prompt prefix	生成パラメータ・サンプラー・プロンプト接頭辞	생성 매개변수, 샘플러, 프롬프트 접두사
 setimg_novelai_params_dialog_body	Matches the SillyTavern NovelAI source: prefix and negative are appended to every request automatically. After changing, go back to Settings and tap "Save".	酒館（SillyTavern）のNovelAIソースと同一：接頭辞とネガティブは毎回のリクエストに自動で連結されます。変更後は設定ページに戻り「保存」をタップしてください。	SillyTavern의 NovelAI 소스와 동일합니다: 접두사와 부정 프롬프트는 매 요청에 자동으로 붙습니다. 변경 후 설정 페이지로 돌아가 "저장"을 누르세요.
@@ -586,7 +581,6 @@ setimg_novelai_params_dialog_title	NovelAI image gen parameters	NovelAI生図パ
 setimg_novelai_sampler_label	Sampler	サンプラー	샘플러
 setimg_novelai_scheduler_label	Scheduler	スケジューラ	스케줄러
 setimg_novelai_steps_help	Max 50; limited to 28 with Anlas guard on	上限50。Anlasガード有効時は28	최대 50, Anlas 가드 사용 시 28
-setimg_novelai_token_help	novelai.net → Account settings → Persistent Token; requires a valid subscription (e.g. Opus)	novelai.net → アカウント設定 → Persistent Token。有効なサブスクリプション（Opusなど）が必要です	novelai.net → 계정 설정 → Persistent Token. 유효한 구독(예: Opus) 필요
 setimg_novelai_token_label	NovelAI token (Persistent Token)	NovelAIトークン（Persistent Token）	NovelAI 토큰(Persistent Token)
 setimg_ok	OK	確定	확인
 setimg_params_dialog_body	Parameters replace the matching placeholders in the workflow. Leave sampler/scheduler empty to keep the workflow's own values. After changing, go back to Settings and tap "Save".	パラメータはワークフロー内の対応するプレースホルダを置き換えます。サンプラーとスケジューラを空欄にすると、ワークフロー自身の値を使います。変更後は設定ページに戻り「保存」をタップしてください。	매개변수는 워크플로의 해당 자리 표시자를 대체합니다. 샘플러/스케줄러를 비우면 워크플로 자체 값을 사용합니다. 변경 후 설정 페이지로 돌아가 "저장"을 누르세요.
@@ -610,8 +604,6 @@ setimg_steps_label	Steps	ステップ数	스텝 수
 setimg_test_connection	Test connection	接続テスト	연결 테스트
 setimg_test_token	Test token	トークンテスト	토큰 테스트
 setimg_testing	Testing...	テスト中...	테스트 중...
-setimg_token_ok	Token works	トークンは有効です	토큰 사용 가능
-setimg_token_unavailable	Unavailable	利用できません	사용할 수 없음
 setimg_upscale_help	1 = no upscaling	1で拡大なし	1 = 확대 없음
 setimg_upscale_label	Upscale factor	拡大倍率	확대 배율
 setimg_variety_label	Variety+ (diversity boost)	Variety+（多様性強化）	Variety+(다양성 강화)
@@ -711,9 +703,6 @@ setabout_qq_copied	Copied group number 754350480	グループ番号754350480を�
 setabout_qq_group	QQ group: tellev酒馆交流群	QQグループ：tellev酒館交流群	QQ 그룹: tellev酒馆交流群
 setabout_title	About	このアプリについて	정보
 setabout_version	tellev v%1$s	tellev v%1$s	tellev v%1$s
-setapp_accent_classic	Classic blue-violet	クラシック青紫	클래식 청보라
-setapp_accent_label	Accent color	テーマカラー	테마 색상
-setapp_accent_warm	Warm orange	ウォームオレンジ	웜 오렌지
 setapp_bubble_alpha	Bubble opacity: %1$d%%	バブル不透明度：%1$d%%	말풍선 불투명도: %1$d%%
 setapp_font_size	Chat font size: %1$d sp	チャット文字サイズ：%1$d sp	채팅 글자 크기: %1$d sp
 setapp_preview_text	Preview: this is a sample chat message	プレビュー：これはチャット文字のサンプルです	미리보기: 채팅 텍스트 샘플입니다
@@ -721,9 +710,6 @@ setapp_theme_dark	Dark	ダーク	다크
 setapp_theme_light	Light	ライト	라이트
 setapp_theme_system	Follow system	システムに従う	시스템 설정 따름
 setapp_title	Theme	テーマ	테마
-setappctl_accent_classic	Classic blue-violet	クラシック青紫	클래식 청보라
-setappctl_accent_switched	Accent color changed to %1$s.	テーマカラーを%1$sに切り替えました。	테마 색상이 %1$s(으)로 변경되었습니다.
-setappctl_accent_warm	Warm orange	ウォームオレンジ	웜 오렌지
 setappctl_theme_dark	Dark	ダーク	다크
 setappctl_theme_light	Light	ライト	라이트
 setappctl_theme_switched	Theme changed to %1$s.	テーマを%1$sに切り替えました。	테마가 %1$s(으)로 변경되었습니다.
@@ -784,6 +770,7 @@ setupd_new_version	New version v%1$s available	新しいバージョンv%1$s	새
 setupd_redownload	Re-download update	更新を再ダウンロード	업데이트 다시 다운로드
 setupd_retry	Retry	再試行	재시도
 setupd_up_to_date	Up to date	最新です	최신 버전입니다
+setupd_hash_unverified	This update was not hash-verified: the release did not publish a sha256 digest, so only the signing certificate was checked.	この更新はハッシュ検証されていません：リリースに sha256 ダイジェストがなく、署名証明書のみ確認しました。	이 업데이트는 해시 검증되지 않았습니다: 릴리스에 sha256 다이제스트가 없어 서명 인증서만 확인했습니다.
 setcomp_import	Import	インポート	가져오기
 provctl_switched_to	Switched to "%1$s".	「%1$s」に切り替えました。	"%1$s"(으)로 전환했습니다.
 provctl_load_failed	Failed to load provider config: %1$s	プロバイダー設定の読み込みに失敗しました：%1$s	공급자 구성 로드 실패: %1$s
@@ -817,7 +804,6 @@ presetctl_exported	Preset "%1$s" exported.	プリセット「%1$s」をエクス
 presetctl_export_failed	Failed to export preset: %1$s	プリセットのエクスポートに失敗しました：%1$s	프리셋 내보내기 실패: %1$s
 presetctl_deleted	Preset deleted.	プリセットを削除しました。	프리셋을 삭제했습니다.
 presetctl_delete_failed	Failed to delete preset: %1$s	プリセットの削除に失敗しました：%1$s	프리셋 삭제 실패: %1$s
-presetctl_read_file_failed	Could not read the selected file	選択したファイルを読み取れませんでした	선택한 파일을 읽을 수 없습니다
 presetctl_imported	Preset "%1$s" imported and activated.	プリセット「%1$s」をインポートして有効にしました。	프리셋 "%1$s"을(를) 가져와 활성화했습니다.
 presetctl_imported_with_warnings	Preset "%1$s" imported and activated; %2$s.	プリセット「%1$s」をインポートして有効にしました；%2$s。	프리셋 "%1$s"을(를) 가져와 활성화했습니다. %2$s.
 presetctl_import_failed	Failed to import preset: %1$s	プリセットのインポートに失敗しました：%1$s	프리셋 가져오기 실패: %1$s
@@ -847,9 +833,7 @@ bkpctl_import_failed	Failed to import backup: %1$s	バックアップのイン�
 setvm_load_failed	Failed to load settings: %1$s	設定の読み込みに失敗しました：%1$s	설정 로드 실패: %1$s
 setscreen_version_unknown	Unknown	不明	알 수 없음
 setscreen_title_provider	Model service config	モデルサービス設定	모델 서비스 구성
-setscreen_title_imagegen	Image gen settings	生図設定	이미지 생성 설정
 setscreen_title_settings	Settings	設定	설정
-setscreen_back_cd	Back	戻る	뒤로
 setscreen_this_config	this config	この設定	이 구성
 setscreen_delete_config_title	Delete custom config	カスタム設定を削除	사용자 지정 구성 삭제
 setscreen_delete_config_message	Delete "%1$s"? Its base URL and API key will be cleared. This cannot be undone.	「%1$s」を削除しますか？この設定のインターフェースアドレスとAPIキーは消去され、元に戻せません。	"%1$s"을(를) 삭제하시겠습니까? 이 구성의 엔드포인트 주소와 API 키가 지워지며 되돌릴 수 없습니다.
@@ -1184,12 +1168,12 @@ chat_optimize_failed_generic	Optimization request failed	最適化リクエス�
 chat_optimize_unavailable	The current provider does not support text generation	現在のプロバイダーはテキスト生成に対応していません	현재 공급자는 텍스트 생성을 지원하지 않음
 chatimgco_invalid_image_data	Provider returned no valid image data	有効な画像データが返されませんでした	유효한 이미지 데이터가 반환되지 않았습니다
 chat_reasoning_effort	Reasoning effort	思考の強さ	추론 강도
-chat_reasoning_effort_auto	Follow preset	プリセットに従う	프리셋 따름
-chat_reasoning_effort_off	Off	オフ	끄기
-chat_reasoning_effort_low	Low	低	낮음
-chat_reasoning_effort_medium	Medium	中	중간
-chat_reasoning_effort_high	High	高	높음
-chat_reasoning_effort_max	Max	最大	최대
+chat_reasoning_effort_auto	Auto	Auto	Auto
+chat_reasoning_effort_off	Off	Off	Off
+chat_reasoning_effort_low	Low	Low	Low
+chat_reasoning_effort_medium	Medium	Medium	Medium
+chat_reasoning_effort_high	High	High	High
+chat_reasoning_effort_max	Max	Max	Max
 chat_reasoning_set_failed	Failed to set reasoning effort: %1$s	思考の強さの設定に失敗しました：%1$s	추론 강도 설정 실패: %1$s
 app_name	tellev	tellev	tellev
 chat_default_assistant_name	Assistant	アシスタント	어시스턴트
@@ -1376,8 +1360,6 @@ ui_extensions_intro_hint	Manage memory, scripts and character features.	メモ�
 ui_settings_appearance	Appearance	外観	외관
 ui_settings_data	Data	データ	데이터
 ui_settings_identity	Identity	ペルソナ	페르소나
-ui_settings_intro	Make the story your own	物語をあなたらしく	취향에 맞는 이야기
-ui_settings_intro_hint	Manage models, presets, appearance and your data.	モデル、プリセット、外観、データを管理します。	모델, 프리셋, 외관, 데이터를 관리하세요.
 ui_settings_models	Models and presets	モデル・プリセット	모델 및 프리셋
 ui_world_count	World books: %1$d	%1$d 冊のワールドブック	월드북 %1$d 권
 ui_world_disabled	Disabled	無効	비활성화됨
@@ -1476,7 +1458,6 @@ creng_blueprint_unknown_fields	Blueprint has unknown fields %1$s; allowed: %2$s	
 creng_blueprint_invalid	Blueprint JSON could not be parsed: %1$s	ブループリントJSONを解析できませんでした：%1$s	블루프린트 JSON을 파싱할 수 없습니다: %1$s
 creng_blueprint_name_required	The blueprint is missing the name field.	ブループリントに name フィールドがありません。	블루프린트에 name 필드가 없습니다.
 creng_blueprint_worldbook_unsupported	Standard blueprints are not supported in world book sessions.	世界書セッションでは標準ブループリントはサポートされていません。	월드북 세션에서는 표준 블루프린트를 지원하지 않습니다.
-setimg_profile_header	Custom image endpoints	カスタム画像エンドポイント	사용자 지정 이미지 엔드포인트
 setimg_profile_desc	Add any number of OpenAI Images compatible endpoints (relays or self-hosted) and switch between them for chat images and cover generation.	OpenAI Images 互換エンドポイント（中継・自己ホスト）をいくつでも追加し、チャット画像や表紙生成で切り替えて使えます。	OpenAI Images 호환 엔드포인트(릴레이 또는 자체 호스팅)를 원하는 만큼 추가하고 채팅 이미지와 표지 생성에서 전환하여 사용할 수 있습니다.
 setimg_profile_empty_hint	No custom endpoints yet.	カスタムエンドポイントはまだありません。	아직 사용자 지정 엔드포인트가 없습니다.
 setimg_profile_add	Add endpoint	エンドポイントを追加	엔드포인트 추가
@@ -1499,16 +1480,12 @@ setimg_profile_required	Required	必須	필수
 setimg_profile_use_engine	Set as active engine	現在のエンジンに設定	현재 엔진으로 설정
 setimg_profile_in_use	Active engine	現在のエンジン	현재 엔진
 setimg_profile_delete	Delete	削除	삭제
-setimg_profile_generic_name	Custom endpoint	カスタムエンドポイント	사용자 지정 엔드포인트
-setimg_entry_profiles	Custom endpoints ×%1$d	カスタムエンドポイント ×%1$d	사용자 지정 엔드포인트 ×%1$d
 imgctl_profile_saved	Endpoint "%1$s" saved.	エンドポイント「%1$s」を保存しました。	엔드포인트 "%1$s"이(가) 저장되었습니다.
 imgctl_profile_save_failed	Failed to save endpoint: %1$s	エンドポイントの保存に失敗：%1$s	엔드포인트 저장 실패: %1$s
 imgctl_profile_deleted	Endpoint deleted.	エンドポイントを削除しました。	엔드포인트가 삭제되었습니다.
 imgctl_profile_delete_failed	Failed to delete endpoint: %1$s	エンドポイントの削除に失敗：%1$s	엔드포인트 삭제 실패: %1$s
 imgctl_profile_test_failed	Test failed: %1$s	テストに失敗：%1$s	테스트 실패: %1$s
 
-tts_section_title	Text-to-speech	音声読み上げ	텍스트 음성 변환
-tts_section_desc	Use the configured OpenAI-compatible service to read chat messages aloud.	設定したOpenAI互換サービスでチャットメッセージを読み上げます。	구성된 OpenAI 호환 서비스로 채팅 메시지를 소리 내어 읽습니다.
 tts_enabled	Enable text-to-speech	音声読み上げを有効にする	텍스트 음성 변환 사용
 tts_enabled_desc	Show Read aloud in message actions and cache generated audio.	メッセージ操作に「読み上げ」を表示し、生成音声をキャッシュします。	메시지 작업 메뉴에 "소리 내어 읽기"를 표시하고 생성된 오디오를 캐시합니다.
 tts_provider_hint	Configure an OpenAI-compatible service in Model services before using text-to-speech.	音声読み上げを使う前に、モデルサービスでOpenAI互換サービスを設定してください。	텍스트 음성 변환을 사용하려면 모델 서비스에서 OpenAI 호환 서비스를 먼저 설정하세요.
@@ -1516,15 +1493,6 @@ tts_voice	Voice	音声	음성
 tts_speed	Speed: %1$.2fx	速度：%1$.2fx	속도: %1$.2fx
 tts_model	Model	モデル	모델
 tts_format	Audio format	音声形式	오디오 형식
-tts_voice_alloy	alloy	alloy	alloy
-tts_voice_echo	echo	echo	echo
-tts_voice_fable	fable	fable	fable
-tts_voice_onyx	onyx	onyx	onyx
-tts_voice_nova	nova	nova	nova
-tts_voice_shimmer	shimmer	shimmer	shimmer
-tts_format_mp3	MP3	MP3	MP3
-tts_format_opus	Opus	Opus	Opus
-tts_read_aloud	Read aloud	読み上げ	소리 내어 읽기
 tts_stop	Stop reading	読み上げを停止	읽기 중지
 tts_error	Read aloud failed: %1$s	読み上げに失敗しました：%1$s	소리 내어 읽기 실패: %1$s
 tts_disabled	Text-to-speech is disabled	音声読み上げが無効です	텍스트 음성 변환이 비활성화되어 있습니다
@@ -1646,13 +1614,10 @@ chatvm_fork_session_failed	Failed to create branch: %1$s	分岐の作成に失�
 tts_custom_endpoint	Custom TTS endpoint	カスタムTTSエンドポイント	사용자 지정 TTS 엔드포인트
 tts_custom_endpoint_desc	Use a separate OpenAI-compatible /v1/audio/speech service instead of the chat provider.	チャットプロバイダに依存しない独立したOpenAI互換/v1/audio/speechサービスを使用します。	채팅 공급자 대신 별도의 OpenAI 호환 /v1/audio/speech 서비스를 사용합니다.
 tts_base_url	Endpoint base URL	エンドポイントBase URL	엔드포인트 Base URL
-tts_base_url_hint	e.g. https://api.example.com	例: https://api.example.com	예: https://api.example.com
 tts_api_key	API Key (optional)	APIキー（任意）	API 키(선택)
 tts_custom_voice	Custom voice	カスタム音声	사용자 지정 음성
-tts_custom_voice_hint	When set, overrides the voice picker above	設定すると上の音声選択を上書きします	설정하면 위의 음성 선택을 덮어씁니다
 tts_custom_voice_active	Active voice: %1$s	現在の音声：%1$s	현재 음성: %1$s
 tts_custom_model	Custom model	カスタムモデル	사용자 지정 모델
-tts_custom_model_hint	When set, overrides the model picker above	設定すると上のモデル選択を上書きします	설정하면 위의 모델 선택을 덮어씁니다
 tts_test_connection	Test connection	接続テスト	연결 테스트
 tts_test_ok	Connection successful	接続成功	연결 성공
 tts_test_failed	Connection failed: %1$s	接続失敗：%1$s	연결 실패: %1$s
@@ -1704,7 +1669,7 @@ world_edit_constant	Constant (always injected)	常駐（常に注入）	상시(�
 world_edit_save	Save	保存	저장
 chatvm_save_preset_failed	Failed to save preset: %1$s	プリセットの保存に失敗しました：%1$s	프리셋 저장 실패: %1$s
 chatvm_save_world_entry_failed	Failed to save world entry: %1$s	ワールドエントリの保存に失敗しました：%1$s	월드 항목 저장 실패: %1$s
-chat_reasoning_effort_on	On	オン	켜기
+chat_reasoning_effort_on	On	On	On
 model_catalog_loading	Loading models…	モデル一覧を取得中…	모델 목록 가져오는 중…
 model_catalog_failed	Failed: %1$s	取得失敗：%1$s	가져오기 실패: %1$s
 model_catalog_retry	Retry	再試行	재시도
@@ -1737,18 +1702,11 @@ dsh_usage_estimated	Estimated	推定	추정
 dsh_usage_empty	No usage recorded yet	使用記録はまだありません	아직 사용 기록이 없습니다
 dsh_user_edit_resend	Edit and resend	編集して再送信	편집 후 다시 보내기
 dsh_user_resend	Resend	再送信	다시 보내기
-dsh_model_config_title	Model configuration	モデル設定	모델 구성
-dsh_model_config_open	Configure models	モデルを設定	모델 구성
-dsh_model_provider	Provider	プロバイダー	제공자
-dsh_model_base_url	Base URL	ベースURL	기본 URL
-dsh_model_api_key	API key	APIキー	API 키
-dsh_model_name	Model name	モデル名	모델 이름
 dsh_model_levels	Reasoning effort levels	推論強度レベル	추론 강도 단계
 dsh_model_default_effort	Default reasoning effort	既定の推論強度	기본 추론 강도
 dsh_model_follow_memory	Follow memory	記憶に従う	기억 따르기
-dsh_model_test	Test connection	接続テスト	연결 테스트
-dsh_model_save	Save	保存	저장
-dsh_model_saved	Model configuration saved	モデル設定を保存しました	모델 구성을 저장했습니다
+dsh_model_clear_key	Clear API key	API キーを削除	API 키 지우기
+dsh_model_clear_key_confirm	The saved API key will be removed. You will need to enter it again to use this provider.	保存された API キーが削除されます。このプロバイダーを使うには再入力が必要です。	저장된 API 키가 삭제됩니다. 이 제공업체를 사용하려면 다시 입력해야 합니다.
 dsh_model_advanced	Advanced settings	詳細設定	고급 설정
 dsh_preset_full_title	Preset settings	プリセット設定	프리셋 설정
 dsh_drawer_open_cd	Open sessions	セッション一覧を開く	세션 목록 열기
@@ -1777,8 +1735,8 @@ dsh_profile_suggestion	Suggestion · %1$s	提案 · %1$s	제안 · %1$s
 dsh_profile_conf_high	knowledge base	知識ベース	지식베이스
 dsh_profile_conf_low	no match	該当なし	일치 없음
 dsh_profile_capacity	ctx %1$s · out %2$s	コンテキスト %1$s · 出力 %2$s	컨텍스트 %1$s · 출력 %2$s
-chat_reasoning_effort_minimal	Minimal	最小	최소
-chat_reasoning_effort_xhigh	XHigh	超高	매우 높음
+chat_reasoning_effort_minimal	Minimal	Minimal	Minimal
+chat_reasoning_effort_xhigh	XHigh	XHigh	XHigh
 dsh_preset_page_prompts	Prompts	プロンプト	프롬프트
 dsh_preset_prompts_hint	Prompt stack order (ST prompt_order). Reorder, enable/disable, and edit each slot. Save writes prompts + prompt_order together.	プロンプトスタックの順序（ST prompt_order）。並べ替え・有効無効・各項目の編集ができます。保存で prompts と prompt_order をまとめて書き込みます。	프롬프트 스택 순서(ST prompt_order). 순서 변경, 활성/비활성, 각 항목 편집이 가능합니다. 저장 시 prompts와 prompt_order가 함께 기록됩니다.
 dsh_preset_prompts_empty	No enabled prompts	有効なプロンプトなし	활성 프롬프트 없음
@@ -1834,8 +1792,6 @@ dsh_creation_reasoning_toggle	Thinking	思考過程	사고 과정
 dsh_creation_menu_manual	Manual edit	手動編集	수동 편집
 dsh_creation_menu_save	Save to library	ライブラリに保存	라이브러리에 저장
 dsh_creation_menu_export	Export JSON	JSON で書き出し	JSON 내보내기
-crs_chat_create_title	Chat-style creation	チャット式作成	채팅 방식 생성
-crs_chat_create_desc	Describe the character in one sentence, or let the AI guide you	一言で説明するか、AI にガイドさせます	한 마디로 설명하거나 AI 가이드를 받습니다
 cast_picker_title	Choose cast member cards	出演する役のカードを選択	출연 캐릭터 카드 선택
 cast_picker_hint	Multi-select. The main card narrates; member cards supply character settings.	複数選択可。主卡が統一叙事し、出演卡が人物設定を提供します。	다중 선택 가능. 메인 카드가 통합 서술, 멤버 카드가 인물 설정을 제공합니다.
 cast_search	Search characters	役を検색	캐릭터 검색
@@ -1845,3 +1801,67 @@ cast_cancel	Cancel	キャンセル	취소
 cast_binding_title	Cast / ensemble	出演・群像	출연 / 군상
 cast_binding_hint	Character cards, director cards and world cards can bind multiple characters. Chat is narrated by the main card, keeping each member's personality, goals, relationships and speech; member scripts are not executed.	キャラクターカード・監督カード・ワールドカードは複数の役をバインドできます。チャットは主卡が統一叙事し、各自の性格・目標・関係・話し方を保持します。出演卡のスクリプトは実行しません。	캐릭터 카드, 디렉터 카드, 월드 카드에 여러 캐릭터를 바인딩할 수 있습니다. 채팅은 메인 카드가 통합 서술하며 각자의 성격, 목표, 관계, 말투를 유지합니다. 출연 카드의 스크립트는 실행되지 않습니다.
 chat_render_pending	Rendering…	レンダリング中…	렌더링 중…
+nav_discard_unsaved_title	Discard unsaved changes?	未保存の変更を破棄しますか？	저장하지 않은 변경 사항을 버리시겠습니까?
+nav_discard_unsaved_message	Any edits you have not saved will be lost when you leave.	未保存の変更は、画面を離れると失われます。	저장하지 않은 변경 내용은 화면을 떠나면 사라집니다.
+nav_discard_unsaved_confirm	Discard	破棄	버리기
+dsh_model_reset	Restore defaults	初期値に戻す	기본값 복원
+dsh_model_reset_confirm	Clears the saved base URL, API key and model name for this provider, then falls back to its defaults. Advanced compatibility settings and reasoning profiles are untouched. This cannot be undone.	このサービス提供者について保存された API のベース URL・API キー・モデル名を消去し、既定値に戻します。高度な互換設定と思考プロファイルは変更されません。この操作は取り消せません。	이 서비스 제공자에 저장된 기본 URL·API 키·모델 이름을 지우고 기본값으로 되돌립니다. 고급 호환 설정과 사고 프로필은 변경되지 않습니다. 이 작업은 되돌릴 수 없습니다.
+dsh_model_reset_done	Model configuration restored to defaults	モデル設定を初期値に戻しました	모델 설정을 기본값으로 복원했습니다
+dsh_model_effort_auto_hint	Follow preset: no explicit effort; preset and model defaults decide.	プリセットに従う：強度は指定せず、プリセットとモデルの既定値に委ねます。	프리셋 따름: 강도를 지정하지 않고 프리셋과 모델 기본값에 맡깁니다.
+dsh_model_effort_hint	Current level: %1$s	現在のレベル: %1$s	현재 단계: %1$s
+dsh_model_effort_desc_auto	No reasoning-effort field is sent; preset and model defaults apply.	思考強度フィールドを送信せず、プリセットとモデルの既定値を使います。	사고 강도 필드를 보내지 않고 프리셋과 모델 기본값을 사용합니다.
+dsh_model_effort_desc_off	Thinking off: answer directly with no reasoning trace.	思考オフ：推論過程を出さずに直接回答します。	사고 끔: 추론 과정 없이 바로 답변합니다.
+dsh_model_effort_desc_low	Light thinking: converges quickly, good for simple tasks.	軽い思考：速く収束し、簡単なタスク向け。	가벼운 사고: 빠르게 수렴하며 간단한 작업에 적합.
+dsh_model_effort_desc_medium	Balanced thinking: midpoint of speed and depth.	均衡した思考：速度と深さの中間。	균형 사고: 속도와 깊이의 중간.
+dsh_model_effort_desc_high	Deep thinking: more reasoning, takes longer.	深い思考：より多くの推論を行い、時間がかかる。	깊은 사고: 더 많은 추론으로 시간이 더 걸림.
+dsh_model_effort_desc_max	Maximum thinking: most effort possible, slowest.	最大の思考：可能な限りの推論を行い、最も遅い。	최대 사고: 가능한 한 많이 추론하여 가장 느림.
+dsh_model_effort_desc_minimal	Minimal: use the smallest reasoning budget for simple tasks.	Minimal：単純なタスクに最小限の推論予算を使います。	Minimal: 간단한 작업에 최소 추론 예산을 사용합니다.
+dsh_model_effort_desc_xhigh	XHigh: use a higher reasoning effort when the model supports it.	XHigh：モデルが対応する範囲でより高い推論強度を使います。	XHigh: 모델이 지원하는 범위에서 더 높은 추론 강도를 사용합니다.
+dsh_creation_usage_requests	%1$d requests	%1$d 件のリクエスト	%1$d회 요청
+dsh_creation_usage_draft	This draft	このドラフト	이 초안
+dsh_services_title	Model services	モデルサービス	모델 서비스
+dsh_services_chat	Chat	チャット	대화
+dsh_services_image	Image	画像生成	이미지 생성
+dsh_services_voice	Voice	音声	음성
+dsh_services_img_comfy_row	ComfyUI setup	ComfyUI 設定	ComfyUI 설정
+dsh_services_img_novelai_row	NovelAI setup	NovelAI 設定	NovelAI 설정
+dsh_services_img_profiles	Custom image endpoints	カスタム画像エンドポイント	사용자 지정 이미지 엔드포인트
+dsh_services_voice_off	Off	オフ	꺼짐
+chat_drawer_model_services	Model services	モデルサービス	모델 서비스
+chars_group_cd	Group	グループ	그룹
+chars_group_title	Character groups	キャラクターグループ	캐릭터 그룹
+chars_group_all	All characters	すべてのキャラクター	모든 캐릭터
+chars_group_ungrouped	Ungrouped	未分類	미분류
+chars_group_new	New group	新規グループ	새 그룹
+chars_group_new_hint	Group name	グループ名	그룹 이름
+chars_group_create	Create	作成	만들기
+chars_group_rename	Rename	名前を変更	이름 변경
+chars_group_rename_title	Rename group	グループ名を変更	그룹 이름 변경
+chars_group_delete	Delete group	グループを削除	그룹 삭제
+chars_group_delete_title	Delete group	グループを削除	그룹 삭제
+chars_group_delete_confirm	Delete group "%1$s"? The cards themselves are kept and move to Ungrouped.	グループ「%1$s」を削除しますか？カード自体は削除されず、未分類に戻ります。	그룹 "%1$s"을(를) 삭제할까요? 카드 자체는 삭제되지 않고 미분류로 이동합니다.
+chars_group_none_hint	No groups yet. Type a name below to create the first one.	グループがまだありません。下に名前を入力して最初のグループを作成できます。	아직 그룹이 없습니다. 아래에 이름을 입력해 첫 그룹을 만드세요.
+chars_assign_group	Groups	グループ	그룹
+chars_assign_group_title	Add "%1$s" to groups	「%1$s」をグループに追加	"%1$s"을(를) 그룹에 추가
+chars_scan_cards	Scan for cards	カードをスキャン	카드 스캔
+chars_add_cards	Add cards	カードを追加	카드 추가
+chars_scan_empty	No character cards (png / webp / json) found in the selected folder.	選択したフォルダにキャラクターカード（png / webp / json）が見つかりません。	선택한 폴더에서 캐릭터 카드(png / webp / json)를 찾지 못했습니다.
+chars_world_add	Add world book	ワールドブックを追加	월드북 추가
+chars_world_primary	%1$s (primary)	%1$s（メイン）	%1$s(기본)
+chars_world_multi_hint	Multiple world books can be bound; the first in the list is the primary.	複数のワールドブックを紐付けられます。リストの先頭がメインです。	여러 월드북을 연결할 수 있으며, 목록의 첫 번째가 기본입니다.
+chars_world_unbind_cd	Unbind %1$s	%1$s の紐付けを解除	%1$s 연결 해제
+dsh_prompt_add	Add prompt	プロンプトを追加	프롬프트 추가
+dsh_prompt_add_limit	Custom prompt limit reached (%1$d)	カスタムプロンプトの上限（%1$d 件）に達しました	사용자 지정 프롬프트 한도(%1$d개)에 도달했습니다
+dsh_preset_group_sampling	Sampling	サンプリング	샘플링
+dsh_preset_group_penalty	Penalties	ペナルティ	페널티
+dsh_preset_group_length	Length	長さ	길이
+dsh_preset_keep_placeholder	Blank keeps	空欄は維持	비우면 유지
+dsh_preset_saved	Preset saved	プリセットを保存しました	프리셋을 저장했습니다
+dsh_preset_raw_add	Add key	キーを追加	키 추가
+dsh_preset_raw_path_label	Key (dotted path)	キー名（ドット区切り）	키 이름(점 구분 경로)
+dsh_preset_raw_key_blank	Invalid key name	無効なキー名	잘못된 키 이름
+dsh_preset_raw_key_exists	Key already exists — edit its row instead	キーは既に存在します（一覧の該当行を編集）	키가 이미 있습니다(목록에서 해당 행을 편집)
+dsh_preset_raw_key_reserved	Managed by the Parameters/Prompts pages	パラメータ/プロンプトページで管理されています	매개변수/프롬프트 페이지에서 관리됩니다
+dsh_creation_menu_preset	Preset: %1$s	プリセット：%1$s	프리셋: %1$s
+dsh_creation_preset_title	Generation preset	生成プリセット	생성 프리셋
+dsh_creation_preset_follow_chat	Follow chat	チャットに従う	채팅 따르기

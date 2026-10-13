@@ -1,19 +1,30 @@
 package app.tellev.ui.dsh
 
+import android.app.Activity
+import android.content.ContextWrapper
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 
 /**
  * DeepSeek Harness 官方设计 token 逐值复刻。
@@ -227,6 +238,15 @@ private fun DshPalette.toMaterialScheme(): ColorScheme {
         primaryContainer = blue.copy(alpha = 0.12f),
         onPrimaryContainer = textPrimary,
         secondary = textSecondary,
+        // secondaryContainer：中性容器（原设计用于身份/资料徽标），取 selector 面。
+        secondaryContainer = selector,
+        onSecondaryContainer = textPrimary,
+        // tertiary：原设计承载「警示/提示」语义（扩展日志 Warning 等级、预设提示色），
+        // 映射到 dsh 的 amber 状态色，避免保留第二套橙色强调色。
+        tertiary = statusAmber,
+        onTertiary = Color.White,
+        tertiaryContainer = statusAmber.copy(alpha = 0.12f),
+        onTertiaryContainer = textPrimary,
         outline = borderL3,
         outlineVariant = borderL2,
         error = errorPrimary,
@@ -238,8 +258,38 @@ private fun DshPalette.toMaterialScheme(): ColorScheme {
 }
 
 /**
- * 聊天界面的 dsh 主题：提供调色板并把 dsh tokens 铺进 Material3。
- * 只包聊天子树——其他 tab（设置/角色卡/社区）继续用应用的主题与强调色。
+ * dsh 排版（harness 规格锚点）：正文 14/24、secondary 13/20、caption 12/16。
+ * 此前非聊天页吃的是旧 AtmosphereTypography（bodySmall 12sp），统一后
+ * bodySmall 落到 13sp——这是「全应用 dsh 化」的有意变更，不是回归。
+ */
+private val DshTypography = Typography(
+    headlineLarge = TextStyle(fontWeight = FontWeight.Bold, fontSize = 30.sp, lineHeight = 38.sp),
+    headlineMedium = TextStyle(fontWeight = FontWeight.Bold, fontSize = 26.sp, lineHeight = 34.sp),
+    headlineSmall = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 23.sp, lineHeight = 31.sp),
+    titleLarge = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 28.sp),
+    titleMedium = TextStyle(fontWeight = FontWeight.Medium, fontSize = 16.sp, lineHeight = 24.sp),
+    titleSmall = TextStyle(fontWeight = FontWeight.Medium, fontSize = 14.sp, lineHeight = 20.sp),
+    bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
+    bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 24.sp),
+    bodySmall = TextStyle(fontSize = 13.sp, lineHeight = 20.sp),
+    labelLarge = TextStyle(fontWeight = FontWeight.Medium, fontSize = 14.sp, lineHeight = 20.sp),
+    labelMedium = TextStyle(fontWeight = FontWeight.Medium, fontSize = 13.sp, lineHeight = 18.sp),
+    labelSmall = TextStyle(fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 16.sp),
+)
+
+/** dsh 圆角体系（base.css:16-21）：xs4 / sm8 / md12 / lg16 / xl20 / panel28。 */
+private val DshShapes = Shapes(
+    extraSmall = RoundedCornerShape(Dsh.RADIUS_MD.dp),
+    small = RoundedCornerShape(Dsh.RADIUS_SM.dp),
+    medium = RoundedCornerShape(Dsh.RADIUS_MD.dp),
+    large = RoundedCornerShape(Dsh.RADIUS_LG.dp),
+    extraLarge = RoundedCornerShape(Dsh.RADIUS_LG.dp),
+)
+
+/**
+ * 应用唯一主题：提供 dsh 调色板并把 dsh tokens 铺进 Material3，
+ * 让对话框/菜单/输入框等 Material 组件与自绘元素共用同一套 tokens。
+ * 旧 TellevTheme（三套强调色 + Atmosphere 排版）已在本轮删除。
  */
 @Composable
 fun DshTheme(
@@ -247,33 +297,54 @@ fun DshTheme(
     content: @Composable () -> Unit,
 ) {
     val palette = if (darkTheme) DshDarkPalette else DshLightPalette
+    SystemBarAppearance(palette, darkTheme)
     CompositionLocalProvider(LocalDshPalette provides palette) {
         MaterialTheme(
             colorScheme = palette.toMaterialScheme(),
-            typography = MaterialTheme.typography,
-            // 官方圆角体系 sm8 / md12 / lg16：菜单与对话框共用，AlertDialog(extraLarge)
-            // 与 DropdownMenu(extraSmall) 不再各自带 Material 默认的 28dp / 4dp。
-            shapes = Shapes(
-                extraSmall = RoundedCornerShape(Dsh.RADIUS_MD.dp),
-                small = RoundedCornerShape(Dsh.RADIUS_SM.dp),
-                medium = RoundedCornerShape(Dsh.RADIUS_MD.dp),
-                large = RoundedCornerShape(Dsh.RADIUS_LG.dp),
-                extraLarge = RoundedCornerShape(Dsh.RADIUS_LG.dp),
-            ),
+            typography = DshTypography,
+            shapes = DshShapes,
             content = content,
         )
     }
 }
 
-/**
- * 只提供 dsh 调色板、不动 MaterialTheme 的版本：应用外壳（底栏等 dsh 元素）
- * 用它拿到随主题切换的 dsh tokens，同时保留用户的强调色主题。
- */
+/** 系统栏取色：状态栏贴页面底色、导航栏贴一层底色，图标明暗随主题。 */
+@Suppress("DEPRECATION")
 @Composable
-fun ProvideDshPalette(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    content: @Composable () -> Unit,
-) {
-    val palette = if (darkTheme) DshDarkPalette else DshLightPalette
-    CompositionLocalProvider(LocalDshPalette provides palette, content = content)
+private fun SystemBarAppearance(palette: DshPalette, darkTheme: Boolean) {
+    val view = LocalView.current
+    val context = LocalContext.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val activity = generateSequence(context) { (it as? ContextWrapper)?.baseContext }
+                .filterIsInstance<Activity>().firstOrNull()
+            if (activity != null) {
+                // Pre-Android 15 windows still draw opaque system bars. Match
+                // them to the page; on newer edge-to-edge windows only icon
+                // appearance needs updating when the in-app theme changes.
+                activity.window.statusBarColor = palette.bgBase.toArgb()
+                activity.window.navigationBarColor = palette.bgLayer1.toArgb()
+                WindowCompat.getInsetsController(activity.window, view).apply {
+                    isAppearanceLightStatusBars = !darkTheme
+                    isAppearanceLightNavigationBars = !darkTheme
+                }
+            }
+        }
+    }
 }
+
+/** App-wide theme preference; persisted as its name in AppPreferences. */
+enum class ThemeMode {
+    Light, Dark, System,
+}
+
+fun ThemeMode.isDarkTheme(systemInDark: Boolean): Boolean = when (this) {
+    ThemeMode.Light -> false
+    ThemeMode.Dark -> true
+    ThemeMode.System -> systemInDark
+}
+
+/** Tolerant parse for values read from storage; unknown names fall back to System. */
+fun parseThemeMode(name: String?): ThemeMode =
+    if (name == null) ThemeMode.System
+    else runCatching { ThemeMode.valueOf(name) }.getOrDefault(ThemeMode.System)

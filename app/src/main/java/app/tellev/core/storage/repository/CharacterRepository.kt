@@ -136,12 +136,21 @@ internal class CharacterRepository(
         card: CharacterCard,
         sourceBytes: ByteArray,
         sourceFileName: String,
+        bindEmbeddedWorldBook: Boolean = false,
     ): Unit = withContext(Dispatchers.IO) {
         layout.characters.createDirectories()
 
         val exporter = CharacterExporter(json)
         val jsonString = exporter.exportToJson(card)
         val format = CharacterImporter.detectFormat(sourceBytes, sourceFileName)
+        // In-app creation builds the card and its lorebook as one artifact, so it
+        // opts into the legacy bind-everything behaviour.
+        val persistAssets: suspend (CharacterCard, String?) -> Unit =
+            if (bindEmbeddedWorldBook) {
+                { c, fingerprint -> embeddedCoordinator.saveEmbeddedCharacterAssets(c, fingerprint) }
+            } else {
+                { c, fingerprint -> embeddedCoordinator.importEmbeddedCharacterAssets(c, fingerprint) }
+            }
 
         when (format) {
             "png" -> {
@@ -149,16 +158,23 @@ internal class CharacterRepository(
                 val pngBytes = PngCardParser.embedCardJson(sourceBytes, jsonString)
                 val pngPath = safeStorageChild(layout.characters, card.id, ".png")
                 synchronized(cardFileLock) { durableFiles.write(pngPath, pngBytes) }
-                embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(pngPath))
+                persistAssets(card, embeddedCoordinator.cardFingerprintOf(pngPath))
             }
             "webp" -> {
                 removeCharacterVariants(card.id, keepExtension = "webp")
                 val webpBytes = WebpCardParser.embedCardJson(sourceBytes, jsonString)
                 val webpPath = safeStorageChild(layout.characters, card.id, ".webp")
                 synchronized(cardFileLock) { durableFiles.write(webpPath, webpBytes) }
-                embeddedCoordinator.saveEmbeddedCharacterAssets(card, embeddedCoordinator.cardFingerprintOf(webpPath))
+                persistAssets(card, embeddedCoordinator.cardFingerprintOf(webpPath))
             }
-            else -> saveCharacter(card)
+            else -> {
+                // Mirrors the tail of saveCharacter, but routes through the import
+                // path so the card's embedded world book lands disabled instead of
+                // silently activating.
+                val path = safeStorageChild(layout.characters, card.id, ".json")
+                synchronized(cardFileLock) { StorageFileOps.durableWriteText(durableFiles, path, jsonString) }
+                persistAssets(card, embeddedCoordinator.cardFingerprintOf(path))
+            }
         }
         characterChanges.tryEmit(card.id)
     }

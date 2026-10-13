@@ -18,7 +18,7 @@ import app.tellev.core.model.MessageReasoning
 import app.tellev.core.model.MessageRole
 import app.tellev.core.storage.CharacterImporter
 import app.tellev.feature.chat.*
-import app.tellev.ui.theme.TellevTheme
+import app.tellev.ui.dsh.DshTheme
 import kotlinx.coroutines.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -57,7 +57,7 @@ class TavernScrollRegressionTest {
         val created = TavernPanelStats.creates.get()
         try {
             withContext(Dispatchers.Main) {
-                activity.setContent { TellevTheme {
+                activity.setContent { DshTheme {
                     val state by rememberRenderedSegments(inputs, id) {
                         started.countDown()
                         release.await()
@@ -88,7 +88,7 @@ class TavernScrollRegressionTest {
         val id = mutableStateOf("a")
         val effects = AtomicInteger()
         try {
-            withContext(Dispatchers.Main) { activity.setContent { TellevTheme {
+            withContext(Dispatchers.Main) { activity.setContent { DshTheme {
                 TavernHtmlPanel("<html><body><div id='${id.value}'>${id.value}</div></body></html>", 400.dp,
                     tavernRuntime = runtime(id.value, effects), onBoundaryDrag = {})
             } } }
@@ -119,7 +119,7 @@ class TavernScrollRegressionTest {
             val releases = TavernPanelStats.releases.get()
             val sizes = ChatPanelSizes()
             try {
-                withContext(Dispatchers.Main) { activity.setContent { TellevTheme {
+                withContext(Dispatchers.Main) { activity.setContent { DshTheme {
                     list = rememberLazyListState()
                     LazyColumn(state = requireNotNull(list)) {
                         items((0 until count).toList(), key = { it }, contentType = { "message" }) { index ->

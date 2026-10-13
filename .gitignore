@@ -9,6 +9,7 @@ captures/
 *.iml
 backup-*/
 .keystore/
+.archive/
 
 nul
 
@@ -16,3 +17,6 @@ nul
 keystore.properties
 *.jks
 *.keystore
+
+# ZCode session artifacts
+.zcode/

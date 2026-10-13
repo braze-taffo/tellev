@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -44,51 +45,38 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.tellev.R
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun WorldBookEntryEditScreen(
-    viewModel: WorldViewModel,
-    onBack: () -> Unit,
-    modifier: Modifier = Modifier,
+/**
+ * 世界书条目编辑器的可编辑面，字段与界面控件一一对应。
+ *
+ * [toEntry] 与保存路径共用同一套归一化（逗号分词/trim、空数字回退、概率与延迟层级
+ * clamp），所以脏判定不会和实际写入的内容脱节——例如 priority 被改成非数字文本时
+ * 保存会回退成 0，判定也必须按 0 比较，否则会漏报「改了但等于没改」以外的状态。
+ */
+internal data class WorldEntryEditorFields(
+    val keys: String = "",
+    val secondaryKeys: String = "",
+    val content: String = "",
+    val enabled: Boolean = true,
+    val selective: Boolean = false,
+    val constant: Boolean = false,
+    val priority: String = "0",
+    val insertionOrder: String = "100",
+    val depth: String = "4",
+    val position: Int = 0,
+    val selectiveLogic: Int = 0,
+    val useProbability: Boolean = false,
+    val probability: String = "100",
+    val role: Int = 0,
+    val matchWholeWords: Boolean = false,
+    val useRegex: Boolean = false,
+    val caseSensitive: Boolean = false,
+    val excludeRecursion: Boolean = false,
+    val preventRecursion: Boolean = false,
+    val delayUntilRecursion: Boolean = false,
+    val delayUntilRecursionLevel: String = "1",
+    val comment: String = "",
 ) {
-    val state by viewModel.uiState.collectAsState()
-    val entry = state.selectedEntry
-    val bookId = state.selectedBook?.id
-    var editorActive by remember { mutableStateOf(true) }
-    DisposableEffect(Unit) {
-        editorActive = true
-        onDispose { editorActive = false }
-    }
-    fun leaveEditor() {
-        editorActive = false
-        onBack()
-    }
-    BackHandler { leaveEditor() }
-
-    var keys by rememberSaveable(entry?.id) { mutableStateOf(entry?.keys?.joinToString(", ") ?: "") }
-    var secondaryKeys by rememberSaveable(entry?.id) { mutableStateOf(entry?.secondaryKeys?.joinToString(", ") ?: "") }
-    var content by rememberSaveable(entry?.id) { mutableStateOf(entry?.content ?: "") }
-    var enabled by remember(entry?.id) { mutableStateOf(entry?.enabled ?: true) }
-    var selective by remember(entry?.id) { mutableStateOf(entry?.selective ?: false) }
-    var constant by remember(entry?.id) { mutableStateOf(entry?.constant ?: false) }
-    var priority by rememberSaveable(entry?.id) { mutableStateOf(entry?.priority?.toString() ?: "0") }
-    var insertionOrder by rememberSaveable(entry?.id) { mutableStateOf(entry?.insertionOrder?.toString() ?: "100") }
-    var depth by rememberSaveable(entry?.id) { mutableStateOf(entry?.depth?.toString() ?: "4") }
-    var position by remember(entry?.id) { mutableIntStateOf(entry?.position ?: 0) }
-    var selectiveLogic by remember(entry?.id) { mutableIntStateOf(entry?.selectiveLogic ?: 0) }
-    var useProbability by remember(entry?.id) { mutableStateOf(entry?.useProbability ?: false) }
-    var probability by rememberSaveable(entry?.id) { mutableStateOf(entry?.probability?.toString() ?: "100") }
-    var role by remember(entry?.id) { mutableIntStateOf(entry?.role ?: 0) }
-    var matchWholeWords by remember(entry?.id) { mutableStateOf(entry?.matchWholeWords ?: false) }
-    var useRegex by remember(entry?.id) { mutableStateOf(entry?.useRegex ?: false) }
-    var caseSensitive by remember(entry?.id) { mutableStateOf(entry?.caseSensitive ?: false) }
-    var excludeRecursion by remember(entry?.id) { mutableStateOf(entry?.excludeRecursion ?: false) }
-    var preventRecursion by remember(entry?.id) { mutableStateOf(entry?.preventRecursion ?: false) }
-    var delayUntilRecursion by remember(entry?.id) { mutableStateOf((entry?.delayUntilRecursion ?: 0) > 0) }
-    var delayUntilRecursionLevel by rememberSaveable(entry?.id) { mutableStateOf((entry?.delayUntilRecursion ?: 1).coerceAtLeast(1).toString()) }
-    var comment by rememberSaveable(entry?.id) { mutableStateOf(entry?.comment ?: "") }
-
-    fun buildUpdatedEntry(base: app.tellev.core.model.WorldBookEntry): app.tellev.core.model.WorldBookEntry {
+    fun toEntry(base: app.tellev.core.model.WorldBookEntry): app.tellev.core.model.WorldBookEntry {
         val parsedKeys = keys.split(",").map { it.trim() }.filter { it.isNotEmpty() }
         val parsedSecondaryKeys = secondaryKeys.split(",").map { it.trim() }.filter { it.isNotEmpty() }
         return base.copy(
@@ -120,12 +108,98 @@ fun WorldBookEntryEditScreen(
         )
     }
 
+    fun isDirty(base: app.tellev.core.model.WorldBookEntry): Boolean = toEntry(base) != base
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun WorldBookEntryEditScreen(
+    viewModel: WorldViewModel,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val state by viewModel.uiState.collectAsState()
+    val entry = state.selectedEntry
+    val bookId = state.selectedBook?.id
+    var editorActive by remember { mutableStateOf(true) }
+    var showDiscardDialog by remember { mutableStateOf(false) }
+    DisposableEffect(Unit) {
+        editorActive = true
+        onDispose { editorActive = false }
+    }
+    fun leaveEditor() {
+        editorActive = false
+        onBack()
+    }
+
+    var keys by rememberSaveable(entry?.id) { mutableStateOf(entry?.keys?.joinToString(", ") ?: "") }
+    var secondaryKeys by rememberSaveable(entry?.id) { mutableStateOf(entry?.secondaryKeys?.joinToString(", ") ?: "") }
+    var content by rememberSaveable(entry?.id) { mutableStateOf(entry?.content ?: "") }
+    var enabled by remember(entry?.id) { mutableStateOf(entry?.enabled ?: true) }
+    var selective by remember(entry?.id) { mutableStateOf(entry?.selective ?: false) }
+    var constant by remember(entry?.id) { mutableStateOf(entry?.constant ?: false) }
+    var priority by rememberSaveable(entry?.id) { mutableStateOf(entry?.priority?.toString() ?: "0") }
+    var insertionOrder by rememberSaveable(entry?.id) { mutableStateOf(entry?.insertionOrder?.toString() ?: "100") }
+    var depth by rememberSaveable(entry?.id) { mutableStateOf(entry?.depth?.toString() ?: "4") }
+    var position by remember(entry?.id) { mutableIntStateOf(entry?.position ?: 0) }
+    var selectiveLogic by remember(entry?.id) { mutableIntStateOf(entry?.selectiveLogic ?: 0) }
+    var useProbability by remember(entry?.id) { mutableStateOf(entry?.useProbability ?: false) }
+    var probability by rememberSaveable(entry?.id) { mutableStateOf(entry?.probability?.toString() ?: "100") }
+    var role by remember(entry?.id) { mutableIntStateOf(entry?.role ?: 0) }
+    var matchWholeWords by remember(entry?.id) { mutableStateOf(entry?.matchWholeWords ?: false) }
+    var useRegex by remember(entry?.id) { mutableStateOf(entry?.useRegex ?: false) }
+    var caseSensitive by remember(entry?.id) { mutableStateOf(entry?.caseSensitive ?: false) }
+    var excludeRecursion by remember(entry?.id) { mutableStateOf(entry?.excludeRecursion ?: false) }
+    var preventRecursion by remember(entry?.id) { mutableStateOf(entry?.preventRecursion ?: false) }
+    var delayUntilRecursion by remember(entry?.id) { mutableStateOf((entry?.delayUntilRecursion ?: 0) > 0) }
+    var delayUntilRecursionLevel by rememberSaveable(entry?.id) { mutableStateOf((entry?.delayUntilRecursion ?: 1).coerceAtLeast(1).toString()) }
+    var comment by rememberSaveable(entry?.id) { mutableStateOf(entry?.comment ?: "") }
+
+    fun currentFields() = WorldEntryEditorFields(
+        keys = keys,
+        secondaryKeys = secondaryKeys,
+        content = content,
+        enabled = enabled,
+        selective = selective,
+        constant = constant,
+        priority = priority,
+        insertionOrder = insertionOrder,
+        depth = depth,
+        position = position,
+        selectiveLogic = selectiveLogic,
+        useProbability = useProbability,
+        probability = probability,
+        role = role,
+        matchWholeWords = matchWholeWords,
+        useRegex = useRegex,
+        caseSensitive = caseSensitive,
+        excludeRecursion = excludeRecursion,
+        preventRecursion = preventRecursion,
+        delayUntilRecursion = delayUntilRecursion,
+        delayUntilRecursionLevel = delayUntilRecursionLevel,
+        comment = comment,
+    )
+
+    val dirty = entry != null && currentFields().isDirty(entry)
+
+    fun confirmLeave() {
+        if (dirty) showDiscardDialog = true else leaveEditor()
+    }
+
+    fun buildUpdatedEntry(base: app.tellev.core.model.WorldBookEntry): app.tellev.core.model.WorldBookEntry =
+        currentFields().toEntry(base)
+
+    // 只拦「有未保存更改」的返回；干净时保持原有行为（含 editorActive 复位）。
+    BackHandler {
+        if (dirty) showDiscardDialog = true else leaveEditor()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(if (entry?.content?.isBlank() == true || entry?.keys?.isEmpty() == true) stringResource(R.string.wbedit_new_entry) else stringResource(R.string.wbedit_edit_entry)) },
                 navigationIcon = {
-                    IconButton(onClick = { leaveEditor() }) {
+                    IconButton(onClick = ::confirmLeave) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.wbedit_back_cd))
                     }
                 },
@@ -160,7 +234,7 @@ fun WorldBookEntryEditScreen(
                 } else {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(state.selectionError.orEmpty(), color = MaterialTheme.colorScheme.error)
-                        TextButton(onClick = { leaveEditor() }) { Text(stringResource(R.string.wbedit_back_to_book)) }
+                        TextButton(onClick = ::confirmLeave) { Text(stringResource(R.string.wbedit_back_to_book)) }
                     }
                 }
             }
@@ -358,7 +432,7 @@ fun WorldBookEntryEditScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     OutlinedButton(
-                        onClick = { leaveEditor() },
+                        onClick = ::confirmLeave,
                         modifier = Modifier.weight(1f),
                     ) {
                         Text(stringResource(R.string.wbedit_cancel))
@@ -378,5 +452,31 @@ fun WorldBookEntryEditScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
+    }
+
+    if (showDiscardDialog) {
+        AlertDialog(
+            onDismissRequest = { showDiscardDialog = false },
+            title = { Text(stringResource(R.string.nav_discard_unsaved_title)) },
+            text = { Text(stringResource(R.string.nav_discard_unsaved_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDiscardDialog = false
+                        leaveEditor()
+                    },
+                ) {
+                    Text(
+                        text = stringResource(R.string.nav_discard_unsaved_confirm),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDiscardDialog = false }) {
+                    Text(stringResource(R.string.wbedit_cancel))
+                }
+            },
+        )
     }
 }

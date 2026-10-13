@@ -5,8 +5,10 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
@@ -28,6 +30,8 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -37,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -68,6 +73,7 @@ import app.tellev.core.guide.GuideKind
 import app.tellev.core.guide.StartupGuide
 import app.tellev.core.guide.decideStartupGuide
 import app.tellev.core.guide.hasAnyUserData
+import app.tellev.core.model.ReasoningEffort
 import app.tellev.feature.guide.GuideOverlay
 import app.tellev.feature.characters.CharacterDetailScreen
 import app.tellev.feature.characters.CharactersListScreen
@@ -76,10 +82,12 @@ import app.tellev.feature.characters.CharactersViewModelFactory
 import app.tellev.feature.community.CommunityScreen
 import app.tellev.feature.creation.CreationEditorScreen
 import app.tellev.feature.creation.CreationHomeScreen
+import app.tellev.feature.creation.CreationKind
 import app.tellev.feature.creation.CreationViewModel
 import app.tellev.feature.creation.CreationViewModelFactory
 import app.tellev.feature.chat.ChatViewModel
 import app.tellev.feature.chat.ChatViewModelFactory
+import app.tellev.feature.chat.forProvider
 import app.tellev.feature.extensions.ExtensionsScreen
 import app.tellev.feature.extensions.ExtensionsViewModel
 import app.tellev.feature.extensions.ExtensionsViewModelFactory
@@ -96,8 +104,10 @@ import app.tellev.feature.world.WorldViewModel
 import app.tellev.feature.world.WorldViewModelFactory
 import app.tellev.ui.AppBackAction
 import app.tellev.ui.appBackAction
-import app.tellev.ui.theme.isDarkTheme
+import app.tellev.ui.isDshTopLevel
+import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.coroutines.withContext
 
@@ -108,28 +118,14 @@ private enum class DshTab(val route: String, val labelRes: Int, val icon: ImageV
     Settings("settings", R.string.nav_tab_settings, Icons.Default.Settings),
 }
 
-/** 顶层路由（保底提交 c9f4ad1 的语义：这些叶子保留底栏）。 */
-/** dsh 外壳的底栏路由（four tabs + chat）。与 upstream isTopLevelScreen 不同：
- *  本外壳的 tab 是 工坊/类脑/角色卡/设置，world/list 不是 tab。 */
-internal fun isDshTopLevel(route: String?): Boolean = route in setOf(
-    "characters/list", "creation/home", "community", "settings", "chat",
-)
-
 /**
  * dsh 外壳：底部四 tab（角色工坊/类脑/角色卡/设置），聊天不再是 tab——
  * 从角色卡点进 DshChatScreen（自带图五抽屉）。
- * 旧 TellevRoot 不复存在；启动弹窗（更新/指引/群通知）这轮不移植。
+ * 主题（DshTheme）已在 MainActivity 根层挂载，这里不再嵌套。
  */
 @Composable
 fun DshRoot() {
-    val graph = LocalTellevGraph.current
-    // dsh token 随应用的主题模式切换；这里只提供调色板（不动 MaterialTheme），
-    // 底栏等 dsh 元素吃到正确底色，其余 tab 继续用各自的强调色主题。
-    val themeMode by graph.themeModeFlow.collectAsState()
-    val dshDark = themeMode.isDarkTheme(isSystemInDarkTheme())
-    ProvideDshPalette(darkTheme = dshDark) {
-        DshRootContent()
-    }
+    DshRootContent()
 }
 
 @Composable
@@ -162,6 +158,8 @@ private fun DshRootContent() {
             secrets = graph.secretStore,
             providers = graph.providerRegistry,
             imageDownloader = graph.imageDownloader,
+            // 与聊天共用同一个明细 writer：制卡记录进同一份账，且不会互相覆盖。
+            metricsStore = chatViewModel.metricsStoreForCreation,
         ),
     )
     val settingsViewModel: SettingsViewModel = viewModel(
@@ -171,7 +169,6 @@ private fun DshRootContent() {
             secretStore = graph.secretStore,
             appPreferences = graph.appPreferences,
             themeModeFlow = graph.themeModeFlow,
-            themeAccentFlow = graph.themeAccentFlow,
             chatBubbleAlphaFlow = graph.chatBubbleAlphaFlow,
             chatFontSizeSpFlow = graph.chatFontSizeSpFlow,
         ),
@@ -217,23 +214,27 @@ private fun DshRootContent() {
     var showQqGroupNotice by rememberSaveable { mutableStateOf(false) }
     var presetFocusRequest by rememberSaveable { mutableIntStateOf(0) }
     var showExitConfirmation by rememberSaveable { mutableStateOf(false) }
-    // 聊天式创建屏的 JSON 导出中转（SAF 选完 Uri 再写）。
-    var pendingCreationExport by remember { mutableStateOf<ByteArray?>(null) }
-    // 层级化返回（upstream 1.7.1.3 AppBackAction 语义）：二级页返回上一级；
-    // 四个首页 tab 在栈底时返回聊天首页；只有聊天首页在栈底才弹退出确认。
-    val canPopBackStack = navController.previousBackStackEntry != null
-    val conversationOpen = chatViewModel.uiState.value.currentSession != null
-    val backAction = appBackAction(currentRoute, conversationOpen)
-    // 首页 tab 在栈底：返回 = 回聊天首页（非退出）。
-    LaunchedEffect(backAction, canPopBackStack) {
-        if (!canPopBackStack && backAction == AppBackAction.ChatHome) {
-            navController.navigate("chat") { launchSingleTop = true }
-        }
-    }
-    val exitConfirmationEnabled = !canPopBackStack &&
-        backAction == AppBackAction.ConfirmExit &&
-        startupGuide == null && manualGuide == null &&
-        !showPresetLimitUpgradeNotice && !showQqGroupNotice
+    // 模型服务统一弹层：聊天抽屉「模型服务」（root 三服务行）、输入栏模型键
+    // （直达「对话」段）与设置 tab「模型服务」卡的管理按钮共用这一份渲染；
+    // null = 关闭。服务商管理（自定义端点 CRUD/高级设置）已并入弹层
+    // 「对话 → 模型服务商」段，原设置页独立「模型配置」页已删。
+    var modelServicesPane by rememberSaveable { mutableStateOf<String?>(null) }
+    // 聊天式创建屏的 JSON 导出中转：先落 cacheDir，SAF 选完 Uri 再写到用户位置并清理——
+    // 选择器期间旋转/进程死亡时 remember 的字节会丢，磁盘副本不能再丢。
+    // 只存路径（rememberSaveable 跨配置变更存活）；离开页面不清理：那正是要保住的场景。
+    var pendingCreationExportPath by rememberSaveable { mutableStateOf<String?>(null) }
+    // 聊天输入框草稿：提到根层，写作助手（输入栏入口 + 设置 tab 入口）才能共同读写
+    // 同一个草稿——设置 tab 打开写作助手时聊天页不在栈上，弹层够不着聊天屏的局部状态。
+    var chatDraft by rememberSaveable { mutableStateOf("") }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val shellScope = rememberCoroutineScope()
+    // 会话是否打开：必须订阅 uiState——组合期读 StateFlow.value 不产生快照订阅。
+    val chatUiState by chatViewModel.uiState.collectAsState()
+    val settingsState by settingsViewModel.uiState.collectAsState()
+    val conversationOpen = chatUiState.currentSession != null
+    // 启动弹窗在栈时不抢返回：退出确认只在没有模态时可达。
+    val startupModalsOpen = startupGuide != null || manualGuide != null ||
+        showPresetLimitUpgradeNotice || showQqGroupNotice
     LaunchedEffect(Unit) { updateViewModel.checkOnLaunch() }
     LaunchedEffect(packageInfo.firstInstallTime, packageInfo.lastUpdateTime) {
         showPresetLimitUpgradeNotice = graph.appPreferences.shouldShowPresetLimitUpgradeNotice(
@@ -266,6 +267,7 @@ private fun DshRootContent() {
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             if (isDshTopLevel(currentRoute)) {
                 NavigationBar(containerColor = Dsh.bgSurface, tonalElevation = 0.dp) {
@@ -300,32 +302,60 @@ private fun DshRootContent() {
             modifier = Modifier.fillMaxSize()
                 .padding(padding)
                 .consumeWindowInsets(padding),
+            // 过渡节奏：navigation-compose 的默认是 700ms 交叉淡化（NavHost.kt
+            // 默认 tween(700)），对工具型应用每次切页都慢半拍。统一 200ms 淡化，
+            // 落在会话内交互的 140-200ms 档；四个高频 tab 与聊天页共用同一份。
+            enterTransition = { fadeIn(animationSpec = tween(200)) },
+            exitTransition = { fadeOut(animationSpec = tween(200)) },
+            popEnterTransition = { fadeIn(animationSpec = tween(200)) },
+            popExitTransition = { fadeOut(animationSpec = tween(200)) },
         ) {
             fun NavGraphBuilder.page(route: String, arguments: List<NamedNavArgument> = emptyList(), block: @Composable (NavBackStackEntry) -> Unit) {
                 composable(route, arguments) { entry ->
-                    // Compose gives priority to the LAST registered BackHandler.
-                    // Registering the exit confirmation BEFORE the page content lets
-                    // page-level handlers (editors' unsaved-changes guards, etc.) win;
-                    // this handler only fires when no page handler is enabled.
-                    BackHandler(enabled = exitConfirmationEnabled) { showExitConfirmation = true }
+                    // dsh 返回语义（appBackAction 吃 isDshTopLevel 这一份集合）：二级页
+                    // Parent 时本 handler 关闭，让系统默认 pop；首页 tab 在栈底返回 = 回
+                    // 聊天首页；chat 有会话 = 关会话；chat 空会话 = 退出确认。
+                    // 「栈底」= 当前路由本身是顶层页：tab 切换的
+                    // popUpTo(findStartDestination()) 会把栈收敛到 [characters/list, 当前 tab]，
+                    // 顶层页之上不可能再压页面，因此不能用 previousBackStackEntry 判栈底
+                    // （那会让 ConfirmExit 恒不可达）。
+                    // Compose 优先最后一次注册的 BackHandler：本 handler 注册在页面内容
+                    // 之前，页面自己的 handler（编辑器未保存保护等）能先拿到事件。
+                    val backAction = appBackAction(entry.destination.route, conversationOpen)
+                    BackHandler(enabled = when (backAction) {
+                        AppBackAction.ChatHome, AppBackAction.CloseConversation -> true
+                        AppBackAction.ConfirmExit -> !startupModalsOpen
+                        AppBackAction.None, AppBackAction.Parent -> false
+                    }) {
+                        when (backAction) {
+                            AppBackAction.ChatHome -> navController.navigate("chat") {
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                            AppBackAction.CloseConversation -> chatViewModel.deselectCharacter()
+                            AppBackAction.ConfirmExit -> showExitConfirmation = true
+                            AppBackAction.None, AppBackAction.Parent -> Unit
+                        }
+                    }
                     block(entry)
                 }
             }
 
             page("chat") {
-                // 聊天子树整体套 DshTheme：对话框/菜单/输入框等 Material 组件统一吃
-                // dsh 配色与圆角，不再出现应用强调色主题与 dsh 弹层混搭的两种风格。
-                DshTheme(darkTheme = LocalDshPalette.current.isDark) {
-                    DshChatScreen(
-                        viewModel = chatViewModel,
-                        onBack = { navController.popBackStack() },
-                        onOpenWorldBooks = { navController.navigate("world/list") },
-                        onOpenPlugins = { navController.navigate("extensions") },
-                        onOpenImageGenSettings = { navController.navigate("settings/imagegen") },
-                        onOpenUsageStats = { navController.navigate("settings/usage") },
-                        onOpenSettings = { navigateToSettings() },
-                    )
-                }
+                // 主题在根层（MainActivity 的 DshTheme）已挂载，这里不再嵌套。
+                DshChatScreen(
+                    viewModel = chatViewModel,
+                    draftText = chatDraft,
+                    onDraftChange = { chatDraft = it },
+                    onBack = { navController.popBackStack() },
+                    onOpenWorldBooks = { navController.navigate("world/list") },
+                    onOpenPlugins = { navController.navigate("extensions") },
+                    onOpenModelServices = { modelServicesPane = "root" },
+                    onOpenModelConfig = { modelServicesPane = "chat" },
+                    onOpenUsageStats = { navController.navigate("settings/usage") },
+                    onOpenSettings = { navigateToSettings() },
+                )
             }
 
             navigation(startDestination = "characters/list", route = "characters") {
@@ -374,7 +404,7 @@ private fun DshRootContent() {
                 page("world/list") {
                     WorldBooksListScreen(
                         viewModel = worldViewModel,
-                        onCreateWithAi = { navController.navigate("creation/chat") },
+                        onCreateWithAi = { navController.navigate("creation/chat?kind=WorldBook") },
                         onEditWithAi = { navController.navigate("creation/edit/world/$it") },
                         onBookClick = { bookId ->
                             worldViewModel.selectBook(bookId)
@@ -415,33 +445,108 @@ private fun DshRootContent() {
                     viewModel = creationViewModel,
                     onBack = { navController.popBackStack() },
                     onOpenEditor = { navController.navigate("creation/editor") },
+                    // 必须显式接线：不传就走形参默认值，把聊天式创建静默改道去旧编辑器。
+                    onOpenChatCreation = { kind -> navController.navigate("creation/chat?kind=$kind") },
                 )
             }
             // 聊天式创建（PRD 主机屏）：角色卡会话以聊天气泡/输入框/流式完成；
             // 世界书会话与手动编辑仍走旧编辑器（高级资产在那里）。
-            page("creation/chat") {
-                // 保存前没有 current 会话（首页直接进来）→ 起一个新角色卡会话。
-                androidx.compose.runtime.LaunchedEffect(Unit) {
-                    if (creationViewModel.state.value.current == null) {
-                        creationViewModel.start(app.tellev.feature.creation.CreationKind.Character)
+            page(
+                route = "creation/chat?kind={kind}",
+                arguments = listOf(navArgument("kind") {
+                    type = NavType.StringType
+                    defaultValue = CreationKind.Character.name
+                }),
+            ) { entry ->
+                val chatKind = creationKindOf(entry.arguments?.getString("kind"))
+                // 会话类型由路由参数驱动：没有 current 会话（首页直接进来）或与路由类型
+                // 不一致时起新会话；一致则沿用当前会话（卡片点击处已 start()，这里不重启）。
+                androidx.compose.runtime.LaunchedEffect(chatKind) {
+                    val current = creationViewModel.state.value.current
+                    if (current == null || current.kind != chatKind) {
+                        creationViewModel.start(chatKind)
                     }
                 }
                 val jsonSaver = androidx.activity.compose.rememberLauncherForActivityResult(
                     androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json"),
                 ) { uri ->
-                    uri ?: return@rememberLauncherForActivityResult
-                    pendingCreationExport?.let { bytes ->
-                        activityContext.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    val pending = pendingCreationExportPath
+                    pendingCreationExportPath = null
+                    val staging = pending?.let(::File)
+                    // uri == null = 用户取消选择器，不是失败，不提示。
+                    if (uri == null) {
+                        staging?.delete()
+                        return@rememberLauncherForActivityResult
                     }
-                    pendingCreationExport = null
+                    if (staging?.isFile != true) {
+                        // 缓存副本已不在（选择器期间旋转/进程死亡）：必须给可见反馈，
+                        // 不能像原来那样静默 no-op、什么文件都不创建。
+                        shellScope.launch {
+                            snackbarHostState.showSnackbar(
+                                activityContext.getString(R.string.chat_export_failed),
+                            )
+                        }
+                        return@rememberLauncherForActivityResult
+                    }
+                    shellScope.launch {
+                        val failure = withContext(Dispatchers.IO) {
+                            runCatching {
+                                val out = activityContext.contentResolver.openOutputStream(uri) ?: error("")
+                                out.use { stream -> staging.inputStream().use { it.copyTo(stream) } }
+                            }.exceptionOrNull()
+                        }
+                        staging.delete()
+                        failure?.let { error ->
+                            snackbarHostState.showSnackbar(
+                                activityContext.getString(
+                                    R.string.crs_export_failed,
+                                    error.message.orEmpty(),
+                                ),
+                            )
+                        }
+                    }
                 }
                 DshCreationChatScreen(
                     viewModel = creationViewModel,
+                    modelState = chatUiState,
+                    onRefreshModels = { chatViewModel.refreshModelCatalog(activeProviderOnly = true) },
+                    onSelectModel = { model, providerId, onSelected ->
+                        chatViewModel.selectModel(model, providerId, onSelected)
+                    },
                     onBack = { navController.popBackStack() },
                     onOpenManualEditor = { navController.navigate("creation/editor") },
-                    onExportJson = { bytes -> pendingCreationExport = bytes; jsonSaver.launch("character.json") },
+                    modelProfileOf = { modelId -> chatViewModel.modelReasoningProfile(modelId) },
+                    onOpenUsageStats = { navController.navigate("settings/usage") },
+                    onAssignModelGroup = { modelId, groupId, member ->
+                        chatViewModel.assignModelGroup(modelId, groupId, member)
+                    },
+                    onCreateModelGroup = { label -> chatViewModel.createModelGroup(label) },
+                    onExportJson = { bytes ->
+                        // 先落 cacheDir 再开选择器：SAF 期间旋转/进程死亡仍能凭路径找回字节。
+                        shellScope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) {
+                                    File.createTempFile(
+                                        "tellev-creation-",
+                                        ".json",
+                                        activityContext.cacheDir,
+                                    ).apply { writeBytes(bytes) }
+                                }
+                            }.onSuccess { file ->
+                                pendingCreationExportPath = file.path
+                                jsonSaver.launch("character.json")
+                            }.onFailure { error ->
+                                snackbarHostState.showSnackbar(
+                                    activityContext.getString(
+                                        R.string.crs_export_failed,
+                                        error.message.orEmpty(),
+                                    ),
+                                )
+                            }
+                        }
+                    },
                     onSaved = { kind, _ ->
-                        if (kind == app.tellev.feature.creation.CreationKind.Character) charactersViewModel.loadCharacters()
+                        if (kind == CreationKind.Character) charactersViewModel.loadCharacters()
                         else worldViewModel.loadBookSummaries()
                         navController.popBackStack()
                     },
@@ -457,7 +562,7 @@ private fun DshRootContent() {
                     viewModel = creationViewModel,
                     onBack = { navController.popBackStack() },
                     onSaved = { kind, _ ->
-                        if (kind == app.tellev.feature.creation.CreationKind.Character) charactersViewModel.loadCharacters()
+                        if (kind == CreationKind.Character) charactersViewModel.loadCharacters()
                         else worldViewModel.loadBookSummaries()
                     },
                 )
@@ -472,7 +577,7 @@ private fun DshRootContent() {
                     viewModel = creationViewModel,
                     onBack = { navController.popBackStack() },
                     onSaved = { kind, _ ->
-                        if (kind == app.tellev.feature.creation.CreationKind.Character) charactersViewModel.loadCharacters()
+                        if (kind == CreationKind.Character) charactersViewModel.loadCharacters()
                         else worldViewModel.loadBookSummaries()
                     },
                 )
@@ -487,7 +592,7 @@ private fun DshRootContent() {
                     viewModel = creationViewModel,
                     onBack = { navController.popBackStack() },
                     onSaved = { kind, _ ->
-                        if (kind == app.tellev.feature.creation.CreationKind.WorldBook) worldViewModel.loadBookSummaries()
+                        if (kind == CreationKind.WorldBook) worldViewModel.loadBookSummaries()
                     },
                 )
             }
@@ -496,7 +601,7 @@ private fun DshRootContent() {
                     viewModel = creationViewModel,
                     onBack = { navController.popBackStack() },
                     onSaved = { kind, _ ->
-                        if (kind == app.tellev.feature.creation.CreationKind.Character) charactersViewModel.loadCharacters()
+                        if (kind == CreationKind.Character) charactersViewModel.loadCharacters()
                         else worldViewModel.loadBookSummaries()
                     },
                 )
@@ -509,113 +614,165 @@ private fun DshRootContent() {
                 ExtensionsScreen(viewModel = extensionsViewModel, onBack = { navController.popBackStack() })
             }
             page(DshTab.Settings.route) {
-                // dsh Models 页语义：模型配置在设置页内就地弹层编辑（dsh+bre 布局），
-                // 优化提示词的写作助手设置也移到这里。
-                var showModelConfig by rememberSaveable { mutableStateOf(false) }
+                // 模型服务统一弹层（对话/生图/语音，dsh+bre 布局）在根层渲染；
+                // 本页「模型服务」卡的管理按钮打开同一弹层（服务商管理已并入
+                // 弹层「对话 → 模型服务商」段，原设置页「模型服务配置」独立页已删）。
                 var showOptimizer by rememberSaveable { mutableStateOf(false) }
                 val chatState by chatViewModel.uiState.collectAsState()
                 Column {
                     SettingsScreen(
                         viewModel = settingsViewModel,
                         updateViewModel = updateViewModel,
-                        onOpenProviderSettings = { navController.navigate("settings/providers") },
-                        onOpenImageGenSettings = { navController.navigate("settings/imagegen") },
+                        onOpenModelServices = { modelServicesPane = "root" },
                         onOpenUsageStats = { navController.navigate("settings/usage") },
                         onOpenExtensions = { navController.navigate("extensions") },
-                        onOpenModelConfig = { showModelConfig = true },
                         onOpenPromptOptimizer = { showOptimizer = true },
                         onOpenGuide = { manualGuide = it },
                         presetFocusRequest = presetFocusRequest,
+                        // 弹层在根层渲染：打开期间反馈由弹层内联消费，本页跳过 snackbar。
+                        suppressFeedbackSnackbar = modelServicesPane != null,
                     )
-                }
-                if (showModelConfig) {
-                    val family = app.tellev.core.provider.ReasoningSupport.familyFor(
-                        chatState.providerConfig?.providerType ?: chatState.selectedProvider,
-                        chatState.providerConfig?.options ?: JsonObject(emptyMap()),
-                    )
-                    val effortLevels = remember(family) { app.tellev.core.provider.ReasoningSupport.uiLevels(family) }
-                    val configModelId = chatState.providerConfig?.model.orEmpty()
-                    var showProfile by remember { mutableStateOf(false) }
-                    var profileState by remember(configModelId) {
-                        mutableStateOf(chatViewModel.modelReasoningProfile(configModelId))
-                    }
-                    val suggestion = remember(configModelId) { chatViewModel.modelReasoningSuggestion(configModelId) }
-                    DshModelConfigSheet(
-                        providerLabel = chatState.providerConfig?.providerType ?: chatState.selectedProvider,
-                        baseUrl = chatState.providerConfig?.baseUrl.orEmpty(),
-                        apiKey = chatState.providerConfig?.apiKey.orEmpty(),
-                        model = chatState.providerConfig?.model.orEmpty(),
-                        effortLevels = effortLevels,
-                        defaultEffort = app.tellev.core.provider.ReasoningSupport.sessionOverrideFrom(chatState.currentSession?.metadata),
-                        profileSummary = profileState?.efforts?.keys?.joinToString("/")?.ifBlank { null }
-                            ?: stringResource(R.string.dsh_profile_none),
-                        onOpenProfile = { showProfile = true },
-                        onTest = {},
-                        onSave = { url, key, model, effort ->
-                            chatViewModel.saveModelConfig(url, key, model, effort)
-                            showModelConfig = false
-                        },
-                        onDismiss = { showModelConfig = false },
-                    )
-                    if (showProfile && configModelId.isNotBlank()) {
-                        DshModelProfileEditor(
-                            modelId = configModelId,
-                            initial = profileState,
-                            suggestion = suggestion,
-                            onAutoAdapt = {
-                                val ok = chatViewModel.autoAdaptModelReasoningProfile(configModelId)
-                                if (ok) {
-                                    profileState = app.tellev.core.provider.ModelReasoningProfile(
-                                        efforts = suggestion.efforts.orEmpty(),
-                                        defaultEffort = suggestion.defaultEffort,
-                                        contextWindow = suggestion.contextWindow,
-                                        maxTokens = suggestion.maxTokens,
-                                        source = "knowledge",
-                                    )
-                                }
-                                ok
-                            },
-                            onSave = { profile ->
-                                chatViewModel.saveModelReasoningProfile(configModelId, profile)
-                                profileState = profile
-                                showProfile = false
-                            },
-                            onDismiss = { showProfile = false },
-                        )
-                    }
                 }
                 if (showOptimizer) {
                     // 只留一个动画（生成中），无其它动效。
                     app.tellev.ui.PromptOptimizationDialog(
                         providerLabel = chatState.providerConfig?.providerType,
                         onRun = { options, onPreview, onDone ->
-                            chatViewModel.optimizeDraft("", options, onPreview, onDone)
+                            // 草稿已上提到根层：这里不再传空串，优化的是输入框里的原文。
+                            chatViewModel.optimizeDraft(chatDraft, options, onPreview, onDone)
                         },
                         onCancelRun = { chatViewModel.cancelPromptOptimization() },
-                        onApply = { },
+                        onApply = { optimized ->
+                            // 「替换草稿」：写回同一个草稿，回到 chat 页让用户看得见结果
+                            // （这个入口常从设置 tab 打开，聊天页当时不一定在栈上）。
+                            chatDraft = optimized
+                            showOptimizer = false
+                            navController.navigate("chat") {
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
                         onDismiss = { showOptimizer = false },
                     )
                 }
             }
             page("settings/usage") { UsageStatsRoute(onBack = { navController.popBackStack() }) }
-            page("settings/imagegen") {
-                SettingsScreen(
-                    viewModel = settingsViewModel,
-                    updateViewModel = updateViewModel,
-                    onOpenProviderSettings = {},
-                    imageGenDetailsOnly = true,
-                    onBack = { navController.popBackStack() },
-                )
-            }
-            page("settings/providers") {
-                SettingsScreen(
-                    viewModel = settingsViewModel,
-                    updateViewModel = updateViewModel,
-                    onOpenProviderSettings = {},
-                    providerDetailsOnly = true,
-                    onBack = { navController.popBackStack() },
-                )
-            }
+        }
+    }
+
+    // ── 模型服务统一弹层：对话模型 / 生图引擎 / 语音朗读三类服务一个 sheet ──
+    // 抽屉「模型服务」与输入栏模型键共用这一份渲染。
+    val openModelServicesPane = modelServicesPane
+    if (openModelServicesPane != null) {
+        val chatState = chatUiState
+        // 打开时拉取当前服务商的完整模型目录（与聊天页模型菜单同款种子刷新）。
+        LaunchedEffect(chatState.currentSession?.id) {
+            chatViewModel.refreshModelCatalog(activeProviderOnly = true)
+        }
+        val family = app.tellev.core.provider.ReasoningSupport.familyFor(
+            chatState.providerConfig?.providerType ?: chatState.selectedProvider,
+            chatState.providerConfig?.options ?: JsonObject(emptyMap()),
+        )
+        // 档位按当前模型的思考档案收窄（与聊天页模型菜单同源逻辑）。
+        val configModelId = chatState.providerConfig?.model?.takeIf(String::isNotBlank).orEmpty()
+        val modelProfile = remember(configModelId) {
+            configModelId.takeIf(String::isNotBlank)?.let { chatViewModel.modelReasoningProfile(it) }
+        }
+        val effortLevels = remember(family, modelProfile) {
+            app.tellev.core.provider.ReasoningSupport.uiLevelsForModel(family, modelProfile)
+        }
+        val effortOnLabel = stringResource(R.string.chat_reasoning_effort_on)
+        val currentEffort = sessionReasoningEffortOf(chatState)
+        val currentEffortLabel = if (family == app.tellev.core.provider.ReasoningFamily.DeepSeek &&
+            currentEffort != ReasoningEffort.Auto && currentEffort != ReasoningEffort.Off
+        ) {
+            // DeepSeek 中继只有开/关；Low..Max 在线上同义，标签统一为「开」。
+            effortOnLabel
+        } else {
+            dshEffortLabel(currentEffort)
+        }
+        val activeProvider = chatState.selectedProvider
+        // 思考档案编辑器（连接配置钻入行的二级对话框）。
+        var showProfile by remember { mutableStateOf(false) }
+        var profileState by remember(configModelId) {
+            mutableStateOf(chatViewModel.modelReasoningProfile(configModelId))
+        }
+        val suggestion = remember(configModelId) { chatViewModel.modelReasoningSuggestion(configModelId) }
+        val ttsSettings = remember(activityContext) { app.tellev.core.tts.TtsSettings(activityContext) }
+        var ttsValues by remember { mutableStateOf(ttsSettings.load()) }
+        val ttsProviderConfigured =
+            (chatState.selectedProvider == app.tellev.core.provider.ProviderCatalog.OPENAI_COMPATIBLE ||
+                chatState.selectedProvider.startsWith("custom:")) &&
+                chatState.providerConfig?.apiKey?.isNotBlank() == true
+        DshModelServicesSheet(
+            initialPane = openModelServicesPane,
+            options = modelOptions(
+                chatState,
+                groupCurrent = stringResource(R.string.model_group_current),
+                groupRecent = stringResource(R.string.model_group_recent),
+            ),
+            groups = chatState.modelGroups,
+            catalog = chatState.modelCatalog.forProvider(activeProvider),
+            currentModel = chatState.providerConfig?.model,
+            currentEffort = currentEffort,
+            effortLevels = effortLevels,
+            currentEffortLabel = currentEffortLabel,
+            modelLabel = chatState.providerConfig?.model?.takeIf(String::isNotBlank)
+                ?: activeProvider.takeIf(String::isNotBlank),
+            selectionEnabled = !chatState.isGenerating && !chatState.isLoading && !chatState.isSelectingModel,
+            onSelectModel = { model ->
+                // 保存成功才关弹层；失败时 selectModel 已把原因写进 error，
+                // 弹层保持打开，用户能立刻看到反馈并重试。
+                chatViewModel.selectModel(model, activeProvider) { saved ->
+                    if (saved) modelServicesPane = null
+                }
+            },
+            onSelectEffort = { chatViewModel.setSessionReasoningEffort(it) },
+            onRefreshCatalog = { chatViewModel.refreshModelCatalog(activeProviderOnly = true) },
+            onAssignGroup = { modelId, groupId, member ->
+                chatViewModel.assignModelGroup(modelId, groupId, member)
+            },
+            onCreateGroup = { label -> chatViewModel.createModelGroup(label) },
+            providerLabel = chatState.providerConfig?.providerType ?: chatState.selectedProvider,
+            profileSummary = profileState?.efforts?.keys?.joinToString("/")?.ifBlank { null }
+                ?: stringResource(R.string.dsh_profile_none),
+            onOpenProfile = { showProfile = true },
+            imageViewModel = settingsViewModel,
+            imageState = settingsState,
+            ttsValues = ttsValues,
+            onTtsSave = { next ->
+                ttsValues = next.validated()
+                ttsSettings.save(ttsValues)
+            },
+            ttsProviderConfigured = ttsProviderConfigured,
+            onDismiss = { modelServicesPane = null },
+        )
+        if (showProfile && configModelId.isNotBlank()) {
+            DshModelProfileEditor(
+                modelId = configModelId,
+                initial = profileState,
+                suggestion = suggestion,
+                onAutoAdapt = {
+                    val ok = chatViewModel.autoAdaptModelReasoningProfile(configModelId)
+                    if (ok) {
+                        profileState = app.tellev.core.provider.ModelReasoningProfile(
+                            efforts = suggestion.efforts.orEmpty(),
+                            defaultEffort = suggestion.defaultEffort,
+                            contextWindow = suggestion.contextWindow,
+                            maxTokens = suggestion.maxTokens,
+                            source = "knowledge",
+                        )
+                    }
+                    ok
+                },
+                onSave = { profile ->
+                    chatViewModel.saveModelReasoningProfile(configModelId, profile)
+                    profileState = profile
+                    showProfile = false
+                },
+                onDismiss = { showProfile = false },
+            )
         }
     }
 
@@ -807,3 +964,7 @@ private tailrec fun Context.hostActivity(): Activity? = when (this) {
     is ContextWrapper -> baseContext.hostActivity()
     else -> null
 }
+
+/** creation/chat 的 kind 路由参数 → 会话类型；未知/缺失值回落角色卡（工坊卡片入口的默认类型）。 */
+private fun creationKindOf(raw: String?): CreationKind =
+    CreationKind.entries.firstOrNull { it.name == raw } ?: CreationKind.Character

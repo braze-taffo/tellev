@@ -68,6 +68,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -86,8 +87,40 @@ private val CARD_EXTENSIONS = setOf("png", "json", "webp", "charx")
 /** 与 MainActivity 的 intent 导入保持同一条上限：正文卡含 4MB 封面约 6MB。 */
 private const val DOWNLOAD_MAX_BYTES = 100L * 1024 * 1024
 
+/**
+ * 单个下载最多跟随的重定向跳数。入口是公开邀请页，正常路径一跳（Discord 附件
+ * 常直接 302 到 CDN）就够，超过即视为异常响应，不能无限跟下去。
+ */
+private const val DOWNLOAD_MAX_REDIRECTS = 5
+
+/** 3xx 中真正需要手动跟随的状态码；304 Not Modified 不是重定向。 */
+internal fun isDownloadRedirect(code: Int): Boolean = code in 301..303 || code == 307 || code == 308
+
+/**
+ * 把 WebView 给的下载地址（或某一跳的 Location）解析成可用的 https URL。
+ *
+ * 这是 app/src/main 里唯一不经 CleartextGuard 的平台栈网络调用，明文请求在这里
+ * 既穿不过全局默认拒绝，也看不到用户在「设置 → 模型」里的明文开关，所以按拒绝
+ * 处理：协议只认 https，主机名必须存在。入口与每一跳都要过这道检查，否则一次
+ * https → http 的重定向就能把明文请求送出应用自己的策略范围。
+ */
+internal fun parseDownloadUrl(raw: String, base: URL? = null): URL {
+    val resolved = runCatching { if (base == null) URL(raw) else URL(base, raw) }
+        .getOrElse { throw IOException("无法解析下载地址：$raw") }
+    if (!resolved.protocol.equals("https", ignoreCase = true)) {
+        throw IOException("仅支持 https 下载（收到 ${resolved.protocol} 协议）")
+    }
+    if (resolved.host.isNullOrBlank()) throw IOException("下载地址缺少主机名")
+    return resolved
+}
+
 private data class PendingCardDownload(
     val fileName: String,
+    /**
+     * 入口地址的主机。主机链上最终的落点可能与入口不同，确认框要能让用户判断
+     * 这张卡是谁给的，所以记入口而不是最终落点。
+     */
+    val sourceHost: String,
     val bytes: ByteArray,
 ) {
     // ByteArray 的数据类相等语义没有意义，只按内容字段保留默认结构相等即可。
@@ -188,7 +221,20 @@ fun CommunityScreen(
         AlertDialog(
             onDismissRequest = { pendingImport = null },
             title = { Text(stringResource(R.string.comm_import_title)) },
-            text = { Text(stringResource(R.string.comm_import_body, download.fileName)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.comm_import_body, download.fileName))
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = stringResource(
+                            R.string.chat_memory_source_label,
+                            download.sourceHost,
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
             confirmButton = {
                 TextButton(onClick = { importDownload(download) }) {
                     Text(stringResource(R.string.comm_import_confirm))
@@ -271,8 +317,10 @@ fun CommunityScreen(
                                 settings.loadWithOverviewMode = true
                                 settings.useWideViewPort = true
                                 settings.setSupportMultipleWindows(false)
+                                // 入口是公开邀请页，代码不依赖任何登录态；第三方
+                                // Cookie 只会把其它站点的标识交给 Discord 之外的主机。
                                 android.webkit.CookieManager.getInstance()
-                                    .setAcceptThirdPartyCookies(this, true)
+                                    .setAcceptThirdPartyCookies(this, false)
                                 webChromeClient = object : WebChromeClient() {
                                     override fun onProgressChanged(
                                         view: WebView?,
@@ -314,13 +362,13 @@ fun CommunityScreen(
                                             busy = true
                                             val downloaded = runCatching {
                                                 withContext(Dispatchers.IO) {
-                                                    downloadBounded(url, userAgent)
+                                                    downloadBounded(fileName, url, userAgent)
                                                 }
                                             }
                                             busy = false
                                             downloaded
-                                                .onSuccess { bytes ->
-                                                    if (bytes.isEmpty()) {
+                                                .onSuccess { download ->
+                                                    if (download.bytes.isEmpty()) {
                                                         snackbarHostState.showSnackbar(
                                                             context.getString(
                                                                 R.string.comm_import_failed,
@@ -328,10 +376,7 @@ fun CommunityScreen(
                                                             ),
                                                         )
                                                     } else {
-                                                        pendingImport = PendingCardDownload(
-                                                            fileName,
-                                                            bytes,
-                                                        )
+                                                        pendingImport = download
                                                     }
                                                 }
                                                 .onFailure { error ->
@@ -485,23 +530,43 @@ private fun CommunityFallback(
 }
 
 /**
- * 限量读取下载体：WebView 给的下载地址可能是任意大小的文件，读满上限或流结束即停。
- * 连接失败/非 2xx 抛异常，由调用方转成可读错误。
+ * 限量读取下载体：WebView 给的下载地址可能是任意站点/协议，协议与主机逐跳复核
+ * （不让平台栈自己跟重定向，否则 https → http 会被静默接受），读满上限或流结束
+ * 即停。连接失败/非 2xx 抛异常，由调用方转成可读错误。
  */
-private fun downloadBounded(url: String, userAgent: String): ByteArray {
-    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-        requestMethod = "GET"
-        setRequestProperty("User-Agent", userAgent)
-        connectTimeout = 15_000
-        readTimeout = 30_000
-        instanceFollowRedirects = true
+private fun downloadBounded(fileName: String, url: String, userAgent: String): PendingCardDownload {
+    var current = parseDownloadUrl(url)
+    // 确认框显示来源主机，取入口地址而不是最终落点（跳转后的 CDN 主机）。
+    val sourceHost = current.host
+    var redirects = 0
+    while (true) {
+        val connection = (current.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            setRequestProperty("User-Agent", userAgent)
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            instanceFollowRedirects = false
+        }
+        try {
+            connection.connect()
+            val code = connection.responseCode
+            if (isDownloadRedirect(code)) {
+                val location = connection.getHeaderField("Location")
+                    ?: throw IOException("重定向响应缺少 Location")
+                if (++redirects > DOWNLOAD_MAX_REDIRECTS) throw IOException("重定向次数过多")
+                current = parseDownloadUrl(location, base = current)
+                continue
+            }
+            if (code !in 200..299) throw IOException("HTTP $code")
+            return PendingCardDownload(fileName, sourceHost, readBounded(connection))
+        } finally {
+            connection.disconnect()
+        }
     }
-    connection.connect()
-    val code = connection.responseCode
-    if (code !in 200..299) {
-        connection.disconnect()
-        error("HTTP $code")
-    }
+}
+
+/** 按上限读空一个已建立、已确认 2xx 的连接。 */
+private fun readBounded(connection: HttpURLConnection): ByteArray {
     val out = ByteArrayOutputStream(1 shl 20)
     var total = 0
     val stream: InputStream = connection.inputStream
@@ -516,7 +581,6 @@ private fun downloadBounded(url: String, userAgent: String): ByteArray {
         }
     } finally {
         runCatching { stream.close() }
-        connection.disconnect()
     }
     return out.toByteArray()
 }

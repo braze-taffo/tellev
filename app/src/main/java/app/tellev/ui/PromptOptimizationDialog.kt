@@ -29,6 +29,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,6 +81,15 @@ fun PromptOptimizationDialog(
     var preview by remember { mutableStateOf("") }
     var result by remember { mutableStateOf<PromptOptimizationResult?>(null) }
     var startError by remember { mutableStateOf(false) }
+    var operationToken by remember { mutableIntStateOf(0) }
+    var active by remember { mutableStateOf(true) }
+    DisposableEffect(Unit) {
+        onDispose {
+            active = false
+            operationToken++
+            onCancelRun()
+        }
+    }
 
     fun options() = PromptOptimizationOptions(
         mode = mode,
@@ -242,6 +253,7 @@ fun PromptOptimizationDialog(
         confirmButton = {
             if (running) {
                 TextButton(onClick = {
+                    operationToken++
                     onCancelRun()
                     running = false
                 }) { Text(stringResource(R.string.chat_optimize_stop)) }
@@ -257,11 +269,20 @@ fun PromptOptimizationDialog(
                     startError = false
                     preview = ""
                     result = null
-                    val started = onRun(options(), { preview = it }, { finished ->
-                        running = false
-                        result = finished
+                    val token = ++operationToken
+                    running = true
+                    val started = onRun(options(), { text ->
+                        if (active && token == operationToken) preview = text
+                    }, { finished ->
+                        if (active && token == operationToken) {
+                            running = false
+                            result = finished
+                        }
                     })
-                    if (started) running = true else startError = true
+                    if (!started) {
+                        running = false
+                        startError = true
+                    }
                 }) { Text(stringResource(R.string.chat_optimize_start)) }
             }
         },

@@ -63,6 +63,8 @@ class FileStDataStore(
         durableFiles = durableFiles,
         characterImporter = characterImporter,
         saveWorldBook = { worldBookRepository.saveWorldBook(it) },
+        readDisabledWorldIds = { worldBookRepository.readDisabledWorldIds() },
+        saveDisabledWorldIds = { worldBookRepository.saveDisabledWorldIds(it) },
     )
 
     private val backupCoordinator = BackupCoordinator(
@@ -156,8 +158,12 @@ class FileStDataStore(
     override suspend fun saveCharacter(card: CharacterCard) =
         characterRepository.saveCharacter(card)
 
-    override suspend fun importCharacter(card: CharacterCard, sourceBytes: ByteArray, sourceFileName: String) =
-        characterRepository.importCharacter(card, sourceBytes, sourceFileName)
+    override suspend fun importCharacter(
+        card: CharacterCard,
+        sourceBytes: ByteArray,
+        sourceFileName: String,
+        bindEmbeddedWorldBook: Boolean,
+    ) = characterRepository.importCharacter(card, sourceBytes, sourceFileName, bindEmbeddedWorldBook)
 
     override suspend fun deleteCharacter(id: String) {
         characterRepository.deleteCharacter(id)

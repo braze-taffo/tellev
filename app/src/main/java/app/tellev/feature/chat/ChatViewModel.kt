@@ -137,6 +137,7 @@ data class ChatUiState(
     val modelGroups: List<DshModelGroup> = emptyList(),
     /** 聊天模型菜单的完整目录（各已配置端点 listModels 的结果与失败状态）。 */
     val modelCatalog: ModelCatalogState = ModelCatalogState(),
+    val isSelectingModel: Boolean = false,
     /** 置顶的会话 id（pinned-sessions.json）。 */
     val pinnedSessionIds: Set<String> = emptySet(),
 )
@@ -201,6 +202,9 @@ class ChatViewModel(
     private val runtimeResolver = GenerationRuntimeResolver(dataStore, providerRegistry, secretStore)
     private val memoryService = MemoryService(dataStore, providerRegistry, secretStore)
     private val generationMetricsStore = GenerationMetricsStore(dataStore.layout.root)
+
+    /** One writer instance per process for the metrics files (chat + creation). */
+    val metricsStoreForCreation: GenerationMetricsStore get() = generationMetricsStore
     private val generatedImageStore = GeneratedImageStore(dataStore.layout)
     private val imageGenCoordinator = ChatImageGenerationCoordinator(
         dataStore, providerRegistry, secretStore, generatedImageStore, imageDownloader,
@@ -520,8 +524,16 @@ class ChatViewModel(
 
                         val allWorldBooks = dataStore.listWorldBooks()
                         val embeddedId = StDataStore.embeddedCharacterBookId(characterId)
+                        val storedDisabledWorldIds = dataStore.readDisabledWorldIds()
                         val ownWorldBookIds = buildSet {
-                            add(embeddedId)
+                            // The card's own embedded book is bound only when it still
+                            // exists on disk and the user has switched it on. Imports
+                            // materialize it disabled, so re-entering the chat must not
+                            // re-enable what the user turned off, and a book deleted in
+                            // the world screen must not come back to life.
+                            if (allWorldBooks.any { it.id == embeddedId } && embeddedId !in storedDisabledWorldIds) {
+                                add(embeddedId)
+                            }
                             app.tellev.core.model.CharacterWorldBinding.linkedWorldBookNames(character).forEach { name ->
                                 allWorldBooks
                                     .firstOrNull { it.name.equals(name, ignoreCase = true) || it.id == name }
@@ -535,7 +547,7 @@ class ChatViewModel(
                                     it !in ownWorldBookIds
                             }
                         val disabledWorldIds =
-                            (dataStore.readDisabledWorldIds() + otherEmbeddedIds) - ownWorldBookIds
+                            (storedDisabledWorldIds + otherEmbeddedIds) - ownWorldBookIds
                         dataStore.saveDisabledWorldIds(disabledWorldIds)
                         Selection(character, session, allSessions, disabledWorldIds)
                     }
@@ -956,7 +968,7 @@ class ChatViewModel(
 
     fun sendMessage(text: String, attachments: List<Attachment> = emptyList()): Boolean {
         // 与消息编辑/滑动删除一致的门禁：会话切换/删除进行中不接受发送。
-        if (_uiState.value.isLoading) {
+        if (_uiState.value.isLoading || _uiState.value.isSelectingModel) {
             // 输入栏已经把发送控件置灰，这道门禁是第二道防线（脚本触发的发送、切会话瞬间的
             // 竞态点击都会走到这里）。拒绝不再静默：走既有的 error → Snackbar 通道给出
             // 本地化提示，草稿与附件由调用方保留，不在这里丢弃。
@@ -1619,15 +1631,15 @@ class ChatViewModel(
      * listModels 的失败（分组内标注错误并可单独重试），不再用最近统计记录
      * 冒充完整模型列表。
      */
-    fun refreshModelCatalog() {
+    fun refreshModelCatalog(activeProviderOnly: Boolean = false) {
         if (_uiState.value.modelCatalog.isLoading) return
+        _uiState.update { it.copy(modelCatalog = it.modelCatalog.copy(isLoading = true)) }
         viewModelScope.launch {
-            _uiState.update { it.copy(modelCatalog = it.modelCatalog.copy(isLoading = true)) }
             try {
                 val state = _uiState.value
                 val runtime = runCatching { runtimeResolver.resolve(state.selectedPersona?.id) }.getOrNull()
                 data class Target(val id: String, val label: String, val config: ProviderConfig)
-                val selectedId = state.selectedProvider
+                val selectedId = runtime?.selectedProviderId ?: state.selectedProvider
                 val selectedConfig = runtime?.providerConfig ?: state.providerConfig
                 val targets = buildList {
                     if (selectedConfig != null) {
@@ -1641,7 +1653,7 @@ class ChatViewModel(
                         add(Target(selectedId, label, selectedConfig))
                     }
                     ProviderConfigPersistence.listCustomConfigs(secretStore)
-                        .filter { it.baseUrl.isNotBlank() }
+                        .filter { !activeProviderOnly && it.baseUrl.isNotBlank() }
                         .filter { selectedConfig == null || ProviderConfigPersistence.selectedIdFor(it.id) != selectedId }
                         .forEach { cfg ->
                             add(Target(
@@ -1659,7 +1671,7 @@ class ChatViewModel(
                         }
                     app.tellev.core.provider.ProviderCatalog.plannedProviderIds
                         .mapNotNull { pid -> providerRegistry.find(pid)?.takeIf { it.supportsChatGeneration }?.let { pid to it } }
-                        .filter { (pid, _) -> pid != ProviderConfigPersistence.adapterIdFor(selectedId) }
+                        .filter { (pid, _) -> !activeProviderOnly && pid != ProviderConfigPersistence.adapterIdFor(selectedId) }
                         .filter { (pid, _) ->
                             !secretStore.readSecret("provider-$pid-apikey").isNullOrBlank() ||
                                 !secretStore.readSecret("provider-$pid-baseurl").isNullOrBlank()
@@ -1724,39 +1736,42 @@ class ChatViewModel(
      * config JSON — the write here updates that config, so switching models on
      * a custom endpoint works in chat instead of bouncing to Settings.
      */
-    fun selectModel(model: String) {
+    fun selectModel(
+        model: String,
+        providerId: String = _uiState.value.selectedProvider,
+        onSelected: (Boolean) -> Unit = {},
+    ): Boolean {
+        val state = _uiState.value
+        if (state.isLoading || state.isGenerating || state.isSelectingModel) return false
         val trimmed = model.trim()
         if (trimmed.isEmpty()) {
             _uiState.update { it.copy(error = UiStrings.get(S.chatvm_model_blank)) }
-            return
+            return false
         }
-        val providerId = _uiState.value.selectedProvider
+        if (providerId != state.selectedProvider) {
+            _uiState.update { it.copy(error = UiStrings.get(S.chatvm_model_set_failed, providerId)) }
+            return false
+        }
+        _uiState.update { it.copy(isSelectingModel = true, error = null) }
         viewModelScope.launch {
+            var saved = false
             try {
-                if (app.tellev.core.provider.ProviderConfigPersistence.isCustomConfigId(providerId)) {
-                    val rawId = app.tellev.core.provider.ProviderConfigPersistence.customIdFrom(providerId)
-                    val configs = app.tellev.core.provider.ProviderConfigPersistence.listCustomConfigs(secretStore)
-                    if (configs.none { it.id == rawId }) {
-                        _uiState.update { it.copy(error = UiStrings.get(S.chatvm_model_set_failed, "custom:$rawId")) }
-                        return@launch
-                    }
-                    app.tellev.core.provider.ProviderConfigPersistence.saveCustomConfigs(
-                        secretStore,
-                        configs.map { if (it.id == rawId) it.copy(model = trimmed) else it },
-                    )
-                } else {
-                    secretStore.putSecret("provider-$providerId-model", trimmed)
+                val config = persistSelectedProviderModel(secretStore, providerId, trimmed)
+                _uiState.update {
+                    if (it.selectedProvider == providerId) it.copy(providerConfig = config) else it
                 }
                 applyRememberedEffort(trimmed)
-                // 写密钥已触发 secretStore.changes -> refreshRuntimeState；这里再显式
-                // 刷新一次，保证读取失败时用户能看到错误而不是静默回退。
-                refreshRuntimeState(S.chatvm_reread_provider_failed)
+                saved = true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = UiStrings.get(S.chatvm_model_set_failed, e.message)) }
+            } finally {
+                _uiState.update { it.copy(isSelectingModel = false) }
             }
+            onSelected(saved)
         }
+        return true
     }
 
     /**
@@ -1866,81 +1881,6 @@ class ChatViewModel(
             }
         }
         return true
-    }
-
-    /**
-     * 模型配置弹层的保存（dsh Models 页语义）：写当前选中服务商的 baseUrl /
-     * apiKey / model 三个 secret（自定义配置写 custom-configs 列表项），
-     * 默认思考强度写进模型挡位记忆。secret 变更触发 refreshRuntimeState。
-     */
-    fun saveModelConfig(baseUrl: String, apiKey: String, model: String, defaultEffort: ReasoningEffort?) {
-        val providerId = _uiState.value.selectedProvider
-        viewModelScope.launch {
-            try {
-                if (app.tellev.core.provider.ProviderConfigPersistence.isCustomConfigId(providerId)) {
-                    val rawId = app.tellev.core.provider.ProviderConfigPersistence.customIdFrom(providerId)
-                    val configs = app.tellev.core.provider.ProviderConfigPersistence.listCustomConfigs(secretStore)
-                    if (configs.none { it.id == rawId }) {
-                        _uiState.update { it.copy(error = UiStrings.get(S.chatvm_model_set_failed, "custom:$rawId")) }
-                        return@launch
-                    }
-                    app.tellev.core.provider.ProviderConfigPersistence.saveCustomConfigs(
-                        secretStore,
-                        configs.map { c ->
-                            if (c.id == rawId) c.copy(
-                                baseUrl = baseUrl,
-                                apiKey = apiKey,
-                                model = model,
-                            ) else c
-                        },
-                    )
-                } else {
-                    if (baseUrl.isNotBlank()) secretStore.putSecret("provider-$providerId-baseurl", baseUrl)
-                    if (apiKey.isNotBlank()) secretStore.putSecret("provider-$providerId-apikey", apiKey) else secretStore.deleteSecret("provider-$providerId-apikey")
-                    if (model.isNotBlank()) secretStore.putSecret("provider-$providerId-model", model) else secretStore.deleteSecret("provider-$providerId-model")
-                }
-                // 默认思考强度 → 模型挡位记忆（Auto 清除）。
-                val efforts = if (model.isNotBlank()) {
-                    ChatModelEffortMemory.read(dataStore.layout.root)
-                        .mapValues { (_, entry) -> entry.name }
-                        .toMutableMap()
-                        .also {
-                            if (model.isNotBlank()) {
-                                if (defaultEffort == null || defaultEffort == ReasoningEffort.Auto) it.remove(model)
-                                else it[model] = defaultEffort.name
-                            }
-                        }
-                } else null
-                if (efforts != null) ChatModelEffortMemory.write(dataStore.layout.root, efforts)
-                refreshRuntimeState(S.chatvm_reread_provider_failed)
-                _uiState.update { it.copy(error = UiStrings.get(S.dsh_model_saved)) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _uiState.update { it.copy(error = UiStrings.get(S.chatvm_model_set_failed, e.message)) }
-            }
-        }
-    }
-
-    /** 模型配置弹层的「测试连接」：listModels 成功即认为连通。 */
-    fun testProviderConnection(onResult: (Boolean, String?) -> Unit) {
-        viewModelScope.launch {
-            val state = _uiState.value
-            val config = state.providerConfig ?: run {
-                onResult(false, UiStrings.get(S.chat_optimize_unavailable))
-                return@launch
-            }
-            val adapter = providerRegistry.find(config.providerType) ?: run {
-                onResult(false, UiStrings.get(S.chat_optimize_unavailable))
-                return@launch
-            }
-            val result = runCatching { adapter.listModels(config) }
-            result.onSuccess { models ->
-                onResult(true, "${models.size} models")
-            }.onFailure { e ->
-                onResult(false, e.message)
-            }
-        }
     }
 
     /**
@@ -2253,6 +2193,9 @@ class ChatViewModel(
                         selectedPreset = state.selectedPreset?.let { sel ->
                             if (sel.id == updated.id) updated else sel
                         },
+                        // 保存成功的反馈走既有 error→Snackbar 通道（dsh_model_saved 同款），
+                        // 让「已写回 named 并同步 in_use、下次生成即生效」可见。
+                        error = UiStrings.get(S.dsh_preset_saved),
                     )
                 }
             } catch (e: Exception) {
@@ -2279,7 +2222,8 @@ class ChatViewModel(
                     return@launch
                 }
                 val reparsed = app.tellev.core.storage.codec.PresetCodec.parsePreset(
-                    java.nio.file.Path.of("$presetId.json"),
+                    // Path.of 属 API 34；Paths.get 为 API 26 等价写法。
+                    java.nio.file.Paths.get("$presetId.json"),
                     raw,
                     preset.category,
                     preset.providerType,
@@ -2300,6 +2244,7 @@ class ChatViewModel(
                     state.copy(
                         presets = state.presets.map { if (it.id == reparsed.id) reparsed else it },
                         selectedPreset = state.selectedPreset?.let { sel -> if (sel.id == reparsed.id) reparsed else sel },
+                        error = UiStrings.get(S.dsh_preset_saved),
                     )
                 }
                 // 保存成功 → 关 sheet：参数页的草稿是旧初值，留着只会误导。
@@ -2440,6 +2385,7 @@ class ChatViewModel(
                     state.copy(
                         presets = state.presets.map { if (it.id == updated.id) updated else it },
                         selectedPreset = state.selectedPreset?.let { sel -> if (sel.id == updated.id) updated else sel },
+                        error = UiStrings.get(S.dsh_preset_saved),
                     )
                 }
                 onSaved()
@@ -2452,7 +2398,9 @@ class ChatViewModel(
     /**
      * 保存单个 raw 键（「全部可调」）：[value] 为 null 表示删除该键。
      * baseline 同参数页——编辑器实际显示的那份预设（in_use 形状）。
-     * setPath/removePath 只动该点分路径，其余键逐字保留。
+     * setPath/removePath 只动该点分路径，其余键逐字保留。[PresetRawKeys.applyEdit]
+     * 同时把 extensions 类型化引用同步成新 raw，否则 savePreset 会用旧值顶掉
+     * `extensions.*` 的改动。
      */
     fun savePresetRawKey(presetId: String, path: String, value: JsonElement?) {
         viewModelScope.launch {
@@ -2461,12 +2409,7 @@ class ChatViewModel(
                 val baseline = state0.selectedPreset?.takeIf { it.id == presetId }
                     ?: state0.presets.firstOrNull { it.id == presetId }
                     ?: return@launch
-                val raw = if (value == null) {
-                    PresetRawKeys.removePath(baseline.raw, path)
-                } else {
-                    PresetRawKeys.setPath(baseline.raw, path, value)
-                }
-                val updated = baseline.copy(raw = raw)
+                val updated = PresetRawKeys.applyEdit(baseline, path, value)
                 dataStore.savePreset(updated)
                 if (_uiState.value.selectedPreset?.id == updated.id) {
                     dataStore.selectPreset(updated.category, updated.id)

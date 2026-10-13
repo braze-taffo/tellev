@@ -29,6 +29,9 @@ data class CharactersUiState(
     val characters: List<CharacterSummary> = emptyList(),
     val filteredCharacters: List<CharacterSummary> = emptyList(),
     val searchQuery: String = "",
+    // 分组（书架分类）：null = 全部；空串 = 未分组；其余为分组 id。
+    val groups: List<CharacterGroup> = emptyList(),
+    val activeGroupId: String? = null,
     val selectedCharacter: CharacterCard? = null,
     // World books available to bind to the selected character (loaded lazily
     // when a character is opened, for the binding picker in the detail screen).
@@ -69,15 +72,20 @@ class CharactersViewModel(
             _uiState.update { it.copy(isLoading = true, error = null, selectionError = null) }
             try {
                 val characters = dataStore.listCharacters()
-                val query = _uiState.value.searchQuery
-                val filtered = filterCharacters(characters, query)
+                val groups = withContext(Dispatchers.IO) { CharacterGroups.read(dataStore.layout.root) }
                 val avatarFiles = characters.associate { summary ->
                     summary.id to dataStore.layout.root.resolve(summary.avatarRelativePath).toFile()
                 }
-                _uiState.update {
-                    it.copy(
+                _uiState.update { state ->
+                    // 分组可能在上一次列表刷新后新增/删除：悬空的筛选回落「全部」。
+                    val active = state.activeGroupId?.takeIf { id ->
+                        id == UNGROUPED_GROUP_ID || groups.any { it.id == id }
+                    }
+                    state.copy(
                         characters = characters,
-                        filteredCharacters = filtered,
+                        groups = groups,
+                        activeGroupId = active,
+                        filteredCharacters = filterCharacters(characters, state.searchQuery, groups, active),
                         avatarFiles = avatarFiles,
                         isLoading = false,
                     )
@@ -95,13 +103,82 @@ class CharactersViewModel(
 
     fun search(query: String) {
         _uiState.update { state ->
-            val filtered = filterCharacters(state.characters, query)
             state.copy(
                 searchQuery = query,
-                filteredCharacters = filtered,
+                filteredCharacters = filterCharacters(state.characters, query, state.groups, state.activeGroupId),
             )
         }
     }
+
+    /** 书架分组筛选：null=全部、[UNGROUPED_GROUP_ID]=未分组、其余为分组 id。 */
+    fun selectGroup(groupId: String?) {
+        _uiState.update { state ->
+            val active = groupId?.takeIf { it == UNGROUPED_GROUP_ID || state.groups.any { g -> g.id == it } }
+            state.copy(
+                activeGroupId = active,
+                filteredCharacters = filterCharacters(state.characters, state.searchQuery, state.groups, active),
+            )
+        }
+    }
+
+    fun createGroup(label: String): Boolean {
+        val trimmed = label.trim()
+        if (trimmed.isBlank()) return false
+        val group = CharacterGroup(id = CharacterGroups.newGroupId(), label = trimmed)
+        val next = _uiState.value.groups + group
+        if (!CharacterGroups.write(dataStore.layout.root, next)) return false
+        _uiState.update { state ->
+            state.copy(
+                groups = next,
+                filteredCharacters = filterCharacters(state.characters, state.searchQuery, next, state.activeGroupId),
+            )
+        }
+        return true
+    }
+
+    fun renameGroup(groupId: String, label: String): Boolean {
+        val trimmed = label.trim()
+        if (trimmed.isBlank()) return false
+        val next = _uiState.value.groups.map { if (it.id == groupId) it.copy(label = trimmed) else it }
+        if (!CharacterGroups.write(dataStore.layout.root, next)) return false
+        _uiState.update { it.copy(groups = next) }
+        return true
+    }
+
+    /** 删除分组只删分类定义，角色卡本身保持不动（成员回落「未分组」）。 */
+    fun deleteGroup(groupId: String) {
+        val next = _uiState.value.groups.filterNot { it.id == groupId }
+        if (!CharacterGroups.write(dataStore.layout.root, next)) return
+        _uiState.update { state ->
+            val active = state.activeGroupId.takeIf { it != groupId }
+            state.copy(
+                groups = next,
+                activeGroupId = active,
+                filteredCharacters = filterCharacters(state.characters, state.searchQuery, next, active),
+            )
+        }
+    }
+
+    /** 角色卡归入/移出分组（一张卡可属多个分组）。 */
+    fun setCharacterGroup(characterId: String, groupId: String, member: Boolean) {
+        val next = _uiState.value.groups.map { group ->
+            if (group.id != groupId) group
+            else group.copy(
+                members = if (member) (group.members + characterId).distinct()
+                else group.members.filterNot { it == characterId },
+            )
+        }
+        if (!CharacterGroups.write(dataStore.layout.root, next)) return
+        _uiState.update { state ->
+            state.copy(
+                groups = next,
+                filteredCharacters = filterCharacters(state.characters, state.searchQuery, next, state.activeGroupId),
+            )
+        }
+    }
+
+    fun groupsOf(characterId: String): List<CharacterGroup> =
+        _uiState.value.groups.filter { characterId in it.members }
 
     fun selectCharacter(id: String) {
         viewModelScope.launch {
@@ -295,6 +372,14 @@ class CharactersViewModel(
     }
 
     /**
+     * 扫描结果批量导入（导入菜单「扫描角色卡」）：与 [importCharacters] 同一条
+     * 隔离管线，只是来源是目录遍历而不是文档选择器。
+     */
+    fun importScannedCharacters(sources: List<BatchImportSource>) {
+        importCharacters(sources)
+    }
+
+    /**
      * Batch import: every file is isolated — one malformed card never aborts
      * the rest. A single-file batch reports through the existing info/error
      * snackbars; a multi-file batch surfaces the full per-file report dialog.
@@ -362,10 +447,48 @@ class CharactersViewModel(
         _uiState.update { it.copy(info = null) }
     }
 
-    private fun filterCharacters(characters: List<CharacterSummary>, query: String): List<CharacterSummary> {
-        if (query.isBlank()) return characters
+    /**
+     * 搜索（名称/标签）与分组筛选的交集：分组先收窄集合，再按关键词过滤。
+     * [activeGroupId] null=全部、[UNGROUPED_GROUP_ID]=不属于任何分组的卡。
+     */
+    private fun filterCharacters(
+        characters: List<CharacterSummary>,
+        query: String,
+        groups: List<CharacterGroup> = emptyList(),
+        activeGroupId: String? = null,
+    ): List<CharacterSummary> = CharactersFilter.filter(characters, query, groups, activeGroupId)
+
+    companion object {
+        /** 「未分组」虚拟分组 id：不与真实分组冲突。 */
+        const val UNGROUPED_GROUP_ID = "__ungrouped__"
+    }
+}
+
+/**
+ * 「搜索 × 分组」过滤的纯函数（无 Android 依赖，单测直接覆盖）：
+ * 分组先收窄集合（全部 / 未分组 / 指定分组），再按关键词过滤名称与标签。
+ */
+internal object CharactersFilter {
+    fun filter(
+        characters: List<CharacterSummary>,
+        query: String,
+        groups: List<CharacterGroup> = emptyList(),
+        activeGroupId: String? = null,
+    ): List<CharacterSummary> {
+        val inGroup = when (activeGroupId) {
+            null -> characters
+            CharactersViewModel.UNGROUPED_GROUP_ID -> {
+                val grouped = groups.flatMap { it.members }.toSet()
+                characters.filterNot { it.id in grouped }
+            }
+            else -> {
+                val members = groups.firstOrNull { it.id == activeGroupId }?.members.orEmpty().toSet()
+                characters.filter { it.id in members }
+            }
+        }
+        if (query.isBlank()) return inGroup
         val lowerQuery = query.lowercase()
-        return characters.filter { char ->
+        return inGroup.filter { char ->
             char.name.lowercase().contains(lowerQuery) ||
                 char.tags.any { it.lowercase().contains(lowerQuery) }
         }

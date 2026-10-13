@@ -1,5 +1,6 @@
 package app.tellev.feature.chat
 
+import app.tellev.core.model.GenerationPreset
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -100,6 +101,49 @@ internal object PresetRawKeys {
         val child = (raw[head] as? JsonObject) ?: return raw
         val updated = removePath(child, segments.drop(1).joinToString("."))
         return if (updated.isEmpty()) JsonObject(raw - head) else JsonObject(raw + (head to updated))
+    }
+
+    // ── 预设键「可选添加」：新增键校验与整单应用 ─────────────────────
+
+    /** 新增键名（点分路径）的校验结果。 */
+    enum class NewKeyCheck { Ok, Blank, Duplicate, Reserved }
+
+    /**
+     * 校验新键名能否安全写入 [raw]：
+     *  - [NewKeyCheck.Blank]：空路径或含空段（`a..b`）；
+     *  - [NewKeyCheck.Reserved]：顶层是类型化/提示词键（temperature/prompts/…），
+     *    由参数页与提示词页管理，raw 侧写回会被 savePreset 的合并覆盖或清掉；
+     *  - [NewKeyCheck.Duplicate]：该路径已是叶子行、已是容器（子叶在列，写入会
+     *    整段覆盖子树）、或路径中段已被叶子/数组占用（写入会把它们改写成对象）；
+     *  - 其余为 [NewKeyCheck.Ok]（对象容器下的新叶或者全新路径，setPath 只创建缺失层级）。
+     */
+    fun checkNewKey(raw: JsonObject, path: String): NewKeyCheck {
+        val normalized = path.trim()
+        val segments = normalized.split('.')
+        if (normalized.isEmpty() || segments.any { it.isBlank() }) return NewKeyCheck.Blank
+        if (segments.first() in TYPED_KEYS) return NewKeyCheck.Reserved
+        val existing = rows(raw).map { it.path }
+        if (normalized in existing) return NewKeyCheck.Duplicate
+        if (existing.any { it.startsWith("$normalized.") }) return NewKeyCheck.Duplicate
+        if ((1 until segments.size).any { i -> segments.take(i).joinToString(".") in existing }) {
+            return NewKeyCheck.Duplicate
+        }
+        return NewKeyCheck.Ok
+    }
+
+    /**
+     * 单键编辑的完整应用：[value] 为 null 删除，否则 setPath 写入；返回的预设
+     * 里 raw 与 extensions 类型化引用保持一致。
+     *
+     * extensions 是 raw 里唯一没有类型化编辑器的对象，savePreset 会拿内存里的
+     * typed extensions 覆写 raw 的同名键——不同步就会把刚写入/删除的
+     * `extensions.*` 改动静默顶回去（编辑器列出这些叶子行，用户看得见改得动，
+     * 落盘却回滚）。
+     */
+    fun applyEdit(preset: GenerationPreset, path: String, value: JsonElement?): GenerationPreset {
+        val raw = if (value == null) removePath(preset.raw, path) else setPath(preset.raw, path, value)
+        val extensions = raw["extensions"] as? JsonObject ?: preset.extensions
+        return preset.copy(raw = raw, extensions = extensions)
     }
 
     /**

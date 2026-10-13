@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
+import app.tellev.core.model.Attachment
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.WorldBook
 import app.tellev.core.provider.ImageProviderProfile
@@ -20,10 +21,13 @@ import app.tellev.core.storage.FileStDataStore
 import app.tellev.core.storage.StDataStore
 import app.tellev.core.storage.codec.WorldBookCodec
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,6 +45,7 @@ data class CreationUiState(
     val current: CreationSession? = null,
     val coverPreviewPng: ByteArray? = null,
     val busy: Boolean = false,
+    val isOptimizingPrompt: Boolean = false,
     val extractionProgress: String = "",
     val operationLabel: String = "",
     val modelPhase: String = "",
@@ -61,6 +66,8 @@ data class CreationUiState(
     val imageEngines: Set<String> = emptySet(),
     val imageProfiles: List<ImageProviderProfile> = emptyList(),
     val isGeneratingCover: Boolean = false,
+    /** Shared generation records (chat + creation) for the 今日/累计 sections. */
+    val recentMetrics: List<app.tellev.core.metrics.GenerationMetrics> = emptyList(),
     val error: String? = null,
     val info: String? = null,
 )
@@ -85,11 +92,18 @@ class CreationViewModel(
     private val providers: ProviderRegistry,
     /** Size-capped remote download for engines that return URLs (OpenAI Images). */
     private val imageDownloader: (suspend (String) -> ByteArray?)? = null,
+    /**
+     * Shared with ChatViewModel: one writer instance for the metrics files, so
+     * creation records cannot clobber chat history (and the chat flow sees
+     * creation records immediately).
+     */
+    private val metricsStore: app.tellev.core.metrics.GenerationMetricsStore? = null,
 ) : ViewModel() {
     private val engine = CreationEngine(secrets, providers, store)
     private val coverGenerator = CreationCoverGenerator(secrets, providers, imageDownloader)
     private val promptOptimizer = app.tellev.core.prompt.PromptOptimizer()
     private var promptOptimizationJob: Job? = null
+    @Volatile private var promptOptimizationToken = 0L
     private var coverJob: Job? = null
     private val writeMutex = Mutex()
     private val _state = MutableStateFlow(CreationUiState())
@@ -99,6 +113,16 @@ class CreationViewModel(
     private var askAnswer: CompletableDeferred<String>? = null
 
     init { refresh() }
+
+    init {
+        // 今日/累计分区复用共享明细缓冲；只读订阅，写入仍由唯一 writer 负责。
+        metricsStore?.let { store ->
+            viewModelScope.launch {
+                store.load()
+                store.entries.collect { entries -> _state.update { it.copy(recentMetrics = entries) } }
+            }
+        }
+    }
 
     fun refresh() = viewModelScope.launch {
         runCatching { repository.list() }
@@ -206,26 +230,60 @@ class CreationViewModel(
 
     fun close() { if (!_state.value.busy) _state.update { it.copy(current = null, coverPreviewPng = null, extractionProgress = "", operationLabel = "", modelPhase = "", liveReasoning = "", liveOutput = "", liveAssistantMessage = "", operationStartedAtMillis = 0, modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "", toolEvents = emptyList(), pendingQuestion = null) } }
 
-    fun send(text: String) {
-        val session = _state.value.current ?: return
-        if (_state.value.busy || text.isBlank()) return
-        generationJob = viewModelScope.launch {
-            val withUser = session.copy(
-                turns = session.turns + CreationTurn("user", text.trim()),
-                updatedAt = System.currentTimeMillis(),
-            )
-            _state.update { it.copy(
-                current = withUser, busy = true, error = null, suggestions = emptyList(),
-                extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_converse), modelPhase = UiStrings.get(S.crvm_phase_preparing), liveReasoning = "", liveOutput = "",
-                liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(),
-                modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "",
-            ) }
+    fun send(text: String, attachments: List<Attachment> = emptyList()): Boolean {
+        val state = _state.value
+        val session = state.current ?: return false
+        val trimmed = text.trim()
+        if (state.isOptimizingPrompt || (trimmed.isBlank() && attachments.isEmpty())) return false
+        if (state.pendingQuestion != null) {
+            if (attachments.isNotEmpty()) {
+                showError(UiStrings.get(S.crs_attachment_pending_question))
+                return false
+            }
+            val accepted = askAnswer?.complete(trimmed) == true
+            if (accepted) _state.update { it.copy(error = null, pendingQuestion = null) }
+            return accepted
+        }
+        if (state.busy) return false
+        val userTurn = CreationTurn("user", trimmed, attachments.toList())
+        if (!validateSendAttachments(userTurn.attachments)) return false
+        val withUser = session.copy(
+            turns = session.turns + userTurn,
+            updatedAt = System.currentTimeMillis(),
+        )
+        launchConversation(session, withUser, userTurn)
+        return true
+    }
+
+    private fun validateSendAttachments(attachments: List<Attachment>): Boolean {
+        return try {
+            validateCreationAttachments(attachments, store.layout.root)
+            true
+        } catch (error: Exception) {
+            fail(error)
+            false
+        }
+    }
+
+    private fun launchConversation(session: CreationSession, withUser: CreationSession, userTurn: CreationTurn) {
+        _state.update { it.copy(
+            current = withUser, busy = true, error = null, suggestions = emptyList(),
+            extractionProgress = "", operationLabel = UiStrings.get(S.crvm_op_converse), modelPhase = UiStrings.get(S.crvm_phase_preparing), liveReasoning = "", liveOutput = "",
+            liveAssistantMessage = "", operationStartedAtMillis = System.currentTimeMillis(),
+            modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "",
+            toolEvents = emptyList(), pendingQuestion = null,
+        ) }
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
                 write(withUser)
+                val sessionId = withUser.id
                 val reply = engine.converse(
-                    session, text.trim(), ::showModelProgress,
+                    session, userTurn.text, ::showModelProgress,
+                    attachments = userTurn.attachments,
+                    snapshot = engine.resolveSessionSnapshot(session.presetId),
+                    onUsage = { metric -> recordUsage(sessionId, metric) },
                     onCheckpoint = { working ->
-                        val checkpoint = working.copy(
+                        val checkpoint = mergeUsage(working).copy(
                             turns = withUser.turns,
                             partialTurnSaved = true,
                             updatedAt = System.currentTimeMillis(),
@@ -250,7 +308,7 @@ class CreationViewModel(
                     },
                 )
                 _state.update { it.copy(modelPhase = UiStrings.get(S.crvm_phase_verify_save)) }
-                val next = reply.session.copy(
+                val next = mergeUsage(reply.session).copy(
                     turns = withUser.turns + CreationTurn(
                         "agent", reply.message.ifBlank { UiStrings.get(S.creng_turn_draft_updated) },
                     ),
@@ -268,19 +326,26 @@ class CreationViewModel(
                 fail(e)
                 _state.update { it.copy(modelPhase = if (it.current?.partialTurnSaved == true)
                     UiStrings.get(S.crvm_phase_interrupted_saved) else UiStrings.get(S.crvm_phase_turn_failed)) }
-            } finally {
-                _state.update { it.copy(busy = false) }
             }
         }
+        generationJob = job
+        job.invokeOnCompletion {
+            if (generationJob === job) {
+                generationJob = null
+                _state.update { it.copy(busy = false, pendingQuestion = null) }
+            }
+        }
+        job.start()
     }
 
     fun retry() {
-        val session = _state.value.current ?: return
-        if (_state.value.busy || session.partialTurnSaved || session.turns.lastOrNull()?.role != "user") return
-        val last = session.turns.last().text
-        val before = session.copy(turns = session.turns.dropLast(1))
-        _state.update { it.copy(current = before) }
-        send(last)
+        val state = _state.value
+        val session = state.current ?: return
+        if (state.busy || state.isOptimizingPrompt || session.partialTurnSaved || session.turns.lastOrNull()?.role != "user") return
+        val userTurn = session.turns.last()
+        if (!validateSendAttachments(userTurn.attachments)) return
+        // The persisted failed turn stays visible until replaced by its retry result.
+        launchConversation(session.copy(turns = session.turns.dropLast(1)), session, userTurn)
     }
 
     fun setSource(name: String, text: String) {
@@ -317,15 +382,17 @@ class CreationViewModel(
 
     fun extractSource() {
         val starting = _state.value.current ?: return
-        if (_state.value.busy || starting.sourceLength == 0) return
-        generationJob = viewModelScope.launch {
-            _state.update { it.copy(
-                busy = true, error = null, operationLabel = UiStrings.get(S.crvm_op_extract),
-                modelPhase = UiStrings.get(S.crvm_phase_reading_source), liveReasoning = "", liveOutput = "", liveAssistantMessage = "",
-                operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0,
-                firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "",
-            ) }
+        if (_state.value.busy || _state.value.isOptimizingPrompt || starting.sourceLength == 0) return
+        _state.update { it.copy(
+            busy = true, error = null, operationLabel = UiStrings.get(S.crvm_op_extract),
+            modelPhase = UiStrings.get(S.crvm_phase_reading_source), liveReasoning = "", liveOutput = "", liveAssistantMessage = "",
+            operationStartedAtMillis = System.currentTimeMillis(), modelElapsedMillis = 0,
+            firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0, providerLabel = "",
+            toolEvents = emptyList(), pendingQuestion = null,
+        ) }
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
+                val snapshot = engine.resolveSessionSnapshot(starting.presetId)
                 val source = repository.readSource(starting.id, starting.sourceSha256)
                 require(source.length == starting.sourceLength) { UiStrings.get(S.crvm_error_source_length_mismatch) }
                 var current = starting
@@ -341,12 +408,16 @@ class CreationViewModel(
                         liveReasoning = "", liveOutput = "", liveAssistantMessage = "",
                         modelElapsedMillis = 0, firstDeltaMillis = null, lastDeltaMillis = null, deltaCount = 0,
                     ) }
-                    val reply = engine.extractChunk(chunk, starting.sourceName, ::showModelProgress)
+                    val reply = engine.extractChunk(
+                        chunk, starting.sourceName, ::showModelProgress, snapshot = snapshot,
+                        effortOverride = starting.reasoningEffort,
+                        onUsage = { metric -> recordUsage(starting.id, metric) },
+                    )
                     _state.update { it.copy(modelPhase = UiStrings.get(S.crvm_phase_verify_chunk, chunkNumber)) }
                     val proposed = reply.lore.orEmpty()
                     val verified = verifiedLoreFromChunk(chunk, proposed, starting.sourceName, starting.sourceSha256)
                     val rejected = proposed.size - verified.size
-                    current = current.copy(
+                    current = mergeUsage(current).copy(
                         lore = mergeExtractedLore(current.lore, verified),
                         worldName = current.worldName.ifBlank { reply.worldName.orEmpty() },
                         sourceCursor = chunk.end,
@@ -372,10 +443,16 @@ class CreationViewModel(
             } catch (e: Exception) {
                 fail(e)
                 _state.update { it.copy(modelPhase = UiStrings.get(S.crvm_phase_extract_interrupted)) }
-            } finally {
+            }
+        }
+        generationJob = job
+        job.invokeOnCompletion {
+            if (generationJob === job) {
+                generationJob = null
                 _state.update { it.copy(busy = false) }
             }
         }
+        job.start()
     }
 
     fun cancelGeneration() { generationJob?.cancel() }
@@ -544,7 +621,10 @@ class CreationViewModel(
                         require(pngCard.name == card.name && pngCard.firstMessage == card.firstMessage) {
                             UiStrings.get(S.crvm_error_cover_card_roundtrip)
                         }
-                        store.importCharacter(card, cover, "character.png")
+                        // The card and its generated lorebook are one artifact here,
+                        // so the book is bound straight away instead of waiting for
+                        // the user to switch it on in the world screen.
+                        store.importCharacter(card, cover, "character.png", bindEmbeddedWorldBook = true)
                     } else store.saveCharacter(card)
                     card.id
                 } else {
@@ -581,35 +661,55 @@ class CreationViewModel(
         onPreview: (String) -> Unit,
         onDone: (app.tellev.core.prompt.PromptOptimizationResult) -> Unit,
     ): Boolean {
+        if (_state.value.busy || text.isBlank()) return false
+        val token = ++promptOptimizationToken
         promptOptimizationJob?.cancel()
-        promptOptimizationJob = viewModelScope.launch {
+        _state.update { it.copy(isOptimizingPrompt = true) }
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            val activeJob = currentCoroutineContext()[Job]
+            fun isCurrent() = promptOptimizationToken == token && activeJob?.isActive == true
+            var result: app.tellev.core.prompt.PromptOptimizationResult
             try {
                 val selectedId = secrets.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
                     ?: ProviderCatalog.OPENAI_COMPATIBLE
                 val adapterId = ProviderConfigPersistence.adapterIdFor(selectedId)
                 val adapter = providers.find(adapterId)?.takeIf { it.supportsChatGeneration }
-                if (adapter == null) {
-                    onDone(app.tellev.core.prompt.PromptOptimizationResult.failed(
+                result = if (adapter == null) {
+                    app.tellev.core.prompt.PromptOptimizationResult.failed(
                         listOf(UiStrings.get(S.chat_optimize_unavailable)),
-                    ))
-                    return@launch
+                    )
+                } else {
+                    val config = ProviderConfigPersistence.loadProviderConfig(secrets, selectedId)
+                    currentCoroutineContext().ensureActive()
+                    promptOptimizer.optimize(text, options, config, adapter,
+                        onPreview = { preview -> if (isCurrent()) onPreview(preview) })
                 }
-                val config = ProviderConfigPersistence.loadProviderConfig(secrets, selectedId)
-                onDone(promptOptimizer.optimize(text, options, config, adapter, onPreview = onPreview))
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                onDone(app.tellev.core.prompt.PromptOptimizationResult.failed(
+                result = app.tellev.core.prompt.PromptOptimizationResult.failed(
                     listOf(error.message ?: UiStrings.get(S.chat_optimize_failed_generic)),
-                ))
+                )
+            }
+            if (isCurrent()) onDone(result)
+        }
+        promptOptimizationJob = job
+        job.invokeOnCompletion {
+            if (promptOptimizationToken == token && promptOptimizationJob === job) {
+                promptOptimizationJob = null
+                _state.update { it.copy(isOptimizingPrompt = false) }
             }
         }
+        job.start()
         return true
     }
 
     fun cancelPromptOptimization() {
-        promptOptimizationJob?.cancel()
+        ++promptOptimizationToken
+        val job = promptOptimizationJob
         promptOptimizationJob = null
+        _state.update { it.copy(isOptimizingPrompt = false) }
+        job?.cancel()
     }
 
     fun showError(message: String) { _state.update { it.copy(error = message) } }
@@ -650,7 +750,22 @@ class CreationViewModel(
         }
     }
 
-    private suspend fun write(session: CreationSession) = writeMutex.withLock { repository.save(session) }
+    private suspend fun write(session: CreationSession) = writeMutex.withLock {
+        repository.save(mergeUsage(session))
+    }
+
+    /**
+     * Engine snapshots predate the usage accumulated during their own turn, so
+     * assigning one verbatim to the state (or writing it to disk) would erase
+     * freshly counted requests. The in-memory draft always holds the newest
+     * aggregate for its id; merge it whenever it is further along. Callers that
+     * put an engine snapshot into the state must run it through here first.
+     */
+    private fun mergeUsage(session: CreationSession): CreationSession {
+        val live = _state.value.current?.takeIf { it.id == session.id } ?: return session
+        if (live.usage.completedRequests <= session.usage.completedRequests) return session
+        return session.copy(usage = live.usage)
+    }
 
     private fun showModelProgress(progress: CreationStreamUpdate) {
         _state.update { it.copy(
@@ -666,6 +781,58 @@ class CreationViewModel(
         ) }
     }
 
+    /**
+     * Per-draft usage accumulation. The engine calls this once per completed
+     * provider request (before parsing/tool execution), so retries and repair
+     * rounds are all counted. The draft copy is the source of truth and is
+     * merged into every later save through [write].
+     */
+    private suspend fun recordUsage(sessionId: String, metric: app.tellev.core.metrics.GenerationMetrics) {
+        val current = _state.value.current?.takeIf { it.id == sessionId } ?: return
+        val attributed = metric.copy(sessionId = sessionId)
+        val next = current.copy(
+            usage = current.usage.plus(attributed),
+            updatedAt = System.currentTimeMillis(),
+        )
+        _state.update { it.copy(current = next) }
+        runCatching { metricsStore?.record(attributed) }
+    }
+
+    /**
+     * The draft's own reasoning effort, applied to authoring requests through
+     * the shared override metadata (same wire path as chat).
+     */
+    fun setReasoningEffort(effort: app.tellev.core.model.ReasoningEffort) {
+        val session = _state.value.current ?: return
+        if (_state.value.busy) return
+        _state.update { it.copy(current = it.current?.copy(reasoningEffort = effort), info = null) }
+        persist(_state.value.current)
+    }
+
+    /**
+     * 本草案指定的预设 id（空 = 跟随聊天当前所选）。随草案持久化，
+     * 与档位同一存储位；请求时经 resolveSessionSnapshot 落线。
+     */
+    fun setPreset(presetId: String) {
+        val session = _state.value.current ?: return
+        if (_state.value.busy) return
+        _state.update { it.copy(current = it.current?.copy(presetId = presetId), info = null) }
+        persist(_state.value.current)
+    }
+
+    /**
+     * 统计面板的「清除统计」：清空共享明细与本草稿的累计。本草稿只重置聚合，
+     * 不影响草稿内容本身；共享明细的清除会同时清掉聊天侧记录（同一份文件）。
+     */
+    fun clearUsage() {
+        val session = _state.value.current ?: return
+        viewModelScope.launch {
+            runCatching { metricsStore?.clearAll() }
+            _state.update { it.copy(current = it.current?.copy(usage = CreationUsage())) }
+            runCatching { write(_state.value.current ?: session) }
+        }
+    }
+
     private fun fail(e: Throwable) {
         _state.update { it.copy(error = e.message ?: UiStrings.get(S.crvm_failed_default)) }
     }
@@ -677,6 +844,7 @@ class CreationViewModelFactory(
     private val secrets: SecretStore,
     private val providers: ProviderRegistry,
     private val imageDownloader: (suspend (String) -> ByteArray?)? = null,
+    private val metricsStore: app.tellev.core.metrics.GenerationMetricsStore? = null,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T = CreationViewModel(
@@ -685,5 +853,6 @@ class CreationViewModelFactory(
         secrets = secrets,
         providers = providers,
         imageDownloader = imageDownloader,
+        metricsStore = metricsStore,
     ) as T
 }

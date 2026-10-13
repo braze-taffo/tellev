@@ -1,6 +1,7 @@
 package app.tellev.core.provider
 
 import app.tellev.core.security.SecretStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -108,8 +109,31 @@ object ProviderConfigPersistence {
     /** Selected-id string for a custom config (adds the [CUSTOM_PREFIX]). */
     fun selectedIdFor(customConfigId: String): String = CUSTOM_PREFIX + customConfigId
 
+    /**
+     * [SecretStore.readSecret] is a value-or-null contract, but a store facing a
+     * corrupt payload or a lost key can still surface exceptions. Every read in
+     * this object feeds a read-modify-write cycle, so an unreadable entry must
+     * fall back to its default value — otherwise one broken entry (e.g.
+     * custom-provider-configs) locks the user out of reading *and* overwriting
+     * it until app data is cleared.
+     *
+     * Cancellation is not a failure: these reads sit inside listCustomConfigs /
+     * createCustomConfig / deleteCustomConfig / migrateLegacyOpenAiCompatible,
+     * all read-modify-write, and swallowing a cancellation would let a cancelled
+     * job continue into the overwrite and cut the whole list down to the new
+     * entry. Rethrow it — the same口径 GenerationMetrics.record already uses.
+     */
+    private suspend fun readOrNull(secretStore: SecretStore, id: String): String? =
+        try {
+            secretStore.readSecret(id)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            null
+        }
+
     suspend fun listCustomConfigs(secretStore: SecretStore): List<CustomProviderConfig> {
-        val stored = secretStore.readSecret(CUSTOM_CONFIGS_SECRET_ID) ?: return emptyList()
+        val stored = readOrNull(secretStore, CUSTOM_CONFIGS_SECRET_ID) ?: return emptyList()
         return runCatching { json.decodeFromString<List<CustomProviderConfig>>(stored) }
             .getOrElse { emptyList() }
     }
@@ -134,7 +158,7 @@ object ProviderConfigPersistence {
         // DeepSeek has a fixed profile. Never let an older saved compatibility
         // document change its paths, authentication headers or request body.
         if (!hasCustomOpenAiSettings(providerId)) return OpenAiCompatibilitySettings.defaults(providerId)
-        val stored = secretStore.readSecret(advancedSecretId(providerId))
+        val stored = readOrNull(secretStore, advancedSecretId(providerId))
             ?: return OpenAiCompatibilitySettings.defaults(providerId)
         return runCatching { json.decodeFromString<OpenAiCompatibilitySettings>(stored) }
             .getOrElse { OpenAiCompatibilitySettings.defaults(providerId) }
@@ -159,7 +183,7 @@ object ProviderConfigPersistence {
     }
 
     suspend fun loadComfySettings(secretStore: SecretStore): ComfyUiSettings {
-        val stored = secretStore.readSecret(COMFY_SETTINGS_SECRET_ID) ?: return ComfyUiSettings()
+        val stored = readOrNull(secretStore, COMFY_SETTINGS_SECRET_ID) ?: return ComfyUiSettings()
         return runCatching { json.decodeFromString<ComfyUiSettings>(stored) }
             .getOrElse { ComfyUiSettings() }
     }
@@ -187,7 +211,7 @@ object ProviderConfigPersistence {
     fun imageProfileEngineId(profileId: String): String = IMAGE_PROFILE_PREFIX + profileId
 
     suspend fun listImageProviderProfiles(secretStore: SecretStore): List<ImageProviderProfile> {
-        val stored = secretStore.readSecret(IMAGE_PROFILES_SECRET_ID) ?: return emptyList()
+        val stored = readOrNull(secretStore, IMAGE_PROFILES_SECRET_ID) ?: return emptyList()
         return runCatching { json.decodeFromString<List<ImageProviderProfile>>(stored) }
             .getOrElse { emptyList() }
     }
@@ -222,11 +246,11 @@ object ProviderConfigPersistence {
 
     /** True when a NovelAI access token has been saved; model/parameters all carry valid defaults. */
     suspend fun isNovelAiImageConfigured(secretStore: SecretStore): Boolean {
-        return !secretStore.readSecret("provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey").isNullOrBlank()
+        return !readOrNull(secretStore, "provider-${ProviderCatalog.NOVELAI_IMAGE}-apikey").isNullOrBlank()
     }
 
     suspend fun loadNovelAiImageSettings(secretStore: SecretStore): NovelAiImageSettings {
-        val stored = secretStore.readSecret(NOVELAI_IMAGE_SETTINGS_SECRET_ID)
+        val stored = readOrNull(secretStore, NOVELAI_IMAGE_SETTINGS_SECRET_ID)
             ?: return NovelAiImageSettings()
         return runCatching { json.decodeFromString<NovelAiImageSettings>(stored) }
             .getOrElse { NovelAiImageSettings() }
@@ -262,7 +286,7 @@ object ProviderConfigPersistence {
         engine in imageEngines || isImageProfileEngineId(engine)
 
     suspend fun loadImageEngine(secretStore: SecretStore): String {
-        val stored = secretStore.readSecret(IMAGE_ENGINE_SECRET_ID) ?: return ProviderCatalog.COMFYUI
+        val stored = readOrNull(secretStore, IMAGE_ENGINE_SECRET_ID) ?: return ProviderCatalog.COMFYUI
         return if (isValidImageEngineId(stored)) stored else ProviderCatalog.COMFYUI
     }
 
@@ -295,10 +319,10 @@ object ProviderConfigPersistence {
         val customOpenAi = hasCustomOpenAiSettings(providerId)
         return ProviderConfig(
             providerType = providerId,
-            baseUrl = secretStore.readSecret("provider-$providerId-baseurl")
+            baseUrl = readOrNull(secretStore, "provider-$providerId-baseurl")
                 ?: ProviderDefaults.baseUrl(providerId),
-            apiKey = secretStore.readSecret("provider-$providerId-apikey"),
-            model = secretStore.readSecret("provider-$providerId-model")
+            apiKey = readOrNull(secretStore, "provider-$providerId-apikey"),
+            model = readOrNull(secretStore, "provider-$providerId-model")
                 ?: ProviderDefaults.model(providerId).takeIf { it.isNotBlank() },
             headers = if (customOpenAi) advanced.headers else emptyMap(),
             options = if (customOpenAi) advanced.toOptions() else JsonObject(emptyMap()),
@@ -320,13 +344,13 @@ object ProviderConfigPersistence {
      * Returns the migration outcome, or null if nothing was done.
      */
     suspend fun migrateLegacyOpenAiCompatible(secretStore: SecretStore): MigrationResult? {
-        if (secretStore.readSecret(CUSTOM_CONFIGS_SECRET_ID) != null) return null
+        if (readOrNull(secretStore, CUSTOM_CONFIGS_SECRET_ID) != null) return null
 
-        val currentSelected = secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
+        val currentSelected = readOrNull(secretStore, ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
         val wasOpenAiCompatible = currentSelected == null || currentSelected == ProviderCatalog.OPENAI_COMPATIBLE
 
-        val legacyBaseUrl = secretStore.readSecret("provider-${ProviderCatalog.OPENAI_COMPATIBLE}-baseurl")
-        val legacyApiKey = secretStore.readSecret("provider-${ProviderCatalog.OPENAI_COMPATIBLE}-apikey")
+        val legacyBaseUrl = readOrNull(secretStore, "provider-${ProviderCatalog.OPENAI_COMPATIBLE}-baseurl")
+        val legacyApiKey = readOrNull(secretStore, "provider-${ProviderCatalog.OPENAI_COMPATIBLE}-apikey")
         val hasLegacy = !legacyBaseUrl.isNullOrBlank() || !legacyApiKey.isNullOrBlank()
 
         if (!wasOpenAiCompatible && !hasLegacy) return null
@@ -341,7 +365,7 @@ object ProviderConfigPersistence {
             name = name,
             baseUrl = legacyBaseUrl ?: "",
             apiKey = legacyApiKey ?: "",
-            model = secretStore.readSecret("provider-${ProviderCatalog.OPENAI_COMPATIBLE}-model") ?: "",
+            model = readOrNull(secretStore, "provider-${ProviderCatalog.OPENAI_COMPATIBLE}-model") ?: "",
             advanced = loadAdvanced(secretStore, ProviderCatalog.OPENAI_COMPATIBLE),
         )
         saveCustomConfigs(secretStore, listOf(migrated))

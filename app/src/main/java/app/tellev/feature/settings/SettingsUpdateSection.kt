@@ -76,6 +76,15 @@ internal fun UpdateStatus(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+                // MF-8：发行没带 sha256 digest 时 APK 只过了签名比对，用户必须看得见，
+                // 否则「已下载」看起来和校验过一样安全。
+                if (state.hashUnverified) {
+                    Text(
+                        text = stringResource(R.string.setupd_hash_unverified),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
             state.checking -> {
                 Row(

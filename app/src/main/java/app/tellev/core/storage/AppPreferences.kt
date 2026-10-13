@@ -40,21 +40,11 @@ class AppPreferences(
     /**
      * Theme preference stored as the enum name so the storage layer stays
      * independent of the UI-layer ThemeMode type; callers parse with
-     * [app.tellev.ui.theme.parseThemeMode].
+     * [app.tellev.ui.dsh.parseThemeMode].
      */
     var themeModeName: String
         get() = prefs.getString(KEY_THEME_MODE, DEFAULT_THEME_MODE) ?: DEFAULT_THEME_MODE
         set(value) = prefs.edit().putString(KEY_THEME_MODE, value).apply()
-
-    /**
-     * Accent palette preference stored as the enum name so the storage layer
-     * stays independent of the UI-layer ThemeAccent type; callers parse with
-     * [app.tellev.ui.theme.parseThemeAccent]. Defaults to the Warm palette so
-     * existing installs (which have no stored value) pick up the new look.
-     */
-    var themeAccentName: String
-        get() = prefs.getString(KEY_THEME_ACCENT, DEFAULT_THEME_ACCENT) ?: DEFAULT_THEME_ACCENT
-        set(value) = prefs.edit().putString(KEY_THEME_ACCENT, value).apply()
 
     /**
      * Chat bubble opacity (1 = opaque, 0 = fully transparent). Stored as a
@@ -147,7 +137,6 @@ class AppPreferences(
         const val KEY_UPDATE_GUIDE_VERSION = "update_guide_shown_version"
         const val KEY_ONBOARDING_SHOWN = "onboarding_guide_shown"
         const val KEY_THEME_MODE = "theme_mode"
-        const val KEY_THEME_ACCENT = "theme_accent"
         const val KEY_CHAT_BUBBLE_ALPHA = "chat_bubble_alpha"
         const val KEY_CHAT_FONT_SIZE = "chat_font_size_sp"
         const val KEY_LANGUAGE_TAG = "language_tag"
@@ -161,10 +150,6 @@ class AppPreferences(
         /** Literal "System" — the ThemeMode.System enum name, kept as a
          *  string so this layer does not depend on the UI enum. */
         const val DEFAULT_THEME_MODE = "System"
-
-        /** Literal "Warm" — the ThemeAccent.Warm enum name; same rationale as
-         *  [DEFAULT_THEME_MODE]. */
-        const val DEFAULT_THEME_ACCENT = "Warm"
 
         /** Legacy hardcoded bubble alpha in ChatScreen; keep as default so
          *  existing installs see no visual change. */

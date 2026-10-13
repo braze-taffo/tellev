@@ -69,7 +69,7 @@ class OpenIssueRegressionTest {
                     .body((if (failed) "missing" else "apk bytes").toResponseBody()).build()
             }.build()
             val target = root.resolve("update.apk").toFile()
-            UpdateChecker(client).downloadApk(updateInfo(), mirrors(), target) {}
+            UpdateChecker(client).downloadApk(updateInfo(), mirrors(), target, onProgress = {})
             assertEquals(listOf("first.test", "second.test"), calls)
             assertEquals("apk bytes", target.readText())
         } finally { root.toFile().deleteRecursively() }
@@ -85,7 +85,9 @@ class OpenIssueRegressionTest {
                     .code(503).message("unavailable").body("failed".toResponseBody()).build()
             }.build()
             val target = root.resolve("update.apk").toFile()
-            val error = runCatching { UpdateChecker(client).downloadApk(updateInfo(), mirrors(), target) {} }.exceptionOrNull()
+            val error = runCatching {
+                UpdateChecker(client).downloadApk(updateInfo(), mirrors(), target, onProgress = {})
+            }.exceptionOrNull()
             assertTrue("HTTP failure returned success: $error", error is IOException)
             assertEquals(2, calls.size)
             assertFalse(target.exists())
@@ -166,7 +168,7 @@ class OpenIssueRegressionTest {
                 }.build()
                 val target = root.resolve("update.apk").toFile()
                 target.writeText("old partial file")
-                UpdateChecker(client).downloadApk(updateInfo(), mirrors(), target) {}
+                UpdateChecker(client).downloadApk(updateInfo(), mirrors(), target, onProgress = {})
                 assertEquals(2, calls.size)
                 assertEquals("apk bytes", target.readText())
             } finally { root.toFile().deleteRecursively() }
@@ -185,9 +187,9 @@ class OpenIssueRegressionTest {
                 }.build()
                 val target = root.resolve("update.apk").toFile()
                 val error = runCatching {
-                    UpdateChecker(client).downloadApk(updateInfo(), mirrors(), target) {
+                    UpdateChecker(client).downloadApk(updateInfo(), mirrors(), target, onProgress = {
                         if (cancel) throw CancellationException("cancel download") else throw IOException("read interrupted")
-                    }
+                    })
                 }.exceptionOrNull()
                 assertTrue(if (cancel) error is CancellationException else error is IOException)
                 assertEquals(if (cancel) 1 else 2, calls.size)
@@ -206,7 +208,9 @@ class OpenIssueRegressionTest {
                     .body("apk bytes".toResponseBody()).build()
             }.build()
             val target = root.resolve("update.apk").toFile()
-            val error = runCatching { UpdateChecker(client).downloadApk(updateInfo().copy(sha256 = "wrong"), mirrors(), target) {} }.exceptionOrNull()
+            val error = runCatching {
+                UpdateChecker(client).downloadApk(updateInfo().copy(sha256 = "wrong"), mirrors(), target, onProgress = {})
+            }.exceptionOrNull()
             assertTrue(error is IllegalStateException)
             assertEquals(1, calls)
             assertFalse(target.exists())

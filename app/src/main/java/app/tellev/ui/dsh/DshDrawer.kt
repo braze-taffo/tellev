@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
@@ -75,6 +76,7 @@ fun DshDrawer(
     onTogglePinned: (String) -> Unit,
     onOpenPlugins: () -> Unit,
     onExportLog: () -> Unit,
+    onOpenModelServices: () -> Unit = {},
     onOpenSettings: () -> Unit,
     drawerState: androidx.compose.material3.DrawerState,
     content: @Composable () -> Unit,
@@ -327,7 +329,30 @@ fun DshDrawer(
                         }
                     }
 
-                    // 底部：设置行（官方 .trigger：42 高）。
+                    // 底部：模型服务 + 设置行（官方 .trigger：42 高）。
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(42.dp)
+                            .clip(sessionShape)
+                            .clickable(onClick = onOpenModelServices)
+                            .padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Default.Memory,
+                            contentDescription = null,
+                            tint = Dsh.textSecondary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            stringResource(R.string.chat_drawer_model_services),
+                            fontSize = 14.sp,
+                            lineHeight = 22.sp,
+                            color = Dsh.textPrimary,
+                        )
+                    }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

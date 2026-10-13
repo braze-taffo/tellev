@@ -31,10 +31,8 @@ import app.tellev.feature.settings.controller.ImageGenSettingsController
 import app.tellev.feature.settings.controller.PersonaSecretSettingsController
 import app.tellev.feature.settings.controller.PresetSettingsController
 import app.tellev.feature.settings.controller.ProviderSettingsController
-import app.tellev.ui.theme.ThemeAccent
-import app.tellev.ui.theme.ThemeMode
-import app.tellev.ui.theme.parseThemeAccent
-import app.tellev.ui.theme.parseThemeMode
+import app.tellev.ui.dsh.ThemeMode
+import app.tellev.ui.dsh.parseThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -51,6 +49,9 @@ data class SettingsUiState(
     val customConfigName: String = "",
     val baseUrl: String = "",
     val apiKey: String = "",
+    // 载入（或保存/切换）时的已存密钥快照：字段空白不等于「用户要删除密钥」，
+    // 可能只是读取失败回落；删除必须由用户在保存确认框里显式表态。
+    val loadedApiKey: String = "",
     val model: String = "",
     val compatibility: OpenAiCompatibilitySettings = OpenAiCompatibilitySettings(),
     val extraHeadersJson: String = "{}",
@@ -62,7 +63,6 @@ data class SettingsUiState(
     val personas: List<Persona> = emptyList(),
     val secretIds: List<String> = emptyList(),
     val themeMode: ThemeMode = ThemeMode.System,
-    val themeAccent: ThemeAccent = ThemeAccent.Warm,
     val chatBubbleAlpha: Float = 0.6f,
     val chatFontSizeSp: Int = 16,
     val languageTag: String = "",
@@ -96,7 +96,6 @@ class SettingsViewModel(
     private val secretStore: SecretStore,
     private val appPreferences: AppPreferences,
     private val themeModeFlow: MutableStateFlow<ThemeMode>,
-    private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
     private val chatBubbleAlphaFlow: MutableStateFlow<Float>,
     private val chatFontSizeSpFlow: MutableStateFlow<Int>,
 ) : ViewModel() {
@@ -139,7 +138,6 @@ class SettingsViewModel(
     private val appearanceController = AppearanceSettingsController(
         appPreferences = appPreferences,
         themeModeFlow = themeModeFlow,
-        themeAccentFlow = themeAccentFlow,
         chatBubbleAlphaFlow = chatBubbleAlphaFlow,
         chatFontSizeSpFlow = chatFontSizeSpFlow,
         stateFlow = _uiState,
@@ -229,13 +227,13 @@ class SettingsViewModel(
                         personas = personas,
                         secretIds = secretIds,
                         themeMode = parseThemeMode(appPreferences.themeModeName),
-                        themeAccent = parseThemeAccent(appPreferences.themeAccentName),
                         chatBubbleAlpha = appPreferences.chatBubbleAlpha,
                         chatFontSizeSp = appPreferences.chatFontSizeSp,
                         languageTag = appPreferences.languageTag,
                         allowRemoteCleartext = appPreferences.allowRemoteCleartext,
                         baseUrl = fields.baseUrl,
                         apiKey = fields.apiKey,
+                        loadedApiKey = fields.apiKey,
                         model = fields.model,
                         compatibility = fields.compatibility,
                         extraHeadersJson = json.encodeToString(fields.compatibility.headers),
@@ -285,7 +283,8 @@ class SettingsViewModel(
     fun createCustomConfig() = providerController.createCustomConfig()
     fun deleteCustomConfig(rawId: String) = providerController.deleteCustomConfig(rawId)
     fun testConnection() = providerController.testConnection()
-    fun saveProviderConfig() = providerController.saveProviderConfig()
+    fun saveProviderConfig(clearApiKey: Boolean = false) = providerController.saveProviderConfig(clearApiKey)
+    fun resetProviderConfig() = providerController.resetProviderConfig()
 
     // ── Image Generation Actions ──
 
@@ -326,7 +325,6 @@ class SettingsViewModel(
     // ── Appearance Actions ──
 
     fun setThemeMode(mode: ThemeMode) = appearanceController.setThemeMode(mode)
-    fun setThemeAccent(accent: ThemeAccent) = appearanceController.setThemeAccent(accent)
     fun previewChatBubbleAlpha(alpha: Float) = appearanceController.previewChatBubbleAlpha(alpha)
     fun setChatBubbleAlpha(alpha: Float) = appearanceController.setChatBubbleAlpha(alpha)
     fun previewChatFontSizeSp(size: Int) = appearanceController.previewChatFontSizeSp(size)
@@ -355,7 +353,6 @@ class SettingsViewModelFactory(
     private val secretStore: SecretStore,
     private val appPreferences: AppPreferences,
     private val themeModeFlow: MutableStateFlow<ThemeMode>,
-    private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
     private val chatBubbleAlphaFlow: MutableStateFlow<Float>,
     private val chatFontSizeSpFlow: MutableStateFlow<Int>,
 ) : ViewModelProvider.Factory {
@@ -368,8 +365,7 @@ class SettingsViewModelFactory(
                 secretStore = secretStore,
                 appPreferences = appPreferences,
                 themeModeFlow = themeModeFlow,
-                themeAccentFlow = themeAccentFlow,
-                chatBubbleAlphaFlow = chatBubbleAlphaFlow,
+                    chatBubbleAlphaFlow = chatBubbleAlphaFlow,
                 chatFontSizeSpFlow = chatFontSizeSpFlow,
             ) as T
         }

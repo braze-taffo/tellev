@@ -2,7 +2,9 @@ package app.tellev.feature.creation
 
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
+import app.tellev.core.model.Attachment
 import app.tellev.core.model.CharacterCard
+import app.tellev.core.model.ReasoningEffort
 import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
 import kotlinx.serialization.Serializable
@@ -57,7 +59,54 @@ data class CreationSessionSummary(
 )
 
 @Serializable
-data class CreationTurn(val role: String, val text: String)
+data class CreationTurn(
+    val role: String,
+    val text: String,
+    val attachments: List<Attachment> = emptyList(),
+)
+
+/**
+ * Per-draft usage of the authoring agent, accumulated across every completed
+ * provider request (each tool-loop round, each extraction/repair request).
+ *
+ * Only provider-reported samples are counted as reported values; requests that
+ * finished without a usage frame still increment [completedRequests] and
+ * [estimatedCount] so the count stays honest while the token sums stay empty.
+ * [promptTokens] is the full prompt (cache read + write + uncached).
+ */
+@Serializable
+data class CreationUsage(
+    val completedRequests: Int = 0,
+    val estimatedCount: Int = 0,
+    val promptTokens: Long = 0L,
+    val completionTokens: Long = 0L,
+    val cacheReadTokens: Long = 0L,
+    val cacheWriteTokens: Long = 0L,
+    val reasoningTokens: Long = 0L,
+    val lastModel: String = "",
+    val lastTokensPerSecond: Double? = null,
+    val lastEstimated: Boolean = false,
+) {
+    val totalTokens: Long get() = promptTokens + completionTokens
+    val uncachedInputTokens: Long
+        get() = (promptTokens - cacheReadTokens - cacheWriteTokens).coerceAtLeast(0L)
+
+    fun plus(metric: app.tellev.core.metrics.GenerationMetrics): CreationUsage {
+        val reported = !metric.isEstimate && metric.promptTokens != null
+        return copy(
+            completedRequests = completedRequests + 1,
+            estimatedCount = estimatedCount + if (reported) 0 else 1,
+            promptTokens = promptTokens + (if (reported) metric.promptTokens?.toLong() ?: 0L else 0L),
+            completionTokens = completionTokens + (if (reported) metric.completionTokens?.toLong() ?: 0L else 0L),
+            cacheReadTokens = cacheReadTokens + (if (reported) (metric.cacheReadTokens ?: metric.cachedTokens)?.toLong() ?: 0L else 0L),
+            cacheWriteTokens = cacheWriteTokens + (if (reported) metric.cacheCreationTokens?.toLong() ?: 0L else 0L),
+            reasoningTokens = reasoningTokens + (if (reported) metric.reasoningTokens?.toLong() ?: 0L else 0L),
+            lastModel = metric.model.orEmpty(),
+            lastTokensPerSecond = metric.decodeTokensPerSecond ?: metric.tokensPerSecond,
+            lastEstimated = metric.isEstimate,
+        )
+    }
+}
 
 /** One executed (or rejected) tool call inside a conversation turn, for the activity UI. */
 data class CreationToolEvent(
@@ -153,6 +202,19 @@ data class CreationSession(
     val originalBook: WorldBook? = null,
     /** Editable SillyTavern extension tree; unknown keys remain untouched. */
     val advancedExtensions: JsonObject = JsonObject(emptyMap()),
+    /** Provider request accounting for this draft (see [CreationUsage]). */
+    val usage: CreationUsage = CreationUsage(),
+    /**
+     * Per-draft reasoning effort override ("跟随预设" is represented by Auto).
+     * Kept beside [usage] rather than inside the card so switching drafts never
+     * leaks one draft's effort into another.
+     */
+    val reasoningEffort: ReasoningEffort = ReasoningEffort.Auto,
+    /**
+     * 本草案指定的预设 id（空 = 跟随聊天当前所选，即引擎默认行为）。
+     * 与 [reasoningEffort] 同理存于草案侧，避免跨草稿串台。
+     */
+    val presetId: String = "",
 ) {
     companion object {
         fun fromCharacter(card: CharacterCard): CreationSession {

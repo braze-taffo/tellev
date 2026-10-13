@@ -156,6 +156,23 @@ internal object ChatTavernAdapter {
         }
     }
 
+    /**
+     * 消息文档同步桥在会话切换窗口的降级上下文：结构完整、没有数据。
+     *
+     * message.js 读 c.chat（:19/:30/:35/:37）与 c.variableScopes[type]（:17），
+     * 所以载荷不能是 {}。键名与 [tavernMessageContextJson] 的 variableScopes 对齐，
+     * 前端拿到的就是一份空数据而不是异常。
+     */
+    fun emptyMessageContextJson(): String = buildJsonObject {
+        putJsonArray("chat") {}
+        putJsonObject("variableScopes") {
+            put("global", buildJsonObject {})
+            put("chat", buildJsonObject {})
+            put("character", buildJsonObject {})
+            put("preset", buildJsonObject {})
+        }
+    }.toString()
+
     fun tavernMessageContextJson(
         token: RuntimeToken?,
         state: ChatUiState,

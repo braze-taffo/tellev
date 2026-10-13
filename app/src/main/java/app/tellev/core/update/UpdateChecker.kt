@@ -20,6 +20,19 @@ import java.io.IOException
 import java.security.MessageDigest
 
 /**
+ * [UpdateChecker.downloadApk] 的「未校验哈希」默认出口。
+ *
+ * 走 stderr 而不是 `android.util.Log`：本模块的 JVM 单测不 mock android.jar
+ * （GuideContent.kt 对同一个取舍有说明），而 `OpenIssueRegressionTest` 正好覆盖
+ * digest 缺失的下载路径，默认出口必须让单测继续可跑；Android 会把 stderr 重定向进
+ * logcat，诊断在真机上仍可感知。要让用户看到「本次更新未校验哈希」，由调用方传自己
+ * 的回调并展示本地化文案。
+ */
+private fun logUnverifiedHash(tag: String) {
+    System.err.println("tellev-update: release $tag carries no sha256 digest; APK not hash-verified")
+}
+
+/**
  * A GitHub mirror. [prefix] is prepended to the full GitHub URL; an empty
  * prefix means "direct". The prefix-style community mirrors
  * (gh-proxy.com, ghfast.top, ...) accept the full URL right after the slash,
@@ -272,15 +285,30 @@ class UpdateChecker(
     /**
      * Streams the APK for [info] to [target], trying [mirrors] in order until
      * one delivers the full file. Reports download progress in `[0f, 1f]`.
-     * If [UpdateInfo.sha256] is known, the downloaded file is verified and a
-     * mismatch aborts (the same asset from any mirror would mismatch, so there
-     * is no point retrying).
+     *
+     * Completeness and content are two separate gates, and neither may be
+     * skipped silently:
+     *
+     *  - Length: the response's Content-Length and the release-reported asset
+     *    size, and a byte count that contradicts either means a truncated
+     *    transfer, so the next mirror is tried. When *neither* anchor exists,
+     *    completeness cannot be established at all and the download is refused
+     *    instead of trusted — unless the release carried a digest, which is the
+     *    stronger proof in that case.
+     *  - Content: if [UpdateInfo.sha256] is known, the downloaded file is
+     *    verified and a mismatch aborts (the same asset from any mirror would
+     *    mismatch, so there is no point retrying). If it is not, the check is
+     *    *not* skipped under the table: [onHashUnverified] fires with the tag,
+     *    so the "hash not verified" state is an explicit event the caller can
+     *    put in front of the user, and it is diagnosable on device even when
+     *    nobody wires it (see [logUnverifiedHash]).
      */
     suspend fun downloadApk(
         info: UpdateInfo,
         mirrors: List<UpdateMirror>,
         target: File,
         onProgress: (Float) -> Unit,
+        onHashUnverified: (String) -> Unit = ::logUnverifiedHash,
     ): File = withContext(Dispatchers.IO) {
         target.parentFile?.mkdirs()
         var lastError: Throwable? = null
@@ -297,6 +325,11 @@ class UpdateChecker(
                     }
                     val body = response.body ?: throw IOException(UiStrings.get(S.updchk_empty_response_body))
                     val contentLength = body.contentLength()
+                    // 长度锚点与 digest 都没有时，截断或被替换的 APK 与完整的无从区分；
+                    // 在把字节写进 target 之前就拒绝，而不是等写完才发现。
+                    if (!hasLengthAnchor(contentLength, info.apkSize) && info.sha256 == null) {
+                        throw IOException(UiStrings.get(S.updchk_apk_checksum_failed))
+                    }
                     val total = contentLength.takeIf { it > 0 } ?: info.apkSize
                     var read = 0L
                     target.outputStream().use { out ->
@@ -311,9 +344,10 @@ class UpdateChecker(
                             if (total > 0) onProgress((read.toFloat() / total).coerceIn(0f, 1f))
                         }
                     }
-                    if (read == 0L || (contentLength >= 0 && read != contentLength) ||
-                        (info.apkSize > 0 && read != info.apkSize)) {
-                        throw IOException("Incomplete APK download: received $read bytes, expected $total")
+                    if (!isWholeDownload(read, contentLength, info.apkSize)) {
+                        throw IOException(
+                            "Incomplete APK download: received $read bytes, expected $total",
+                        )
                     }
                 }
                 // Verify integrity only after a clean download; a mismatch is
@@ -324,6 +358,11 @@ class UpdateChecker(
                         target.delete()
                         throw IllegalStateException(UiStrings.get(S.updchk_apk_checksum_failed))
                     }
+                } else {
+                    // 发行没带 digest：元数据与 APK 同走这条镜像链，这一跳上就再没有任何
+                    // 内容级校验。不能静默跳过——把「未校验哈希」作为显式事件交出去，
+                    // 让更新界面能告诉用户/记录诊断（见 [logUnverifiedHash]）。
+                    onHashUnverified(info.tagName)
                 }
                 onProgress(1f)
                 return@withContext target
@@ -352,6 +391,34 @@ class UpdateChecker(
     }
 
     companion object {
+        /**
+         * True when the transfer reported a length the download can be compared
+         * against: the response's Content-Length ([contentLength] >= 0) or the
+         * release-reported asset size ([apkSize] > 0).
+         */
+        internal fun hasLengthAnchor(contentLength: Long, apkSize: Long): Boolean =
+            contentLength >= 0 || apkSize > 0
+
+        /**
+         * True when the received byte count agrees with every anchor the
+         * transfer offered — the response's Content-Length and the
+         * release-reported asset size when it is known. A mirror that stops
+         * mid-file usually still reports the *full* length, so a short body
+         * fails here even though the stream ended cleanly.
+         *
+         * With no anchor at all this is true by construction; that case only
+         * ever reaches this point when the release carried a digest (see
+         * [hasLengthAnchor] plus the guard in [downloadApk]), which is the
+         * stronger proof.
+         */
+        internal fun isWholeDownload(received: Long, contentLength: Long, apkSize: Long): Boolean {
+            if (received == 0L) return false
+            if (contentLength >= 0 && received != contentLength) return false
+            if (apkSize > 0 && received != apkSize) return false
+            return true
+        }
+
+
         /**
          * This build's release channel — the one line that differs between the
          * official (`master`) and MNN (`mnn-image-gen`) worktrees.

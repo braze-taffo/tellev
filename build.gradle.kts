@@ -28,7 +28,11 @@ tasks.register("dependencyReport") {
             appendLine()
             dependencies.forEach { appendLine("- $it") }
         }
-        file("DEPENDENCIES.md").writeText(report.toString())
-        println("Dependency report written to DEPENDENCIES.md")
+        // The report is a build artifact: writing it to the repo root dirties the
+        // tracked DEPENDENCIES.md on every run.
+        val reportFile = layout.buildDirectory.file("DEPENDENCIES.md").get().asFile
+        reportFile.parentFile?.mkdirs()
+        reportFile.writeText(report.toString())
+        println("Dependency report written to ${reportFile.path}")
     }
 }

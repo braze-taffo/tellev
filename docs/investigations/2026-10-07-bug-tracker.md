@@ -331,3 +331,197 @@ extensions.SPreset.ChatSquash/RegexBinding/MacroNest）此前只能改 JSON 原�
   + 版本链提示；聊天弹层记住「上次应用的结果」作下一轮 basePrompt
 - 8 项新用例：六策略都带三条纪律/证据转义（引号与换行）/迭代双字段/策略 id 触发/
   普通路径无迭代字段/语言与附加指令透传/策略 id 稳定/mode 映射全覆盖
+
+## S. 第十六轮：AI 制卡选择器/统计 + 思考档位滑杆（用户反馈批次）
+
+编译通过 + 全量单测 0 失败（新增制卡用量/引擎/VM/滑杆几何用例）。
+
+| ID | 反馈 | 根因与修复 | 状态 |
+|----|------|-----------|------|
+| U42 | AI 创建角色卡无法选择模型和思考档位 | 聊天式创建页把档位入口写死：`effortLevels = emptyList()`、`onSelectEffort = { }`、`modelsOnly = true`（只出模型列表，档位面板不可达）；`controlsBusy` 还漏了 `modelState.isGenerating`，隐藏聊天生成期间点选模型会被静默拒绝。修复：档位按当前模型档案收窄后真实下发（`uiLevelsForModel`），`onSelectEffort` 写入草稿并随草稿持久化（`CreationSession.reasoningEffort`），请求经 `ReasoningSupport.REQUEST_OVERRIDE_KEY` + 档案 metadata 落到线上；`controlsBusy` 补 `isGenerating` | ■ |
+| U43 | 制卡没有数据统计 | 引擎把 `GenerateChunk.Completed.usage` 直接丢弃，VM 只记流式计时；composer 统计位传 null。修复：`converse`/`extractChunk` 增 `onUsage` 回调（每次 accepted Completed 在解析/工具执行前记账，修复与压缩重试轮同样计入）；`CreationUsage` 聚合（完成请求数/上报 token/缓存桶/思考子集/估算数）随草稿持久化；明细写入与聊天共用同一个 `GenerationMetricsStore`（`metricsStoreForCreation`），composer 出「N 次请求 · tok/s」「总 tok」双 pill 并复用 `DshUsagePanel`（本草稿区=草稿账本，今日/累计=共享明细） | ■ |
+| U44 | 思考档位滑动 bug | 旧实现手搓 `detectDragGestures`：`preview` 索引在拖动中被 `onPreview` 与本地态双重驱动，`onCommit` 又用闭包里的旧 `steps` 解释索引；旋钮 `offset` 用「中心坐标当左边缘」，两端各越界 14dp；RTL 下几何与绘制不一致。修复：改用原生 Compose `Slider` 承载手势/斜率/取消/RTL（画布只负责视觉），新增 `effortSliderCenter`/`effortSliderIndex` 纯函数（旋钮完全落在轨道内、窄轨道安全钳制），RTL 只镜像画布 | ■ |
+| U45 | 思考档位动画 bug | 辐射/焰口/顶档呼吸由 `rememberInfiniteTransition` 的 10 分钟时钟驱动，`publish` 与 `shown` 在拖动中互相覆盖造成跳变；旋钮半径随 `dragging` 突变。修复：位置动画改 `animateFloatAsState`（拖动中 0ms、松手 140ms 收敛），时钟仅在 enabled 且 progress>0 时启动，拖动只做视觉提亮不改变几何 | ■ |
+| U46 | 思考档位改成英文 | 档位标签此前随语言本地化（中/日/韩译名）。修复：`chat_reasoning_effort_*` 四语统一为 Auto/Off/Minimal/Low/Medium/High/XHigh/Max，补 minimal/xhigh 两档描述 | ■ |
+
+### 回归守护（新增）
+- `CreationUsageTest`：完成请求计数（含未上报 usage 的轮次仍计数）、缓存三桶互斥、思考子集不重复计、旧草稿默认值、往返序列化、草稿隔离
+- `CreationEngineUsageTest`：工具回路两轮=两条记录、格式失败轮仍计费、抽取修复+压缩=三条记录、未上报 usage 样本、草稿档位落线、Auto 不发字段、自定义端点身份
+- `CreationViewModelUsageTest`：checkpoint/final 快照不得覆盖本轮用量（回归）、重开草稿读回聚合、档位随草稿持久化
+- `EffortSliderGeometryTest`：旋钮两端完全在轨道内、窄轨道钳制、越界/NaN 索引安全
+
+### 已知边界（本轮未改，需用户决策）
+- 共享明细「清除统计」清的是 JSONL+日汇总+本草稿聚合；聊天侧会话账本（metadata `tellev_token_usage`）不清，两端口径不同。
+- 端点是否回传 usage 取决于兼容设置 `includeUsage`（默认关）；未开启时只显示请求数与估算标记，不显示 token 数。
+- 手动编辑器入口（`CreationEditorScreen`）仍无模型/档位选择器——该屏属另一入口，本轮未动。
+
+## T. 第十七轮：模型服务统一弹层 + 角色卡书架式改造
+
+编译通过 + 全量单测 1517/0 失败（本轮新增 `CharacterGroupsTest` 10 用例）。
+
+### T1 模型服务统一弹层（DeepSeek Harness 单弹层形态）
+
+用户要求把对话模型、生图引擎、语音(TTS) 三类服务的配置/选择合并进**同一个弹层**。上游 Harness 实际是「配置页 + 选择弹层」分离，本轮按用户要求做单一弹层，统一收敛在数据/注册层。
+
+| 项 | 落地 |
+|----|------|
+| 新文件 | `ui/dsh/DshModelServicesSheet.kt`：root = 三条服务行（对话/生图/语音，当前值 + ›），各段钻入二级页 |
+| 对话段 | 复用重构后的 `DshModelListPane`（模型列表）/`DshEffortPane`（档位滑杆）/`DshModelConfigContent`（连接配置），三者从 `DshPopups.kt` 抽出为 internal |
+| 生图段 | 引擎单选（ComfyUI/NovelAI/自定义 imgprof 端点）+ Comfy/NovelAI/端点列表钻入页，全部经 `SettingsViewModel` → `ImageGenSettingsController` 直写 |
+| 语音段 | `TtsSettingsValues` 取值/校验 + 开关/音色/语速/模型/格式/自定义端点 + 连接测试（`OpenAiSpeechAdapter.checkStatus`，IO 调度 + runCatching 兜底） |
+| 入口 | ①设置 tab「模型配置」卡片 ②聊天抽屉新增「模型服务」行（`DshDrawer` + `DshChatScreen.onOpenModelServices`），两入口共用根层渲染 |
+| 刷新链路 | 引擎保存写 secretStore → `ChatViewModel.observeProviderChanges` 自动触发 `refreshImageGenAvailability`（无需额外接线） |
+| i18n | 新增 10 键（`dsh_services_*` + `chat_drawer_model_services`），四语齐全 |
+
+### T2 角色卡书架式改造（用户反馈批次）
+
+| ID | 反馈 | 落地 |
+|----|------|------|
+| V1 | 布局改为书架式 | `LazyVerticalGrid` 列宽 148→132dp、间距收紧、底部 104dp 让位 FAB，视觉上每列一本「书」 |
+| V2 | 调换搜索键和导入键 | 顶栏 actions 顺序改为「搜索 → 导入」（原为导入在前） |
+| V3 | 角色卡改分组键，可自建分组分类角色卡 | 标题位改为分组键（当前分组名 + ⌄），点开 `DshCharacterGroupSheet`：全部/未分组/各分组筛选 + 新建/重命名/删除；卡片长按菜单新增「分组」项进 `CharacterGroupAssignDialog`（多选勾选 + 就地新建） |
+| V4 | 导入功能加入扫描/添加/搜索 | 导入键改为下拉菜单：**扫描角色卡**（SAF 目录树递归找 png/webp/json，`scanCharacterTree`）/ **添加角色卡**（原 OpenMultipleDocuments）/ **搜索**（打开搜索栏） |
+
+**新持久化**：`feature/characters/CharacterGroups.kt` — `character-groups.json`（`DurableFileOps` 模式，同 `ChatModelGroups`）：分组定义 + 成员关系一份存，删分组不动卡片（成员回落未分组）。
+
+**过滤语义**：`CharactersFilter.filter` 纯函数抽出（无 Android 依赖）——分组先收窄集合（全部/未分组/指定），再按关键词过滤名称与标签；`CharactersViewModel.UNGROUPED_GROUP_ID = "__ungrouped__"` 虚拟分组不冲突。
+
+### 回归守护（新增）
+- `CharacterGroupsTest`：分组读写往返、缺失/损坏文件回落空表、空白 id/label 条目丢弃、新 id 唯一且带前缀、未分组排除任何分组卡、按分组只留成员、分组×关键词交集、空查询返回全集、成员增删幂等且可往返
+
+### 已知边界
+- 扫描导入依赖 SAF（Android 11+ 隐私策略禁选 Download 根等敏感目录，需选子目录）；JVM 单测无法覆盖 ContentResolver 遍历，扫描链路只做了模拟器入口验证。
+- 分组为「一卡可属多组」；删除分组后成员回落「未分组」，不级联删除卡片（有意为之）。
+
+## U. 第十八轮：UI 体系合并（剔除旧 Material 强调色体系）
+
+编译通过（main + androidTest 双源集）+ 全量单测 1517/0 失败。
+
+用户要求「剔除两套 UI 体系，只保留一套 DeepSeek Harness 化 UI 体系」。此前 dsh 只包聊天子树，设置/角色卡/社区等 tab 吃的是旧 `TellevTheme`（暖橘强调色），两套并存。
+
+### 落地
+| 项 | 内容 |
+|----|------|
+| dsh 成为唯一主题 | `DshTheme` 补齐 5 个缺失的 Material 角色映射（`secondaryContainer`/`onSecondaryContainer`/`tertiary`/`tertiaryContainer`/`onTertiaryContainer`），此前这 5 个角色在非聊天页有 15 处引用会落到 Material 默认色 |
+| dsh 排版 | 新增 `DshTypography`（harness 规格锚点：正文 14/24、secondary 13/20、caption 12/16），替换原先透传的 `MaterialTheme.typography`；`DshShapes` 提取为常量 |
+| 系统栏取色 | 旧 `SystemBarAppearance` 移入 DshTheme，改用 dsh token（状态栏 `bgBase`、导航栏 `bgLayer1`） |
+| ThemeMode 迁址 | `ThemeMode`/`isDarkTheme`/`parseThemeMode` 从 `ui/theme/Theme.kt` 移入 `ui/dsh/DshTheme.kt`（浅色/深色/跟随系统不是重复体系，dsh 有明暗两套 palette） |
+| 根层挂载 | `MainActivity` 改挂 `DshTheme`；`DshRoot` 的 `ProvideDshPalette` 包裹与聊天页内层 `DshTheme`、`DshModelServicesSheet` 内层 `DshTheme` 全部删除（嵌套冗余） |
+| 强调色特性删除 | 删 `ui/theme/Theme.kt`+`Typography.kt`（6 套调色板）、`TellevGraph.themeAccentFlow`、`AppPreferences.themeAccentName`/`KEY_THEME_ACCENT`/`DEFAULT_THEME_ACCENT`、`SettingsUiState.themeAccent`+`setThemeAccent`、`AppearanceSettingsController` accent 分支、`SettingsAppearanceSection` 的 `AccentOption` 与「主题色」区块 |
+| 死代码清理 | 删 `ui/PlaceholderScreen.kt`（无引用）+ i18n 键 `ui_placeholder_message`；accent i18n 键 8 个删除 |
+| i18n | 1950 → 1941 键，四语重生成 |
+| androidTest 修复 | 6 个测试改挂 `DshTheme`；`TavernMixedRenderingTest` 前景色改从 dsh palette 取；2 个引用已不存在的 `ChatScreen` 的测试改挂 `DshChatScreen`（带空回调）——**androidTest 源集此前编译不过，本轮恢复可编译** |
+
+### 保留的外观设置
+主题模式（浅色/深色/跟随系统）、聊天气泡不透明度、对话字号——三项均为 dsh 体系内的真实可调项，非重复体系。
+
+### 已知边界（有意变更）
+- 非聊天页正文字号 12sp → 13sp（`bodySmall` 按 harness 规格对齐）。已在模拟器逐 tab 核对观感，未发现变挤。
+- 用户已保存的 `theme_accent` 偏好键不再读取（键值留在 prefs 里不清理，避免动用户数据）。
+
+### 待办（用户新反馈，本轮未动）
+- 用户反馈「很多重复和不统一的 UI 功能」。已盘点出的**功能重复**：
+  - TTS 配置：`DshModelServicesSheet` 语音段 与 设置→外观→`TtsSettingsSection` 两处
+  - 生图引擎/地址/令牌：`DshModelServicesSheet` 生图段 与 设置→`settings/imagegen`（`SettingsImageGenSection`）两处
+  - 使用统计：设置页 `UsageStatsEntryCard`（进全屏页）与聊天页 `DshUsagePanel` 弹层、制卡页 `DshUsagePanel` 三处口径
+  - 扩展入口：抽屉「插件」行 与 设置→资料→`ExtensionsEntryCard` 两处
+  - 优化提示词：设置页入口 与 聊天 composer 常驻键 两处
+  下一轮需与用户确认保留哪一侧（倾向：弹层侧保留、设置页重复项删除）。
+
+## V. 第十九轮：重复 UI 功能合并 + 统一弹层放大
+
+编译通过（main + androidTest）+ 全量单测 1517/0 失败。
+
+用户反馈「很多重复和不统一的 UI 功能」「重复的直接合并，弹层太小做大」。
+
+### 弹层放大
+`DshModelServicesSheet` 容器：宽 `400dp` → **`560dp` 上限 / 屏宽 98%**，高 `560dp` 固定 → **屏高 88%**，圆角 `RADIUS_LG` → `RADIUS_XL`，内边距 10→12。各段内部滚动上限同步放宽（生图段 460dp）。
+
+### 生图段补全（原设置→生图页功能全量并入）
+| 引擎 | 新增控件 |
+|------|---------|
+| ComfyUI | 模型下拉（可编辑 + 按输入过滤，源自 `state.comfyModels`，带「测试连接后可获取」提示）＋ 工作流 JSON 编辑按钮（状态文字随配置切换）＋ 采样参数按钮 |
+| NovelAI | 模型只读下拉（`NovelAiImageSettings.MODELS` 固定清单，映射 id↔显示名）＋ 参数按钮 |
+
+新增私有组件 `DshModelDropdownField`（可编辑/只读两态 + 尾部展开键 + 过滤列表）。三个对话框（`ComfyWorkflowDialog`/`ComfyParamsDialog`/`NovelAiImageParamsDialog`）状态提到弹层顶层，随弹层关闭一并消失。
+
+### 删除的重复入口
+| 删除项 | 位置 | 理由 |
+|--------|------|------|
+| 「生图（引擎与模型）」卡片 + 分隔线 | `SettingsScreen` | 弹层生图段已完全覆盖 |
+| `imageGenDetailsOnly` 参数及 4 处分支 | `SettingsScreen` | 页面本身删除 |
+| `settings/imagegen` 路由 | `DshRoot` | 同上 |
+| TTS 设置区块 | `SettingsScreen` 外观 tab | 弹层语音段是其超集（多连接测试、自定义端点开关、音色/格式胶囊） |
+| `TtsSettingsSection.kt` | 整文件删除 | 同上 |
+| `ImageGenEntryCard`/`imageGenSummary`/`imageGenDetailsItems` | `SettingsImageGenSection.kt` | 入口已删；保留 4 个可复用对话框 |
+| `onOpenImageGenSettings` 参数 | `SettingsScreen`/`DshChatScreen` | 无调用点 |
+
+### 文案修正（入口迁移后的遗留指引）
+- 删 `dsh_services_img_advanced`（「高级设置见设置→生图」——高级设置现在就在弹层内，提示已过期）。
+- 三处对话框正文「修改后请回到设置页点击「保存」」→「修改后点击下方「保存」」（保存键现在就在同一弹层）。
+
+### i18n
+1950 → 1934 键（本轮删 `dsh_services_img_advanced`、`tts_section_title`、`tts_section_desc`、`setimg_entry_title`、`setimg_entry_summary`、`setimg_entry_profiles`、`setscreen_title_imagegen` 共 7 键）。
+
+### 保留的入口（非重复，已确认）
+- 使用统计：设置页全屏页（图表/趋势）＋ 聊天/制卡弹层（会话口径）——口径不同。
+- 优化提示词：设置页入口 ＋ 聊天输入框常驻键（设置 tab 打开时聊天页可能不在栈上）。
+- 扩展：抽屉「插件」行 ＋ 设置→资料入口（同一目的地，抽屉为高频路径）。
+
+### 模拟器验收
+弹层三段逐个钻入确认：生图段显示引擎单选 + 三行配置入口；ComfyUI 钻入页四控件齐全（地址/模型下拉/工作流/参数）且工作流对话框可从弹层内正常打开；设置页确认生图卡片与 TTS 区块已消失；外观 tab 仅剩主题/气泡/字号/语言。
+
+## W. 第二十轮：用户反馈三问题修复 + 模型服务/配置融合收口
+
+编译门禁双绿（debug + mvuValidation androidTest）+ 全量单测 1534/0/0/2（154 个 XML 全通过）+ APK 渠道检查通过。
+
+### 用户反馈三问题（2026-10-13）
+
+| ID | 反馈 | 根因与修复 | 状态 |
+|----|------|-----------|------|
+| X1 | 设置里的 TTS 和生图设置都不见了 | 非缺陷，是 round-19「重复入口合并」有意结果：生图/TTS 全量并入聊天页「模型服务」弹层（生图段：ComfyUI/NovelAI/自定义端点；语音段：TTS 全套 + 连接测试）。本轮按用户要求完成「模型服务与模型配置融合」：设置页「管理模型服务配置」改接统一弹层，服务商管理面（自定义端点 CRUD/高级设置）整体嵌入弹层 `chat-providers` 段，删除 `settings/providers` 独立路由。两处入口（设置页 / 聊天页）各留一个，零功能丢失 | ■ |
+| X2 | ai 创建界面的底部 token 统计在哪里 | 旧实现仅在「已完成请求数 > 0」时渲染 pill，且左侧只显示请求数——首次生成前/失败轮完全不可见。修复对齐聊天页 dock 口径：有对话轮次或生成中即常驻显示，左 pill = 「N 轮 · M 步 · 速度」，右 pill = 「总 tok」（请求完成后补上） | ■ |
+| X3 | 设置界面的数据统计一点击就闪退 | **存量 P0**：`UsageStatsScreen.kt:108` 根级 Column 挂了 `horizontalScroll`，给整棵子树无限宽约束，与 SummaryCards 自身的水平滚动嵌套，在测量阶段抛 `IllegalStateException: Horizontally scrollable component was measured with an infinity maximum width constraints`（logcat 完整堆栈已取证）。修复：删根级 horizontalScroll，把横向滚动下沉到真正溢出的 30 日热力图行（父 Card 宽度有界，合法）。全仓其余 7 处 horizontalScroll 已逐一审计，无同型嵌套 | ■ |
+
+### 用户新需求：ai 创建的可选预设（同日追加）
+
+| 项 | 落地 |
+|----|------|
+| 需求 | 「ai 创建的可选预设」——为 AI 制卡会话提供预设选择 |
+| 语义 | 制卡链路此前只自动跟随聊天当前所选预设（`CreationEngine.resolveChatPreset`），用户无法为本草案单独指定。新增：草案级 `presetId`（空 = 跟随聊天），⋮ 菜单新增「预设：X」行 → 底部选择器（跟随聊天 / 各预设单选 + 勾选态），选择随草案持久化 |
+| 落线 | `CreationEngine.resolveSessionSnapshot(presetId)` 按 id 解析（找不到回落跟随聊天，请求不因预设缺失失败）；`converse`/`extractChunk` 两条链路均改为按草案预设解析 |
+| 回归守护 | 预设 id 存于草案侧（与 `reasoningEffort` 同位），跨草稿不串台；旧草稿 `presetId=""` 行为不变 |
+
+### 模型服务/配置融合（F0，用户要求「设置界面留一个聊天界面留一个」）
+
+- 弹层对话段新增「模型服务配置」行 → `chat-providers` pane（ProviderDetailsPane：服务商选择/新建、自定义名、删除、地址、API 密钥、模型 + 目录选择器、高级设置、测试连接、保存、连通状态卡）。
+- 删除 `settings/providers` 路由与 `providerDetailsOnly` 模式；设置页「管理模型服务配置」按钮改接统一弹层 root。
+- 保留：设置页模型服务卡（含快速切换下拉）、聊天页输入栏模型键（→对话段）+ 抽屉「模型服务」行（→root）。
+- 兼容：CompatibilityAdvancedDialog 与删除确认弹窗移入弹层承载；i18n 复用 `setscreen_title_provider`，新增 3 键（`dsh_creation_menu_preset` 等），总键数 1921。
+
+### 已知边界（未动，待用户裁决）
+
+- 密钥区块（SettingsSecretSection）仍列出应用内部 secret id（`provider-selected-id` 等），可被误删——是否过滤/移除待定。
+- 世界书同名时选择器按名字匹配，无法在 UI 区分（测试库 3 本同名「李婧」观察到）。
+- 「本轮动画改动未视频取证」（E 波自述），静态走查无回归。
+
+### 第二十一轮 F1 波：模型服务配置融合收尾验收（2026-10-13）
+
+F1 代码（子智能体完成）：chat-conn 与 chat-providers 合并为单一「模型服务配置」面，ProviderDetailsPane 为基底；删除 `DshModelConfigContent` 全族（DshPopups -356 行）与 ChatVM 三死方法；护栏测试改靶不删（`ModelConfigKeyClearTest` 4 例改指 settings 侧）；净 -5 → 基线 1529/0/0/2；compileDebugKotlin + assembleDebug 双绿。唯一弃项：「默认思考强度」主动编辑 grid（被动记忆链保留）。
+
+**模拟器验收（emulator-5554，APK 75,470,262B md5 c1d7c0df…，versionCode=47 / 1.7.1.5-debug / base splits 渠道一致）：**
+
+| # | 路径 | 结果 |
+|---|------|------|
+| 1 | 设置页「管理模型服务配置」→ 统一弹层（对话/生图/语音） | ■ 弹层三分段齐全，当前值正确 |
+| 2 | 对话段钻入（选择模型/思考强度档位/模型服务配置） | ■ 二级弹层结构完整 |
+| 3 | ProviderDetailsPane 主面板（服务商/名称+删除/地址/密钥/模型/思考档案/高级设置/测试连接/保存/恢复默认） | ■ 控件齐全 |
+| 4 | profileSummary 钻入：思考档案 sheet（档位矩阵 7 档 + 建议卡 + 默认思考强度 Auto 被动显示） | ■ |
+| 5 | 「恢复默认」确认弹窗：文案「清空接口地址、API 密钥、模型名…高级兼容设置与思考档案不受影响。此操作不可撤销」 | ■ 点取消，未真删 |
+| 6 | 清键拦截：表单密钥清空后点保存 → 「清除 API 密钥」确认框（取消/删除） | ■ 点取消，密钥未动 |
+| 7 | baseUrl 空白=删回默认：UI 清空显示默认 placeholder `https://api.example.com`；持久层 `ProviderConfigPersistence.kt:311` `ifBlank { ProviderDefaults.baseUrl(...) }` | ■ UI+代码双证 |
+| 8 | 旧路由/死代码不可达：`settings/providers`、`DshModelConfigContent`、ChatVM 死方法 grep 全 0 | ■ 代码级 |
+
+**附带验证**：编辑仅写内存草稿（`updateApiKey/updateBaseUrl` 只 update stateFlow），未保存即关弹层草稿丢弃、持久层无损（实测：草稿改名/密钥截断后关弹层，重开全部恢复原值）；快速切换配置下拉正常；「当前使用 OpenAI 兼容 / Qwen-3.8-Flash」口径一致。
+
+**验收遗留**：chat-providers 模型列表下拉需真实服务返回 availableModels 才显示，本模拟器 baseUrl 为占位地址无法触发，由 T10 单测覆盖。

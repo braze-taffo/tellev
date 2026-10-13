@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,10 +36,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.filled.Forum
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -151,6 +146,8 @@ fun CreationHomeScreen(
     viewModel: CreationViewModel,
     onBack: () -> Unit,
     onOpenEditor: () -> Unit,
+    // 形参携带会话类型（与 creation/chat?kind= 路由参数同值）。默认回落只能去旧编辑器，
+    // 调用方必须显式接入路由，否则聊天式创建入口会被静默改道（TELLER-1-7 根因一）。
     onOpenChatCreation: (String) -> Unit = { onOpenEditor() },
 ) {
     val state by viewModel.state.collectAsState()
@@ -182,6 +179,10 @@ fun CreationHomeScreen(
         ) {
             item(key = "creation_start") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // 主路径：角色卡/世界书两张卡都直达聊天式创建；旧编辑器保留为
+            // 次级入口（聊天页 ⋮→手动编辑、草稿行点击）。
+            // 点击处先 start()：路由侧 LaunchedEffect 只在 current==null 或
+            // kind 不一致时才起会话，先起可避免误恢复此前的旧草稿。
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 CreationStartCard(
                     modifier = Modifier.weight(1f),
@@ -189,7 +190,7 @@ fun CreationHomeScreen(
                     title = stringResource(R.string.crs_new_character),
                     description = stringResource(R.string.crs_new_character_desc),
                     enabled = !state.busy,
-                    onClick = { viewModel.start(CreationKind.Character); onOpenEditor() },
+                    onClick = { viewModel.start(CreationKind.Character); onOpenChatCreation(CreationKind.Character.name) },
                 )
                 CreationStartCard(
                     modifier = Modifier.weight(1f),
@@ -197,50 +198,8 @@ fun CreationHomeScreen(
                     title = stringResource(R.string.crs_new_worldbook),
                     description = stringResource(R.string.crs_new_worldbook_desc),
                     enabled = !state.busy,
-                    onClick = { viewModel.start(CreationKind.WorldBook); onOpenEditor() },
+                    onClick = { viewModel.start(CreationKind.WorldBook); onOpenChatCreation(CreationKind.WorldBook.name) },
                 )
-            }
-            // 聊天式创建（dsh 资金界面一致）：一句话或引导对话出卡。
-            Surface(
-                onClick = {
-                    viewModel.start(CreationKind.Character)
-                    onOpenChatCreation("chat")
-                },
-                shape = RoundedCornerShape(22.dp),
-                color = Dsh.blue.copy(alpha = 0.1f),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(
-                    Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        Modifier.clip(CircleShape)
-                            .background(Dsh.blue.copy(alpha = 0.12f))
-                            .padding(8.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.Forum,
-                            contentDescription = null,
-                            tint = Dsh.blue,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            stringResource(R.string.crs_chat_create_title),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Dsh.textPrimary,
-                        )
-                        Text(
-                            stringResource(R.string.crs_chat_create_desc),
-                            fontSize = 12.sp,
-                            color = Dsh.textSecondary,
-                        )
-                    }
-                }
             }
             }
             }
@@ -249,7 +208,7 @@ fun CreationHomeScreen(
             }
                 items(state.sessions, key = CreationSessionSummary::id) { session ->
                     Surface(
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(Dsh.RADIUS_MD.dp),
                         color = Dsh.bgBase,
                         border = BorderStroke(1.dp, Dsh.borderL3),
                         modifier = Modifier.fillMaxWidth(),
@@ -259,7 +218,7 @@ fun CreationHomeScreen(
                             // Stop button remains reachable after leaving the
                             // editor mid-generation; open() no-ops while busy,
                             // and the editor shows the still-running session.
-                            Column(Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).clickable(
+                            Column(Modifier.weight(1f).clip(RoundedCornerShape(Dsh.RADIUS_MD.dp)).clickable(
                                 enabled = !state.busy || state.current?.id == session.id,
                             ) {
                                 viewModel.open(session.id)
@@ -300,9 +259,11 @@ private fun CreationStartCard(
     onClick: () -> Unit,
 ) {
     Surface(
-        shape = RoundedCornerShape(22.dp),
+        // dsh 圆角体系（base.css 4/8/12/16/20/28）：入口大卡取 xl=20，
+        // 原 22 不在体系内。
+        shape = RoundedCornerShape(Dsh.RADIUS_XL.dp),
         color = Dsh.hover,
-        modifier = modifier.clip(RoundedCornerShape(22.dp)).clickable(enabled = enabled, onClick = onClick),
+        modifier = modifier.clip(RoundedCornerShape(Dsh.RADIUS_XL.dp)).clickable(enabled = enabled, onClick = onClick),
     ) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(

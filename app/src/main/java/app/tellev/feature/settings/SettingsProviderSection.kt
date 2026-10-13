@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -25,6 +27,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -41,6 +44,7 @@ import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +53,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -181,16 +186,45 @@ internal fun ProviderQuickSwitchCard(
     }
 }
 
+/**
+ * 服务商管理面板（弹层版）：服务商选择（内置/自定义/新建）、自定义名与删除、
+ * 地址、API 密钥（可见性切换）、模型（手动 + 目录选择器）、高级设置、测试/保存、
+ * 连通状态卡。原为设置页独立「模型服务配置」页的列表版实现，随「模型配置」
+ * 入口合并进模型服务弹层后改为可复用的 Column 版（内部滚动），
+ * 供 DshModelServicesSheet 的「对话 → 模型服务商」段调用。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
-internal fun LazyListScope.providerDetailsItems(
+@Composable
+internal fun ProviderDetailsPane(
     state: SettingsUiState,
     viewModel: SettingsViewModel,
     apiKeyVisible: Boolean,
     onToggleApiKeyVisible: () -> Unit,
     onOpenAdvancedDialog: () -> Unit,
     onDeleteCustomConfigClick: (String) -> Unit,
+    profileSummary: String,
+    onOpenProfile: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    item(key = "provider_selector") {
+    val configuration = LocalConfiguration.current
+    val maxHeight = minOf((configuration.screenHeightDp * 0.72f).dp, 520.dp)
+    // 服务商选择器/模型选择器的展开态：原为 LazyListScope item 内的局部 remember，
+    // Column 版统一上提到面板级（避免条件分支进出时状态随 item 重建）。
+    var providerExpanded by remember { mutableStateOf(false) }
+    var pickerOpen by remember { mutableStateOf(false) }
+    // 「保存」拦截与「恢复默认」的确认框：局部状态，随面板销毁。
+    var confirmClearKey by remember { mutableStateOf(false) }
+    var confirmReset by remember { mutableStateOf(false) }
+    val availableModels = remember(state.availableModels) { state.availableModels.distinct() }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(max = maxHeight)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        // ── 服务商选择（内置 + 自定义 + 新建）──
         val isCustom = ProviderConfigPersistence.isCustomConfigId(state.selectedProviderId)
         val selectedLabel = if (isCustom) {
             state.customConfigs.firstOrNull {
@@ -200,24 +234,23 @@ internal fun LazyListScope.providerDetailsItems(
             state.providers.find { it.id == state.selectedProviderId }?.displayName
                 ?: state.selectedProviderId
         }
-        var expanded by remember { mutableStateOf(false) }
         ExposedDropdownMenuBox(
-            expanded = expanded,
-            onExpandedChange = { expanded = it },
+            expanded = providerExpanded,
+            onExpandedChange = { providerExpanded = it },
         ) {
             OutlinedTextField(
                 value = selectedLabel,
                 onValueChange = {},
                 readOnly = true,
                 label = { Text(stringResource(R.string.setprov_provider_label)) },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = providerExpanded) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .menuAnchor(MenuAnchorType.PrimaryNotEditable),
             )
             ExposedDropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false },
+                expanded = providerExpanded,
+                onDismissRequest = { providerExpanded = false },
             ) {
                 // Built-in providers; the openai-compatible slot is
                 // superseded by the named custom configs below.
@@ -228,7 +261,7 @@ internal fun LazyListScope.providerDetailsItems(
                             text = { Text(provider.displayName) },
                             onClick = {
                                 viewModel.selectProvider(provider.id)
-                                expanded = false
+                                providerExpanded = false
                             },
                         )
                     }
@@ -241,7 +274,7 @@ internal fun LazyListScope.providerDetailsItems(
                                 viewModel.selectProvider(
                                     ProviderConfigPersistence.selectedIdFor(config.id)
                                 )
-                                expanded = false
+                                providerExpanded = false
                             },
                         )
                     }
@@ -254,14 +287,13 @@ internal fun LazyListScope.providerDetailsItems(
                     },
                     onClick = {
                         viewModel.createCustomConfig()
-                        expanded = false
+                        providerExpanded = false
                     },
                 )
             }
         }
-    }
 
-    item(key = "provider_custom_name") {
+        // ── 自定义配置名（仅自定义配置：命名 + 删除键）──
         if (ProviderConfigPersistence.isCustomConfigId(state.selectedProviderId)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -290,9 +322,8 @@ internal fun LazyListScope.providerDetailsItems(
                 }
             }
         }
-    }
 
-    item(key = "provider_base_url") {
+        // ── 接口地址 ──
         OutlinedTextField(
             value = state.baseUrl,
             onValueChange = { viewModel.updateBaseUrl(it) },
@@ -301,9 +332,8 @@ internal fun LazyListScope.providerDetailsItems(
             singleLine = true,
             placeholder = { Text("https://api.example.com") },
         )
-    }
 
-    item(key = "provider_api_key") {
+        // ── API 密钥（可见性切换）──
         OutlinedTextField(
             value = state.apiKey,
             onValueChange = { viewModel.updateApiKey(it) },
@@ -321,13 +351,8 @@ internal fun LazyListScope.providerDetailsItems(
                 }
             },
         )
-    }
 
-    item(key = "provider_model") {
-        var pickerOpen by remember { mutableStateOf(false) }
-        val availableModels = remember(state.availableModels) {
-            state.availableModels.distinct()
-        }
+        // ── 模型（手动输入 + 目录选择器）──
         OutlinedTextField(
             value = state.model,
             onValueChange = { viewModel.updateModel(it) },
@@ -367,10 +392,40 @@ internal fun LazyListScope.providerDetailsItems(
                 onDismiss = { pickerOpen = false },
             )
         }
-    }
 
-    if (ProviderConfigPersistence.hasAdvancedSettings(state.selectedProviderId)) {
-        item(key = "provider_advanced") {
+        // ── 思考档案（钻入行：右摘要 + ›；编辑器对话框由外层弹层挂载）──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { onOpenProfile() }
+                .padding(horizontal = 10.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.dsh_profile_entry),
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                profileSummary,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 130.dp),
+            )
+            Text(
+                "›",
+                fontSize = 18.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.42f),
+                modifier = Modifier.padding(start = 6.dp),
+            )
+        }
+
+        // ── 高级设置（仅对支持的服务商显示）──
+        if (ProviderConfigPersistence.hasAdvancedSettings(state.selectedProviderId)) {
             OutlinedButton(
                 onClick = onOpenAdvancedDialog,
                 modifier = Modifier.fillMaxWidth(),
@@ -380,9 +435,8 @@ internal fun LazyListScope.providerDetailsItems(
                 Text(stringResource(R.string.setprov_advanced))
             }
         }
-    }
 
-    item(key = "provider_actions") {
+        // ── 测试 / 保存 ──
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -402,7 +456,15 @@ internal fun LazyListScope.providerDetailsItems(
                 Text(if (state.isTesting) stringResource(R.string.setprov_testing) else stringResource(R.string.setprov_test_connection))
             }
             FilledTonalButton(
-                onClick = { viewModel.saveProviderConfig() },
+                onClick = {
+                    // 已存密钥被清空：先确认再删。表单空白可能只是读取失败回落，
+                    // 直接保存会静默丢凭据（与弹层清键确认同语义）。
+                    if (state.apiKey.isBlank() && state.loadedApiKey.isNotBlank()) {
+                        confirmClearKey = true
+                    } else {
+                        viewModel.saveProviderConfig()
+                    }
+                },
                 modifier = Modifier.weight(1f),
             ) {
                 Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -410,11 +472,68 @@ internal fun LazyListScope.providerDetailsItems(
                 Text(stringResource(R.string.setprov_save))
             }
         }
-    }
 
-    if (state.providerStatus != null) {
-        item(key = "provider_status") {
-            val status = state.providerStatus ?: return@item
+        // ── 恢复默认（破坏性操作：清空地址/密钥/模型，回落到服务商默认值）──
+        OutlinedButton(
+            onClick = { confirmReset = true },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                stringResource(R.string.dsh_model_reset),
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (confirmReset) {
+            AlertDialog(
+                onDismissRequest = { confirmReset = false },
+                title = { Text(stringResource(R.string.dsh_model_reset)) },
+                text = { Text(stringResource(R.string.dsh_model_reset_confirm)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmReset = false
+                        viewModel.resetProviderConfig()
+                    }) {
+                        Text(
+                            stringResource(R.string.dsh_model_reset),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmReset = false }) {
+                        Text(stringResource(R.string.chat_cancel))
+                    }
+                },
+            )
+        }
+        // 保存键拦截的确认框：清空已存密钥前先问一次。
+        if (confirmClearKey) {
+            AlertDialog(
+                onDismissRequest = { confirmClearKey = false },
+                title = { Text(stringResource(R.string.dsh_model_clear_key)) },
+                text = { Text(stringResource(R.string.dsh_model_clear_key_confirm)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmClearKey = false
+                        viewModel.saveProviderConfig(clearApiKey = true)
+                    }) {
+                        Text(
+                            stringResource(R.string.chat_delete),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmClearKey = false }) {
+                        Text(stringResource(R.string.chat_cancel))
+                    }
+                },
+            )
+        }
+
+        // ── 连通性状态卡 ──
+        val status = state.providerStatus
+        if (status != null) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(

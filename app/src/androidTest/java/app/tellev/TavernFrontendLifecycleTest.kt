@@ -9,9 +9,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.test.platform.app.InstrumentationRegistry
 import app.tellev.core.model.*
-import app.tellev.feature.chat.ChatScreen
+import app.tellev.ui.dsh.DshChatScreen
 import app.tellev.feature.chat.ChatViewModel
-import app.tellev.ui.theme.TellevTheme
+import app.tellev.ui.dsh.DshTheme
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
@@ -39,7 +39,7 @@ class TavernFrontendLifecycleTest {
                 ChatViewModel(graph.dataStore, graph.providerRegistry, graph.promptEngine, graph.secretStore,
                     graph.extensionHost, graph.permissionManager).also {
                     models.put("test", it)
-                    activity.setContent { CompositionLocalProvider(LocalTellevGraph provides graph) { TellevTheme { ChatScreen(it) } } }
+                    activity.setContent { CompositionLocalProvider(LocalTellevGraph provides graph) { DshTheme { DshChatScreen(viewModel = it, onBack = {}, onOpenWorldBooks = {}, onOpenPlugins = {}, onOpenUsageStats = {}) } } }
                 }
             }
             waitUntil { !vm.uiState.value.isLoading }

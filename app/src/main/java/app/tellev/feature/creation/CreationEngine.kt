@@ -2,9 +2,13 @@ package app.tellev.feature.creation
 
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
+import app.tellev.core.metrics.GenerationMetrics
+import app.tellev.core.metrics.GenerationMetricsCalculator
+import app.tellev.core.model.Attachment
 import app.tellev.core.network.CleartextGuard
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.MessageReasoning
+import app.tellev.core.model.ReasoningEffort
 import app.tellev.core.model.TellevError
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.prompt.PromptBuildResult
@@ -12,24 +16,37 @@ import app.tellev.core.prompt.PromptDiagnostics
 import app.tellev.core.prompt.PromptMessage
 import app.tellev.core.provider.GenerateChunk
 import app.tellev.core.provider.GenerateRequest
+import app.tellev.core.provider.ModelReasoningProfile
+import app.tellev.core.provider.ModelReasoningProfiles
 import app.tellev.core.provider.OpenAiCompatibleAdapter
+import app.tellev.core.provider.ProviderAdapter
+import app.tellev.core.provider.ProviderCapability
 import app.tellev.core.provider.ProviderCatalog
+import app.tellev.core.provider.ProviderConfig
 import app.tellev.core.provider.ProviderConfigPersistence
 import app.tellev.core.provider.ProviderDefaults
 import app.tellev.core.provider.ProviderRegistry
+import app.tellev.core.provider.ReasoningSupport
 import app.tellev.core.provider.presetCategoryForProvider
 import app.tellev.core.provider.supportsChatGeneration
 import app.tellev.core.storage.StDataStore
 import app.tellev.core.security.SecretStore
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
@@ -212,7 +229,9 @@ internal fun creationNativeTools(): JsonArray = JsonArray(listOf(buildJsonObject
 internal fun creationConversationContext(session: CreationSession): String {
     val recentTurns = session.turns.takeLast(12)
     val recent = recentTurns.joinToString("\n") {
-        "${if (it.role == "user") UiStrings.get(S.creng_role_user) else "agent"}: ${it.text}"
+        val attachedText = creationAttachmentContext(it.attachments)
+        "${if (it.role == "user") UiStrings.get(S.creng_role_user) else "agent"}: ${it.text}" +
+            attachedText.takeIf(String::isNotBlank)?.let { text -> "\n$text" }.orEmpty()
     }
     val brief = session.turns.firstOrNull()?.takeIf {
         it.role == "user" && CREATION_BRIEF_MARKERS.any(it.text::startsWith) && it !in recentTurns
@@ -313,6 +332,14 @@ internal fun verifiedLoreFromChunk(
     )
 }
 
+/** One immutable selection per authoring operation, including custom provider identity. */
+internal data class CreationOperationSnapshot(
+    val selectedId: String,
+    val config: ProviderConfig,
+    val adapter: ProviderAdapter,
+    val chatPreset: GenerationPreset?,
+)
+
 /** Independent authoring requests never pass through the chat prompt engine. */
 internal class CreationEngine(
     private val secrets: SecretStore,
@@ -346,7 +373,9 @@ internal class CreationEngine(
     // relays close an HTTP/2 connection before sending its initial SETTINGS
     // frame; using HTTP/1.1 here avoids a second, potentially billable POST.
     private val compatibleCreationAdapter by lazy {
-        OpenAiCompatibleAdapter(client = OkHttpClient.Builder()
+        OpenAiCompatibleAdapter(
+            resolveAttachmentBytes = { attachment -> readCreationImage(attachment, store?.layout?.root) },
+            client = OkHttpClient.Builder()
             .protocols(listOf(Protocol.HTTP_1_1))
             .addInterceptor(CleartextGuard)
             // The model may take minutes to answer, but opening a TCP socket should not.
@@ -358,6 +387,48 @@ internal class CreationEngine(
             .build())
     }
 
+    suspend fun resolveOperationSnapshot(): CreationOperationSnapshot {
+        currentCoroutineContext().ensureActive()
+        val selectedId = secrets.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
+            ?: ProviderCatalog.OPENAI_COMPATIBLE
+        val adapterId = ProviderConfigPersistence.adapterIdFor(selectedId)
+        val selectedAdapter = providers.find(adapterId)
+            ?.takeIf { it.supportsChatGeneration }
+            ?: error(UiStrings.get(S.creng_error_provider_not_supported))
+        val adapter = if (adapterId == ProviderCatalog.OPENAI_COMPATIBLE &&
+            selectedAdapter is OpenAiCompatibleAdapter
+        ) compatibleCreationAdapter else selectedAdapter
+        val config = ProviderConfigPersistence.loadProviderConfig(secrets, selectedId)
+        val chatPreset = store?.let { resolveChatPreset(it, config) }
+        currentCoroutineContext().ensureActive()
+        return CreationOperationSnapshot(selectedId, config, adapter, chatPreset)
+    }
+
+    /**
+     * 按草案指定的预设 id 解析（空 id = 跟随聊天所选，返回 null 走既有链路）。
+     * 找不到该 id（被删/换类目）时回落 null，请求不因预设缺失而失败。
+     */
+    suspend fun resolveSessionSnapshot(presetId: String): CreationOperationSnapshot {
+        val base = resolveOperationSnapshot()
+        val presetStore = store ?: return base
+        if (presetId.isBlank()) return base
+        val preset = runCatching {
+            val category = presetCategoryForProvider(base.config.providerType)
+            val candidates = presetStore.listPresets().filter { it.category == category }
+            val named = candidates.firstOrNull { it.id == presetId } ?: return@runCatching null
+            named.copy(
+                id = "ai-creation-agent",
+                name = named.name,
+                providerType = base.config.providerType,
+                category = category,
+            )
+        }.getOrElse { error ->
+            if (error is CancellationException) throw error
+            null
+        }
+        return if (preset == null) base else base.copy(chatPreset = preset)
+    }
+
     suspend fun converse(
         session: CreationSession,
         userText: String,
@@ -365,21 +436,44 @@ internal class CreationEngine(
         onCheckpoint: suspend (CreationSession) -> Unit = {},
         onToolEvent: (CreationToolEvent) -> Unit = {},
         onAskUser: (suspend (CreationAgentQuestion) -> String)? = null,
+        attachments: List<Attachment> = emptyList(),
+        snapshot: CreationOperationSnapshot? = null,
+        /** Called once per accepted Completed chunk, before parsing or tool execution. */
+        onUsage: (suspend (GenerationMetrics) -> Unit)? = null,
     ): ConverseResult {
+        val operation = snapshot ?: resolveOperationSnapshot()
+        if (attachments.any { it.mimeType.startsWith("image/") }) {
+            val visionEnabled = (operation.config.options["supportsVision"] as? JsonPrimitive)?.booleanOrNull
+            val compatible = operation.config.providerType in setOf(
+                ProviderCatalog.OPENAI_COMPATIBLE, ProviderCatalog.DEEPSEEK,
+                ProviderCatalog.TELLEVCLICK, ProviderCatalog.VOLCENGINE_CODING_PLAN,
+            ) || operation.adapter is OpenAiCompatibleAdapter
+            require(ProviderCapability.Vision in operation.adapter.capabilities &&
+                visionEnabled != false && (!compatible || visionEnabled == true)
+            ) { UiStrings.get(S.crs_attachment_vision_unavailable) }
+        }
+        val requestAttachments = withContext(Dispatchers.IO) {
+            prepareCreationAttachments(attachments, store?.layout?.root)
+        }
         val opener = creationConversationContext(session)
+        val attachedText = creationAttachmentContext(attachments)
         val history = mutableListOf(
             PromptMessage(MessageRole.System, content = conversationSystemPrompt(session.kind, session.kind == CreationKind.WorldBook && session.originalCard != null)),
-            PromptMessage(MessageRole.User, content = opener + UiStrings.get(S.creng_context_user_round, userText)),
+            PromptMessage(MessageRole.User, content = opener + UiStrings.get(S.creng_context_user_round, userText) +
+                attachedText.takeIf(String::isNotBlank)?.let { "\n\n$it" }.orEmpty()),
         )
         val toolbox = CreationToolBox(session)
         var consecutiveBadRounds = 0
         var lastBadDetail = ""
         var round = 0
         while (true) {
+            currentCoroutineContext().ensureActive()
             round++
             val generation = generate(history, temperatureOverride = if (consecutiveBadRounds > 0) 0.0 else null,
                 onProgress = onProgress,
-                phasePrefix = UiStrings.get(S.creng_round_prefix, round))
+                phasePrefix = UiStrings.get(S.creng_round_prefix, round),
+                snapshot = operation, attachments = requestAttachments,
+                effortOverride = session.reasoningEffort, onUsage = onUsage)
             val nativeBlocks = parseNativeCreationCalls(generation.toolCalls)
             val parsed = if (generation.toolCalls?.isNotEmpty() == true) {
                 ToolBlocksParseResult(nativeBlocks, "", false)
@@ -560,21 +654,26 @@ internal class CreationEngine(
         chunk: SourceChunk,
         sourceName: String,
         onProgress: (CreationStreamUpdate) -> Unit = {},
+        snapshot: CreationOperationSnapshot? = null,
+        effortOverride: app.tellev.core.model.ReasoningEffort = app.tellev.core.model.ReasoningEffort.Auto,
+        onUsage: (suspend (GenerationMetrics) -> Unit)? = null,
     ): AgentReply {
+        val operation = snapshot ?: resolveOperationSnapshot()
         val system = UiStrings.get(S.creng_extract_system)
         val prompt = UiStrings.get(S.creng_extract_source_line, sourceName, chunk.start, chunk.end) +
             "\n<source>\n${chunk.text}\n</source>"
         val first = generate(listOf(
             PromptMessage(MessageRole.System, content = system),
             PromptMessage(MessageRole.User, content = prompt),
-        ), temperatureOverride = 0.2, onProgress = onProgress)
+        ), temperatureOverride = 0.2, onProgress = onProgress, snapshot = operation,
+            effortOverride = effortOverride, onUsage = onUsage)
         try {
             return CreationReplyParser.parse(first.text)
         } catch (_: AgentReplyFormatException) {
         }
         if (first.finishReason == "length") {
             onProgress(CreationStreamUpdate(UiStrings.get(S.creng_phase_condensed_retry)))
-            return condensedExtractionRetry(system, prompt, onProgress)
+            return condensedExtractionRetry(system, prompt, onProgress, operation, effortOverride, onUsage)
         }
         onProgress(CreationStreamUpdate(UiStrings.get(S.creng_phase_repair_format)))
         val repairSystem = UiStrings.get(S.creng_repair_system)
@@ -584,11 +683,12 @@ internal class CreationEngine(
                 PromptMessage(MessageRole.User, content = UiStrings.get(S.creng_repair_input, json.encodeToString(first.text))),
             ),
             temperatureOverride = 0.0, onProgress = onProgress, phasePrefix = UiStrings.get(S.creng_repair_prefix),
+            snapshot = operation, effortOverride = effortOverride, onUsage = onUsage,
         )
         try {
             return CreationReplyParser.parse(repaired.text)
         } catch (_: AgentReplyFormatException) {
-            return condensedExtractionRetry(system, prompt, onProgress)
+            return condensedExtractionRetry(system, prompt, onProgress, operation, effortOverride, onUsage)
         }
     }
 
@@ -597,6 +697,9 @@ internal class CreationEngine(
         originalSystem: String,
         prompt: String,
         onProgress: (CreationStreamUpdate) -> Unit,
+        snapshot: CreationOperationSnapshot,
+        effortOverride: app.tellev.core.model.ReasoningEffort = app.tellev.core.model.ReasoningEffort.Auto,
+        onUsage: (suspend (GenerationMetrics) -> Unit)? = null,
     ): AgentReply {
         val condensed = originalSystem + "\n" + UiStrings.get(S.creng_condensed_suffix)
         val retried = generate(
@@ -605,6 +708,7 @@ internal class CreationEngine(
                 PromptMessage(MessageRole.User, content = prompt),
             ),
             temperatureOverride = 0.0, onProgress = onProgress, phasePrefix = UiStrings.get(S.creng_condensed_prefix),
+            snapshot = snapshot, effortOverride = effortOverride, onUsage = onUsage,
         )
         return try {
             CreationReplyParser.parse(retried.text)
@@ -626,8 +730,7 @@ internal class CreationEngine(
      * built-in agent defaults. Read failures degrade to null instead of
      * failing the turn: an authoring request must not die on preset I/O.
      */
-    private suspend fun resolveChatPreset(store: StDataStore, config: app.tellev.core.provider.ProviderConfig): GenerationPreset? =
-        runCatching {
+    private suspend fun resolveChatPreset(store: StDataStore, config: app.tellev.core.provider.ProviderConfig): GenerationPreset? =        runCatching {
             val category = presetCategoryForProvider(config.providerType)
             val candidates = store.listPresets().filter { it.category == category }
             val selectedName = store.readSelectedPresetName(category)
@@ -639,31 +742,36 @@ internal class CreationEngine(
                 providerType = config.providerType,
                 category = category,
             )
-        }.getOrNull()
+        }.getOrElse { error ->
+            if (error is CancellationException) throw error
+            null
+        }
+
+    /**
+     * Declared reasoning profile for [modelId], read from the same store the
+     * chat chain uses. Failures degrade to null (no profile = legacy path).
+     */
+    private fun profileForModel(modelId: String): ModelReasoningProfile? =
+        store?.layout?.root?.let { root ->
+            runCatching { ModelReasoningProfiles.read(root).profiles[modelId] }.getOrNull()
+        }
 
     private suspend fun generate(
         messages: List<PromptMessage>,
         temperatureOverride: Double?,
         onProgress: (CreationStreamUpdate) -> Unit,
+        snapshot: CreationOperationSnapshot,
         phasePrefix: String = "",
+        attachments: List<Attachment> = emptyList(),
+        effortOverride: app.tellev.core.model.ReasoningEffort = app.tellev.core.model.ReasoningEffort.Auto,
+        onUsage: (suspend (GenerationMetrics) -> Unit)? = null,
     ): RawGeneration {
+        currentCoroutineContext().ensureActive()
         onProgress(CreationStreamUpdate(phasePrefix + UiStrings.get(S.creng_phase_prepare_request)))
-        val selectedId = secrets.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
-            ?: ProviderCatalog.OPENAI_COMPATIBLE
-        val adapterId = ProviderConfigPersistence.adapterIdFor(selectedId)
-        val selectedAdapter = providers.find(adapterId)
-            ?.takeIf { it.supportsChatGeneration }
-            ?: error(UiStrings.get(S.creng_error_provider_not_supported))
-        val adapter = if (adapterId == ProviderCatalog.OPENAI_COMPATIBLE &&
-            selectedAdapter is OpenAiCompatibleAdapter
-        ) compatibleCreationAdapter else selectedAdapter
-        val config = ProviderConfigPersistence.loadProviderConfig(secrets, selectedId)
-        // Authoring follows the CURRENT chat selection: the chat-selected
-        // preset for this provider category owns sampling, budgets, stop
-        // sequences and provider-specific raw fields (reasoning etc.). The
-        // authoring instructions in [messages] stay authoritative — a chat
-        // preset never injects prompt content here.
-        val chatPreset = store?.let { resolveChatPreset(it, config) }
+        val adapter = snapshot.adapter
+        val config = snapshot.config
+        // Authoring keeps the operation's chat preset, but never its prompt slots.
+        val chatPreset = snapshot.chatPreset
         val temperature = temperatureOverride ?: chatPreset?.temperature ?: 0.7
         val outputBudgetField = (chatPreset?.maxCompletionTokens ?: chatPreset?.maxTokens)
             ?.coerceIn(1_024, MAX_OUTPUT_TOKENS)
@@ -703,9 +811,13 @@ internal class CreationEngine(
         var completedReasoning: String? = null
         var completedFinishReason: String? = null
         var completedToolCalls: JsonArray? = null
+        var completedUsage: JsonObject? = null
         val deltas = StringBuilder()
         val reasoningDeltas = StringBuilder()
-        val requestStartedAt = System.nanoTime()
+        var requestStartedAt = System.nanoTime()
+        // Wall-clock anchor for the current wire attempt: metrics timestamps are
+        // epoch millis, while elapsed time stays on the monotonic clock.
+        var attemptStartedWallMs = System.currentTimeMillis()
         var firstDeltaMillis: Long? = null
         var lastDeltaMillis: Long? = null
         var deltaCount = 0
@@ -733,17 +845,37 @@ internal class CreationEngine(
         var budgetRetries = 0
         var outputBudget = outputBudgetField
         do {
+            currentCoroutineContext().ensureActive()
             var retryConnect = false
+            // Per wire attempt: a retry re-streams the same request, so the
+            // decode window must not inherit the failed attempt's first-delta time.
+            requestStartedAt = System.nanoTime()
+            attemptStartedWallMs = System.currentTimeMillis()
+            firstDeltaMillis = null
+            lastDeltaMillis = null
             adapter.streamGenerate(
                 config,
-                GenerateRequest(prompt = prompt.copy(maxTokens = outputBudget), preset = agentPreset, stream = true,
+                GenerateRequest(prompt = prompt.copy(maxTokens = outputBudget), preset = agentPreset,
+                    attachments = attachments, stream = true,
                     metadata = buildJsonObject {
                         put("creation_agent", true)
                         put("require_stream_terminator", true)
                         put("tools", creationNativeTools())
                         put("tool_choice", "auto")
+                        if (effortOverride != app.tellev.core.model.ReasoningEffort.Auto) {
+                            put(ReasoningSupport.REQUEST_OVERRIDE_KEY, effortOverride.name)
+                        }
+                        config.model?.takeIf(String::isNotBlank)?.let { model ->
+                            // The profile travels with the request exactly like the
+                            // chat generation chain does, so declared wire spellings
+                            // apply to authoring requests too.
+                            profileForModel(model)?.let { profile ->
+                                put("tellev_model_profile", json.encodeToJsonElement(ModelReasoningProfile.serializer(), profile))
+                            }
+                        }
                     }),
             ).collect { chunk ->
+                currentCoroutineContext().ensureActive()
                 when (chunk) {
                     is GenerateChunk.Delta -> {
                         deltas.append(chunk.text)
@@ -760,6 +892,22 @@ internal class CreationEngine(
                         completedReasoning = chunk.reasoning
                         completedFinishReason = chunk.finishReason
                         completedToolCalls = chunk.toolCalls
+                        completedUsage = chunk.usage
+                        // Accounting happens before parsing or tool execution: the
+                        // request was consumed even when its payload turns out
+                        // malformed and the round is replayed.
+                        onUsage?.invoke(
+                            GenerationMetricsCalculator.fromCompletion(
+                                providerType = snapshot.selectedId,
+                                model = config.model,
+                                usage = chunk.usage,
+                                estimatedPromptTokens = null,
+                                deltaText = (chunk.text.ifBlank { deltas.toString() }),
+                                startedAtMs = attemptStartedWallMs,
+                                firstDeltaAtMs = firstDeltaMillis?.let { attemptStartedWallMs + it },
+                                completedAtMs = System.currentTimeMillis(),
+                            ),
+                        )
                     }
                     is GenerateChunk.Failed -> {
                         if (deltaCount == 0 && deltas.isEmpty() && budgetRetries < 2 &&

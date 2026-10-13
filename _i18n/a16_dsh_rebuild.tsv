@@ -84,18 +84,11 @@ dsh_usage_estimated	估算
 dsh_usage_empty	暂无使用记录
 dsh_user_edit_resend	编辑并重新发送
 dsh_user_resend	重新发送
-dsh_model_config_title	模型配置
-dsh_model_config_open	配置模型
-dsh_model_provider	服务商
-dsh_model_base_url	接口地址
-dsh_model_api_key	API 密钥
-dsh_model_name	模型名称
 dsh_model_levels	思考强度档位
 dsh_model_default_effort	默认思考强度
 dsh_model_follow_memory	跟随记忆
-dsh_model_test	测试连接
-dsh_model_save	保存
-dsh_model_saved	模型配置已保存
+dsh_model_clear_key	清除 API 密钥
+dsh_model_clear_key_confirm	清除后需重新输入密钥才能调用该服务商。
 dsh_model_advanced	高级设置
 dsh_preset_full_title	预设设置
 dsh_drawer_open_cd	打开会话列表
@@ -124,8 +117,8 @@ dsh_profile_suggestion	建议 · %1$s
 dsh_profile_conf_high	知识库命中
 dsh_profile_conf_low	无命中
 dsh_profile_capacity	上下文 %1$s · 输出 %2$s
-chat_reasoning_effort_minimal	最小
-chat_reasoning_effort_xhigh	超高
+chat_reasoning_effort_minimal	Minimal
+chat_reasoning_effort_xhigh	XHigh
 dsh_preset_page_prompts	提示词
 dsh_preset_prompts_hint	提示词栈顺序（ST prompt_order）。可重排、停用/启用、逐条编辑；保存时 prompts 与 prompt_order 一起写回。
 dsh_preset_prompts_empty	暂无启用的提示词
@@ -181,8 +174,9 @@ dsh_creation_reasoning_toggle	思考过程
 dsh_creation_menu_manual	手动编辑
 dsh_creation_menu_save	保存到角色库
 dsh_creation_menu_export	导出 JSON
-crs_chat_create_title	聊天式创建
-crs_chat_create_desc	一句话描述角色，或让 AI 逐步引导
+dsh_creation_menu_preset	预设：%1$s
+dsh_creation_preset_title	生成预设
+dsh_creation_preset_follow_chat	跟随聊天
 cast_picker_title	选择附属角色卡
 cast_picker_hint	可多选。主卡统一叙事，附属卡提供人物设定。
 cast_search	搜索角色
@@ -192,3 +186,23 @@ cast_cancel	取消
 cast_binding_title	附属角色 / 群像
 cast_binding_hint	角色卡、导演卡和世界卡均可绑定多个角色。聊天由主卡统一叙事，保留各人的性格、目标、关系和说话方式；不执行附属卡的脚本。
 chat_render_pending	正在渲染…
+dsh_services_title	模型服务
+dsh_services_chat	对话
+dsh_services_image	生图
+dsh_services_voice	语音
+dsh_services_img_comfy_row	ComfyUI 配置
+dsh_services_img_novelai_row	NovelAI 配置
+dsh_services_img_profiles	自定义生图端点
+dsh_services_voice_off	未启用
+dsh_prompt_add	新增提示词
+dsh_prompt_add_limit	自定义提示词已达上限（%1$d 条）
+dsh_preset_group_sampling	采样
+dsh_preset_group_penalty	惩罚
+dsh_preset_group_length	长度
+dsh_preset_keep_placeholder	留空保持
+dsh_preset_saved	预设已保存
+dsh_preset_raw_add	新增键
+dsh_preset_raw_path_label	键名（点分路径）
+dsh_preset_raw_key_blank	无效的键名
+dsh_preset_raw_key_exists	键已存在，请编辑列表中对应行
+dsh_preset_raw_key_reserved	该键由参数页或提示词页管理

@@ -83,6 +83,7 @@ internal class ProviderSettingsController(
                         customConfigName = fields.customConfigName,
                         baseUrl = fields.baseUrl,
                         apiKey = fields.apiKey,
+                        loadedApiKey = fields.apiKey,
                         model = fields.model,
                         compatibility = fields.compatibility,
                         extraHeadersJson = json.encodeToString(fields.compatibility.headers),
@@ -175,6 +176,7 @@ internal class ProviderSettingsController(
                         customConfigName = name,
                         baseUrl = "",
                         apiKey = "",
+                        loadedApiKey = "",
                         model = "",
                         compatibility = OpenAiCompatibilitySettings(),
                         extraHeadersJson = "{}",
@@ -215,6 +217,7 @@ internal class ProviderSettingsController(
                             customConfigName = fields.customConfigName,
                             baseUrl = fields.baseUrl,
                             apiKey = fields.apiKey,
+                            loadedApiKey = fields.apiKey,
                             model = fields.model,
                             compatibility = fields.compatibility,
                             extraHeadersJson = json.encodeToString(fields.compatibility.headers),
@@ -286,7 +289,7 @@ internal class ProviderSettingsController(
         }
     }
 
-    fun saveProviderConfig() {
+    fun saveProviderConfig(clearApiKey: Boolean = false) {
         val state = stateFlow.value
         scope.launch {
             stateFlow.update { it.copy(isLoading = true, error = null) }
@@ -314,17 +317,25 @@ internal class ProviderSettingsController(
                         it.copy(
                             customConfigs = updated,
                             customConfigName = savedName,
+                            // 保存后的表单值即最新已存密钥（清键确认的对比基准）。
+                            loadedApiKey = state.apiKey.trim(),
                             isLoading = false,
                             info = UiStrings.get(S.provctl_saved),
                         )
                     }
                 } else {
+                    // 接口地址留空 = 恢复该服务商默认地址（删掉已存值，读取回落
+                    // ProviderDefaults）；只写不删会让改错的 URL 无法挽回。
                     if (state.baseUrl.isNotBlank()) {
                         secretStore.putSecret("provider-$providerId-baseurl", state.baseUrl)
+                    } else {
+                        secretStore.deleteSecret("provider-$providerId-baseurl")
                     }
+                    // 密钥留空 ≠ 清除：表单空白可能只是读取失败回落，直接保存会把
+                    // 已存凭证静默删掉。只有用户显式确认（clearApiKey）才删除。
                     if (state.apiKey.isNotBlank()) {
                         secretStore.putSecret("provider-$providerId-apikey", state.apiKey)
-                    } else {
+                    } else if (clearApiKey) {
                         secretStore.deleteSecret("provider-$providerId-apikey")
                     }
                     if (state.model.isNotBlank()) {
@@ -342,9 +353,71 @@ internal class ProviderSettingsController(
                     stateFlow.update {
                         it.copy(
                             isLoading = false,
+                            // 空白且未确认删除时已存密钥保持原样，快照不变。
+                            loadedApiKey = when {
+                                state.apiKey.isNotBlank() -> state.apiKey
+                                clearApiKey -> ""
+                                else -> state.loadedApiKey
+                            },
                             info = UiStrings.get(S.provctl_saved),
                         )
                     }
+                }
+            } catch (e: Exception) {
+                stateFlow.update {
+                    it.copy(
+                        isLoading = false,
+                        error = UiStrings.get(S.provctl_save_failed, e.message),
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * 「恢复默认」：把当前服务商的本连接配置清回默认状态。
+     *
+     * 删除已存接口地址、API 密钥、模型名，随后回读让取值回落到
+     * [ProviderDefaults]；高级兼容设置与思考档案不动——它们是用户逐项
+     * 调出来的能力声明，不属于「这个连接填错了」的恢复范围。
+     */
+    fun resetProviderConfig() {
+        scope.launch {
+            stateFlow.update { it.copy(isLoading = true, error = null) }
+            try {
+                val providerId = stateFlow.value.selectedProviderId
+                if (ProviderConfigPersistence.isCustomConfigId(providerId)) {
+                    val rawId = ProviderConfigPersistence.customIdFrom(providerId)
+                    val configs = ProviderConfigPersistence.listCustomConfigs(secretStore)
+                    ProviderConfigPersistence.saveCustomConfigs(
+                        secretStore,
+                        configs.map { c ->
+                            if (c.id == rawId) c.copy(
+                                baseUrl = "",
+                                apiKey = "",
+                                model = "",
+                            ) else c
+                        },
+                    )
+                } else {
+                    secretStore.deleteSecret("provider-$providerId-baseurl")
+                    secretStore.deleteSecret("provider-$providerId-apikey")
+                    secretStore.deleteSecret("provider-$providerId-model")
+                }
+                val customConfigs = ProviderConfigPersistence.listCustomConfigs(secretStore)
+                val fields = loadConfigFields(providerId, customConfigs)
+                stateFlow.update {
+                    it.copy(
+                        customConfigs = customConfigs,
+                        baseUrl = fields.baseUrl,
+                        apiKey = fields.apiKey,
+                        loadedApiKey = fields.apiKey,
+                        model = fields.model,
+                        providerStatus = null,
+                        availableModels = emptyList(),
+                        isLoading = false,
+                        info = UiStrings.get(S.dsh_model_reset_done),
+                    )
                 }
             } catch (e: Exception) {
                 stateFlow.update {

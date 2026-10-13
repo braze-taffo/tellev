@@ -19,8 +19,8 @@ import app.tellev.core.model.CharacterSummary
 import app.tellev.core.storage.CharacterImporter
 import app.tellev.util.UriUtils
 import app.tellev.ui.dsh.DshRoot
-import app.tellev.ui.theme.TellevTheme
-import app.tellev.ui.theme.isDarkTheme
+import app.tellev.ui.dsh.DshTheme
+import app.tellev.ui.dsh.isDarkTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -47,11 +47,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             CompositionLocalProvider(LocalTellevGraph provides graph) {
                 val themeMode by graph.themeModeFlow.collectAsState()
-                val themeAccent by graph.themeAccentFlow.collectAsState()
-                TellevTheme(
-                    darkTheme = themeMode.isDarkTheme(isSystemInDarkTheme()),
-                    accent = themeAccent,
-                ) {
+                // 全应用只有一套 dsh（DeepSeek Harness）token 体系：
+                // 明暗由主题模式决定，不再有第二套强调色主题。
+                DshTheme(darkTheme = themeMode.isDarkTheme(isSystemInDarkTheme())) {
                     DshRoot()
                 }
             }

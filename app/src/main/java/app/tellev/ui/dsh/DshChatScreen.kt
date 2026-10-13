@@ -66,6 +66,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -93,11 +94,11 @@ import app.tellev.core.model.MessageRole
 import app.tellev.core.model.reasoningParts
 import app.tellev.core.model.toSummary
 import app.tellev.core.model.ReasoningEffort
-import app.tellev.core.provider.ReasoningFamily
 import app.tellev.core.provider.ReasoningSupport
 import app.tellev.core.tts.TtsPlaybackState
 import app.tellev.core.tts.TtsRuntime
 import app.tellev.core.tts.ttsUserMessage
+import app.tellev.util.UriUtils
 import app.tellev.feature.chat.ChatUiState
 import app.tellev.feature.chat.ChatViewModel
 import app.tellev.feature.chat.CharacterCardInterfaceDialog
@@ -114,6 +115,7 @@ import app.tellev.feature.chat.buildAttachmentFromUri
 import app.tellev.feature.chat.chatSendEnabled
 import app.tellev.feature.chat.buildFileAttachmentFromUri
 import app.tellev.feature.chat.canRegenerateResponse
+import app.tellev.feature.chat.forProvider
 import app.tellev.core.tts.TtsSpeechService
 import app.tellev.feature.chat.rememberRenderedSegments
 import app.tellev.feature.chat.renderMessageParts
@@ -123,7 +125,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlin.math.roundToInt
@@ -133,13 +134,25 @@ import kotlin.math.roundToInt
  * 抽屉 + 消息列（左右 20dp/上下 16dp，项距 12px）+ composer（28 圆角白卡）+
  * dock 统计条 + 三弹层 + 集合键 sheet。数据层走既有 ChatViewModel。
  */
+
+/** 聊天背景图的进堆上限（与角色头像选取同一量级：16MB）。 */
+private const val CHAT_BACKGROUND_MAX_BYTES = 16L * 1024L * 1024L
+
 @Composable
 fun DshChatScreen(
     viewModel: ChatViewModel,
+    // 输入框草稿上提到 DshRoot：写作助手「替换草稿」也能从设置 tab 打开，那时聊天页
+    // 不一定在栈上，只有根层持有的草稿能被两个入口共同读写（以前这里是
+    // rememberSaveable 的局部状态，根层弹层的 onApply 根本够不着，只能给空回调）。
+    draftText: String = "",
+    onDraftChange: (String) -> Unit = {},
     onBack: () -> Unit,
     onOpenWorldBooks: () -> Unit,
     onOpenPlugins: () -> Unit,
-    onOpenImageGenSettings: () -> Unit,
+    onOpenModelServices: () -> Unit = {},
+    // 输入栏模型键：直达统一模型配置面的「对话」段（模型选择/档位/连接配置），
+    // 与抽屉「模型服务」共用根层同一个弹层（选择已并入配置面）。
+    onOpenModelConfig: () -> Unit = {},
     onOpenUsageStats: () -> Unit,
     onOpenSettings: () -> Unit = {},
 ) {
@@ -158,15 +171,19 @@ fun DshChatScreen(
     val contentSp = (chatFontSizeSp * 14f / 16f).roundToInt()
     val userBubbleMaxWidth = LocalConfiguration.current.screenWidthDp.dp * 0.82f
 
-    var inputText by rememberSaveable { mutableStateOf("") }
-    var pendingAttachments by remember { mutableStateOf(listOf<DshPendingAttachment>()) }
+    // 附件本体已由 ChatCoreHelpers 落盘在 dataRoot/user/images、user/files，
+    // 所以这两个列表只存 id/名称/类型/相对路径，可随配置变更保存（旋转/进程重建）。
+    var pendingAttachments by rememberSaveable(stateSaver = DshPendingAttachmentListSaver) {
+        mutableStateOf(listOf<DshPendingAttachment>())
+    }
     var showMoreMenu by remember { mutableStateOf(false) }
     var showUsagePanel by remember { mutableStateOf(false) }
     // 轮级用量详情（dsh TurnUsagePanel 弹层）。
     var turnUsageFor by remember { mutableStateOf<Pair<app.tellev.feature.chat.ChatTokenUsageLedger.Buckets, Long>?>(null) }
-    // 真实附件（含落盘路径/元数据）与展示条 DshPendingAttachment 一一对应。
-    var pendingRealAttachments by remember { mutableStateOf(listOf<app.tellev.core.model.Attachment>()) }
-    var showModelMenu by remember { mutableStateOf(false) }
+    // 真实附件（含 mimeType/元数据）与展示条 DshPendingAttachment 一一对应。
+    var pendingRealAttachments by rememberSaveable(stateSaver = ChatAttachmentListSaver) {
+        mutableStateOf(listOf<app.tellev.core.model.Attachment>())
+    }
     var showContext by remember { mutableStateOf(false) }
     // 顶栏合并键（预设/用户设定/世界书）：集合 sheet + 各自二级弹层。
     var showCollectionsSheet by remember { mutableStateOf(false) }
@@ -198,12 +215,12 @@ fun DshChatScreen(
     // 临时段，final 只提交一次——旧版把 final 追加在 partial 后会重复整句。
     var voiceBaseText by remember { mutableStateOf<String?>(null) }
     fun startVoiceListening() {
-        voiceBaseText = inputText
+        voiceBaseText = draftText
         voice.start(
             context,
-            onPartial = { partial -> voiceBaseText?.let { inputText = it + partial } },
+            onPartial = { partial -> voiceBaseText?.let { onDraftChange(it + partial) } },
             onFinal = { final ->
-                voiceBaseText?.let { inputText = it + final }
+                voiceBaseText?.let { onDraftChange(it + final) }
                 voiceBaseText = null
             },
         )
@@ -242,13 +259,8 @@ fun DshChatScreen(
             }
         }.getOrNull()
         if (attachment != null) {
-            // Strip 只需展示名/类型/缩略图；附件本体已在 dataRoot 下（builder 落盘）。
-            pendingAttachments = pendingAttachments + DshPendingAttachment(
-                id = attachment.id,
-                name = attachment.name,
-                isImage = attachment.mimeType.startsWith("image/"),
-                file = java.io.File(dataRoot, attachment.relativePath).takeIf { it.exists() },
-            )
+            // Strip 只需展示名/类型/相对路径；附件本体已在 dataRoot 下（builder 落盘）。
+            pendingAttachments = pendingAttachments + attachment.toDshPendingAttachment()
             pendingRealAttachments = pendingRealAttachments + attachment
         } else {
             snackbar.showSnackbar(context.getString(R.string.chat_attach_failed, ""))
@@ -269,7 +281,13 @@ fun DshChatScreen(
             scope.launch {
                 runCatching {
                     val bytes = withContext(Dispatchers.IO) {
-                        requireNotNull(context.contentResolver.openInputStream(selected)).use { it.readBytes() }
+                        // 与其它用户文件入口同一纪律：先限量再进堆。无上限的
+                        // readBytes 会把「换背景」变成一次 OOM 击杀。
+                        UriUtils.readBounded(
+                            context,
+                            selected,
+                            maxBytes = CHAT_BACKGROUND_MAX_BYTES,
+                        )
                     }
                     viewModel.setChatBackground(bytes)
                 }.onFailure { snackbar.showSnackbar(context.getString(R.string.chat_attach_failed, it.message)) }
@@ -278,7 +296,7 @@ fun DshChatScreen(
     }
 
     fun send() {
-        val trimmed = inputText.trim()
+        val trimmed = draftText.trim()
         if (trimmed.isNotEmpty() || pendingAttachments.isNotEmpty()) {
             if (viewModel.sendMessage(trimmed, pendingRealAttachments)) {
                 // Detach any in-flight recognition first: its late partial/final
@@ -286,7 +304,7 @@ fun DshChatScreen(
                 // was just sent), so the sent text would reappear in the box.
                 voiceBaseText = null
                 if (voice.listening.value) voice.stop()
-                inputText = ""
+                onDraftChange("")
                 pendingAttachments = emptyList()
                 pendingRealAttachments = emptyList()
             }
@@ -296,7 +314,7 @@ fun DshChatScreen(
     // 输入框（不自动发出，用户可改可发），旧附件一并不再重发。
     fun resendUserMessage(message: app.tellev.core.model.ChatMessage) {
         viewModel.trimMessagesAfter(message.id)
-        inputText = message.reasoningParts().body
+        onDraftChange(message.reasoningParts().body)
         pendingAttachments = emptyList()
         pendingRealAttachments = emptyList()
     }
@@ -325,6 +343,15 @@ fun DshChatScreen(
     LaunchedEffect(state.messages.size, state.isGenerating) {
         if (followLatest) listState.animateScrollToItem((state.messages.size).coerceAtLeast(0))
     }
+    // 流式增长的跟随：token 频率的跟必须用瞬时滚动——每来一段文本就重启一次
+    // 滚动动画，会让整段生成过程持续抖；条数/生成起止的边界仍走上面的动画路径。
+    LaunchedEffect(state.streamingText.length, state.streamingReasoning.length) {
+        if (followLatest && state.isGenerating &&
+            (state.streamingText.isNotEmpty() || state.streamingReasoning.isNotEmpty())
+        ) {
+            listState.scrollToItem(state.messages.size.coerceAtLeast(0))
+        }
+    }
 
     val renderMacroContext = remember(
         state.selectedCharacter, state.currentSession, state.selectedPersona,
@@ -332,6 +359,26 @@ fun DshChatScreen(
     ) { viewModel.messageMacroContext(state) }
     val visibleDepths = remember(state.messages) { visibleRegexDepths(state.messages) }
     val runtimeToken = viewModel.currentRuntimeToken(state.currentSession?.id)
+
+    // ── 列表的稳定捕获（流式重组收窄）────────────────────────────────
+    // LazyColumn 的 content 块是 item lambda 的工厂：只要它捕获了逐 token 变化的
+    // state，每个流式增量都会重造全部 item lambda，让所有可见消息行跟着重组合。
+    // 逐 token 数据（草稿/流式文本）改放 rememberUpdatedState（State 实例自身稳定），
+    // 其余读取在此解构成局部量；流式气泡那一项自己读 .value——生成期间只有气泡
+    // 重组合，历史行全部跳过。
+    val draftTextState = rememberUpdatedState(draftText)
+    val streamingTextState = rememberUpdatedState(state.streamingText)
+    val streamingReasoningState = rememberUpdatedState(state.streamingReasoning)
+    val messages = state.messages
+    val selectedCharacter = state.selectedCharacter
+    val selectedPreset = state.selectedPreset
+    val personaName = state.selectedPersona?.name ?: "User"
+    val selectedCharacterAvatarFile = state.characterAvatarFiles[selectedCharacter?.id]
+    val sessionId = state.currentSession?.id
+    val isGenerating = state.isGenerating
+    val characterScriptsDisabled = state.characterScriptsDisabled != null
+    val streamingItemVisible = isGenerating &&
+        (state.streamingText.isNotEmpty() || state.streamingReasoning.isNotEmpty())
 
     val drawerState = androidx.compose.material3.rememberDrawerState(androidx.compose.material3.DrawerValue.Closed)
     // 抽屉打开时刷新按角色分组的会话树（跨角色卡全部会话）。
@@ -357,6 +404,10 @@ fun DshChatScreen(
         onExportLog = {
             exportLog.launch("chat-log-" + System.currentTimeMillis() + ".json")
             scope.launch { drawerState.close() }
+        },
+        onOpenModelServices = {
+            scope.launch { drawerState.close() }
+            onOpenModelServices()
         },
         onOpenSettings = {
             scope.launch { drawerState.close() }
@@ -478,7 +529,7 @@ fun DshChatScreen(
                             ),
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            if (state.characterScriptsDisabled != null) {
+                            if (characterScriptsDisabled) {
                                 item(key = "character_scripts_disabled") {
                                     Surface(
                                         color = Dsh.blue.copy(alpha = 0.08f),
@@ -502,7 +553,7 @@ fun DshChatScreen(
                                     }
                                 }
                             }
-                            itemsIndexed(state.messages, key = { _, m -> m.id }) { index, message ->
+                            itemsIndexed(messages, key = { _, m -> m.id }) { index, message ->
                                 if (editingIndex == index) {
                                     EditMessageCard(
                                         initialText = editText,
@@ -511,15 +562,21 @@ fun DshChatScreen(
                                     )
                                 } else {
                                     DshMessageRow(
-                                        state = state,
                                         index = index,
                                         message = message,
+                                        selectedCharacter = selectedCharacter,
+                                        selectedPreset = selectedPreset,
+                                        personaName = personaName,
+                                        characterAvatarFile = selectedCharacterAvatarFile,
+                                        sessionId = sessionId,
+                                        messages = messages,
+                                        isGenerating = isGenerating,
                                         depth = visibleDepths.getOrElse(index) { 0 },
                                         macroContext = renderMacroContext,
                                         dataRoot = dataRoot,
                                         runtimeToken = runtimeToken,
-                                        inputText = { inputText },
-                                        onSetInput = { inputText = it },
+                                        inputText = { draftTextState.value },
+                                        onSetInput = onDraftChange,
                                         viewModel = viewModel,
                                         clipboard = clipboard,
                                         bubbleAlpha = bubbleAlpha,
@@ -540,7 +597,7 @@ fun DshChatScreen(
                                         onMenuChange = { messageMenuIndex = if (it) index else null },
                                         onFork = {
                                             messageMenuIndex = null
-                                            state.currentSession?.id?.let { id ->
+                                            sessionId?.let { id ->
                                                 viewModel.forkSession(id, index + 1)
                                             }
                                         },
@@ -551,14 +608,14 @@ fun DshChatScreen(
                                     )
                                 }
                             }
-                            if (state.isGenerating && (state.streamingText.isNotEmpty() || state.streamingReasoning.isNotEmpty())) {
+                            if (streamingItemVisible) {
                                 item(key = "streaming") {
                                     // 回复框布局：头像一行置左，流式气泡在头像正下方
                                     // 居中（不再右侧跟随），与用户要求一致。
                                     Column(modifier = Modifier.fillMaxWidth()) {
                                         CharacterAvatar(
-                                            file = state.characterAvatarFiles[state.selectedCharacter?.id],
-                                            fallbackText = state.selectedCharacter?.name.orEmpty(),
+                                            file = selectedCharacterAvatarFile,
+                                            fallbackText = selectedCharacter?.name.orEmpty(),
                                             modifier = Modifier.size(34.dp),
                                             shape = RoundedCornerShape(Dsh.RADIUS_MD.dp),
                                             fallbackTextStyle = androidx.compose.ui.text.TextStyle(
@@ -568,47 +625,42 @@ fun DshChatScreen(
                                             ),
                                         )
                                         Spacer(Modifier.size(6.dp))
-                                        androidx.compose.foundation.layout.BoxWithConstraints(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            StreamingBubble(
-                                        macroContext = renderMacroContext,
-                                        text = state.streamingText,
-                                        reasoning = state.streamingReasoning,
-                                        characterName = state.selectedCharacter?.name ?: "",
-                                        character = state.selectedCharacter,
-                                        preset = state.selectedPreset,
-                                        bubbleAlpha = bubbleAlpha,
-                                        chatFontSizeSp = contentSp,
-                                        userName = state.selectedPersona?.name ?: "User",
-                                        availableMaxHeight = 480.dp,
-                                        centerText = true,
-                                        tavernRuntime = TavernMessageRuntime(
-                                            allowContentUpdates = followLatest,
-                                            token = runtimeToken,
-                                            messageIndex = state.messages.size,
-                                            variablesJson = { viewModel.tavernMessageVariablesJson(runtimeToken) },
-                                            contextJson = { viewModel.tavernMessageContextJson(runtimeToken) },
-                                            currentInput = { inputText },
-                                            request = { op, payload, cb ->
-                                                viewModel.handleTavernMessageRequest(op, payload, { inputText = it }, cb, runtimeToken)
-                                            },
-                                        ),
+                                        StreamingBubble(
+                                            macroContext = renderMacroContext,
+                                            text = streamingTextState.value,
+                                            reasoning = streamingReasoningState.value,
+                                            characterName = selectedCharacter?.name ?: "",
+                                            character = selectedCharacter,
+                                            preset = selectedPreset,
+                                            bubbleAlpha = bubbleAlpha,
+                                            chatFontSizeSp = contentSp,
+                                            userName = personaName,
+                                            availableMaxHeight = 480.dp,
+                                            centerText = true,
+                                            tavernRuntime = TavernMessageRuntime(
+                                                allowContentUpdates = followLatest,
+                                                token = runtimeToken,
+                                                messageIndex = messages.size,
+                                                variablesJson = { viewModel.tavernMessageVariablesJson(runtimeToken) },
+                                                contextJson = { viewModel.tavernMessageContextJson(runtimeToken) },
+                                                currentInput = { draftTextState.value },
+                                                request = { op, payload, cb ->
+                                                    viewModel.handleTavernMessageRequest(op, payload, onDraftChange, cb, runtimeToken)
+                                                },
+                                            ),
                                             onHtmlBoundaryDrag = { },
-                                            )
-                                        }
+                                        )
                                     }
                                 }
                             }
                         }
                     }
                     DshComposer(
-                        text = inputText,
-                        onTextChange = { inputText = it },
+                        text = draftText,
+                        onTextChange = onDraftChange,
                         isGenerating = state.isGenerating,
                         canSend = chatSendEnabled(
-                            hasDraft = inputText.isNotBlank() || pendingAttachments.isNotEmpty(),
+                            hasDraft = draftText.isNotBlank() || pendingAttachments.isNotEmpty(),
                             isGenerating = state.isGenerating,
                             isLoading = state.isLoading,
                         ),
@@ -622,7 +674,7 @@ fun DshChatScreen(
                         },
                         onPickFile = { pickFile.launch(arrayOf("*/*")) },
                         onOptimize = { showOptimize = true },
-                        onOpenModelMenu = { showModelMenu = true },
+                        onOpenModelMenu = { onOpenModelConfig() },
                         onOpenContext = { showContext = true },
                         onLongPressVoice = ::startVoice,
                         listening = voice.listening.value,
@@ -638,50 +690,9 @@ fun DshChatScreen(
         }
     }
 
-    if (showModelMenu) {
-        // 合并弹层（图一+图二）：root=思考滑杆+模型行，钻入=分组模型列表；
-        // 长按模型行指派自定义供应商分组。打开时拉取完整模型目录。
-        LaunchedEffect(state.currentSession?.id) { viewModel.refreshModelCatalog() }
-        val family = ReasoningSupport.familyFor(
-            state.providerConfig?.providerType ?: state.selectedProvider,
-            state.providerConfig?.options ?: JsonObject(emptyMap()),
-        )
-        val effortLevels = remember(family) { ReasoningSupport.uiLevels(family) }
-        val effortOnLabel = stringResource(R.string.chat_reasoning_effort_on)
-        val currentEffort = sessionReasoningEffortOf(state)
-        val currentEffortLabel = if (family == ReasoningFamily.DeepSeek &&
-            currentEffort != ReasoningEffort.Auto && currentEffort != ReasoningEffort.Off
-        ) {
-            // DeepSeek 中继只有开/关；Low..Max 在线上同义，标签统一为「开」。
-            effortOnLabel
-        } else {
-            dshEffortLabel(currentEffort)
-        }
-        DshModelEffortMenu(
-            options = modelOptions(
-                state,
-                groupCurrent = stringResource(R.string.model_group_current),
-                groupRecent = stringResource(R.string.model_group_recent),
-            ),
-            groups = state.modelGroups,
-            catalog = state.modelCatalog,
-            currentModel = state.providerConfig?.model,
-            currentEffort = currentEffort,
-            effortLevels = effortLevels,
-            currentEffortLabel = currentEffortLabel,
-            modelLabel = state.providerConfig?.model?.takeIf(String::isNotBlank)
-                ?: state.selectedProvider.takeIf(String::isNotBlank),
-            onSelectModel = { viewModel.selectModel(it); showModelMenu = false },
-            // 滑杆提交后弹层保持打开（连续拖动调档），与上游 ComposerSlider 一致。
-            onSelectEffort = { viewModel.setSessionReasoningEffort(it) },
-            onRefreshCatalog = { viewModel.refreshModelCatalog() },
-            onAssignGroup = { modelId, groupId, member ->
-                viewModel.assignModelGroup(modelId, groupId, member)
-            },
-            onCreateGroup = { label -> viewModel.createModelGroup(label) },
-            onDismiss = { showModelMenu = false },
-        )
-    }
+    // 模型/档位选择的平行弹层（DshModelEffortMenu）已删除：输入栏模型键
+    // 改为打开根层统一模型配置面（DshModelServicesSheet 的「对话」段），
+    // 模型选择/分组/档位/连接配置只此一个入口。
     if (showContext) {
         val seg = contextSegmentsOf(state)
         if (seg != null) {
@@ -802,7 +813,9 @@ fun DshChatScreen(
         )
     }
     if (showUsagePanel) {
-        // 本会话口径：只算 sessionId 匹配的记录；今日=自然日内全部会话；累计=明细全量。
+        // 本会话=账本口径：桶读会话 metadata，思考读消息级账本——均不受明细缓冲
+        // 截断；今日=自然日内全部会话；累计=明细缓冲全量。估算徽标是唯一例外：
+        // 聊天账本没有估算计数（兼容优先，不改持久化格式），只能由明细缓冲判定。
         val zone = java.time.ZoneId.systemDefault()
         val today = java.time.LocalDate.now(zone)
         val todayMetrics = state.generationMetrics.filter {
@@ -810,17 +823,13 @@ fun DshChatScreen(
         }
         val sessionId = state.currentSession?.id
         val ledgerBuckets = app.tellev.feature.chat.ChatTokenUsageLedger.sessionBuckets(state.currentSession?.metadata)
-        val sessionReasoning = state.generationMetrics
-            .filter { it.sessionId == sessionId }
-            .sumOf { it.reasoningTokens?.toLong() ?: 0L }
-        val sessionAllEstimated = state.generationMetrics
-            .filter { it.sessionId == sessionId }
-            .let { it.isNotEmpty() && it.all { m -> m.isEstimate } }
+        val sessionReasoning = app.tellev.feature.chat.ChatTokenUsageLedger.sessionReasoning(state.messages)
+        val sessionEstimated = sessionHasEstimatedSamples(state.generationMetrics, sessionId)
         DshUsagePanel(
             sessionLabel = stringResource(R.string.dsh_usage_session),
             sessionBuckets = ledgerBuckets,
             sessionReasoningTokens = sessionReasoning,
-            sessionEstimated = sessionAllEstimated,
+            sessionEstimated = sessionEstimated,
             todayMetrics = todayMetrics,
             allMetrics = state.generationMetrics,
             detailBufferNote = stringResource(R.string.dsh_usage_buffer_note, state.generationMetrics.size),
@@ -834,7 +843,7 @@ fun DshChatScreen(
     }
     if (showImageDialog) {
         ImageGenerationDialog(
-            initialPrompt = inputText,
+            initialPrompt = draftText,
             initialEngine = state.imageEngine,
             configuredEngines = state.configuredImageEngines,
             profiles = state.imageProfiles,
@@ -850,10 +859,10 @@ fun DshChatScreen(
         app.tellev.ui.PromptOptimizationDialog(
             providerLabel = state.providerConfig?.providerType,
             initialBasePrompt = lastOptimizedPrompt,
-            onRun = { options, onPreview, onDone -> viewModel.optimizeDraft(inputText, options, onPreview, onDone) },
+            onRun = { options, onPreview, onDone -> viewModel.optimizeDraft(draftText, options, onPreview, onDone) },
             onCancelRun = { viewModel.cancelPromptOptimization() },
             onApply = {
-                inputText = it
+                onDraftChange(it)
                 lastOptimizedPrompt = it
                 showOptimize = false
             },
@@ -1056,9 +1065,15 @@ fun DshChatScreen(
 
 @Composable
 private fun DshMessageRow(
-    state: ChatUiState,
     index: Int,
     message: app.tellev.core.model.ChatMessage,
+    selectedCharacter: app.tellev.core.model.CharacterCard?,
+    selectedPreset: app.tellev.core.model.GenerationPreset?,
+    personaName: String,
+    characterAvatarFile: java.io.File?,
+    sessionId: String?,
+    messages: List<app.tellev.core.model.ChatMessage>,
+    isGenerating: Boolean,
     depth: Int,
     macroContext: app.tellev.core.prompt.MacroContext?,
     dataRoot: java.io.File,
@@ -1088,7 +1103,6 @@ private fun DshMessageRow(
     val tts = remember(dataRoot, graph.providerRegistry, graph.secretStore) {
         TtsRuntime.get(context, dataRoot, graph.providerRegistry, graph.secretStore, graph.extensionHost.events)
     }
-    val sessionId = state.currentSession?.id
     val playbackId = remember(sessionId, message.id, message.swipeIndex, message.content) {
         TtsSpeechService.messagePlaybackId(sessionId, message.id, message.swipeIndex, message.content)
     }
@@ -1099,9 +1113,7 @@ private fun DshMessageRow(
         (ttsState as? TtsPlaybackState.Paused)?.item?.id == playbackId
     val feedback = (message.metadata["feedback"] as? JsonPrimitive)?.contentOrNull
     // QQ 式对话：左侧角色头像 / 右侧用户（persona）头像。
-    val characterAvatarFile = state.characterAvatarFiles[state.selectedCharacter?.id]
-    val characterName = state.selectedCharacter?.name.orEmpty()
-    val personaName = state.selectedPersona?.name ?: "User"
+    val characterName = selectedCharacter?.name.orEmpty()
 
     Column(modifier = Modifier.fillMaxWidth()) {
         if (isUser) {
@@ -1162,18 +1174,18 @@ private fun DshMessageRow(
         } else {
             // 助手消息：无气泡、无头像，正文满宽；轮尾动作行。
             val parts = remember(message) { message.reasoningParts() }
-            val renderInputs = remember(parts, message.role, state.selectedCharacter, state.selectedPreset, state.selectedPersona?.name, depth, message.metadata, macroContext) {
+            val renderInputs = remember(parts, message.role, selectedCharacter, selectedPreset, personaName, depth, message.metadata, macroContext) {
                 RenderInputs(
-                    parts, message.role, state.selectedCharacter, state.selectedPreset,
-                    state.selectedPersona?.name ?: "User", depth,
+                    parts, message.role, selectedCharacter, selectedPreset,
+                    personaName, depth,
                     includeNormal = !app.tellev.core.regex.CharacterRegexApplier.isNormalProcessed(message),
                     macroContext = macroContext,
                 )
             }
             val renderState = rememberRenderedSegments(renderInputs, message.id) {
                 renderMessageParts(
-                    parts, message.role, state.selectedCharacter, state.selectedPreset,
-                    state.selectedPersona?.name ?: "User", depth,
+                    parts, message.role, selectedCharacter, selectedPreset,
+                    personaName, depth,
                     includeNormal = !app.tellev.core.regex.CharacterRegexApplier.isNormalProcessed(message),
                     macroContext = macroContext,
                 )
@@ -1288,10 +1300,10 @@ private fun DshMessageRow(
                         }
                     }
                 }
-                if (!state.isGenerating && canRegenerateResponse(state.messages, index)) {
+                if (!isGenerating && canRegenerateResponse(messages, index)) {
                     ActionKey(Icons.Default.Refresh, R.string.chat_regenerate) { viewModel.regenerateResponse(message.id) }
                 }
-                if (!state.isGenerating && index == state.messages.lastIndex &&
+                if (!isGenerating && index == messages.lastIndex &&
                     (message.role == MessageRole.Character || message.role == MessageRole.Assistant)
                 ) {
                     ActionKey(Icons.Default.FastForward, R.string.chat_continue) { viewModel.continueGeneration() }
@@ -1529,9 +1541,20 @@ internal fun modelOptions(
     groupRecent: String,
 ): List<app.tellev.feature.chat.ModelOption> {
     val current = state.providerConfig?.model?.takeIf(String::isNotBlank)
+    // 最近列表按当前服务商过滤：统计跨会话跨服务商累积，直接列出来会把
+    // 别的连接的模型混进本连接的菜单，选中即写错位置。
+    val activeProvider = state.selectedProvider
+    val activeAdapter = app.tellev.core.provider.ProviderConfigPersistence
+        .adapterIdFor(activeProvider)
     return buildList {
         current?.let { add(app.tellev.feature.chat.ModelOption(it, groupCurrent, isCurrent = true)) }
-        state.generationMetrics.asReversed().mapNotNull { it.model?.takeIf(String::isNotBlank) }
+        state.generationMetrics.asReversed()
+            .filter { metric ->
+                val metricProvider = metric.providerType?.takeIf(String::isNotBlank) ?: return@filter false
+                metricProvider == activeProvider ||
+                    app.tellev.core.provider.ProviderConfigPersistence.adapterIdFor(metricProvider) == activeAdapter
+            }
+            .mapNotNull { it.model?.takeIf(String::isNotBlank) }
             .distinct().filter { it != current }.take(6)
             .forEach { add(app.tellev.feature.chat.ModelOption(it, groupRecent)) }
     }
@@ -1567,6 +1590,17 @@ internal fun sessionLatestMetrics(state: ChatUiState): app.tellev.core.metrics.G
     val sessionId = state.currentSession?.id ?: return null
     return state.generationMetrics.lastOrNull { it.sessionId == sessionId }
 }
+
+/**
+ * usage 面板本会话区「估算」徽标：明细缓冲里本会话存在未上报样本即打标，
+ * 与制卡弹层（estimatedCount > 0）同语义——数字不全就提示，空缓冲不提示。
+ * 不是「全部样本都是估算才提示」（账本桶只收上报样本，全估算时显示的是零桶）。
+ * 范围=共享明细缓冲：聊天账本没有估算计数，缓冲是唯一可用来源（见调用点注释）。
+ */
+internal fun sessionHasEstimatedSamples(
+    metrics: List<app.tellev.core.metrics.GenerationMetrics>,
+    sessionId: String?,
+): Boolean = metrics.any { it.sessionId == sessionId && it.isEstimate }
 
 internal fun statsLeft(state: ChatUiState): String? {
     val rounds = state.messages.count { it.role == MessageRole.User }

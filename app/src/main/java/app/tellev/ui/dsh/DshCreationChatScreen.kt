@@ -3,6 +3,7 @@ package app.tellev.ui.dsh
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -25,6 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -37,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +53,26 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.tellev.R
+import app.tellev.LocalTellevGraph
+import app.tellev.core.model.Attachment
+import app.tellev.core.model.ReasoningEffort
+import app.tellev.core.provider.ReasoningFamily
+import app.tellev.core.provider.ReasoningSupport
+import app.tellev.feature.chat.ChatUiState
+import app.tellev.feature.chat.ModelOption
+import app.tellev.feature.chat.buildAttachmentFromUri
+import app.tellev.feature.chat.buildFileAttachmentFromUri
+import app.tellev.feature.chat.forProvider
+import app.tellev.ui.PromptOptimizationDialog
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.DisposableEffect
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import app.tellev.feature.creation.CharacterCompletion
 import app.tellev.feature.creation.CreationKind
 import app.tellev.feature.creation.CreationSession
@@ -72,23 +96,104 @@ import kotlinx.coroutines.launch
 @Composable
 fun DshCreationChatScreen(
     viewModel: CreationViewModel,
+    modelState: ChatUiState,
+    onRefreshModels: () -> Unit,
+    onSelectModel: (String, String, (Boolean) -> Unit) -> Boolean,
     onBack: () -> Unit,
     onOpenManualEditor: () -> Unit,
     onExportJson: (ByteArray) -> Unit = {},
     onSaved: (CreationKind, String) -> Unit,
+    /** Declared reasoning profile for a model id; null when none is stored. */
+    modelProfileOf: (String) -> app.tellev.core.provider.ModelReasoningProfile? = { null },
+    /** Provider request accounting shared with the chat chain (今日/累计 sections). */
+    onOpenUsageStats: () -> Unit = {},
+    onAssignModelGroup: (modelId: String, groupId: String, member: Boolean) -> Unit,
+    onCreateModelGroup: (label: String) -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
     val session = state.current
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    var inputText by remember { mutableStateOf("") }
+    val graph = LocalTellevGraph.current
+    val dataRoot = graph.dataStore.layout.root.toFile()
+    var inputText by rememberSaveable(session?.id) { mutableStateOf("") }
+    var pendingAttachments by rememberSaveable(session?.id, stateSaver = ChatAttachmentListSaver) {
+        mutableStateOf<List<Attachment>>(emptyList())
+    }
     var showMenu by remember { mutableStateOf(false) }
+    var showModelMenu by remember(session?.id) { mutableStateOf(false) }
+    var showUsagePanel by remember(session?.id) { mutableStateOf(false) }
+    var showOptimize by remember(session?.id) { mutableStateOf(false) }
+    var showPresetPicker by remember(session?.id) { mutableStateOf(false) }
+    var availablePresets by remember { mutableStateOf<List<app.tellev.core.model.GenerationPreset>>(emptyList()) }
+    val presetCategory = app.tellev.core.provider.presetCategoryForProvider(
+        modelState.providerConfig?.providerType ?: modelState.selectedProvider,
+    )
+    // 草案侧预设列表：与聊天同源（dataStore 预设库），但独立读取，
+    // 不依赖聊天页是否已加载；打开菜单时刷新一次（预设可能刚被编辑）。
+    fun reloadPresets() {
+        scope.launch {
+            runCatching {
+                graph.dataStore.listPresets().filter { it.category == presetCategory }
+            }.onSuccess { availablePresets = it }
+        }
+    }
+    var readingAttachment by remember(session?.id) { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val controlsBusy = state.busy || state.isOptimizingPrompt || modelState.isSelectingModel ||
+        modelState.isLoading || modelState.isGenerating || readingAttachment
+    val currentModel = modelState.providerConfig?.model
+    val selectedCatalog = modelState.modelCatalog.forProvider(modelState.selectedProvider)
+    val providerLabel = selectedCatalog.groups.firstOrNull()?.label
+        ?: modelState.selectedProvider
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null && !controlsBusy) {
+            val sessionId = session?.id
+            readingAttachment = true
+            scope.launch {
+                try {
+                    val attachment = withContext(Dispatchers.IO) {
+                        buildAttachmentFromUri(context, uri, dataRoot)
+                            ?: buildFileAttachmentFromUri(context, uri, dataRoot)
+                    }
+                    requireNotNull(attachment) { context.getString(R.string.crs_error_read_image) }
+                    val hasText = (attachment.metadata["textContent"] as? JsonPrimitive)
+                        ?.contentOrNull?.isNotBlank() == true
+                    require(attachment.mimeType.startsWith("image/") || hasText) {
+                        context.getString(R.string.crs_attachment_unsupported)
+                    }
+                    if (viewModel.state.value.current?.id == sessionId) {
+                        pendingAttachments = pendingAttachments + attachment
+                        viewModel.clearNotice()
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    viewModel.showError(context.getString(R.string.chat_attach_failed, error.message.orEmpty()))
+                } finally {
+                    readingAttachment = false
+                }
+            }
+        }
+    }
+    DisposableEffect(session?.id) {
+        onDispose { viewModel.cancelPromptOptimization() }
+    }
 
-    // 新消息/流式增长时跟随底部（与聊天一致）。
-    LaunchedEffect(session?.turns?.size, state.liveOutput.length) {
+    // 新消息/流式增长时跟随底部（与聊天一致）。轮次与忙碌边界用动画过渡；
+    // token 频率的跟必须瞬时滚动——每段文本重启一次滚动动画会让列表在整段
+    // 生成过程持续抖动。跟的目标文本与流式气泡同一口径（liveOutput 空时
+    // 回落 liveAssistantMessage）。
+    LaunchedEffect(session?.turns?.size, state.busy) {
         val count = (session?.turns?.size ?: 0) + if (state.busy) 1 else 0
         if (count > 0) listState.animateScrollToItem((count - 1).coerceAtLeast(0))
+    }
+    val liveDisplayText = state.liveOutput.ifBlank { state.liveAssistantMessage }
+    LaunchedEffect(liveDisplayText.length) {
+        if (state.busy) {
+            val count = (session?.turns?.size ?: 0) + 1
+            listState.scrollToItem((count - 1).coerceAtLeast(0))
+        }
     }
 
     if (session == null) {
@@ -126,7 +231,12 @@ fun DshCreationChatScreen(
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    session.card.name.ifBlank { stringResource(R.string.crs_editor_title_character) },
+                    // 世界书草稿的标题在世界书名字段上；角色卡才用卡名。
+                    if (session.kind == CreationKind.WorldBook) {
+                        session.worldName.ifBlank { stringResource(R.string.crs_editor_title_worldbook) }
+                    } else {
+                        session.card.name.ifBlank { stringResource(R.string.crs_editor_title_character) }
+                    },
                     fontSize = 14.sp,
                     lineHeight = 18.sp,
                     fontWeight = FontWeight.Medium,
@@ -158,8 +268,19 @@ fun DshCreationChatScreen(
                 DshCreationMenu(
                     expanded = showMenu,
                     busy = state.busy,
-                    canSave = session.kind == CreationKind.Character &&
-                        CharacterCompletion.evaluate(session.card).canChat,
+                    // 世界书保存门槛与 CreationViewModel.checkedWorldBook 的头两条一致
+                    // （世界书名 + 至少一条条目）；条目级合法性由保存时的校验与错误条兜底。
+                    canSave = when (session.kind) {
+                        CreationKind.Character -> CharacterCompletion.evaluate(session.card).canChat
+                        CreationKind.WorldBook -> session.worldName.isNotBlank() && session.lore.isNotEmpty()
+                    },
+                    presetLabel = presetMenuLabel(availablePresets, session.presetId),
+                    currentPresetId = session.presetId,
+                    onPreset = {
+                        showMenu = false
+                        reloadPresets()
+                        showPresetPicker = true
+                    },
                     onManual = { showMenu = false; onOpenManualEditor() },
                     onSave = {
                         showMenu = false
@@ -169,9 +290,13 @@ fun DshCreationChatScreen(
                         showMenu = false
                         scope.launch {
                             runCatching {
-                                val bytes = viewModel.exportCharacter(
-                                    app.tellev.feature.creation.CharacterExportFormat.Json,
-                                )
+                                val bytes = if (session.kind == CreationKind.WorldBook) {
+                                    viewModel.exportWorldBook()
+                                } else {
+                                    viewModel.exportCharacter(
+                                        app.tellev.feature.creation.CharacterExportFormat.Json,
+                                    )
+                                }
                                 onExportJson(bytes)
                             }.onFailure { e ->
                                 viewModel.showError(e.message ?: context.getString(R.string.crs_export_failed, ""))
@@ -236,15 +361,17 @@ fun DshCreationChatScreen(
             if (session.turns.isEmpty() && !state.busy) {
                 item(key = "empty") { DshCreationEmptyState(onPrompt = { inputText = it }) }
             }
-            items(session.turns, key = { it.hashCode() }) { turn ->
-                DshCreationTurnBubble(turn = turn)
+            items(session.turns.size, key = { index -> "turn-$index" }) { index ->
+                DshCreationTurnBubble(turn = session.turns[index])
             }
             // 引导追问：气泡内大按钮（点选即发送）。
+            // 等待回答期间 busy 仍为 true，「生成中」与「等待用户回答」是两种互斥语义，
+            // 可点性只能由 pendingQuestion 表达，否则选项恒被禁用、点击被静默丢弃。
             state.pendingQuestion?.let { question ->
                 item(key = "question") {
                     DshCreationAskBubble(
                         question = question,
-                        enabled = !state.busy,
+                        enabled = state.pendingQuestion != null,
                         onAnswer = { label ->
                             viewModel.answerAgentQuestion(label)
                         },
@@ -303,34 +430,190 @@ fun DshCreationChatScreen(
             }
         }
 
+        val operationStatus = when {
+            modelState.isSelectingModel -> stringResource(R.string.crs_model_saving)
+            readingAttachment -> stringResource(R.string.crs_attachment_reading)
+            else -> currentModel?.let { "$providerLabel · $it" }
+        }
+        operationStatus?.let { label ->
+            Text(
+                label,
+                color = Dsh.textTertiary,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+            )
+        }
+
         // ── 输入框：复用 DshComposer ──
+        // 统计 pill 与聊天 dock 同口径：一旦有对话轮次就常驻显示（轮/步 +
+        // 速度），而不是等首个请求完成才出现——生成中与失败轮同样可见。
+        // token 数在请求完成后补上；没有任何轮次时不显示（空态干净）。
+        val usage = session.usage
+        val usageTotal = usage.totalTokens
+        val rounds = session.turns.count { it.role == "user" }
+        val steps = session.turns.count { it.role != "user" }
+        val hasActivity = rounds > 0 || steps > 0 || state.busy
+        val usageRight = if (usage.completedRequests > 0) {
+            dshCompactTokens(usageTotal) + " tok"
+        } else null
+        val usageLeft = if (hasActivity) {
+            val speed = usage.lastTokensPerSecond?.let {
+                (if (usage.lastEstimated) "≈" else "") + "%.0f tok/s".format(it)
+            }
+            listOfNotNull(
+                stringResource(R.string.chat_stats_round, rounds),
+                stringResource(R.string.chat_stats_step, steps),
+                speed,
+            ).joinToString(" · ")
+        } else null
         DshComposer(
             text = inputText,
             onTextChange = { inputText = it },
-            isGenerating = state.busy,
-            canSend = inputText.isNotBlank() && !state.busy,
+            isGenerating = state.busy && state.pendingQuestion == null,
+            canSend = (inputText.isNotBlank() || pendingAttachments.isNotEmpty()) &&
+                (!controlsBusy || state.pendingQuestion != null && !modelState.isSelectingModel && !readingAttachment),
             contextRatio = null,
             onSend = {
-                val text = inputText.trim()
-                if (text.isNotEmpty()) {
-                    viewModel.send(text)
+                if (viewModel.send(inputText.trim(), pendingAttachments)) {
                     inputText = ""
+                    pendingAttachments = emptyList()
                 }
             },
             onStop = { viewModel.cancelGeneration() },
-            onOpenModelMenu = { },
+            onOpenModelMenu = {
+                if (!controlsBusy) {
+                    showModelMenu = true
+                    onRefreshModels()
+                }
+            },
             onOpenContext = { },
             onLongPressVoice = { },
             listening = false,
             onCancelVoice = { },
-            statsLeft = null,
-            statsRight = null,
-            onStatsLeft = { },
-            onStatsRight = { },
-            onPickFile = { },
-            onOptimize = { },
+            statsLeft = usageLeft,
+            statsRight = usageRight,
+            onStatsLeft = { showUsagePanel = true },
+            onStatsRight = { showUsagePanel = true },
+            attachments = pendingAttachments.map { it.toDshPendingAttachment() },
+            onRemoveAttachment = { id ->
+                if ((!state.busy || state.pendingQuestion != null) && !state.isOptimizingPrompt) {
+                    pendingAttachments = pendingAttachments.filterNot { it.id == id }
+                }
+            },
+            onPickFile = { if (!controlsBusy) filePicker.launch(arrayOf("*/*")) },
+            onOptimize = { if (!controlsBusy && inputText.isNotBlank()) showOptimize = true },
+            toolsEnabled = !controlsBusy,
+            inputLabel = stringResource(R.string.crs_input_label),
         )
         Spacer(Modifier.navigationBarsPadding())
+    }
+    if (showModelMenu) {
+        // Same effort ladder as chat: the current model's declared profile
+        // narrows the family levels; the draft stores the choice itself.
+        val family = ReasoningSupport.familyFor(
+            modelState.providerConfig?.providerType ?: modelState.selectedProvider,
+            modelState.providerConfig?.options ?: JsonObject(emptyMap()),
+        )
+        val configModelId = modelState.providerConfig?.model?.takeIf(String::isNotBlank)
+        val modelProfile = remember(configModelId) {
+            configModelId?.let { modelId -> modelProfileOf(modelId) }
+        }
+        val effortLevels = remember(family, modelProfile) {
+            ReasoningSupport.uiLevelsForModel(family, modelProfile)
+        }
+        val currentEffort = session.reasoningEffort
+        val currentEffortLabel = if (family == ReasoningFamily.DeepSeek &&
+            currentEffort != ReasoningEffort.Auto && currentEffort != ReasoningEffort.Off
+        ) {
+            stringResource(R.string.chat_reasoning_effort_on)
+        } else {
+            dshEffortLabel(currentEffort)
+        }
+        DshModelEffortMenu(
+            // 模型列表 = 当前/最近兜底 + 用户自定义供应商分组（此前 groups 恒空，
+            // 制卡页模型菜单里看不到 id 分组——本轮补上）。
+            options = modelOptions(
+                modelState,
+                groupCurrent = stringResource(R.string.model_group_current),
+                groupRecent = stringResource(R.string.model_group_recent),
+            ),
+            groups = modelState.modelGroups,
+            catalog = selectedCatalog,
+            currentModel = currentModel,
+            currentEffort = currentEffort,
+            effortLevels = effortLevels,
+            currentEffortLabel = currentEffortLabel,
+            modelLabel = currentModel,
+            onSelectModel = { model ->
+                onSelectModel(model, modelState.selectedProvider) { saved ->
+                    if (saved) showModelMenu = false
+                    else viewModel.showError(context.getString(R.string.chatvm_model_set_failed, model))
+                }
+            },
+            onSelectEffort = { effort -> viewModel.setReasoningEffort(effort) },
+            onRefreshCatalog = onRefreshModels,
+            onAssignGroup = { modelId, groupId, member -> onAssignModelGroup(modelId, groupId, member) },
+            onCreateGroup = { label -> onCreateModelGroup(label) },
+            onDismiss = { if (!modelState.isSelectingModel) showModelMenu = false },
+            modelsOnly = false,
+            selectionEnabled = !controlsBusy,
+        )
+        modelState.error?.let { error ->
+            LaunchedEffect(error) { viewModel.showError(error) }
+        }
+    }
+    if (showUsagePanel) {
+        // 本草稿区=账本口径（无明细缓冲截断）；今日/累计=共享明细（含聊天）。
+        val zone = java.time.ZoneId.systemDefault()
+        val today = java.time.LocalDate.now(zone)
+        val todayMetrics = state.recentMetrics.filter {
+            java.time.Instant.ofEpochMilli(it.timestampMs).atZone(zone).toLocalDate() == today
+        }
+        val buckets = app.tellev.feature.chat.ChatTokenUsageLedger.Buckets(
+            uncachedInput = session.usage.uncachedInputTokens,
+            cacheRead = session.usage.cacheReadTokens,
+            cacheWrite = session.usage.cacheWriteTokens,
+            output = session.usage.completionTokens,
+        )
+        DshUsagePanel(
+            sessionLabel = stringResource(R.string.dsh_creation_usage_draft),
+            sessionBuckets = buckets,
+            sessionReasoningTokens = session.usage.reasoningTokens,
+            sessionEstimated = session.usage.estimatedCount > 0,
+            todayMetrics = todayMetrics,
+            allMetrics = state.recentMetrics,
+            detailBufferNote = stringResource(R.string.dsh_usage_buffer_note, state.recentMetrics.size),
+            onClear = { viewModel.clearUsage() },
+            onDismiss = { showUsagePanel = false },
+        )
+    }
+    if (showOptimize) {
+        PromptOptimizationDialog(            providerLabel = currentModel?.let { "$providerLabel · $it" },
+            onRun = { options, onPreview, onDone ->
+                if (modelState.isSelectingModel || modelState.isLoading || state.busy) false
+                else viewModel.optimizeDraft(inputText, options, onPreview, onDone)
+            },
+            onCancelRun = { viewModel.cancelPromptOptimization() },
+            onApply = { optimized ->
+                viewModel.cancelPromptOptimization()
+                inputText = optimized
+                showOptimize = false
+            },
+            onDismiss = {
+                viewModel.cancelPromptOptimization()
+                showOptimize = false
+            },
+        )
+    }
+    if (showPresetPicker && session != null) {
+        DshCreationPresetSheet(
+            presets = availablePresets,
+            currentPresetId = session.presetId,
+            onSelect = { viewModel.setPreset(it) },
+            onDismiss = { showPresetPicker = false },
+        )
     }
 }
 
@@ -410,13 +693,24 @@ private fun DshCreationTurnBubble(turn: CreationTurn) {
                 color = Dsh.userBubble,
                 modifier = Modifier.widthIn(max = LocalConfiguration.current.screenWidthDp.dp * 0.78f),
             ) {
-                Text(
-                    turn.text,
-                    fontSize = 14.sp,
-                    lineHeight = 22.sp,
-                    color = Dsh.textPrimary,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                )
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
+                    if (turn.text.isNotBlank()) {
+                        Text(
+                            turn.text,
+                            fontSize = 14.sp,
+                            lineHeight = 22.sp,
+                            color = Dsh.textPrimary,
+                        )
+                    }
+                    turn.attachments.forEach { attachment ->
+                        Text(
+                            attachment.name,
+                            fontSize = 12.sp,
+                            color = Dsh.textSecondary,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                }
             }
         } else {
             Surface(
@@ -467,10 +761,11 @@ private fun DshCreationAskBubble(
             Spacer(Modifier.height(8.dp))
             question.options.forEach { option ->
                 Surface(
-                    onClick = { if (enabled) onAnswer(option.label) },
+                    onClick = { onAnswer(option.label) },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    enabled = enabled,
                     shape = RoundedCornerShape(Dsh.RADIUS_SM.dp),
                     color = Dsh.bgBase,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
                 ) {
                     Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
                         Text(option.label, fontSize = 13.sp, color = Dsh.textPrimary)
@@ -557,12 +852,15 @@ private fun DshCreationStreamingBubble(
     }
 }
 
-/** ⋮ 菜单：手动编辑 / 保存 / 导出 JSON。 */
+/** ⋮ 菜单：手动编辑 / 生成预设 / 保存 / 导出 JSON。 */
 @Composable
 private fun DshCreationMenu(
     expanded: Boolean,
     busy: Boolean,
     canSave: Boolean,
+    presetLabel: String,
+    currentPresetId: String,
+    onPreset: () -> Unit,
     onManual: () -> Unit,
     onSave: () -> Unit,
     onExportJson: () -> Unit,
@@ -572,6 +870,20 @@ private fun DshCreationMenu(
         androidx.compose.material3.DropdownMenuItem(
             text = { Text(stringResource(R.string.dsh_creation_menu_manual), fontSize = 14.sp) },
             onClick = onManual,
+        )
+        // 本草案的生成预设（采样/预算）：空 id = 跟随聊天当前所选。
+        androidx.compose.material3.DropdownMenuItem(
+            text = {
+                Text(
+                    stringResource(R.string.dsh_creation_menu_preset, presetLabel),
+                    fontSize = 14.sp,
+                    color = if (currentPresetId.isBlank()) Dsh.textSecondary else Dsh.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            enabled = !busy,
+            onClick = onPreset,
         )
         androidx.compose.material3.DropdownMenuItem(
             text = { Text(stringResource(R.string.dsh_creation_menu_save), fontSize = 14.sp) },
@@ -583,5 +895,83 @@ private fun DshCreationMenu(
             enabled = !busy,
             onClick = onExportJson,
         )
+    }
+}
+
+/** 菜单行展示：空 id → “跟随聊天”；id 失效（预设被删）→ 也回落“跟随聊天”。 */
+@Composable
+private fun presetMenuLabel(presets: List<app.tellev.core.model.GenerationPreset>, presetId: String): String {
+    val name = presets.firstOrNull { it.id == presetId }?.name
+    return name ?: stringResource(R.string.dsh_creation_preset_follow_chat)
+}
+
+/**
+ * 草案生成预设选择：跟随聊天 / 具体预设单选。与聊天“预设点选”同一数据源
+ * （dataStore 预设库按服务商类目过滤）；保存即写回草案并随草案持久化。
+ * 预设本身的参数编辑仍在聊天侧「调整预设」完成（同一份预设库）。
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun DshCreationPresetSheet(
+    presets: List<app.tellev.core.model.GenerationPreset>,
+    currentPresetId: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Dsh.menuSurface,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(
+                stringResource(R.string.dsh_creation_preset_title),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Dsh.textPrimary,
+            )
+            Spacer(Modifier.height(8.dp))
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+            ) {
+                DshCreationPresetRow(
+                    label = stringResource(R.string.dsh_creation_preset_follow_chat),
+                    selected = currentPresetId.isBlank(),
+                    onClick = { onSelect(""); onDismiss() },
+                )
+                presets.forEach { preset ->
+                    DshCreationPresetRow(
+                        label = preset.name,
+                        selected = preset.id == currentPresetId,
+                        onClick = { onSelect(preset.id); onDismiss() },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DshCreationPresetRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            fontSize = 14.sp,
+            color = Dsh.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (selected) {
+            Icon(
+                Icons.Default.Check,
+                contentDescription = null,
+                tint = Dsh.textPrimary,
+                modifier = Modifier.size(16.dp),
+            )
+        }
     }
 }

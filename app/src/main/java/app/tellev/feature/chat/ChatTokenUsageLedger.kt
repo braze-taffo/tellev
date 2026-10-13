@@ -89,6 +89,15 @@ internal object ChatTokenUsageLedger {
     }
 
     /**
+     * 会话账本口径的思考小注：逐条消息当前 swipe 的思考子集之和。
+     * 与账本桶同一替换语义（重刷覆盖、删消息随消息消失）——不读明细缓冲：
+     * 缓冲会把被重刷掉的旧 swipe 重复计入、又被「最近 100 条」截断
+     * （U32 根因：面板本会话区不受明细缓冲截断）。
+     */
+    fun sessionReasoning(messages: List<app.tellev.core.model.ChatMessage>): Long =
+        messages.sumOf { messageReasoning(it.metadata) }
+
+    /**
      * 会话 metadata 的纯函数改写：先减 [previous]（同消息旧 swipe，可为零桶）
      * 再加 [next]（dsh addReplacing）。返回 null 表示无需变更。
      */

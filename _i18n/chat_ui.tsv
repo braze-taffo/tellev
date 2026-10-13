@@ -120,7 +120,6 @@ nav_update_message	新版本 %1$s 已发布，当前版本 v%2$s。
 nav_update_apk_size	安装包约 %1$s MB
 nav_update_now	立即更新
 nav_update_download_started	开始下载新版本…
-ui_placeholder_message	架构入口已就绪，具体功能实现放在当前模块。
 chat_optimize_title	优化提示词
 chat_optimize_mode_polish	润色
 chat_optimize_mode_expand	扩写
@@ -144,12 +143,12 @@ chat_optimize_failed_generic	优化请求失败
 chat_optimize_unavailable	当前服务商不支持文本生成，无法优化
 chatimgco_invalid_image_data	返回内容不是有效图片
 chat_reasoning_effort	思考强度
-chat_reasoning_effort_auto	跟随预设
-chat_reasoning_effort_off	关闭
-chat_reasoning_effort_low	低
-chat_reasoning_effort_medium	中
-chat_reasoning_effort_high	高
-chat_reasoning_effort_max	最大
+chat_reasoning_effort_auto	Auto
+chat_reasoning_effort_off	Off
+chat_reasoning_effort_low	Low
+chat_reasoning_effort_medium	Medium
+chat_reasoning_effort_high	High
+chat_reasoning_effort_max	Max
 chat_reasoning_set_failed	设置思考强度失败：%1$s
 ui_character_count	%1$d 位角色
 ui_character_library	你的角色收藏
@@ -167,8 +166,6 @@ ui_extensions_intro_hint	管理记忆、脚本和角色能力。
 ui_settings_appearance	外观
 ui_settings_data	资料
 ui_settings_identity	身份
-ui_settings_intro	让故事更合心意
-ui_settings_intro_hint	模型、预设、外观与资料，都在这里管理。
 ui_settings_models	模型与预设
 ui_world_count	%1$d 本世界书
 ui_world_disabled	未启用
@@ -276,7 +273,7 @@ ctx_label_world	世界书
 ctx_label_messages	对话消息
 time_hours_short	%1$d小时
 time_days_short	%1$d天
-chat_reasoning_effort_on	开
+chat_reasoning_effort_on	On
 model_catalog_loading	正在获取模型列表…
 model_catalog_failed	获取失败：%1$s
 model_catalog_retry	重试
@@ -284,3 +281,7 @@ model_catalog_empty	没有可用模型
 chat_voice_no_match	没有听清，请再试一次
 chat_voice_error_generic	语音识别出错（代码 %1$d）
 chat_voice_permission	需要麦克风权限才能语音输入
+nav_discard_unsaved_title	放弃未保存的更改？
+nav_discard_unsaved_message	离开后，未保存的修改会丢失。
+nav_discard_unsaved_confirm	放弃
+chat_drawer_model_services	模型服务

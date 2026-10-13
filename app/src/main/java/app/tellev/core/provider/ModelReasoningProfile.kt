@@ -29,6 +29,21 @@ data class ModelReasoningProfile(
     val maxTokens: Long? = null,
     /** 档案来源：user（用户声明）/ knowledge（知识库建议已套用）。 */
     val source: String = "user",
+    /**
+     * thinking token 预算的请求字段拼写（bre thinkingTokenBudgetField）：
+     * openai-completions 协议专用。null = 不声明。
+     */
+    val thinkingTokenBudgetField: String? = null,
+    /** 是否支持 thinking token 预算（bre supportsThinkingTokenBudget）。 */
+    val supportsThinkingTokenBudget: Boolean? = null,
+    /** vLLM 优先级（bre vllmPriority）：openai-completions 协议专用。 */
+    val vllmPriority: Int? = null,
+    /** 是否支持 max_output_tokens（bre supportsMaxOutputTokens）：openai-responses 专用。 */
+    val supportsMaxOutputTokens: Boolean? = null,
+    /** 端点说的思考格式（bre thinkingFormat），仅展示用。 */
+    val thinkingFormat: String? = null,
+    /** 端点是否接受 reasoning-effort 风格参数（bre supportsReasoningEffort）。 */
+    val supportsReasoningEffort: Boolean? = null,
 )
 
 /** bre UNSET_MARKER 的对应物：「用户明确清空」与「还没填」是两个状态。 */

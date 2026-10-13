@@ -50,26 +50,40 @@ fun CharacterPortraitCard(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
     trailing: @Composable () -> Unit = {},
+    /** 紧凑形制：书架 3 列网格用（更小圆角/内边距、封面 3:4、名称单行）。 */
+    compact: Boolean = false,
 ) {
+    val cardShape = RoundedCornerShape(if (compact) 14.dp else 22.dp)
     Card(
-        modifier = modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = RoundedCornerShape(22.dp),
+        // 水波纹画在 clickable 节点上：不先裁剪，方形 ripple 会溢出圆角卡片；
+        // Surface 内部的裁剪在 modifier 之后，够不着外层的按压反馈。
+        modifier = modifier.fillMaxWidth().clip(cardShape).combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        shape = cardShape,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
     ) {
-        Box(Modifier.fillMaxWidth().aspectRatio(0.85f)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(if (compact) 0.75f else 0.85f)) {
             CharacterCover(file, name, Modifier.fillMaxSize())
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
                 listOf(Color.Transparent, Color.Black.copy(alpha = 0.3f)),
             )))
-            Box(Modifier.align(Alignment.TopEnd).padding(8.dp)) { trailing() }
+            Box(Modifier.align(Alignment.TopEnd).padding(if (compact) 4.dp else 8.dp)) { trailing() }
         }
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(name, style = MaterialTheme.typography.titleMedium, maxLines = 1,
-                overflow = TextOverflow.Ellipsis)
-            Text(tags.take(2).joinToString(" · ").ifBlank { "✦" },
-                style = MaterialTheme.typography.bodySmall,
+        Column(
+            Modifier.padding(horizontal = if (compact) 8.dp else 14.dp, vertical = if (compact) 6.dp else 14.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 6.dp),
+        ) {
+            Text(
+                name,
+                style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                tags.take(2).joinToString(" · ").ifBlank { "✦" },
+                style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

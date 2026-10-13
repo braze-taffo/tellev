@@ -35,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,9 +47,16 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.tellev.LocalTellevGraph
 import app.tellev.R
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 
 /**
  * dsh Composer 官方复刻（harness InputBar.module.css）：
@@ -81,6 +89,8 @@ fun DshComposer(
     statsRight: String?,
     onStatsLeft: () -> Unit,
     onStatsRight: () -> Unit,
+    toolsEnabled: Boolean = true,
+    inputLabel: String? = null,
 ) {
     val cardShape = RoundedCornerShape(Dsh.RADIUS_PANEL.dp)
     Column {
@@ -134,6 +144,7 @@ fun DshComposer(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 36.dp)
+                            .semantics { inputLabel?.let { contentDescription = it } }
                             .padding(start = 14.dp, end = 8.dp)
                             .padding(vertical = 4.dp)
                             .pointerInput(Unit) {
@@ -161,7 +172,8 @@ fun DshComposer(
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(CircleShape)
-                                .clickable(onClick = onPickFile),
+                                .alpha(if (toolsEnabled) 1f else 0.4f)
+                                .clickable(enabled = toolsEnabled, onClick = onPickFile),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
@@ -176,8 +188,8 @@ fun DshComposer(
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(CircleShape)
-                                .alpha(if (text.isNotBlank()) 1f else 0.4f)
-                                .clickable(enabled = text.isNotBlank(), onClick = onOptimize),
+                                .alpha(if (toolsEnabled && text.isNotBlank()) 1f else 0.4f)
+                                .clickable(enabled = toolsEnabled && text.isNotBlank(), onClick = onOptimize),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
@@ -193,7 +205,8 @@ fun DshComposer(
                             modifier = Modifier
                                 .size(28.dp)
                                 .clip(RoundedCornerShape(Dsh.RADIUS_SM.dp))
-                                .clickable(onClick = onOpenModelMenu),
+                                .alpha(if (toolsEnabled) 1f else 0.4f)
+                                .clickable(enabled = toolsEnabled, onClick = onOpenModelMenu),
                             contentAlignment = Alignment.Center,
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -330,13 +343,62 @@ private fun SendOrStop(
     }
 }
 
-/** 待发附件：只用于 composer 上方的缩略条（名称 + 是否图片）。 */
+/**
+ * 待发附件：只用于 composer 上方的缩略条（名称 + 是否图片）。
+ *
+ * 只存 dataRoot 下的相对路径而不存 File：File 不可入 Bundle，旋转/进程重建后
+ * 无法经由 rememberSaveable 还原；路径可以在还原后重新解析。落盘本体由
+ * ChatCoreHelpers 写在 dataRoot/user/images 与 user/files 下。
+ */
+@Serializable
 data class DshPendingAttachment(
     val id: String,
     val name: String,
     val isImage: Boolean,
-    val file: java.io.File? = null,
+    val relativePath: String? = null,
 )
+
+private val DshAttachmentJson = Json { ignoreUnknownKeys = true }
+
+/** 展示条编成可入 Bundle 的字符串（旋转/进程重建后由 [decodeDshPendingAttachments] 还原）。 */
+internal fun encodeDshPendingAttachments(items: List<DshPendingAttachment>): String =
+    runCatching { DshAttachmentJson.encodeToString(items) }.getOrElse { "[]" }
+
+internal fun decodeDshPendingAttachments(raw: String): List<DshPendingAttachment> =
+    runCatching { DshAttachmentJson.decodeFromString<List<DshPendingAttachment>>(raw) }
+        .getOrElse { emptyList() }
+
+/**
+ * 真实附件（含 mimeType / metadata）的编解码。展示条只有 id/name/isImage，
+ * 凭它重建不了发送时要用的 mime 与元数据，所以走 [app.tellev.core.model.Attachment]
+ * 自身的序列化做无损往返，而不是只按 id 拼一个残缺副本。
+ */
+internal fun encodeChatAttachments(items: List<app.tellev.core.model.Attachment>): String =
+    runCatching { DshAttachmentJson.encodeToString(items) }.getOrElse { "[]" }
+
+internal fun decodeChatAttachments(raw: String): List<app.tellev.core.model.Attachment> =
+    runCatching { DshAttachmentJson.decodeFromString<List<app.tellev.core.model.Attachment>>(raw) }
+        .getOrElse { emptyList() }
+
+/** rememberSaveable 的两个 Saver：Saved 类型是 String，可安全进 Bundle。 */
+internal val DshPendingAttachmentListSaver: Saver<List<DshPendingAttachment>, String> = Saver(
+    save = { encodeDshPendingAttachments(it) },
+    restore = { decodeDshPendingAttachments(it) },
+)
+
+internal val ChatAttachmentListSaver: Saver<List<app.tellev.core.model.Attachment>, String> = Saver(
+    save = { encodeChatAttachments(it) },
+    restore = { decodeChatAttachments(it) },
+)
+
+/** 发送侧用的真实附件 → composer 展示条。 */
+internal fun app.tellev.core.model.Attachment.toDshPendingAttachment(): DshPendingAttachment =
+    DshPendingAttachment(
+        id = id,
+        name = name,
+        isImage = mimeType.startsWith("image/"),
+        relativePath = relativePath,
+    )
 
 /** 附件条：横向滚动的小卡片，图片显示缩略图，其余显示文件名，右上角 × 移除。 */
 @Composable
@@ -344,21 +406,23 @@ private fun DshAttachmentStrip(
     attachments: List<DshPendingAttachment>,
     onRemove: (String) -> Unit,
 ) {
+    val dataRoot = LocalTellevGraph.current.dataStore.layout.root.toFile()
     androidx.compose.foundation.lazy.LazyRow(
         modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(attachments.size, key = { attachments[it].id }) { index ->
             val item = attachments[index]
+            val file = item.relativePath?.let { java.io.File(dataRoot, it) }
             Box {
                 Surface(
                     shape = RoundedCornerShape(Dsh.RADIUS_MD.dp),
                     color = Dsh.selector,
                     modifier = Modifier.padding(top = 6.dp, end = 6.dp),
                 ) {
-                    if (item.isImage && item.file != null) {
+                    if (item.isImage && file != null) {
                         coil.compose.AsyncImage(
-                            model = item.file,
+                            model = file,
                             contentDescription = item.name,
                             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                             modifier = Modifier.size(56.dp),

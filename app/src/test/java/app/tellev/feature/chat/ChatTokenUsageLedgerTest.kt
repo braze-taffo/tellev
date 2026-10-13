@@ -2,6 +2,8 @@ package app.tellev.feature.chat
 
 import app.tellev.core.metrics.GenerationMetrics
 import app.tellev.core.metrics.GenerationMetricsCalculator
+import app.tellev.core.model.ChatMessage
+import app.tellev.core.model.MessageRole
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -12,7 +14,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** dsh token-meter 语义的回归：四互斥桶、替换（重刷不重复计数）、删除扣回。 */
+/** dsh token-meter 语义的回归：四互斥桶、替换（重刷不重复计数）、删除扣回、思考小计。 */
 class ChatTokenUsageLedgerTest {
 
     private fun sessionMeta(vararg pairs: Pair<String, JsonObject>) = buildJsonObject {
@@ -25,6 +27,15 @@ class ChatTokenUsageLedgerTest {
         put("cacheWrite", write)
         put("output", output)
     }
+
+    private fun chatMessage(id: String, metadata: JsonObject) = ChatMessage(
+        id = id,
+        role = MessageRole.Character,
+        name = "test",
+        content = "",
+        createdAtMillis = 0L,
+        metadata = metadata,
+    )
 
     @Test
     fun `session buckets read back what was written`() {
@@ -131,6 +142,48 @@ class ChatTokenUsageLedgerTest {
             ChatTokenUsageLedger.Buckets(uncachedInput = 1, cacheRead = 2, cacheWrite = 3, output = 4),
             ChatTokenUsageLedger.messageBuckets(meta),
         )
+    }
+
+    @Test
+    fun `session reasoning sums current-swipe message keys`() {
+        val reported = ChatTokenUsageLedger.messageMetadataWith(
+            buildJsonObject { },
+            ChatTokenUsageLedger.Buckets(uncachedInput = 100, output = 50),
+            reasoning = 120,
+        )
+        // 估算轮：零桶零思考键照写，对求和贡献 0。
+        val estimated = ChatTokenUsageLedger.messageMetadataWith(
+            buildJsonObject { },
+            ChatTokenUsageLedger.Buckets(),
+            reasoning = 0,
+        )
+        // 无键旧消息（导入/旧版本）忽略。
+        val legacy = buildJsonObject { }
+        assertEquals(
+            120L,
+            ChatTokenUsageLedger.sessionReasoning(
+                listOf(chatMessage("m1", reported), chatMessage("m2", estimated), chatMessage("u1", legacy)),
+            ),
+        )
+    }
+
+    @Test
+    fun `session reasoning follows replacement and removal like the session buckets`() {
+        val first = ChatTokenUsageLedger.messageMetadataWith(
+            buildJsonObject { },
+            ChatTokenUsageLedger.Buckets(uncachedInput = 10, output = 5),
+            reasoning = 90,
+        )
+        // 重刷同一消息：消息键被新 swipe 覆盖（不是累加），求和只算新值。
+        val replaced = ChatTokenUsageLedger.messageMetadataWith(
+            first,
+            ChatTokenUsageLedger.Buckets(uncachedInput = 3, output = 2),
+            reasoning = 40,
+        )
+        assertEquals(40L, ChatTokenUsageLedger.sessionReasoning(listOf(chatMessage("m1", replaced))))
+        // 消息被删（从列表消失）→ 键随消息一起消失；空会话记 0。
+        assertEquals(0L, ChatTokenUsageLedger.sessionReasoning(listOf(chatMessage("m2", buildJsonObject { }))))
+        assertEquals(0L, ChatTokenUsageLedger.sessionReasoning(emptyList()))
     }
 }
 
