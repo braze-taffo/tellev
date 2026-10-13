@@ -316,10 +316,8 @@
     <string name="dsh_user_resend">다시 보내기</string>
     <string name="dsh_model_levels">추론 강도 단계</string>
     <string name="dsh_model_default_effort">기본 추론 강도</string>
-    <string name="dsh_model_follow_memory">기억 따르기</string>
     <string name="dsh_model_clear_key">API 키 지우기</string>
     <string name="dsh_model_clear_key_confirm">저장된 API 키가 삭제됩니다. 이 제공업체를 사용하려면 다시 입력해야 합니다.</string>
-    <string name="dsh_model_advanced">고급 설정</string>
     <string name="dsh_preset_full_title">프리셋 설정</string>
     <string name="dsh_drawer_open_cd">세션 목록 열기</string>
     <string name="dsh_bg_set_failed">배경 설정 실패: %1$s</string>
@@ -1048,6 +1046,8 @@
     <string name="setsec_add_title">시크릿 추가</string>
     <string name="setsec_cancel">취소</string>
     <string name="setsec_delete_cd">삭제</string>
+    <string name="setsec_delete_confirm">삭제하면 이 시크릿이 기기에서 제거되고 확장 스크립트가 더 이상 읽을 수 없습니다. 이 작업은 되돌릴 수 없습니다.</string>
+    <string name="setsec_delete_title">시크릿 삭제</string>
     <string name="setsec_empty">저장된 시크릿이 없습니다.</string>
     <string name="setsec_key_label">키</string>
     <string name="setsec_save">저장</string>

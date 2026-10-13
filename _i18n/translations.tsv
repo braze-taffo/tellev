@@ -756,6 +756,8 @@ setpers_title	Persona	ペルソナ	페르소나
 setsec_add_title	Add secret	シークレットを追加	시크릿 추가
 setsec_cancel	Cancel	キャンセル	취소
 setsec_delete_cd	Delete	削除	삭제
+setsec_delete_confirm	Deleting removes this secret from this device; extension scripts will no longer be able to read it. This cannot be undone.	削除するとこのシークレットは端末から削除され、拡張スクリプトは読み取れなくなります。この操作は元に戻せません。	삭제하면 이 시크릿이 기기에서 제거되고 확장 스크립트가 더 이상 읽을 수 없습니다. 이 작업은 되돌릴 수 없습니다.
+setsec_delete_title	Delete secret	シークレットを削除	시크릿 삭제
 setsec_empty	No saved secrets.	保存済みのシークレットはありません。	저장된 시크릿이 없습니다.
 setsec_key_label	Key	キー	키
 setsec_save	Save	保存	저장
@@ -1704,10 +1706,8 @@ dsh_user_edit_resend	Edit and resend	編集して再送信	편집 후 다시 보
 dsh_user_resend	Resend	再送信	다시 보내기
 dsh_model_levels	Reasoning effort levels	推論強度レベル	추론 강도 단계
 dsh_model_default_effort	Default reasoning effort	既定の推論強度	기본 추론 강도
-dsh_model_follow_memory	Follow memory	記憶に従う	기억 따르기
 dsh_model_clear_key	Clear API key	API キーを削除	API 키 지우기
 dsh_model_clear_key_confirm	The saved API key will be removed. You will need to enter it again to use this provider.	保存された API キーが削除されます。このプロバイダーを使うには再入力が必要です。	저장된 API 키가 삭제됩니다. 이 제공업체를 사용하려면 다시 입력해야 합니다.
-dsh_model_advanced	Advanced settings	詳細設定	고급 설정
 dsh_preset_full_title	Preset settings	プリセット設定	프리셋 설정
 dsh_drawer_open_cd	Open sessions	セッション一覧を開く	세션 목록 열기
 dsh_bg_set_failed	Failed to set background: %1$s	背景の設定に失敗: %1$s	배경 설정 실패: %1$s

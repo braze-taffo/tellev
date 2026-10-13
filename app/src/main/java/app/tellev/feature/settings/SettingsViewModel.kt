@@ -23,6 +23,7 @@ import app.tellev.core.provider.ProviderRegistry
 import app.tellev.core.provider.ProviderStatus
 import app.tellev.core.provider.supportsChatGeneration
 import app.tellev.core.security.SecretStore
+import app.tellev.core.security.isInternalSecretId
 import app.tellev.core.storage.AppPreferences
 import app.tellev.core.storage.StDataStore
 import app.tellev.feature.settings.controller.AppearanceSettingsController
@@ -189,7 +190,7 @@ class SettingsViewModel(
                     dataStore.readSelectedPresetName(category)?.let { category to it }
                 }.toMap()
                 val personas = dataStore.listPersonas()
-                val secretIds = secretStore.listSecretIds()
+                val secretIds = secretStore.listSecretIds().filterNot(::isInternalSecretId)
                 val storedSelectedId = secretStore.readSecret(ProviderDefaults.SELECTED_PROVIDER_SECRET_ID)
                     ?: _uiState.value.selectedProviderId
                 val selectedId = if (

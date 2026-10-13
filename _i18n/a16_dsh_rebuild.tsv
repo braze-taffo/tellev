@@ -86,10 +86,8 @@ dsh_user_edit_resend	编辑并重新发送
 dsh_user_resend	重新发送
 dsh_model_levels	思考强度档位
 dsh_model_default_effort	默认思考强度
-dsh_model_follow_memory	跟随记忆
 dsh_model_clear_key	清除 API 密钥
 dsh_model_clear_key_confirm	清除后需重新输入密钥才能调用该服务商。
-dsh_model_advanced	高级设置
 dsh_preset_full_title	预设设置
 dsh_drawer_open_cd	打开会话列表
 dsh_bg_set_failed	设置背景失败：%1$s

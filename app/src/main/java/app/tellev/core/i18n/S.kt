@@ -320,10 +320,8 @@ object S {
     const val dsh_user_resend = "dsh_user_resend"
     const val dsh_model_levels = "dsh_model_levels"
     const val dsh_model_default_effort = "dsh_model_default_effort"
-    const val dsh_model_follow_memory = "dsh_model_follow_memory"
     const val dsh_model_clear_key = "dsh_model_clear_key"
     const val dsh_model_clear_key_confirm = "dsh_model_clear_key_confirm"
-    const val dsh_model_advanced = "dsh_model_advanced"
     const val dsh_preset_full_title = "dsh_preset_full_title"
     const val dsh_drawer_open_cd = "dsh_drawer_open_cd"
     const val dsh_bg_set_failed = "dsh_bg_set_failed"
@@ -1052,6 +1050,8 @@ object S {
     const val setsec_add_title = "setsec_add_title"
     const val setsec_cancel = "setsec_cancel"
     const val setsec_delete_cd = "setsec_delete_cd"
+    const val setsec_delete_confirm = "setsec_delete_confirm"
+    const val setsec_delete_title = "setsec_delete_title"
     const val setsec_empty = "setsec_empty"
     const val setsec_key_label = "setsec_key_label"
     const val setsec_save = "setsec_save"
@@ -2236,10 +2236,8 @@ object S {
         "dsh_user_resend" to R.string.dsh_user_resend,
         "dsh_model_levels" to R.string.dsh_model_levels,
         "dsh_model_default_effort" to R.string.dsh_model_default_effort,
-        "dsh_model_follow_memory" to R.string.dsh_model_follow_memory,
         "dsh_model_clear_key" to R.string.dsh_model_clear_key,
         "dsh_model_clear_key_confirm" to R.string.dsh_model_clear_key_confirm,
-        "dsh_model_advanced" to R.string.dsh_model_advanced,
         "dsh_preset_full_title" to R.string.dsh_preset_full_title,
         "dsh_drawer_open_cd" to R.string.dsh_drawer_open_cd,
         "dsh_bg_set_failed" to R.string.dsh_bg_set_failed,
@@ -2968,6 +2966,8 @@ object S {
         "setsec_add_title" to R.string.setsec_add_title,
         "setsec_cancel" to R.string.setsec_cancel,
         "setsec_delete_cd" to R.string.setsec_delete_cd,
+        "setsec_delete_confirm" to R.string.setsec_delete_confirm,
+        "setsec_delete_title" to R.string.setsec_delete_title,
         "setsec_empty" to R.string.setsec_empty,
         "setsec_key_label" to R.string.setsec_key_label,
         "setsec_save" to R.string.setsec_save,
@@ -4153,10 +4153,8 @@ object S {
         "dsh_user_resend" to "重新发送",
         "dsh_model_levels" to "思考强度档位",
         "dsh_model_default_effort" to "默认思考强度",
-        "dsh_model_follow_memory" to "跟随记忆",
         "dsh_model_clear_key" to "清除 API 密钥",
         "dsh_model_clear_key_confirm" to "清除后需重新输入密钥才能调用该服务商。",
-        "dsh_model_advanced" to "高级设置",
         "dsh_preset_full_title" to "预设设置",
         "dsh_drawer_open_cd" to "打开会话列表",
         "dsh_bg_set_failed" to "设置背景失败：%1\$s",
@@ -4885,6 +4883,8 @@ object S {
         "setsec_add_title" to "添加密钥",
         "setsec_cancel" to "取消",
         "setsec_delete_cd" to "删除",
+        "setsec_delete_confirm" to "删除后此密钥将从本设备移除，扩展脚本将无法再读取。此操作不可撤销。",
+        "setsec_delete_title" to "删除密钥",
         "setsec_empty" to "暂无保存的密钥。",
         "setsec_key_label" to "键",
         "setsec_save" to "保存",

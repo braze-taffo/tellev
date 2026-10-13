@@ -525,3 +525,22 @@ F1 代码（子智能体完成）：chat-conn 与 chat-providers 合并为单一
 **附带验证**：编辑仅写内存草稿（`updateApiKey/updateBaseUrl` 只 update stateFlow），未保存即关弹层草稿丢弃、持久层无损（实测：草稿改名/密钥截断后关弹层，重开全部恢复原值）；快速切换配置下拉正常；「当前使用 OpenAI 兼容 / Qwen-3.8-Flash」口径一致。
 
 **验收遗留**：chat-providers 模型列表下拉需真实服务返回 availableModels 才显示，本模拟器 baseUrl 为占位地址无法触发，由 T10 单测覆盖。
+
+### 第二十二轮 F2 波：模型服务配置残留散点收敛（2026-10-14）
+
+F2 代码落地（brain 派发被 harness 拦截 ×3，主智能体按 brain 契约自拟计划执行，范围经现场调查收敛）：
+
+| 项 | 改动 | 结果 |
+|----|------|------|
+| 密钥区块过滤 | `SecretStore.kt` 新增 `isInternalSecretId`（`provider-*` / `image-*` 前缀 + `custom-provider-configs` + `tellev-memory-settings-v1`），`SettingsViewModel.load` 与 `PersonaSecretSettingsController.addSecret/deleteSecret` 三处加载点统一 `filterNot` | 内部项不再显示/可误删，密钥区块只呈现用户自定义条目（遗留决策点①落地） |
+| 删除确认 | `SettingsSecretSection` 删除按钮改走 AlertDialog（新 i18n 键 `setsec_delete_title` / `setsec_delete_confirm`，键数 1913→1915→1913 净持平：+2 新键 −2 孤儿键） | 误删防线补齐 |
+| 死代码 | DshPopups.kt 死 import ×28 清理（setValue 保留防属性委托误删）；孤儿键 `dsh_model_follow_memory` / `dsh_model_advanced` 三处 S.kt + 两个 tsv 删除 | -28 import、-2 孤儿键 |
+
+门禁：compileDebugKotlin + assembleDebug 绿；全量单测 **1531/0/0/2**（基线 1529 + 新增 `InternalSecretIdTest` 2 例：框架自管 id 全判内部 / 用户自定义 id 保持可见）。
+
+模拟器验收（emulator-5554）：
+- 密钥区块空态「暂无保存的密钥。」（内部项全部过滤）→ 添加自定义 `my-api-key` 正常显示 → 删除弹「删除密钥」确认框（文案含扩展脚本影响与不可撤销）→ 确认后回到空态。全链路 ✓
+- mock 补验（F1 遗留）：`tools/mock_model_service.py` 起宿主 18099，开「允许明文 HTTP」开关后 baseUrl 指向 `http://10.0.2.2:18099`，测试连接成功 → ProviderDetailsPane 模型字段变下拉「可输入筛选，已获取 2 个模型」→ 选择器含搜索框 + fixture-model-a/b + 手动输入/应用。availableModels 链路真实渲染 ✓
+- F1 快速回归：统一弹层 → 对话段 → ProviderDetailsPane 主面板结构与保存/测试连接链路无回归 ✓
+
+验收过程现场说明（如实记录）：①模拟器配置名称因 adb 无法输入中文由「OpenAI 兼容」改为英文等价 `OpenAI Compatible`（UI 中可随时改回）；②「允许明文 HTTP」开关被开启（mock 验收需要，如不需要可关闭）；③中间一次字段错位输入已被完整修复并经重开验证持久层正确。

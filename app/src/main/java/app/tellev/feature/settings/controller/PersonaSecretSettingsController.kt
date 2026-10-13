@@ -4,6 +4,7 @@ import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import app.tellev.core.model.Persona
 import app.tellev.core.security.SecretStore
+import app.tellev.core.security.isInternalSecretId
 import app.tellev.core.storage.StDataStore
 import app.tellev.feature.settings.SettingsUiState
 import kotlinx.coroutines.CoroutineScope
@@ -94,7 +95,7 @@ internal class PersonaSecretSettingsController(
             stateFlow.update { it.copy(isLoading = true, error = null) }
             try {
                 secretStore.putSecret(key, value)
-                val secretIds = secretStore.listSecretIds()
+                val secretIds = secretStore.listSecretIds().filterNot(::isInternalSecretId)
                 stateFlow.update {
                     it.copy(
                         secretIds = secretIds,
@@ -118,7 +119,7 @@ internal class PersonaSecretSettingsController(
             stateFlow.update { it.copy(isLoading = true, error = null) }
             try {
                 secretStore.deleteSecret(key)
-                val secretIds = secretStore.listSecretIds()
+                val secretIds = secretStore.listSecretIds().filterNot(::isInternalSecretId)
                 stateFlow.update {
                     it.copy(
                         secretIds = secretIds,

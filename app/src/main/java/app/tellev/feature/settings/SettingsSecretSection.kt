@@ -105,6 +105,7 @@ internal fun LazyListScope.secretSectionItems(
         }
     } else {
         items(state.secretIds, key = { "secret_$it" }) { secretId ->
+            var confirmDelete by remember { mutableStateOf(false) }
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -130,7 +131,7 @@ internal fun LazyListScope.secretSectionItems(
                         modifier = Modifier.weight(1f),
                     )
                     IconButton(
-                        onClick = { onDeleteSecret(secretId) },
+                        onClick = { confirmDelete = true },
                         modifier = Modifier.size(32.dp),
                     ) {
                         Icon(
@@ -141,6 +142,33 @@ internal fun LazyListScope.secretSectionItems(
                         )
                     }
                 }
+            }
+            if (confirmDelete) {
+                AlertDialog(
+                    onDismissRequest = { confirmDelete = false },
+                    title = { Text(stringResource(R.string.setsec_delete_title)) },
+                    text = {
+                        Text(stringResource(R.string.setsec_delete_confirm))
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                confirmDelete = false
+                                onDeleteSecret(secretId)
+                            },
+                        ) {
+                            Text(
+                                stringResource(R.string.setsec_delete_cd),
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmDelete = false }) {
+                            Text(stringResource(R.string.setsec_cancel))
+                        }
+                    },
+                )
             }
         }
     }

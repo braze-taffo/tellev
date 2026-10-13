@@ -316,10 +316,8 @@
     <string name="dsh_user_resend">Resend</string>
     <string name="dsh_model_levels">Reasoning effort levels</string>
     <string name="dsh_model_default_effort">Default reasoning effort</string>
-    <string name="dsh_model_follow_memory">Follow memory</string>
     <string name="dsh_model_clear_key">Clear API key</string>
     <string name="dsh_model_clear_key_confirm">The saved API key will be removed. You will need to enter it again to use this provider.</string>
-    <string name="dsh_model_advanced">Advanced settings</string>
     <string name="dsh_preset_full_title">Preset settings</string>
     <string name="dsh_drawer_open_cd">Open sessions</string>
     <string name="dsh_bg_set_failed">Failed to set background: %1$s</string>
@@ -1048,6 +1046,8 @@
     <string name="setsec_add_title">Add secret</string>
     <string name="setsec_cancel">Cancel</string>
     <string name="setsec_delete_cd">Delete</string>
+    <string name="setsec_delete_confirm">Deleting removes this secret from this device; extension scripts will no longer be able to read it. This cannot be undone.</string>
+    <string name="setsec_delete_title">Delete secret</string>
     <string name="setsec_empty">No saved secrets.</string>
     <string name="setsec_key_label">Key</string>
     <string name="setsec_save">Save</string>

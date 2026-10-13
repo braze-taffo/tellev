@@ -316,10 +316,8 @@
     <string name="dsh_user_resend">重新发送</string>
     <string name="dsh_model_levels">思考强度档位</string>
     <string name="dsh_model_default_effort">默认思考强度</string>
-    <string name="dsh_model_follow_memory">跟随记忆</string>
     <string name="dsh_model_clear_key">清除 API 密钥</string>
     <string name="dsh_model_clear_key_confirm">清除后需重新输入密钥才能调用该服务商。</string>
-    <string name="dsh_model_advanced">高级设置</string>
     <string name="dsh_preset_full_title">预设设置</string>
     <string name="dsh_drawer_open_cd">打开会话列表</string>
     <string name="dsh_bg_set_failed">设置背景失败：%1$s</string>
@@ -1048,6 +1046,8 @@
     <string name="setsec_add_title">添加密钥</string>
     <string name="setsec_cancel">取消</string>
     <string name="setsec_delete_cd">删除</string>
+    <string name="setsec_delete_confirm">删除后此密钥将从本设备移除，扩展脚本将无法再读取。此操作不可撤销。</string>
+    <string name="setsec_delete_title">删除密钥</string>
     <string name="setsec_empty">暂无保存的密钥。</string>
     <string name="setsec_key_label">键</string>
     <string name="setsec_save">保存</string>

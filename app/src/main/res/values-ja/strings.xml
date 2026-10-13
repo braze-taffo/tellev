@@ -316,10 +316,8 @@
     <string name="dsh_user_resend">再送信</string>
     <string name="dsh_model_levels">推論強度レベル</string>
     <string name="dsh_model_default_effort">既定の推論強度</string>
-    <string name="dsh_model_follow_memory">記憶に従う</string>
     <string name="dsh_model_clear_key">API キーを削除</string>
     <string name="dsh_model_clear_key_confirm">保存された API キーが削除されます。このプロバイダーを使うには再入力が必要です。</string>
-    <string name="dsh_model_advanced">詳細設定</string>
     <string name="dsh_preset_full_title">プリセット設定</string>
     <string name="dsh_drawer_open_cd">セッション一覧を開く</string>
     <string name="dsh_bg_set_failed">背景の設定に失敗: %1$s</string>
@@ -1048,6 +1046,8 @@
     <string name="setsec_add_title">シークレットを追加</string>
     <string name="setsec_cancel">キャンセル</string>
     <string name="setsec_delete_cd">削除</string>
+    <string name="setsec_delete_confirm">削除するとこのシークレットは端末から削除され、拡張スクリプトは読み取れなくなります。この操作は元に戻せません。</string>
+    <string name="setsec_delete_title">シークレットを削除</string>
     <string name="setsec_empty">保存済みのシークレットはありません。</string>
     <string name="setsec_key_label">キー</string>
     <string name="setsec_save">保存</string>

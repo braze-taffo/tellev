@@ -66,6 +66,8 @@ setpers_title	人设
 setsec_add_title	添加密钥
 setsec_cancel	取消
 setsec_delete_cd	删除
+setsec_delete_confirm	删除后此密钥将从本设备移除，扩展脚本将无法再读取。此操作不可撤销。
+setsec_delete_title	删除密钥
 setsec_empty	暂无保存的密钥。
 setsec_key_label	键
 setsec_save	保存
