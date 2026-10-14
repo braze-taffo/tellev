@@ -366,6 +366,6 @@ internal object ExtensionScriptTemplate {
      * as `a < /b/.test(c)` or `</` inside regex literals.
      */
     internal fun sanitizeScriptSource(src: String): String = src
-        .replace(Regex("</script", RegexOption.IGNORE_CASE), "<\\/script")
+        .replace(Regex("</script", RegexOption.IGNORE_CASE), Regex.escapeReplacement("<\\/script"))
         .replace("<!--", "<\\!--")
 }
