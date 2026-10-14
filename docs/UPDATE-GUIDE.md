@@ -36,7 +36,7 @@
 
 ```
 assets/guide/onboarding/{zh-CN,en,ja,ko}.md      # 4 页
-assets/guide/update/{zh-CN,en,ja,ko}.md          # 6 页
+assets/guide/update/{zh-CN,en,ja,ko}.md          # 本版本 3 页，四语言保持一致
 ```
 
 格式刻意做成语言中立，译文可以自由翻译正文，解析器不去认会被翻译的标签：
@@ -83,15 +83,15 @@ assets/guide/update/{zh-CN,en,ja,ko}.md          # 6 页
 - 弹窗自身的文案走既有 i18n 流程（`_i18n/a12_guide.tsv` + `_i18n/translations.tsv`），
   改完照例跑 `python tools/i18n_consolidate.py`。
 
-## 下个版本怎么加指引
+## 每次发行的必要流程
 
-1. 改 `assets/guide/update/<语言>.md`，把内容换成新版本的更新点（四个语言都要改）。
-2. 什么都不用动：判定比的是「上次提示过的版本」与当前 `versionName`，
-   只要版本号变了就会再弹一次。
-3. 新增/删除页面时同步四个语言文件——`GuideFormatTest` 的资产守卫会检查
-   四语言页数一致、每页三件套齐全，缺一个就红。
-4. 如果某一版内容特别多，可以考虑给 `GuideKind` 增加一个并列的资产目录并在
-   `decideStartupGuide` 之外挑选用哪份，目前只有 `Onboarding` / `Update` 两种。
+1. 每次更新版本并发行时，同步替换四语言 `assets/guide/update/<语言>.md` 的正文，覆盖实际发行的变化、入口和用法。补丁版本同样必须更新，不能只改版本号或沿用旧版内容。
+2. 每份文件加入与 `versionName` 完全一致的 `<!-- release-version: VERSION -->`，第一页标题显示该版本。`verifyUpdateGuides` 会核对四份文件，并作为 `preReleaseBuild` 的依赖；遗漏或版本不符时发行构建直接失败。
+3. 新增或删除页面时同步四语言，资产测试检查页数、标题、摘要、入口和步骤。变化涉及首次使用流程时，同时更新四语言新手引导。
+4. 版本判定无需手动重置用户设置：上次已看的版本旧于当前版本时，升级后首次打开会显示新指引；关闭后记录当前版本，再次启动不重复弹出。
+5. 发布前检查升级首次启动、分页和关闭行为，并核对安装包确实包含四语言新内容。发行说明与指引必须描述同一组已交付功能。
+
+此流程同时记录在仓库 `AGENTS.md`，属于每次发行的必过项。
 
 ## 验证
 
@@ -99,6 +99,7 @@ assets/guide/update/{zh-CN,en,ja,ko}.md          # 6 页
 ./gradlew :app:testDebugUnitTest --tests "app.tellev.core.guide.*"   # 判定矩阵 + 资产守卫
 ./gradlew :app:testDebugUnitTest                                     # 全量
 ./gradlew :app:assembleDebug                                         # 资产是否真进包
+./gradlew :app:verifyUpdateGuides                                    # 四语言与当前发行版本一致
 ```
 
 真机验收（弹出时机、分页手感、四语言观感）由用户亲手做。
