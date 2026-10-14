@@ -36,6 +36,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import app.tellev.ui.dsh.DshComposer
 import app.tellev.R
 import app.tellev.core.model.Attachment
 import app.tellev.core.model.AttachmentSource
@@ -63,6 +64,8 @@ internal fun ChatInputBar(
     onSend: () -> Unit,
     onStop: () -> Unit,
     onStopImage: () -> Unit = {},
+    useDsh: Boolean = false,
+    onOpenModelSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val canSend = text.isNotBlank() || attachments.isNotEmpty()
@@ -70,10 +73,11 @@ internal fun ChatInputBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 10.dp)
-            .clip(RoundedCornerShape(28.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = bubbleAlpha))
-            .padding(8.dp),
+            .then(if (useDsh) Modifier.padding(vertical = 10.dp) else Modifier
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+                .clip(RoundedCornerShape(28.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = bubbleAlpha))
+                .padding(8.dp)),
     ) {
         // 生图进行中的状态行（可随时用 Stop 按钮取消）。
         if (isGeneratingImage) {
@@ -144,7 +148,28 @@ internal fun ChatInputBar(
             }
         }
 
-        Row(
+        if (useDsh) {
+            DshComposer(
+                text = text,
+                onTextChange = onTextChange,
+                isGenerating = isGenerating,
+                canSend = canSend,
+                contextRatio = null,
+                onSend = onSend,
+                onStop = onStop,
+                onPickFile = onPickImage,
+                onGenerateImage = if (imageGenAvailable && !isGenerating && !isGeneratingImage) onGenerateImage else null,
+                onOpenModelMenu = onOpenModelSettings,
+                onOpenContext = {},
+                onLongPressVoice = {},
+                listening = false,
+                onCancelVoice = {},
+                statsLeft = null,
+                statsRight = null,
+                onStatsLeft = {},
+                onStatsRight = {},
+            )
+        } else Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp),

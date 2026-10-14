@@ -1223,4 +1223,23 @@
     <string name="crs_primary_reference">Primary: %1$s (%2$d entries)</string>
     <string name="crs_aux_reference">Reference: %1$s (%2$d entries)</string>
     <string name="crs_create_faction_book">Create a reusable faction lorebook with AI</string>
+
+    <!-- Optional DSH interface -->
+    <string name="dsh_attach_remove">Remove attachment</string>
+    <string name="chat_drawer_new_session">New chat</string>
+    <string name="chat_drawer_plugins">Plugins</string>
+    <string name="chat_drawer_settings">Settings</string>
+    <string name="chat_drawer_search_sessions">Search chats</string>
+    <string name="chat_drawer_no_sessions">No chats yet</string>
+    <string name="chat_drawer_expand">Show %1$d more chats</string>
+    <string name="chat_input_voice">Voice input</string>
+    <string name="chat_input_voice_listening">Listening…</string>
+    <string name="chat_attach_image">Image</string>
+    <string name="time_now">Just now</string>
+    <string name="time_hours_short">%1$dh</string>
+    <string name="time_days_short">%1$dd</string>
+    <string name="interface_style_title">Interface style</string>
+    <string name="interface_style_classic">Classic</string>
+    <string name="interface_style_dsh">DSH</string>
+    <string name="interface_style_hint">Your conversations and characters stay available in either style.</string>
 </resources>

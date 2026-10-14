@@ -100,6 +100,7 @@ internal fun ChatBubble(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     macroContext: app.tellev.core.prompt.MacroContext? = null,
+    useDsh: Boolean = false,
 ) {
     val context = LocalContext.current
     val exportScope = rememberCoroutineScope()
@@ -116,6 +117,10 @@ internal fun ChatBubble(
         }
     }
     val isUser = message.role == MessageRole.User
+    val textBubbleModifier = if (useDsh && !isUser) Modifier.fillMaxWidth()
+        else Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(if (useDsh) 20.dp else 12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha))
     var dragAmount by remember { mutableFloatStateOf(0f) }
     var showActions by remember { mutableStateOf(false) }
 
@@ -292,12 +297,7 @@ internal fun ChatBubble(
                 highlightDialogue = message.role != MessageRole.System,
                 bubbleAlpha = bubbleAlpha,
                 chatFontSizeSp = chatFontSizeSp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // 半透明气泡：背景图透出 40%，前端卡片分支保持无底板。
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = bubbleAlpha))
-                    .then(dragModifier),
+                modifier = textBubbleModifier.then(dragModifier),
                 tavernRuntime = tavernRuntime,
                 onHtmlBoundaryDrag = onHtmlBoundaryDrag,
             )

@@ -54,6 +54,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material.icons.filled.Menu
+import app.tellev.ui.dsh.DshDrawer
+import app.tellev.ui.theme.InterfaceStyle
 import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -101,6 +108,10 @@ fun ChatScreen(
     bubbleAlpha: Float = 0.6f,
     chatFontSizeSp: Int = 16,
     modifier: Modifier = Modifier,
+    interfaceStyle: InterfaceStyle = InterfaceStyle.Classic,
+    onOpenSettings: () -> Unit = {},
+    onOpenPlugins: () -> Unit = {},
+    onOpenProviderSettings: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -133,6 +144,10 @@ fun ChatScreen(
                 bottomBarReserve = bottomBarReserve,
                 bubbleAlpha = bubbleAlpha,
                 chatFontSizeSp = chatFontSizeSp,
+                useDsh = interfaceStyle == InterfaceStyle.Dsh,
+                onOpenSettings = onOpenSettings,
+                onOpenPlugins = onOpenPlugins,
+                onOpenProviderSettings = onOpenProviderSettings,
                 modifier = Modifier.padding(padding),
             )
         }
@@ -147,6 +162,10 @@ private fun ChatContentScreen(
     bottomBarReserve: Dp,
     bubbleAlpha: Float,
     chatFontSizeSp: Int,
+    useDsh: Boolean,
+    onOpenSettings: () -> Unit,
+    onOpenPlugins: () -> Unit,
+    onOpenProviderSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val globalVariables = viewModel.messageGlobalVariables()
@@ -163,7 +182,7 @@ private fun ChatContentScreen(
     val flingBehavior = ScrollableDefaults.flingBehavior()
     var followLatest by remember(state.currentSession?.id) { mutableStateOf(true) }
     val keyboardController = LocalSoftwareKeyboardController.current
-    var inputText by remember { mutableStateOf("") }
+    var inputText by rememberSaveable { mutableStateOf("") }
     var showSessionMenu by remember { mutableStateOf(false) }
     var sessionPendingDelete by remember { mutableStateOf<ChatSessionSummary?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
@@ -174,7 +193,7 @@ private fun ChatContentScreen(
     }
     var editingMessageIndex by remember { mutableStateOf<Int?>(null) }
     var editTextField by remember { mutableStateOf("") }
-    var pendingAttachments by remember { mutableStateOf(listOf<Attachment>()) }
+    var pendingAttachments by rememberSaveable(stateSaver = ChatAttachmentStateSaver) { mutableStateOf(listOf<Attachment>()) }
     var showImageDialog by remember { mutableStateOf(false) }
     var showImageGallery by remember(state.currentSession?.id) { mutableStateOf(false) }
     // 画廊删空后必须复位标志：否则下次生成新图时对话框会凭空自动弹出。
@@ -187,6 +206,15 @@ private fun ChatContentScreen(
     }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    LaunchedEffect(useDsh) { if (!useDsh) drawerState.close() }
+    // Registered below the page handler so Back closes the drawer first.
+    BackHandler(enabled = useDsh && drawerState.isOpen) {
+        scope.launch { drawerState.close() }
+    }
+    fun closeDrawerThen(action: () -> Unit) {
+        scope.launch { drawerState.close(); action() }
+    }
     var nativeTouch by remember(state.currentSession?.id) { mutableStateOf(false) }
     var listTouch by remember(state.currentSession?.id) { mutableStateOf(false) }
     val busy = rememberUpdatedState(nativeTouch || listTouch || listState.isScrollInProgress)
@@ -314,6 +342,22 @@ private fun ChatContentScreen(
     val imeExtraPx = maxOf(WindowInsets.ime.getBottom(density) - bottomBarReservePx, 0f)
     val imeExtraPadding = with(density) { imeExtraPx.toDp() }
 
+    DshDrawer(
+        enabled = useDsh,
+        sessions = state.sessions,
+        currentSessionId = state.currentSession?.id,
+        onNewSession = { closeDrawerThen { viewModel.createNewSession() } },
+        onOpenSession = { id ->
+            closeDrawerThen {
+                if (id != state.currentSession?.id) viewModel.switchSession(id)
+            }
+        },
+        onDeleteSession = { session -> closeDrawerThen { sessionPendingDelete = session } },
+        onOpenPlugins = { closeDrawerThen(onOpenPlugins) },
+        onOpenSettings = { closeDrawerThen(onOpenSettings) },
+        drawerState = drawerState,
+        chatState = state,
+    ) { state ->
     Column(modifier = modifier.fillMaxSize().padding(bottom = imeExtraPadding)) {
         TopAppBar(
             title = {
@@ -347,12 +391,17 @@ private fun ChatContentScreen(
                 }
             },
             actions = {
+                if (useDsh) {
+                    IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                        Icon(Icons.Default.Menu, contentDescription = stringResource(R.string.chat_sessions))
+                    }
+                }
                 if (state.characterUiExtensionId != null) {
                     TextButton(onClick = { showCharacterInterface = true }) {
                         Text(stringResource(R.string.chat_card_interface))
                     }
                 }
-                if (state.sessions.isNotEmpty()) {
+                if (!useDsh && state.sessions.isNotEmpty()) {
                     Box {
                         TextButton(onClick = { showSessionMenu = true }) {
                             Text(stringResource(R.string.chat_sessions))
@@ -562,6 +611,7 @@ private fun ChatContentScreen(
                             depth = regexDepths[index],
                             htmlPanelMaxHeight = htmlPanelMaxHeight,
                             bubbleAlpha = bubbleAlpha,
+                            useDsh = useDsh,
                             chatFontSizeSp = chatFontSizeSp,
                             tavernRuntime = TavernMessageRuntime(
                                 onScrollStart = onHtmlScrollStart,
@@ -771,6 +821,8 @@ private fun ChatContentScreen(
             },
             onStop = { viewModel.stopGeneration() },
             onStopImage = { viewModel.stopImageGeneration() },
+            useDsh = useDsh,
+            onOpenModelSettings = onOpenProviderSettings,
         )
 
         if (showImageDialog) {
@@ -817,4 +869,5 @@ private fun ChatContentScreen(
         }
     }
     MemoryChatDialogs(state, viewModel, showMemoryDialog) { showMemoryDialog = false }
+    } // DSH drawer content
 }

@@ -1223,4 +1223,23 @@
     <string name="crs_primary_reference">주 책: %1$s (%2$d개 항목)</string>
     <string name="crs_aux_reference">보조 참고: %1$s (%2$d개 항목)</string>
     <string name="crs_create_faction_book">AI로 범용 세력 세계관 책 만들기</string>
+
+    <!-- Optional DSH interface -->
+    <string name="dsh_attach_remove">첨부 제거</string>
+    <string name="chat_drawer_new_session">새 대화</string>
+    <string name="chat_drawer_plugins">플러그인</string>
+    <string name="chat_drawer_settings">설정</string>
+    <string name="chat_drawer_search_sessions">대화 검색</string>
+    <string name="chat_drawer_no_sessions">대화가 없습니다</string>
+    <string name="chat_drawer_expand">다른 대화 %1$d개 더 보기</string>
+    <string name="chat_input_voice">음성 입력</string>
+    <string name="chat_input_voice_listening">듣는 중…</string>
+    <string name="chat_attach_image">이미지</string>
+    <string name="time_now">방금</string>
+    <string name="time_hours_short">%1$d시간</string>
+    <string name="time_days_short">%1$d일</string>
+    <string name="interface_style_title">인터페이스 스타일</string>
+    <string name="interface_style_classic">클래식</string>
+    <string name="interface_style_dsh">DSH</string>
+    <string name="interface_style_hint">스타일을 바꿔도 대화와 캐릭터를 계속 사용할 수 있습니다.</string>
 </resources>

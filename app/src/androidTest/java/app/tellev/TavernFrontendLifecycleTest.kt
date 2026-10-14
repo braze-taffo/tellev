@@ -12,6 +12,7 @@ import app.tellev.core.model.*
 import app.tellev.feature.chat.ChatScreen
 import app.tellev.feature.chat.ChatViewModel
 import app.tellev.ui.theme.TellevTheme
+import app.tellev.ui.theme.InterfaceStyle
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
@@ -19,7 +20,10 @@ import org.junit.Test
 import java.util.UUID
 
 class TavernFrontendLifecycleTest {
-    @Test fun messageButtonPersistsAndOldFrontendCannotWriteAfterSwitch() = runBlocking {
+    @Test fun messageButtonPersistsAndOldFrontendCannotWriteAfterSwitch() = validate(InterfaceStyle.Classic)
+    @Test fun dshMessageButtonPersistsAndOldFrontendCannotWriteAfterSwitch() = validate(InterfaceStyle.Dsh)
+
+    private fun validate(style: InterfaceStyle) = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         check(instrumentation.targetContext.packageName.endsWith(".mvuvalidation"))
         val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
@@ -39,7 +43,9 @@ class TavernFrontendLifecycleTest {
                 ChatViewModel(graph.dataStore, graph.providerRegistry, graph.promptEngine, graph.secretStore,
                     graph.extensionHost, graph.permissionManager).also {
                     models.put("test", it)
-                    activity.setContent { CompositionLocalProvider(LocalTellevGraph provides graph) { TellevTheme { ChatScreen(it) } } }
+                    activity.setContent { CompositionLocalProvider(LocalTellevGraph provides graph) {
+                        TellevTheme(interfaceStyle = style) { ChatScreen(it, interfaceStyle = style) }
+                    } }
                 }
             }
             waitUntil { !vm.uiState.value.isLoading }
@@ -49,21 +55,36 @@ class TavernFrontendLifecycleTest {
                 withContext(Dispatchers.Main) { vm.switchSession("$id-a") }
                 waitUntil { vm.uiState.value.currentSession?.id == "$id-a" && !vm.uiState.value.isLoading }
             }
-            suspend fun frame(): WebView {
+            suspend fun frame(previousDocument: String? = null): WebView {
                 var found: WebView? = null
-                waitUntil { found = withContext(Dispatchers.Main) { webViews(activity.window.decorView).singleOrNull() }; found != null }
-                val view = requireNotNull(found)
-                waitUntil { evaluate(view, "!!document.getElementById('validation-button')") == "true" }
-                return view
+                // The mainline AndroidView supports reuse. Its document and
+                // runtime must retire even if the native view is reused.
+                waitUntil {
+                    // Re-read the hierarchy on each probe: Compose may replace
+                    // the candidate while we wait for the new document to load.
+                    val candidate = withContext(Dispatchers.Main) { webViews(activity.window.decorView).singleOrNull() }
+                    if (candidate == null) false else {
+                        val ready = runCatching {
+                            val document = evaluate(candidate, "window.__tellevDocumentId")
+                            document != "null" && document != previousDocument &&
+                                evaluate(candidate, "!!document.getElementById('validation-button')") == "true"
+                        }.getOrDefault(false)
+                        if (ready) found = candidate
+                        ready
+                    }
+                }
+                return requireNotNull(found)
             }
             val first = frame()
+            val firstDocument = evaluate(first, "window.__tellevDocumentId")
             val token = vm.currentRuntimeToken("$id-a")
             evaluate(first, "document.getElementById('validation-button').click(); true")
             waitUntil { vm.uiState.value.currentSession?.metadata?.get("variables")?.jsonObject?.get("count") == JsonPrimitive(2) }
             withContext(Dispatchers.Main) { vm.switchSession("$id-b") }
             waitUntil { vm.uiState.value.currentSession?.id == "$id-b" && !vm.uiState.value.isLoading }
-            val second = frame()
-            assertNotSame(first, second)
+            val second = frame(firstDocument)
+            val secondDocument = evaluate(second, "window.__tellevDocumentId")
+            assertNotEquals(firstDocument, secondDocument)
             val rejected = CompletableDeferred<Boolean>()
             withContext(Dispatchers.Main) {
                 vm.handleTavernMessageRequest("replaceVariables", """{"variables":{"count":999},"options":{"type":"chat"}}""",
@@ -74,7 +95,7 @@ class TavernFrontendLifecycleTest {
             assertEquals(JsonPrimitive(2), graph.dataStore.readChatSession("$id-a").metadata["variables"]?.jsonObject?.get("count"))
             withContext(Dispatchers.Main) { vm.switchSession("$id-a") }
             waitUntil { vm.uiState.value.currentSession?.id == "$id-a" && !vm.uiState.value.isLoading }
-            frame()
+            frame(secondDocument)
             assertEquals(1, withContext(Dispatchers.Main) { webViews(activity.window.decorView).size })
             assertEquals(JsonPrimitive(2), vm.uiState.value.currentSession?.metadata?.get("variables")?.jsonObject?.get("count"))
         } finally {

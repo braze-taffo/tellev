@@ -1223,4 +1223,23 @@
     <string name="crs_primary_reference">メイン：%1$s（%2$d 件）</string>
     <string name="crs_aux_reference">補助：%1$s（%2$d 件）</string>
     <string name="crs_create_faction_book">AI で汎用の勢力ロアブックを作成</string>
+
+    <!-- Optional DSH interface -->
+    <string name="dsh_attach_remove">添付を削除</string>
+    <string name="chat_drawer_new_session">新規チャット</string>
+    <string name="chat_drawer_plugins">プラグイン</string>
+    <string name="chat_drawer_settings">設定</string>
+    <string name="chat_drawer_search_sessions">チャットを検索</string>
+    <string name="chat_drawer_no_sessions">チャットはまだありません</string>
+    <string name="chat_drawer_expand">他の %1$d 件のチャットを表示</string>
+    <string name="chat_input_voice">音声入力</string>
+    <string name="chat_input_voice_listening">聞き取り中…</string>
+    <string name="chat_attach_image">画像</string>
+    <string name="time_now">たった今</string>
+    <string name="time_hours_short">%1$d時間</string>
+    <string name="time_days_short">%1$d日</string>
+    <string name="interface_style_title">インターフェース</string>
+    <string name="interface_style_classic">クラシック</string>
+    <string name="interface_style_dsh">DSH</string>
+    <string name="interface_style_hint">どちらの表示でも会話とキャラクターを引き続き利用できます。</string>
 </resources>

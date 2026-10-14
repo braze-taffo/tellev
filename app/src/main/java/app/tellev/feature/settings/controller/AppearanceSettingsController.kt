@@ -6,6 +6,8 @@ import app.tellev.core.storage.AppPreferences
 import app.tellev.feature.settings.SettingsUiState
 import app.tellev.ui.theme.ThemeAccent
 import app.tellev.ui.theme.ThemeMode
+import app.tellev.ui.theme.InterfaceStyle
+import app.tellev.ui.theme.parseInterfaceStyle
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 
@@ -15,8 +17,15 @@ internal class AppearanceSettingsController(
     private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
     private val chatBubbleAlphaFlow: MutableStateFlow<Float>,
     private val chatFontSizeSpFlow: MutableStateFlow<Int>,
+    private val interfaceStyleFlow: MutableStateFlow<InterfaceStyle> = MutableStateFlow(parseInterfaceStyle(appPreferences.interfaceStyleName)),
     private val stateFlow: MutableStateFlow<SettingsUiState>,
 ) {
+    fun setInterfaceStyle(style: InterfaceStyle) {
+        appPreferences.interfaceStyleName = style.name
+        interfaceStyleFlow.value = style
+        stateFlow.update { it.copy(interfaceStyle = style) }
+    }
+
     fun setThemeMode(mode: ThemeMode) {
         appPreferences.themeModeName = mode.name
         themeModeFlow.value = mode

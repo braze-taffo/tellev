@@ -55,6 +55,11 @@ class AppPreferences(
         get() = prefs.getFloat(KEY_CHAT_BUBBLE_ALPHA, DEFAULT_CHAT_BUBBLE_ALPHA)
         set(value) = prefs.edit().putFloat(KEY_CHAT_BUBBLE_ALPHA, value).apply()
 
+    /** Existing installs keep the classic interface until the user switches. */
+    var interfaceStyleName: String
+        get() = prefs.getString("interface_style", "Classic") ?: "Classic"
+        set(value) = prefs.edit().putString("interface_style", value).apply()
+
     /** Chat message body size in sp. The old bodyLarge size is 16 sp. */
     var chatFontSizeSp: Int
         get() = prefs.getInt(KEY_CHAT_FONT_SIZE, DEFAULT_CHAT_FONT_SIZE).coerceIn(14, 20)
