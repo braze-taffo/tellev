@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import java.nio.file.Path
 import kotlin.io.path.createDirectories
@@ -298,6 +299,15 @@ class FileStDataStore(
 
     override suspend fun saveDisabledRegexScriptIds(map: Map<String, Set<String>>) =
         settingsRepository.saveDisabledRegexScriptIds(map)
+
+    override suspend fun readGlobalRegexScripts(): JsonArray =
+        settingsRepository.readGlobalRegexScripts()
+
+    override suspend fun importGlobalRegexScripts(text: String): JsonArray =
+        settingsRepository.importGlobalRegexScripts(text)
+
+    override suspend fun setGlobalRegexScriptEnabled(scriptId: String, enabled: Boolean) =
+        settingsRepository.setGlobalRegexScriptEnabled(scriptId, enabled)
 
     // ── Persona Operations ──
 

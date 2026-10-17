@@ -4,6 +4,7 @@ import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.PromptSettings
 import app.tellev.core.model.WorldInfoSettings
 import app.tellev.core.regex.CharacterRegexApplier
+import app.tellev.core.regex.StandaloneRegexImport
 import app.tellev.core.storage.JournaledFileWriter
 import app.tellev.core.storage.StDirectoryLayout
 import kotlinx.coroutines.Dispatchers
@@ -142,6 +143,44 @@ internal class SettingsRepository(
             }
         }
         if (allWritesSucceeded) layout.regexActivation.deleteIfExists()
+    }
+
+    suspend fun readGlobalRegexScripts(): JsonArray = withContext(Dispatchers.IO) {
+        val path = layout.globalRegex
+        if (!path.exists()) return@withContext JsonArray(emptyList())
+        val raw = runCatching { json.parseToJsonElement(path.readText()) }.getOrElse { error ->
+            throw IllegalArgumentException("无法解析全局正则", error)
+        }
+        raw as? JsonArray ?: throw IllegalArgumentException("全局正则文件必须是 JSON 数组")
+    }
+
+    /** Parses [text] and appends the scripts. Returns only the newly appended ones. */
+    suspend fun importGlobalRegexScripts(text: String): JsonArray = withContext(Dispatchers.IO) {
+        val imported = JsonArray(StandaloneRegexImport.parse(text))
+        val existing = readGlobalRegexScripts()
+        writeGlobalRegexScripts(JsonArray(existing + imported))
+        imported
+    }
+
+    suspend fun setGlobalRegexScriptEnabled(scriptId: String, enabled: Boolean): Unit = withContext(Dispatchers.IO) {
+        if (scriptId.isBlank()) return@withContext
+        val existing = readGlobalRegexScripts()
+        var changed = false
+        val patched = JsonArray(existing.map { element ->
+            val script = element as? JsonObject ?: return@map element
+            if (script["id"]?.stringContentOrNull() != scriptId) return@map element
+            changed = true
+            JsonObject(script + ("disabled" to JsonPrimitive(!enabled)))
+        })
+        if (changed) writeGlobalRegexScripts(patched)
+    }
+
+    private fun writeGlobalRegexScripts(scripts: JsonArray) {
+        StorageFileOps.durableWriteText(
+            durableFiles,
+            layout.globalRegex,
+            json.encodeToString(JsonArray.serializer(), scripts),
+        )
     }
 
     private fun JsonElement.stringContentOrNull(): String? =

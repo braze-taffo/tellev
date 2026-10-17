@@ -17,6 +17,7 @@ import app.tellev.core.model.WorldBookSummary
 import app.tellev.core.model.WorldInfoSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import java.nio.file.Path
 
@@ -111,6 +112,14 @@ interface StDataStore {
     // character-card extensions.regex_scripts[].disabled.
     suspend fun readDisabledRegexScriptIds(): Map<String, Set<String>>
     suspend fun saveDisabledRegexScriptIds(map: Map<String, Set<String>>)
+
+    // Global standalone regex scripts (`global-regex.json`, a JSON array).
+    // Import parses with StandaloneRegexImport and appends. The switch is each
+    // script's `disabled` field. Never written into a character card, and not
+    // the legacy regex-activation sidecar.
+    suspend fun readGlobalRegexScripts(): JsonArray
+    suspend fun importGlobalRegexScripts(text: String): JsonArray
+    suspend fun setGlobalRegexScriptEnabled(scriptId: String, enabled: Boolean)
 
     suspend fun listPresets(): List<GenerationPreset>
     suspend fun readPreset(category: PresetCategory, name: String): GenerationPreset? =
