@@ -238,6 +238,47 @@ class CharacterRegexApplierTest {
     }
 
     @Test
+    fun `global scripts run before preset and card and a disabled global is skipped`() {
+        val card = CharacterImporter().importFromJson(
+            """{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"C","extensions":{"regex_scripts":[
+              {"findRegex":"/P/g","replaceString":"card","placement":[2]}
+            ]}}}""",
+        )
+        val preset = GenerationPreset(
+            id = "p", name = "p", providerType = "openai",
+            extensions = buildJsonObject { putJsonArray("regex_scripts") {
+                add(buildJsonObject {
+                    put("findRegex", "/G/g")
+                    put("replaceString", "P")
+                    put("placement", buildJsonArray { add(JsonPrimitive(2)) })
+                })
+            } },
+        )
+        val globalScripts = JsonArray(listOf(
+            buildJsonObject {
+                put("id", "off")
+                put("findRegex", "/x/g")
+                put("replaceString", "NO")
+                put("placement", buildJsonArray { add(JsonPrimitive(2)) })
+                put("disabled", true)
+            },
+            buildJsonObject {
+                put("id", "on")
+                put("findRegex", "/x/g")
+                put("replaceString", "G")
+                put("placement", buildJsonArray { add(JsonPrimitive(2)) })
+            },
+        ))
+
+        assertEquals(
+            "card",
+            CharacterRegexApplier.applyNormal(
+                "x", MessageRole.Character, card, preset, globalScripts = globalScripts,
+            ),
+        )
+    }
+
+    @Test
     fun `edit skips normal scripts unless runOnEdit is true`() {
         val card = CharacterImporter().importFromJson(
             """{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"C","extensions":{"regex_scripts":[

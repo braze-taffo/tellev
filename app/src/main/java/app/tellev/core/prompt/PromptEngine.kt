@@ -11,6 +11,7 @@ import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.storage.StDataStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
@@ -27,8 +28,10 @@ interface PromptEngine {
         preset: app.tellev.core.model.GenerationPreset?, context: MacroContext,
         expandMacros: Boolean = true, depth: Int = 0, isEdit: Boolean = false,
         includeNormal: Boolean = true,
+        globalScripts: JsonArray = JsonArray(emptyList()),
     ): ProcessedChatText = ChatTextProcessing.process(text, role, character, preset, context,
-        expandMacros = expandMacros, depth = depth, isEdit = isEdit, includeNormal = includeNormal)
+        expandMacros = expandMacros, depth = depth, isEdit = isEdit, includeNormal = includeNormal,
+        globalScripts = globalScripts)
 
     fun buildWithLocalVariableBackend(
         request: PromptBuildRequest,
@@ -55,8 +58,9 @@ class DefaultPromptEngine(
         preset: app.tellev.core.model.GenerationPreset?, context: MacroContext,
         expandMacros: Boolean, depth: Int, isEdit: Boolean,
         includeNormal: Boolean,
+        globalScripts: JsonArray,
     ): ProcessedChatText = ChatTextProcessing.process(text, role, character, preset, context, macroEngine,
-        expandMacros, depth, isEdit, includeNormal)
+        expandMacros, depth, isEdit, includeNormal, globalScripts)
 
     /**
      * Update the EJS template settings used by the internal
@@ -96,6 +100,7 @@ class DefaultPromptEngine(
     override fun build(request: PromptBuildRequest): PromptBuildResult = buildWithCast(CharacterCastPrompt.enrich(request, macroEngine))
 
     private fun buildWithCast(request: PromptBuildRequest): PromptBuildResult {
+        val globalScripts = request.globalScripts
         val rawGeneration = request.metadata["tavernRawGeneration"]?.jsonPrimitive?.booleanOrNull == true
         // 1. Build MacroContext from request data
         val macroContext = PromptMacroContextBuilder.buildMacroContext(request)
@@ -164,6 +169,7 @@ class DefaultPromptEngine(
                             userName = request.persona?.name ?: "User",
                             preset = request.preset,
                             macroExpander = { macroEngine.expand(it, macroContext) },
+                            globalScripts = globalScripts,
                         ),
                         raw = entry.raw,
                     ),
@@ -187,6 +193,7 @@ class DefaultPromptEngine(
                     userName = request.persona?.name ?: "User",
                     preset = request.preset,
                     macroExpander = { macroEngine.expand(it, macroContext) },
+                    globalScripts = globalScripts,
                 ),
                 raw = entry.raw,
                 bookId = book.id,
@@ -291,6 +298,7 @@ class DefaultPromptEngine(
                             preset = request.preset,
                             includeNormal = !CharacterRegexApplier.isNormalProcessed(message),
                             macroExpander = { macroEngine.expand(it, macroContext) },
+                            globalScripts = globalScripts,
                         ),
                         channel = CHANNEL_CHAT,
                         chatMessageId = macroFloorIds[message],
@@ -311,6 +319,7 @@ class DefaultPromptEngine(
                         includeNormal = request.metadata["userInputNormalProcessed"]
                             ?.jsonPrimitive?.booleanOrNull != true,
                         macroExpander = { macroEngine.expand(it, macroContext) },
+                        globalScripts = globalScripts,
                     ),
                     channel = if (rawGeneration) "user_input" else CHANNEL_CHAT,
                     chatMessageId = savedInputFloor,

@@ -6,6 +6,7 @@ import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageRole
 import app.tellev.core.model.Persona
 import app.tellev.core.regex.CharacterRegexApplier
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 
 data class ProcessedChatText(val text: String, val localVariables: JsonObject)
@@ -31,6 +32,7 @@ object ChatTextProcessing {
         context: MacroContext, macroEngine: MacroEngine = DefaultMacroEngine(),
         expandMacros: Boolean = true, depth: Int = 0, isEdit: Boolean = false,
         includeNormal: Boolean = true,
+        globalScripts: JsonArray = JsonArray(emptyList()),
     ): ProcessedChatText {
         val variables = SnapshotMacroVariables(
             context.localVariables ?: JsonObject(emptyMap()), context.globalVariables ?: JsonObject(emptyMap()),
@@ -42,7 +44,9 @@ object ChatTextProcessing {
             maxContextTokens = preset?.maxContextTokens ?: context.maxContextTokens,
             maxPromptTokens = responseTokens, maxResponseTokens = responseTokens)
         val expand: (String) -> String = { macroEngine.expand(it, scoped) }
-        val normal = if (includeNormal) CharacterRegexApplier.applyNormal(text, role, character, preset, context.userName, depth, isEdit, expand) else text
+        val normal = if (includeNormal) CharacterRegexApplier.applyNormal(
+            text, role, character, preset, context.userName, depth, isEdit, expand, globalScripts,
+        ) else text
         return ProcessedChatText(if (expandMacros) expand(normal) else normal, variables.localObject())
     }
 }

@@ -8,6 +8,7 @@ import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.prompt.DefaultMacroEngine
 import app.tellev.core.prompt.MacroContext
 import app.tellev.core.prompt.SnapshotMacroVariables
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 
 internal fun renderMessageParts(
@@ -19,6 +20,7 @@ internal fun renderMessageParts(
     depth: Int,
     includeNormal: Boolean,
     macroContext: MacroContext? = null,
+    globalScripts: JsonArray = JsonArray(emptyList()),
 ): List<TavernRenderSegment> = buildList {
     // Workers retain the owning session's snapshot, including after a chat switch.
     val base = macroContext ?: MacroContext(characterName = character?.name ?: "Character", userName = userName)
@@ -31,6 +33,7 @@ internal fun renderMessageParts(
         val context = CharacterRegexApplier.RegexExecutionContext(
             character, preset, role, userName, depth,
             phase = CharacterRegexApplier.RegexPhase.Normal,
+            globalScripts = globalScripts,
             macroExpander = expand,
         )
         val normal = CharacterRegexApplier.apply(parts.reasoning, context, 6)
@@ -39,7 +42,7 @@ internal fun renderMessageParts(
     }
     val displayBody = CharacterRegexApplier.applyForDisplay(
         parts.body, role, character, userName, depth, preset = preset, includeNormal = includeNormal,
-        macroExpander = expand,
+        macroExpander = expand, globalScripts = globalScripts,
     )
     // Display rules may create tags, but cannot move body text into the reasoning channel.
     val assistant = role == MessageRole.Character || role == MessageRole.Assistant

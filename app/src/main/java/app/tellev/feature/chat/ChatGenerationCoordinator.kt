@@ -126,6 +126,8 @@ internal class ChatGenerationCoordinator(
             try {
                 characterScriptJob?.join()
                 sessionRuntime.flushSessionWrites(session.id, extensionHost)
+                val globalScripts = dataStore.readGlobalRegexScripts()
+                uiState.update { it.copy(globalRegexScripts = globalScripts) }
                 check(uiState.value.currentSession?.id == session.id) { "生成所属会话已经切换" }
                 val runtime = runtimeResolver.resolve(state.selectedPersona?.id)
                 val config = runtime.providerConfig
@@ -168,6 +170,7 @@ internal class ChatGenerationCoordinator(
                     messageText, messageRole, character, preset,
                     ChatTextProcessing.context(character, initializedSession, runtime.persona?.name ?: "User", runtime.persona),
                     isEdit = regexIsEdit,
+                    globalScripts = globalScripts,
                 ) else null
                 val inputMessage = regenerationInput ?: CharacterRegexApplier.markNormalProcessed(ChatMessage(
                     id = generateMessageId(),
@@ -299,6 +302,7 @@ internal class ChatGenerationCoordinator(
                     inputAlreadyInHistory = !isRegeneration && messageRole == MessageRole.User &&
                         promptInputIndex != promptMessages.lastIndex,
                     providerType = config.providerType,
+                    globalScripts = globalScripts,
                     metadata = JsonObject(
                         ChatPromptBuilder.buildPromptMetadata(
                             state = runtimeState,
@@ -354,7 +358,7 @@ internal class ChatGenerationCoordinator(
                             val finalBase = uiState.value.currentSession?.takeIf { it.id == updatedSession.id } ?: updatedSession
                             val processedFinal = promptEngine.processChatText(parts.body, MessageRole.Character, character, preset,
                                 ChatTextProcessing.context(character, finalBase, runtime.persona?.name ?: "User", runtime.persona),
-                                expandMacros = false)
+                                expandMacros = false, globalScripts = globalScripts)
                             val finalText = processedFinal.text
                             if (finalText.isBlank()) {
                                 activeRegeneration = null
@@ -550,6 +554,7 @@ internal class ChatGenerationCoordinator(
                 preset = state.selectedPreset,
                 userName = state.selectedPersona?.name ?: "User",
                 depth = 0,
+                globalScripts = state.globalRegexScripts,
             )
             if (regeneration != null) {
                 val targetIndex = state.messages.indexOfFirst { it.id == regeneration.messageId }
@@ -701,6 +706,8 @@ internal class ChatGenerationCoordinator(
         val generationId = stringOption(options, "generation_id", "generationId")
             ?: UUID.randomUUID().toString()
 
+        val globalScripts = dataStore.readGlobalRegexScripts()
+        uiState.update { it.copy(globalRegexScripts = globalScripts) }
         return try {
             ChatTavernAdapter.emitStEvent(extensionHost, "js_generation_started", generationId)
 
@@ -711,6 +718,7 @@ internal class ChatGenerationCoordinator(
                 supportingCharacters = supportingCast,
                 persona = runtime.persona,
                 messages = state.messages,
+                globalScripts = globalScripts,
                 worldBooks = (ChatTavernStorage.activeWorldBooks(runtime.activeWorldBooks, runtime.worldBooks, character, state.currentSession) + supportingBooks).distinctBy { it.id },
                 preset = preset,
                 userInput = userInput,

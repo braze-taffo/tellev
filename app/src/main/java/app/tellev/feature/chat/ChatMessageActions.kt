@@ -53,7 +53,10 @@ internal class ChatMessageActions(
         val session = state.currentSession ?: return
         val selectedSession = session.copy(messages = messages)
         val updatedSession = if (messageIndex == 0) state.selectedCharacter?.let {
-            selectedSession.withProcessedGreeting(it, state.selectedPersona?.name ?: "User", promptEngine, state.selectedPreset)
+            selectedSession.withProcessedGreeting(
+                it, state.selectedPersona?.name ?: "User", promptEngine, state.selectedPreset,
+                globalScripts = state.globalRegexScripts,
+            )
         } ?: selectedSession else selectedSession
 
         val commit = sessionRuntime.scheduleUiMutation(session, updatedSession, onSessionUpdated, onError) ?: return
@@ -100,7 +103,8 @@ internal class ChatMessageActions(
             character?.let { ChatTextProcessing.context(it, session, state.selectedPersona?.name ?: "User", state.selectedPersona) }
                 ?: app.tellev.core.prompt.MacroContext(userName = state.selectedPersona?.name ?: "User",
                     localVariables = session.metadata["variables"] as? JsonObject),
-            depth = visibleRegexDepth(state.messages, messageIndex), isEdit = true)
+            depth = visibleRegexDepth(state.messages, messageIndex), isEdit = true,
+            globalScripts = state.globalRegexScripts)
         val updatedMessage = editedChatMessage(message, processed.text)
         messages[messageIndex] = updatedMessage
         val updatedSession = session.copy(messages = messages, metadata = JsonObject(session.metadata + ("variables" to processed.localVariables)))
