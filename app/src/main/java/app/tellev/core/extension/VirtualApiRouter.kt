@@ -87,6 +87,10 @@ class VirtualApiRouter(
         val segments = path.removePrefix("/api/").split("/").filter { it.isNotEmpty() }
 
         return when {
+            // Internal name/ID resolution without transporting unrelated worldbook bodies.
+            method == "POST" && path == "/api/tellev/worldbook" ->
+                worldBookHandler.handleResolveWorld(request)
+
             // ── characters ─────────────────────────────────────────
             method == "GET" && segments.size == 1 && segments[0] == "characters" ->
                 characterHandler.handleListCharacters()

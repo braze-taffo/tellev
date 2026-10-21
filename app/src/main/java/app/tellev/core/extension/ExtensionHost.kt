@@ -15,6 +15,9 @@ import kotlinx.serialization.json.buildJsonObject
 interface ExtensionContextProvider {
     fun snapshot(): JsonObject
 
+    /** Internal projection; explicit getContext() continues to return the full snapshot. */
+    fun snapshot(fields: Set<String>): JsonObject = JsonObject(snapshot().filterKeys { it in fields })
+
     suspend fun setChatMessage(index: Int, field: String, value: String): Boolean = false
 
     suspend fun setChatMessages(messages: kotlinx.serialization.json.JsonArray, options: JsonObject): Boolean = false

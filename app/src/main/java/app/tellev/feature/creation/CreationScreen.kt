@@ -720,22 +720,20 @@ private fun CreationConversation(session: CreationSession, state: CreationUiStat
         if (session.turns.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                AssistChip(onClick = { viewModel.send("请继续引导，只问我当前最关键的 1 至 2 个问题，并先整理已有设定。") },
+                AssistChip(onClick = { viewModel.send(CreationPrompts.continueGuide) },
                     enabled = !busy, label = { Text(stringResource(R.string.crs_btn_continue_guide)) })
-                AssistChip(onClick = { viewModel.send("这一部分交给你决定。请结合已确定设定写入草稿，并说明你的选择。") },
+                AssistChip(onClick = { viewModel.send(CreationPrompts.aiDecide) },
                     enabled = !busy, label = { Text(stringResource(R.string.crs_btn_ai_decide)) })
                 AssistChip(onClick = { viewModel.send(if (session.kind == CreationKind.Character)
-                    "请根据目前已有信息立即完成可编辑的角色卡初稿，若有关联的参考世界书则先读取；" +
-                        (if (session.allowAgentLoreEdits) "可以填写适用的世界书条目；" else "不要新增或修改世界书条目；") +
-                        "缺口用合理设定补齐并标明待核对处。"
-                    else "请根据目前已有信息立即完成可编辑的世界书条目初稿，区分已确定事实与待核对设定。") },
+                    CreationPrompts.characterDraftInstruction
+                    else CreationPrompts.worldBookDraftInstruction) },
                     enabled = !busy, label = { Text(stringResource(R.string.crs_btn_generate_draft)) })
                 if (session.kind == CreationKind.WorldBook) {
-                    AssistChip(onClick = { viewModel.send("请从现在起逐条与我讨论世界书条目。先提议一条，等我确认或修改后再写入草稿，然后讨论下一条。") },
+                    AssistChip(onClick = { viewModel.send(CreationPrompts.discussOneByOne) },
                         enabled = !busy, label = { Text(stringResource(R.string.crs_btn_discuss_one_by_one)) })
                 }
                 if (session.kind == CreationKind.Character) {
-                    AssistChip(onClick = { viewModel.send("请根据这张卡的设定，实际创建可运行的变量结构和动态状态栏。先检查已有脚本、变量与正则，再分模块写入草稿；不要只输出让玩家复制的提示词。每个模块写完说明作用和待验证点。") },
+                    AssistChip(onClick = { viewModel.send(CreationPrompts.statusBar) },
                         enabled = !busy, label = { Text(stringResource(R.string.crs_btn_status_bar)) })
                 }
             }
@@ -1071,7 +1069,7 @@ private fun AdvancedAssetsPanel(session: CreationSession, viewModel: CreationVie
             style = MaterialTheme.typography.titleMedium)
         Text(stringResource(R.string.crs_assets_hint),
             style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(onClick = { viewModel.send("请检查并概述当前脚本、正则和变量，列出缺少的运行模块及下一步。") },
+        OutlinedButton(onClick = { viewModel.send(CreationPrompts.checkAssets) },
             enabled = !busy) { Text(stringResource(R.string.crs_btn_check_assets)) }
         scripts.forEach { item ->
             val script = item as? JsonObject ?: return@forEach

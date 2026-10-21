@@ -7,6 +7,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ExtensionHostPolicyTest {
+    @Test fun `large read throttling leaves writes and generation independent`() {
+        assertTrue(isLargeStorageRead("GET", "/api/worlds"))
+        assertTrue(isLargeStorageRead("GET", "/api/characters/card/regex?fresh=1"))
+        assertTrue(isLargeStorageRead("POST", "/api/tellev/worldbook"))
+        assertTrue(isLargeStorageRead("POST", "/api/worldinfo/get"))
+        assertFalse(isLargeStorageRead("POST", "/api/worlds"))
+        assertFalse(isLargeStorageRead("POST", "/api/worldinfo/edit"))
+        assertFalse(isLargeStorageRead("POST", "/api/backends/chat-completions/generate"))
+    }
     @Test
     fun `provider generation route requires provider permission`() {
         assertEquals(

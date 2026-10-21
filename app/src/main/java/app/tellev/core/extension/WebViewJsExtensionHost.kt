@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -161,7 +162,9 @@ class WebViewJsExtensionHost(
      * scripts actually use in command arguments.
      */
     private fun slashMacroContext(): MacroContext {
-        val snapshot = runCatching { _contextProvider?.snapshot() }.getOrNull()
+        val snapshot = runCatching { _contextProvider?.snapshot(setOf(
+            "chat", "name1", "name2", "character", "lastMessageId", "maxContext",
+        )) }.getOrNull()
             ?: return MacroContext()
         fun str(key: String): String =
             (snapshot[key] as? JsonPrimitive)?.contentOrNull.orEmpty()
@@ -674,11 +677,12 @@ class WebViewJsExtensionHost(
         private val extensionId: String,
         private val token: String,
     ) {
-        private val runtimeGeneration = _contextProvider?.snapshot()?.get("__runtimeGeneration")
+        private val storageReadSlots = Semaphore(2)
+        private val runtimeGeneration = _contextProvider?.snapshot(setOf("__runtimeGeneration"))?.get("__runtimeGeneration")
 
         private fun requireCurrentRuntime() {
             check(capabilityTokens[extensionId] == token &&
-                _contextProvider?.snapshot()?.get("__runtimeGeneration") == runtimeGeneration) {
+                _contextProvider?.snapshot(setOf("__runtimeGeneration"))?.get("__runtimeGeneration") == runtimeGeneration) {
                 "Expired runtime call from $extensionId"
             }
         }
@@ -765,29 +769,36 @@ class WebViewJsExtensionHost(
         @JavascriptInterface
         fun apiCall(requestId: String, method: String, path: String, bodyJson: String) {
             scope.launch {
-                val request = VirtualApiRequest(
-                    method = method,
-                    path = path,
-                    body = bodyJson.ifBlank { null },
-                    headers = mapOf("X-Extension-Id" to extensionId, "X-Capability-Token" to token),
-                )
-                if (!checkApiPermissions(path, requestId)) return@launch
-                val response = runCatching {
-                    routeApiRequestForExtension(request)
-                }.getOrElse { error ->
-                    VirtualApiResponse(
-                        status = 500,
-                        headers = mapOf("Content-Type" to "application/json"),
-                        body = json.encodeToString(
-                            JsonObject.serializer(),
-                            buildJsonObject {
-                                put("error", error.message ?: "Extension API call failed")
-                                put("status", 500)
-                            },
-                        ),
+                val boundedRead = isLargeStorageRead(method, path)
+                if (boundedRead) storageReadSlots.acquire()
+                try {
+                    if (capabilityTokens[extensionId] != token) return@launch
+                    val request = VirtualApiRequest(
+                        method = method,
+                        path = path,
+                        body = bodyJson.ifBlank { null },
+                        headers = mapOf("X-Extension-Id" to extensionId, "X-Capability-Token" to token),
                     )
+                    if (!checkApiPermissions(path, requestId)) return@launch
+                    val response = runCatching {
+                        routeApiRequestForExtension(request)
+                    }.getOrElse { error ->
+                        VirtualApiResponse(
+                            status = 500,
+                            headers = mapOf("Content-Type" to "application/json"),
+                            body = json.encodeToString(
+                                JsonObject.serializer(),
+                                buildJsonObject {
+                                    put("error", error.message ?: "Extension API call failed")
+                                    put("status", 500)
+                                },
+                            ),
+                        )
+                    }
+                    deliverApiResponseToJs(requestId, response)
+                } finally {
+                    if (boundedRead) storageReadSlots.release()
                 }
-                deliverApiResponseToJs(requestId, response)
             }
         }
 
@@ -981,11 +992,19 @@ class WebViewJsExtensionHost(
         }
 
         @JavascriptInterface
+        fun stGetContextFields(payload: String): String {
+            if (!hasStorageBridgeAccess("stGetContextFields")) return "{}"
+            val fields = json.parseToJsonElement(payload).jsonArray.map { it.jsonPrimitive.content }.toSet()
+            val snapshot = _contextProvider?.snapshot(fields) ?: buildJsonObject { }
+            return json.encodeToString(JsonObject.serializer(), snapshot)
+        }
+
+        @JavascriptInterface
         fun stReplaceVariables(input: String): String {
             if (!hasStorageBridgeAccess("stReplaceVariables")) return input
             val engine = macroEngine ?: return input
             return runCatching {
-                val snap = _contextProvider?.snapshot()
+                val snap = _contextProvider?.snapshot(setOf("name1", "name2"))
                 val ctx = if (snap != null) {
                     MacroContext(
                         characterName = snap["name2"]?.jsonPrimitive?.content ?: "",
@@ -1162,11 +1181,11 @@ class WebViewJsExtensionHost(
         fun stSetChatMessages(requestId: String, messagesJson: String, optionsJson: String) {
             if (!hasStorageBridgeAccess("stSetChatMessages")) return
             val provider = _contextProvider
-            val chatId = provider?.snapshot()?.get("chatId")
+            val chatId = provider?.snapshot(setOf("chatId"))?.get("chatId")
             scope.launch {
                 val failure = runCatching {
                     requireCurrentRuntime()
-                    check(provider === _contextProvider && provider?.snapshot()?.get("chatId") == chatId) { "Chat changed during write" }
+                    check(provider === _contextProvider && provider?.snapshot(setOf("chatId"))?.get("chatId") == chatId) { "Chat changed during write" }
                     val messages = json.parseToJsonElement(messagesJson).jsonArray
                     val options = json.parseToJsonElement(optionsJson).jsonObject
                     check(provider?.setChatMessages(messages, options) == true) { "Message update failed" }
@@ -1261,12 +1280,12 @@ class WebViewJsExtensionHost(
         }
 
         private suspend fun deliverApiResponseToJs(requestId: String, response: VirtualApiResponse) {
+            val js = withContext(Dispatchers.Default) {
+                ExtensionScriptTemplate.apiResponseScript(requestId, response.status, response.body)
+            }
             withContext(Dispatchers.Main) {
+                if (capabilityTokens[extensionId] != token) return@withContext
                 val webView = webViews[extensionId] ?: return@withContext
-                val escapedReqId = ExtensionScriptTemplate.jsEscape(requestId)
-                val escapedBody = ExtensionScriptTemplate.jsEscape(response.body)
-                val js = "if(window.Tellev&&window.Tellev.onApiResponse){" +
-                    "window.Tellev.onApiResponse('" + escapedReqId + "'," + response.status + ",'" + escapedBody + "');}"
                 webView.evaluateJavascript(js, null)
             }
         }

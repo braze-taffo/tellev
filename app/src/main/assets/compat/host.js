@@ -3,7 +3,7 @@
 (function () {
   const th = window.TavernHelper;
   const clone = value => JSON.parse(JSON.stringify(value));
-  const context = () => window.getContext();
+  const context = fields => fields && window.__tellevReadContext ? window.__tellevReadContext(fields) : window.getContext();
   const expose = (name, fn) => { th[name] = window[name] = fn; };
   const writes = new Map();
   const variableWrites = new Map();
@@ -31,7 +31,7 @@
   registration.dataset.scriptId = getScriptId();
   registry.append(registration);
   document.body.append(registry);
-  SillyTavern.getCurrentChatId = () => context().chatId;
+  SillyTavern.getCurrentChatId = () => context(['chatId']).chatId;
   const schemas = new Map();
   expose('registerVariableSchema', (schema, { type }) => { schemas.set(type, schema); });
   const oldGet = th.getVariables;
@@ -44,7 +44,7 @@
       return clone(scopes[option.type + ':' + (option.script_id || option.extension_id || '')] || {});
     }
     if (option.type === 'message' && (option.message_id === undefined || option.message_id === 'latest')) {
-      const chat = context().chat;
+      const chat = context(['chat']).chat;
       const index = chat.findLastIndex(m => !m.is_system);
       if (index < 0) throw new Error('No non-system message exists');
       option = { ...option, message_id: index };
@@ -66,7 +66,7 @@
     if (option.type === 'message') {
       let id = option.message_id ?? -1;
       if (id === 'latest') id = -1;
-      if (id < 0) id += context().chat.length;
+      if (id < 0) id += context(['chat']).chat.length;
       variableWrites.get(id)?.resolve();
     }
   });
@@ -83,23 +83,23 @@
   });
   expose('getAllVariables', () => Object.assign({}, getVariables({type:'global'}),
     getVariables({type:'character'}), getVariables({type:'script'}), getVariables({type:'chat'})));
-  expose('getLastMessageId', () => context().chat.length - 1);
-  expose('getChatMessages', (range,options) => window.__tellevGetChatMessages(context().chat,range,options));
+  expose('getLastMessageId', () => context(['chat']).chat.length - 1);
+  expose('getChatMessages', (range,options) => window.__tellevGetChatMessages(context(['chat']).chat,range,options));
   expose('setChatMessages', (messages, options = {}) => new Promise((resolve, reject) => {
     const id = crypto.randomUUID();
-    const length = context().chat.length;
+    const length = context(['chat']).chat.length;
     const messageIds = messages.map(m => m.message_id < 0 ? length + m.message_id : m.message_id);
     writes.set(id, {resolve, reject, messageIds});
     tellevNative.stSetChatMessages(id, JSON.stringify(messages), JSON.stringify(options));
   }));
   expose('setChatMessage', (fields, message_id, options) =>
     setChatMessages([{message_id, ...(typeof fields === 'string' ? {message:fields} : fields)}], options));
-  expose('getLorebookSettings', async () => ({ selected_global_lorebooks: context().globalWorldBooks || [] }));
-  expose('getCharLorebooks', async () => ({ primary: context().characterWorldBooks?.[0] ?? null,
-    additional: context().characterWorldBooks?.slice(1) || [] }));
-  expose('getCharWorldbookNames', () => ({primary: context().characterWorldBooks?.[0] ?? null,
-    additional: context().characterWorldBooks?.slice(1) || []}));
-  expose('getGlobalWorldbookNames', () => context().globalWorldBooks || []);
+  expose('getLorebookSettings', async () => ({ selected_global_lorebooks: context(['globalWorldBooks']).globalWorldBooks || [] }));
+  expose('getCharLorebooks', async () => ({ primary: context(['characterWorldBooks']).characterWorldBooks?.[0] ?? null,
+    additional: context(['characterWorldBooks']).characterWorldBooks?.slice(1) || [] }));
+  expose('getCharWorldbookNames', () => ({primary: context(['characterWorldBooks']).characterWorldBooks?.[0] ?? null,
+    additional: context(['characterWorldBooks']).characterWorldBooks?.slice(1) || []}));
+  expose('getGlobalWorldbookNames', () => context(['globalWorldBooks']).globalWorldBooks || []);
 
   // apiCall resolves HTTP errors too. Never acknowledge a failed native write.
   const api = async (method, path, body) => {
@@ -119,7 +119,7 @@
     compatStorage('rebindCharWorldbooks',{name,binding}); window.__tellevInvalidateContext();
   });
   const currentChat = chat => { if (chat !== 'current') throw new Error('Only current chat is supported upstream'); };
-  expose('getChatWorldbookName', (chat = 'current') => { currentChat(chat); return context().chat_metadata?.world_info || null; });
+  expose('getChatWorldbookName', (chat = 'current') => { currentChat(chat); return context(['chat_metadata']).chat_metadata?.world_info || null; });
   expose('rebindChatWorldbook', async (chat, name) => {
     currentChat(chat); compatStorage('rebindChatWorldbook',{chat,name}); window.__tellevInvalidateContext();
   });
@@ -435,10 +435,7 @@
   const loadBook = async name => {
     // Context entries are ST projections, not stored WorldBookEntry objects;
     // load durable data so back-to-back calls cannot overwrite a stale snapshot.
-    const listing = await api('GET', '/api/worlds');
-    const book = listing.worlds?.find(b => b.name === name || b.id === name);
-    if (!book) throw new Error(`Unknown worldbook: ${name}`);
-    return book;
+    return api('POST', '/api/tellev/worldbook', { name });
   };
   const saveBook = async book => {
     await api('POST', '/api/worlds', book);
@@ -469,7 +466,7 @@
         : typeof entry[key] === 'string' ? entry[key].includes(value) : entry[key] === value));
   });
   expose('getWorldbook', async name => entriesAs(await loadBook(name), true));
-  expose('getWorldbookNames', () => [...new Set((context().worldBooks || []).map(b => b.name ?? b.id))]);
+  expose('getWorldbookNames', () => [...new Set((context(['worldBookNames']).worldBookNames || context(['worldBooks']).worldBooks?.map(b => b.name ?? b.id) || []))]);
   SillyTavern.loadWorldInfo = async name => ({ entries: Object.fromEntries(
     (await loadBook(name)).entries.map((e, i) => { const raw = toRawEntry(e, i); return [raw.uid, raw]; })) });
   expose('setLorebookEntries', async (name, patches) => {
@@ -547,9 +544,9 @@
   // insert_before semantics (chat_message.ts:318): 'end' or an index into the
   // normalized floor range; negative indexes count from the end.
   expose('createChatMessages', async (messages, options = {}) => {
-    const chatId = options.chat_id && options.chat_id !== 'current' ? options.chat_id : context().chatId;
+    const chatId = options.chat_id && options.chat_id !== 'current' ? options.chat_id : context(['chatId']).chatId;
     let insertBefore = options.insert_at ?? options.insert_before ?? 'end';
-    const c = context();
+    const c = context(['name1', 'name2']);
     const tellevRole = { system: 'system', user: 'user', assistant: 'assistant' };
     const existing = await sessionMessages(chatId);
     insertBefore = insertBefore === 'end' ? existing.length
@@ -571,7 +568,7 @@
     window.__tellevInvalidateContext();
   });
   expose('deleteChatMessages', async (messageIds, options = {}) => {
-    const chatId = options.chat_id && options.chat_id !== 'current' ? options.chat_id : context().chatId;
+    const chatId = options.chat_id && options.chat_id !== 'current' ? options.chat_id : context(['chatId']).chatId;
     const messages = await sessionMessages(chatId);
     const normalized = [...new Set(messageIds
       .filter(id => id >= -messages.length && id < messages.length)
@@ -742,7 +739,7 @@
     await window.__tellevReady();
     const event = JSON.parse(payload);
     const id = event.args?.[0];
-    const chat = context().chat;
+    const chat = context(['chat']).chat;
     const expectsMvuWrite = name === 'message_received' && window.Mvu &&
       chat[id]?.mes?.length >= 5 && chat.slice(0, Math.max(1,id)).some(m => m.variables?.[m.swipe_id || 0]?.stat_data);
     let timer;
@@ -771,7 +768,7 @@
   // regex reader consumes. The old whole-card write used an ignored data field.
   const regexCharacterId = async option => {
     if (option && typeof option === 'object') {
-      const c = context();
+      const c = context(['characterId']);
       // tavern_regex.ts: deprecated scope defaults to all, not character.
       const type = option.type ?? option.scope ?? 'all';
       if (!['all', 'global', 'preset', 'character'].includes(type)) throw new Error(`Invalid regex scope: ${type}`);
@@ -885,7 +882,7 @@
     }, text);
   };
   expose('formatAsDisplayedMessage', (text, { message_id = 'last' } = {}) => {
-    const c = context(), chat = c.chat ?? [];
+    const c = context(['chat', 'name1', 'name2', 'character', 'characters', 'extension_settings', 'chatCompletionSettings']), chat = c.chat ?? [];
     if (typeof message_id !== 'number' && !['last', 'last_user', 'last_char'].includes(message_id)) throw new Error(`Invalid message_id: ${message_id}`);
     if (!chat.length) throw new Error('No chat messages');
     let id = message_id;

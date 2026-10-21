@@ -7,6 +7,18 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class ScriptSourceEscapingTest {
+    @Test fun `single buffer API responses preserve exact escaping for arbitrary JSON and Unicode`() {
+        val body = """{"quote":"'", "slash":"\\", "unicode":"中文"}""" + "\n\r\u2028\u2029"
+        fun previousEscape(raw: String) = raw.replace("\\", "\\\\").replace("'", "\\'")
+            .replace("\n", "\\n").replace("\r", "\\r").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+        val id = "request'\\\n"
+        assertEquals(previousEscape(body), ExtensionScriptTemplate.jsEscape(body))
+        assertEquals("if(window.Tellev&&window.Tellev.onApiResponse){window.Tellev.onApiResponse('" +
+            previousEscape(id) + "',200,'" + previousEscape(body) + "');}",
+            ExtensionScriptTemplate.apiResponseScript(id, 200, body))
+        val large = body.repeat(20000)
+        assertEquals(previousEscape(large), ExtensionScriptTemplate.jsEscape(large))
+    }
     @Test
     fun `script closer is escaped without changing its string value`() {
         val source = "\"</script>\""

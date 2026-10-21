@@ -49,8 +49,10 @@ test('actual MVU bundle initializes and applies DaoYuan Zod updates', {timeout:2
       getSettings:()=> '{}', saveSettings:()=>{}, registerCommand:()=>{}, registerRoute:()=>{},
       extensionReady:()=>{}, extensionFailed:e=>errors.push(e),
       apiCall:(id, method, path)=>queueMicrotask(()=>w.Tellev.onApiResponse(id,
-        method === 'GET' && path === '/api/worlds' ? 200 : 404,
-        JSON.stringify(method === 'GET' && path === '/api/worlds'
+        (method === 'GET' && path === '/api/worlds') || (method === 'POST' && path === '/api/tellev/worldbook') ? 200 : 404,
+        JSON.stringify(method === 'POST' && path === '/api/tellev/worldbook'
+          ? { id: 'dao', name: 'dao', entries: card.character_book.entries, raw: {} }
+          : method === 'GET' && path === '/api/worlds'
           ? { worlds: [{ id: 'dao', name: 'dao', entries: card.character_book.entries, raw: {} }] }
           : { error: `Unexpected fixture request: ${method} ${path}` }))),
     };

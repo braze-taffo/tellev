@@ -39,3 +39,30 @@ test('invalid compact reads preserve a throwing JS API', () => {
   vm.runInNewContext(script, page);
   assert.throws(() => page.getVariables({ type: 'message', message_id: 999 }), /Invalid message_id/);
 });
+
+test('message and binding helpers project fields but explicit context stays complete', () => {
+  let text = 'before';
+  const calls = [];
+  const page = { TavernHelper: {}, SillyTavern: {}, __tellevRequest() {},
+    __tellevGetChatMessages: chat => chat,
+    TellevMessage: {
+      getContext() { calls.push('full'); return JSON.stringify({ marker: 'full' }); },
+      getContextFields(raw) {
+        const fields = JSON.parse(raw); calls.push(fields);
+        return JSON.stringify({ chat: [{ mes: text }], characterWorldbookBindings: { primary: 'world', additional: [] },
+          chat_metadata: { world_info: 'chat-world' } });
+      },
+    },
+  };
+  page.window = page;
+  vm.runInNewContext(script, page);
+  assert.equal(page.getChatMessages()[0].mes, 'before');
+  text = 'after';
+  assert.equal(page.getChatMessages()[0].mes, 'after');
+  assert.equal(page.getCharWorldbookNames().primary, 'world');
+  assert.equal(page.getChatWorldbookName(), 'chat-world');
+  assert.deepEqual(calls, [['chat'], ['chat'], ['characterWorldbookBindings'], ['chat_metadata']]);
+  assert.ok(!calls.includes('full'));
+  assert.equal(page.SillyTavern.getContext().marker, 'full');
+  assert.equal(calls.at(-1), 'full');
+});

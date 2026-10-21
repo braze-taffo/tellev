@@ -624,6 +624,7 @@ private fun ChatContentScreen(
                                 readVariables = { viewModel.tavernMessageScopedVariablesJson(runtimeToken, message.id, it) },
                                 variablesJson = { viewModel.tavernMessageVariablesJson(runtimeToken) },
                                 contextJson = { viewModel.tavernMessageContextJson(runtimeToken) },
+                                contextFieldsJson = { viewModel.tavernMessageContextJson(runtimeToken, it) },
                                 currentInput = { inputText },
                                 request = { operation, payload, callback ->
                                     viewModel.handleTavernMessageRequest(
@@ -674,6 +675,7 @@ private fun ChatContentScreen(
                                 readVariables = { viewModel.tavernMessageScopedVariablesJson(runtimeToken, "streaming", it) },
                                 variablesJson = { viewModel.tavernMessageVariablesJson(runtimeToken) },
                                 contextJson = { viewModel.tavernMessageContextJson(runtimeToken) },
+                                contextFieldsJson = { viewModel.tavernMessageContextJson(runtimeToken, it) },
                                 currentInput = { inputText },
                                 request = { operation, payload, callback ->
                                     viewModel.handleTavernMessageRequest(operation, payload, { inputText = it }, callback, runtimeToken)

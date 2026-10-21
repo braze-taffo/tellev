@@ -56,9 +56,17 @@ private val STORAGE_API_PREFIXES = listOf(
     "/api/chats",
     "/api/worlds",
     "/api/worldinfo",
+    "/api/tellev/worldbook",
     "/api/settings",
     "/api/groups",
     "/api/personas",
     "/api/presets",
     "/api/avatars",
 )
+
+/** Limit large read/encode/deliver work together; writes and model requests stay independent. */
+internal fun isLargeStorageRead(method: String, path: String): Boolean =
+    (method.equals("GET", ignoreCase = true) && requiredExtensionPermissionForPath(path) == ExtensionPermission.Storage) ||
+        (method.equals("POST", ignoreCase = true) && path.substringBefore('?') in setOf(
+            "/api/tellev/worldbook", "/api/worldinfo/get", "/api/worldinfo/list",
+        ))

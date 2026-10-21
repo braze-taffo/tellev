@@ -26,6 +26,43 @@ import java.util.concurrent.ConcurrentHashMap
 
 class VirtualApiRouterTest {
 
+    @Test fun `compact worldbook resolution reads fresh content and preserves unknown data`() = runBlocking {
+        val raw = json.parseToJsonElement("""{"unknown":{"keep":true},"entries":{"17":{"uid":17,"content":"before","custom":42}}}""").jsonObject
+        store.saveWorldBook(WorldBook("target", "中文书名", app.tellev.core.storage.codec.WorldBookCodec.parseWorldBookEntries(raw), raw))
+        store.saveWorldBook(WorldBook("other", "其他", emptyList(), json.parseToJsonElement("""{"unrelated":"${"x".repeat(100000)}"}""").jsonObject))
+        suspend fun read(name: String) = router.route(VirtualApiRequest("POST", "/api/tellev/worldbook", body = """{"name":"$name"}"""))
+        val first = read("中文书名")
+        assertEquals(200, first.status)
+        assertTrue(first.body.length < 10000)
+        assertTrue(!first.body.contains("unrelated"))
+        val book = json.decodeFromString(WorldBook.serializer(), first.body)
+        assertEquals("before", book.entries.single().content)
+        assertEquals("42", book.entries.single().raw["custom"]!!.jsonPrimitive.content)
+        store.saveWorldBook(book.copy(name = "已改名", entries = book.entries.map { it.copy(content = "after") }))
+        assertEquals(404, read("中文书名").status)
+        val updated = json.decodeFromString(WorldBook.serializer(), read("已改名").body)
+        assertEquals("after", updated.entries.single().content)
+        assertEquals("true", updated.raw["unknown"]!!.jsonObject["keep"]!!.jsonPrimitive.content)
+        assertEquals(200, read("target").status)
+        store.deleteWorldBook("target")
+        assertEquals(404, read("target").status)
+        assertEquals(ExtensionPermission.Storage, requiredExtensionPermissionForPath("/api/tellev/worldbook"))
+    }
+
+    @Test fun `worldbook index observes raw edits and duplicate names retain listing precedence`() = runBlocking {
+        store.saveWorldBook(WorldBook("first", "相同名称", emptyList()))
+        store.saveWorldBook(WorldBook("second", "相同名称", emptyList()))
+        val expected = store.listWorldBooks().first { it.name == "相同名称" }.id
+        suspend fun read(name: String) = router.route(VirtualApiRequest("POST", "/api/tellev/worldbook", body = """{"name":"$name"}"""))
+        assertEquals(expected, json.parseToJsonElement(read("相同名称").body).jsonObject["id"]!!.jsonPrimitive.content)
+        // Raw ST edits bypass saveWorldBook; the file signature must invalidate the cached name.
+        val path = layout.worlds.resolve("$expected.json")
+        Files.write(path, """{"name":"raw-edited-name","entries":{}}""".toByteArray())
+        assertEquals(expected, json.parseToJsonElement(read("raw-edited-name").body).jsonObject["id"]!!.jsonPrimitive.content)
+        Files.delete(path)
+        assertEquals(404, read("raw-edited-name").status)
+    }
+
     private lateinit var tempDir: Path
     private lateinit var layout: StDirectoryLayout
     private lateinit var store: FileStDataStore

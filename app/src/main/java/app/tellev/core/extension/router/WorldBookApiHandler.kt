@@ -40,6 +40,15 @@ internal class WorldBookApiHandler(
         return jsonResponse(200, body as? JsonObject ?: buildJsonObject { put("data", body) }, json)
     }
 
+    suspend fun handleResolveWorld(request: VirtualApiRequest): VirtualApiResponse {
+        val name = parseBodyAsJsonObject(request, json).stringValue("name")
+            ?: return errorResponse(400, "Missing worldbook name", json)
+        // Preserve the listing's first-match rule for duplicate names and ID/name collisions.
+        val match = dataStore.listWorldBookSummaries().firstOrNull { it.name == name || it.id == name }
+            ?: return errorResponse(404, "Unknown worldbook: $name", json)
+        return handleReadWorld(match.id)
+    }
+
     suspend fun handleSaveWorld(request: VirtualApiRequest): VirtualApiResponse {
         val book = parseBody<WorldBook>(request, json)
         dataStore.saveWorldBook(book)
