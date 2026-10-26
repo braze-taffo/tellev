@@ -6,6 +6,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import app.tellev.ui.dsh.*
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -121,16 +123,24 @@ private val WarmDarkColors = darkColorScheme(
 fun TellevTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     accent: ThemeAccent = ThemeAccent.Warm,
+    interfaceStyle: InterfaceStyle = InterfaceStyle.Classic,
     content: @Composable () -> Unit,
 ) {
-    val colors = if (darkTheme) accent.darkColors() else accent.lightColors()
+    val dshPalette = if (darkTheme) DshDarkPalette else DshLightPalette
+    val useDsh = interfaceStyle == InterfaceStyle.Dsh
+    val colors = if (useDsh) dshPalette.toMaterialScheme()
+        else if (darkTheme) accent.darkColors() else accent.lightColors()
     SystemBarAppearance(colors, darkTheme)
-    MaterialTheme(
-        colorScheme = colors,
-        typography = AtmosphereTypography,
-        shapes = AtmosphereShapes,
-        content = content,
-    )
+    // One stable content call keeps navigation and active chat state alive
+    // when the user changes the interface or switches light/dark mode.
+    CompositionLocalProvider(LocalDshPalette provides dshPalette) {
+        MaterialTheme(
+            colorScheme = colors,
+            typography = if (useDsh) DshTypography else AtmosphereTypography,
+            shapes = if (useDsh) DshShapes else AtmosphereShapes,
+            content = content,
+        )
+    }
 }
 
 @Suppress("DEPRECATION")

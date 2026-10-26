@@ -162,15 +162,13 @@ internal object ExtensionScriptTemplate {
         internal const val DEFAULT_SCRIPT_READY_TIMEOUT_MS: Long = 30_000L
 
         /**
-         * 同一 macrotask 内多次属性读取共用一次快照：SillyTavern Proxy
-         * 每次 get 都调 _getContext（= 一次 Java bridge + 一次大 JSON.parse），
-         * 事件 handler 里读几个属性就付几次。tick 缓存让同一任务内只付一次；
-         * 推进靠 setTimeout 包裝（同步 handler 内 token 不变，正好共用；
-         * 下一任务自动失效，不影响新鲜度）。显式调用的 getContext() 保持
-         * 永远新鲜，不走此缓存。
+         * New hosts lazily project properties into the same per-task view, retaining
+         * object identity and script-local mutations without building unrelated fields. Older hosts retain
+         * the per-task snapshot fallback. Explicit getContext() always reads the
+         * complete fresh snapshot on both paths.
          */
         internal const val TAVERN_CONTEXT_TICK_CACHE_JS: String =
-            "var _ctxTickCache=null;var _ctxTickToken=0;function _getContextTick(){var t=_ctxTickToken;if(_ctxTickCache&&_ctxTickCache.tick===t)return _ctxTickCache.ctx;var c=_getContext();_ctxTickCache={tick:t,ctx:c};return c;}" +
+            "var _ctxTickCache=null;var _ctxTickToken=0;function _getContextTick(){var t=_ctxTickToken;if(_ctxTickCache&&_ctxTickCache.tick===t)return _ctxTickCache.ctx;var c=typeof tellevNative.stGetContextFields==='function'?new Proxy({},{get:function(t,p){if(typeof p==='symbol')return undefined;if(Object.prototype.hasOwnProperty.call(t,p))return t[p];return t[p]=_readContextFields([String(p)])[p];}}):_getContext();_ctxTickCache={tick:t,ctx:c};return c;}" +
                 "function _ctxTickAdvance(){_ctxTickToken++;if(_ctxTickToken>1000000){_ctxTickToken=0;_ctxTickCache=null;}}" +
                 "if(!window.__tellevCtxTickAdvancer){window.__tellevCtxTickAdvancer=true;var _origSetTimeout=window.setTimeout;window.setTimeout=function(fn,ms){var args=[].slice.call(arguments,2);return _origSetTimeout(function(){_ctxTickAdvance();try{return fn.apply(this,args);}catch(e){throw e;}},ms);};}"
 
@@ -214,7 +212,8 @@ internal object ExtensionScriptTemplate {
             "var event_types={APP_INITIALIZED:'app_initialized',APP_READY:'app_ready',EXTRAS_CONNECTED:'extras_connected',MESSAGE_SWIPED:'message_swiped',MESSAGE_SENT:'message_sent',MESSAGE_RECEIVED:'message_received',MESSAGE_EDITED:'message_edited',MESSAGE_DELETED:'message_deleted',MESSAGE_UPDATED:'message_updated',MESSAGE_FILE_EMBEDDED:'message_file_embedded',MESSAGE_REASONING_EDITED:'message_reasoning_edited',MESSAGE_REASONING_DELETED:'message_reasoning_deleted',MESSAGE_SWIPE_DELETED:'message_swipe_deleted',MORE_MESSAGES_LOADED:'more_messages_loaded',IMPERSONATE_READY:'impersonate_ready',CHAT_CHANGED:'chat_id_changed',CHAT_LOADED:'chatLoaded',GENERATION_AFTER_COMMANDS:'GENERATION_AFTER_COMMANDS',GENERATION_STARTED:'generation_started',GENERATION_STOPPED:'generation_stopped',GENERATION_ENDED:'generation_ended',SD_PROMPT_PROCESSING:'sd_prompt_processing',EXTENSIONS_FIRST_LOAD:'extensions_first_load',EXTENSION_SETTINGS_LOADED:'extension_settings_loaded',SETTINGS_LOADED:'settings_loaded',SETTINGS_UPDATED:'settings_updated',GROUP_UPDATED:'group_updated',MOVABLE_PANELS_RESET:'movable_panels_reset',SETTINGS_LOADED_BEFORE:'settings_loaded_before',SETTINGS_LOADED_AFTER:'settings_loaded_after',CHATCOMPLETION_SOURCE_CHANGED:'chatcompletion_source_changed',CHATCOMPLETION_MODEL_CHANGED:'chatcompletion_model_changed',OAI_PRESET_CHANGED_BEFORE:'oai_preset_changed_before',OAI_PRESET_CHANGED_AFTER:'oai_preset_changed_after',OAI_PRESET_EXPORT_READY:'oai_preset_export_ready',OAI_PRESET_IMPORT_READY:'oai_preset_import_ready',WORLDINFO_SETTINGS_UPDATED:'worldinfo_settings_updated',WORLDINFO_UPDATED:'worldinfo_updated',CHARACTER_EDITOR_OPENED:'character_editor_opened',CHARACTER_EDITED:'character_edited',CHARACTER_PAGE_LOADED:'character_page_loaded',CHARACTER_GROUP_OVERLAY_STATE_CHANGE_BEFORE:'character_group_overlay_state_change_before',CHARACTER_GROUP_OVERLAY_STATE_CHANGE_AFTER:'character_group_overlay_state_change_after',USER_MESSAGE_RENDERED:'user_message_rendered',CHARACTER_MESSAGE_RENDERED:'character_message_rendered',FORCE_SET_BACKGROUND:'force_set_background',CHAT_DELETED:'chat_deleted',CHAT_CREATED:'chat_created',CHAT_RENAMED:'chat_renamed',GROUP_CHAT_DELETED:'group_chat_deleted',GROUP_CHAT_CREATED:'group_chat_created',GENERATE_BEFORE_COMBINE_PROMPTS:'generate_before_combine_prompts',GENERATE_AFTER_COMBINE_PROMPTS:'generate_after_combine_prompts',GENERATE_AFTER_DATA:'generate_after_data',GROUP_MEMBER_DRAFTED:'group_member_drafted',GROUP_WRAPPER_STARTED:'group_wrapper_started',GROUP_WRAPPER_FINISHED:'group_wrapper_finished',WORLD_INFO_ACTIVATED:'world_info_activated',TEXT_COMPLETION_SETTINGS_READY:'text_completion_settings_ready',CHAT_COMPLETION_SETTINGS_READY:'chat_completion_settings_ready',CHAT_COMPLETION_PROMPT_READY:'chat_completion_prompt_ready',CHARACTER_FIRST_MESSAGE_SELECTED:'character_first_message_selected',CHARACTER_DELETED:'characterDeleted',CHARACTER_DUPLICATED:'character_duplicated',CHARACTER_RENAMED:'character_renamed',CHARACTER_RENAMED_IN_PAST_CHAT:'character_renamed_in_past_chat',SMOOTH_STREAM_TOKEN_RECEIVED:'stream_token_received',STREAM_TOKEN_RECEIVED:'stream_token_received',STREAM_REASONING_DONE:'stream_reasoning_done',FILE_ATTACHMENT_DELETED:'file_attachment_deleted',WORLDINFO_FORCE_ACTIVATE:'worldinfo_force_activate',OPEN_CHARACTER_LIBRARY:'open_character_library',ONLINE_STATUS_CHANGED:'online_status_changed',IMAGE_SWIPED:'image_swiped',CONNECTION_PROFILE_LOADED:'connection_profile_loaded',CONNECTION_PROFILE_CREATED:'connection_profile_created',CONNECTION_PROFILE_DELETED:'connection_profile_deleted',CONNECTION_PROFILE_UPDATED:'connection_profile_updated',TOOL_CALLS_PERFORMED:'tool_calls_performed',TOOL_CALLS_RENDERED:'tool_calls_rendered',CHARACTER_MANAGEMENT_DROPDOWN:'charManagementDropdown',SECRET_WRITTEN:'secret_written',SECRET_DELETED:'secret_deleted',SECRET_ROTATED:'secret_rotated',SECRET_EDITED:'secret_edited',PRESET_CHANGED:'preset_changed',PRESET_DELETED:'preset_deleted',PRESET_RENAMED:'preset_renamed',PRESET_RENAMED_BEFORE:'preset_renamed_before',MAIN_API_CHANGED:'main_api_changed',WORLDINFO_ENTRIES_LOADED:'worldinfo_entries_loaded',WORLDINFO_SCAN_DONE:'worldinfo_scan_done',MEDIA_ATTACHMENT_DELETED:'media_attachment_deleted',PERSONA_CHANGED:'persona_changed',PERSONA_CREATED:'persona_created',PERSONA_UPDATED:'persona_updated',PERSONA_RENAMED:'persona_renamed',PERSONA_DELETED:'persona_deleted',TTS_JOB_STARTED:'tts_job_started',TTS_AUDIO_READY:'tts_audio_ready',TTS_JOB_COMPLETE:'tts_job_complete',ITEMIZED_PROMPTS_LOADED:'itemized_prompts_loaded',ITEMIZED_PROMPTS_SAVED:'itemized_prompts_saved',ITEMIZED_PROMPTS_DELETED:'itemized_prompts_deleted',CHARACTER_SELECTED:'character_selected',CHARACTER_CREATED:'character_created',CHARACTER_IMPORTED:'character_imported',CHARACTER_EXPORTED:'character_exported',CHAT_IMPORTED:'chat_imported',CHAT_EXPORTED:'chat_exported',EXTENSION_SETTINGS_OPENED:'extension_settings_opened',EXTENSION_SETTINGS_CLOSED:'extension_settings_closed',GROUP_SELECTED:'group_selected',GROUP_CHAT_STARTED:'group_chat_started',SETTINGS_CHANGED:'settings_updated'};" +
             "var _stHandlers={};var _autoFire={app_ready:true,app_initialized:true};var _lastArgs={};function _normEvent(t){if(event_types[t])return event_types[t];return String(t||'');}function _argsFromPayload(p){if(p&&Array.isArray(p.args))return p.args;if(p&&Object.prototype.hasOwnProperty.call(p,'detail'))return[p.detail];if(p&&Object.keys&&Object.keys(p).length)return[p];return[];}async function _fireLocal(t,args){t=_normEvent(t);args=args||[];var a=_stHandlers[t];if(a){var copy=a.slice();for(var i=0;i<copy.length;i++){try{var r=copy[i].apply(eventSource,args);if(r&&typeof r.then==='function')await r;}catch(e){tellevNative.log('error','eventSource handler error: '+e);}}}if(_autoFire[t])_lastArgs[t]=args;}" +
             "var eventSource={events:{},on:function(t,c){t=_normEvent(t);if(!_stHandlers[t])_stHandlers[t]=[];_stHandlers[t].push(c);if(_autoFire[t]&&Object.prototype.hasOwnProperty.call(_lastArgs,t)){try{c.apply(eventSource,_lastArgs[t]);}catch(e){tellevNative.log('error','eventSource handler error: '+e);}}return c;},makeFirst:function(t,c){t=_normEvent(t);if(!_stHandlers[t])_stHandlers[t]=[];var a=_stHandlers[t];var i=a.indexOf(c);if(i>=0)a.splice(i,1);a.unshift(c);if(_autoFire[t]&&Object.prototype.hasOwnProperty.call(_lastArgs,t)){try{c.apply(eventSource,_lastArgs[t]);}catch(e){}}return c;},makeLast:function(t,c){t=_normEvent(t);if(!_stHandlers[t])_stHandlers[t]=[];var a=_stHandlers[t];var i=a.indexOf(c);if(i>=0)a.splice(i,1);a.push(c);if(_autoFire[t]&&Object.prototype.hasOwnProperty.call(_lastArgs,t)){try{c.apply(eventSource,_lastArgs[t]);}catch(e){}}return c;},removeListener:function(t,c){t=_normEvent(t);var a=_stHandlers[t];if(!a)return;var i=a.indexOf(c);if(i>=0)a.splice(i,1);},off:function(t,c){return eventSource.removeListener(t,c);},once:function(t,c){var w=function(){eventSource.removeListener(t,w);return c.apply(eventSource,arguments);};return eventSource.on(t,w);},make:function(t,d){return{type:_normEvent(t),detail:d};},emit:function(t){var args=[].slice.call(arguments,1);var n=_normEvent(t);tellevNative.emit(String(n),JSON.stringify({args:args}));return _fireLocal(n,args);},emitAndWait:function(t){return eventSource.emit.apply(eventSource,arguments);},_fireNative:function(n,pj){var p;try{p=JSON.parse(pj);}catch(e){p={};}return _fireLocal(n,_argsFromPayload(p));},_fireLocal:function(n,p){return _fireLocal(n,Array.isArray(p)?p:_argsFromPayload(p));}};" +
-            "function _getContext(){var r;try{r=tellevNative.stGetContext();}catch(e){r='{}';}var c;try{c=JSON.parse(r);}catch(e){c={};}if(!c.chat)c.chat=[];if(!c.characters)c.characters=[];if(!c.groups)c.groups=[];if(!c.name1)c.name1='User';if(!c.name2)c.name2='Character';if(!c.characterId)c.characterId='';if(!c.chatId)c.chatId='';if(!c.groupId)c.groupId='';if(!c.mainApi)c.mainApi='openai-compatible';if(!c.chatMetadata)c.chatMetadata={};if(!c.onlineStatus)c.onlineStatus='connected';if(!c.maxContext)c.maxContext=1000000;if(!c.extensionPrompts)c.extensionPrompts={};if(!c.eventSource)c.eventSource=eventSource;if(!c.eventTypes)c.eventTypes=event_types;if(!c.event_types)c.event_types=event_types;if(!c.chatCompletionSettings)c.chatCompletionSettings={};if(!Array.isArray(c.chatCompletionSettings.prompts))c.chatCompletionSettings.prompts=[];if(!Array.isArray(c.chatCompletionSettings.prompt_order))c.chatCompletionSettings.prompt_order=[{character_id:100001,order:[]}];if(!c.extensionSettings)c.extensionSettings={};if(!Array.isArray(c.extensionSettings.regex))c.extensionSettings.regex=[];return c;}" +
+            "function _getContext(){var r;try{r=tellevNative.stGetContext();}catch(e){r='{}';}var c;try{c=JSON.parse(r);}catch(e){c={};}return _normalizeContext(c);}function _normalizeContext(c){if(!c.chat)c.chat=[];if(!c.characters)c.characters=[];if(!c.groups)c.groups=[];if(!c.name1)c.name1='User';if(!c.name2)c.name2='Character';if(!c.characterId)c.characterId='';if(!c.chatId)c.chatId='';if(!c.groupId)c.groupId='';if(!c.mainApi)c.mainApi='openai-compatible';if(!c.chatMetadata)c.chatMetadata={};if(!c.onlineStatus)c.onlineStatus='connected';if(!c.maxContext)c.maxContext=1000000;if(!c.extensionPrompts)c.extensionPrompts={};if(!c.eventSource)c.eventSource=eventSource;if(!c.eventTypes)c.eventTypes=event_types;if(!c.event_types)c.event_types=event_types;if(!c.chatCompletionSettings)c.chatCompletionSettings={};if(!Array.isArray(c.chatCompletionSettings.prompts))c.chatCompletionSettings.prompts=[];if(!Array.isArray(c.chatCompletionSettings.prompt_order))c.chatCompletionSettings.prompt_order=[{character_id:100001,order:[]}];if(!c.extensionSettings)c.extensionSettings={};if(!Array.isArray(c.extensionSettings.regex))c.extensionSettings.regex=[];return c;}" +
+            "function _readContextFields(fields){if(typeof tellevNative.stGetContextFields!=='function')return _getContext();return _normalizeContext(JSON.parse(tellevNative.stGetContextFields(JSON.stringify(fields))));}window.__tellevReadContext=_readContextFields;" +
             // 同一 macrotask 内多次属性读取共用一次快照（见 TAVERN_CONTEXT_TICK_CACHE_JS）。
             TAVERN_CONTEXT_TICK_CACHE_JS +
             // js-slash-runner iframe/predefine.js exposes the script-facing
@@ -347,13 +346,42 @@ internal object ExtensionScriptTemplate {
         }
     }
 
-    internal fun jsEscape(raw: String): String = raw
-        .replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\u2028", "\\u2028")
-        .replace("\u2029", "\\u2029")
+    private fun escapedLength(raw: String): Int {
+        var extra = 0
+        raw.forEach { extra += when (it) {
+            '\\', '\'', '\n', '\r' -> 1
+            '\u2028', '\u2029' -> 5
+            else -> 0
+        } }
+        return Math.addExact(raw.length, extra)
+    }
+
+    private fun StringBuilder.appendJsEscaped(raw: String) {
+        raw.forEach { when (it) {
+            '\\' -> append("\\\\")
+            '\'' -> append("\\'")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\u2028' -> append("\\u2028")
+            '\u2029' -> append("\\u2029")
+            else -> append(it)
+        } }
+    }
+
+    internal fun jsEscape(raw: String): String {
+        val length = escapedLength(raw)
+        return if (length == raw.length) raw else buildString(length) { appendJsEscaped(raw) }
+    }
+
+    /** One output buffer instead of six replace buffers plus concatenation copies. */
+    internal fun apiResponseScript(requestId: String, status: Int, body: String): String {
+        val prefix = "if(window.Tellev&&window.Tellev.onApiResponse){window.Tellev.onApiResponse('"
+        val middle = "',$status,'"
+        val suffix = "');}"
+        return buildString(prefix.length + escapedLength(requestId) + middle.length + escapedLength(body) + suffix.length) {
+            append(prefix); appendJsEscaped(requestId); append(middle); appendJsEscaped(body); append(suffix)
+        }
+    }
 
     /**
      * Sanitize raw script source before embedding it in a <script> element.
@@ -366,6 +394,6 @@ internal object ExtensionScriptTemplate {
      * as `a < /b/.test(c)` or `</` inside regex literals.
      */
     internal fun sanitizeScriptSource(src: String): String = src
-        .replace(Regex("</script", RegexOption.IGNORE_CASE), "<\\/script")
+        .replace(Regex("</script", RegexOption.IGNORE_CASE), Regex.escapeReplacement("<\\/script"))
         .replace("<!--", "<\\!--")
 }

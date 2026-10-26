@@ -26,18 +26,13 @@ internal data class CreationBrief(
         }
         if (title.isNotBlank()) appendLine("${if (kind == CreationKind.Character) "角色或故事名" else "世界书名"}：${title.trim()}")
         if (premise.isNotBlank()) appendLine("核心设定：\n${premise.trim()}")
-        if (guided) {
-            append("请先根据已提供的信息写出能确定的部分，再只问当前最关键的 1 至 2 个问题；不要重复询问已经填写的内容。")
-        } else {
-            append(if (kind == CreationKind.Character) {
-                "请现在实际填写角色卡草稿字段；只有我允许 AI 修改世界书条目时才写条目。"
-            } else if (loreOneByOne) {
-                "请先提议第一条世界书条目，等我确认后再写入草稿。"
-            } else {
-                "请现在实际填写可编辑的世界书条目草稿。"
-            })
-            append("最后简短说明哪些设定需要我核对。")
-        }
+        append(when {
+            kind == CreationKind.WorldBook && loreOneByOne -> "请先提议第一条世界书条目，等我确认后再写入草稿。"
+            guided -> CreationPrompts.guidedInstruction
+            kind == CreationKind.Character -> CreationPrompts.characterDraftInstruction
+            else -> CreationPrompts.worldBookDraftInstruction
+        })
+        append("最后简短说明实际改动及真正需要我核对之处，不输出固定审核清单。")
     }.trim()
 }
 

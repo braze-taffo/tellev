@@ -32,6 +32,8 @@ import app.tellev.feature.settings.controller.PresetSettingsController
 import app.tellev.feature.settings.controller.ProviderSettingsController
 import app.tellev.ui.theme.ThemeAccent
 import app.tellev.ui.theme.ThemeMode
+import app.tellev.ui.theme.InterfaceStyle
+import app.tellev.ui.theme.parseInterfaceStyle
 import app.tellev.ui.theme.parseThemeAccent
 import app.tellev.ui.theme.parseThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,6 +62,7 @@ data class SettingsUiState(
     val selectedPresetNames: Map<PresetCategory, String> = emptyMap(),
     val personas: List<Persona> = emptyList(),
     val secretIds: List<String> = emptyList(),
+    val interfaceStyle: InterfaceStyle = InterfaceStyle.Classic,
     val themeMode: ThemeMode = ThemeMode.System,
     val themeAccent: ThemeAccent = ThemeAccent.Warm,
     val chatBubbleAlpha: Float = 0.6f,
@@ -94,6 +97,7 @@ class SettingsViewModel(
     private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
     private val chatBubbleAlphaFlow: MutableStateFlow<Float>,
     private val chatFontSizeSpFlow: MutableStateFlow<Int>,
+    private val interfaceStyleFlow: MutableStateFlow<InterfaceStyle> = MutableStateFlow(parseInterfaceStyle(appPreferences.interfaceStyleName)),
 ) : ViewModel() {
 
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
@@ -137,6 +141,7 @@ class SettingsViewModel(
         themeAccentFlow = themeAccentFlow,
         chatBubbleAlphaFlow = chatBubbleAlphaFlow,
         chatFontSizeSpFlow = chatFontSizeSpFlow,
+        interfaceStyleFlow = interfaceStyleFlow,
         stateFlow = _uiState,
     )
 
@@ -217,6 +222,7 @@ class SettingsViewModel(
                         selectedPresetNames = selectedPresetNames,
                         personas = personas,
                         secretIds = secretIds,
+                        interfaceStyle = parseInterfaceStyle(appPreferences.interfaceStyleName),
                         themeMode = parseThemeMode(appPreferences.themeModeName),
                         themeAccent = parseThemeAccent(appPreferences.themeAccentName),
                         chatBubbleAlpha = appPreferences.chatBubbleAlpha,
@@ -310,6 +316,7 @@ class SettingsViewModel(
 
     // ── Appearance Actions ──
 
+    fun setInterfaceStyle(style: InterfaceStyle) = appearanceController.setInterfaceStyle(style)
     fun setThemeMode(mode: ThemeMode) = appearanceController.setThemeMode(mode)
     fun setThemeAccent(accent: ThemeAccent) = appearanceController.setThemeAccent(accent)
     fun setChatBubbleAlpha(alpha: Float) = appearanceController.setChatBubbleAlpha(alpha)
@@ -341,6 +348,7 @@ class SettingsViewModelFactory(
     private val themeAccentFlow: MutableStateFlow<ThemeAccent>,
     private val chatBubbleAlphaFlow: MutableStateFlow<Float>,
     private val chatFontSizeSpFlow: MutableStateFlow<Int>,
+    private val interfaceStyleFlow: MutableStateFlow<InterfaceStyle> = MutableStateFlow(parseInterfaceStyle(appPreferences.interfaceStyleName)),
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -354,6 +362,7 @@ class SettingsViewModelFactory(
                 themeAccentFlow = themeAccentFlow,
                 chatBubbleAlphaFlow = chatBubbleAlphaFlow,
                 chatFontSizeSpFlow = chatFontSizeSpFlow,
+        interfaceStyleFlow = interfaceStyleFlow,
             ) as T
         }
         throw IllegalArgumentException("未知 ViewModel 类型：${modelClass.name}")

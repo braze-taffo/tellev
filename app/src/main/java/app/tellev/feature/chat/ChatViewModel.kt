@@ -1263,8 +1263,8 @@ class ChatViewModel(
     fun currentRuntimeToken(sessionId: String?): RuntimeToken? =
         sessionRuntime.currentRuntimeToken(sessionId)
 
-    fun tavernMessageContextJson(token: RuntimeToken?): String =
-        ChatTavernAdapter.tavernMessageContextJson(token, _uiState.value, promptEngine, sessionRuntime, extensionHost)
+    fun tavernMessageContextJson(token: RuntimeToken?, fields: Set<String>? = null): String =
+        ChatTavernAdapter.tavernMessageContextJson(token, _uiState.value, promptEngine, sessionRuntime, extensionHost, fields)
 
     private var messageVariableToken: RuntimeToken? = null
     private var messageVariableCache = MessageFrontendVariables()

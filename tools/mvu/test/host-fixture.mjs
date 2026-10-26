@@ -112,6 +112,10 @@ export async function createHost({ chat, card = {}, failWrite = () => null, fail
         if (path.startsWith('/api/presets')) {const result=presetApi(method,path,body);return respond(result.status,result.body);}
         if (path === '/api/backends/chat-completions/generate')return respond(200,{text:'fixture generation'});
         if (method === 'GET' && path === '/api/worlds') return respond(200, { worlds: [...worldsStore.values()] });
+        if (method === 'POST' && path === '/api/tellev/worldbook') {
+          const book = [...worldsStore.values()].find(b => b.name === body.name || b.id === body.name);
+          return book ? respond(200, book) : respond(404, { error: `Unknown worldbook: ${body.name}` });
+        }
         if (method === 'GET' && segments[0] === 'worlds' && segments.length === 2) {
           const book = worldsStore.get(segments[1]);
           return book ? respond(200, book) : respond(404, { error: 'not found' });
@@ -163,6 +167,12 @@ export async function createHost({ chat, card = {}, failWrite = () => null, fail
         respond(200, {});
       } catch (error) { respond(500, { error: String(error) }); }
     }),
+  };
+  const fullContext = native.stGetContext;
+  native.stGetContextFields = payload => {
+    const fields = JSON.parse(payload), context = JSON.parse(fullContext());
+    context.worldBookNames = context.worldBooks.map(b => b.name ?? b.id);
+    return JSON.stringify(Object.fromEntries(fields.filter(k => k in context).map(k => [k, context[k]])));
   };
   w.tellevNative = native;
   try {

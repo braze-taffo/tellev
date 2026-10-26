@@ -49,10 +49,10 @@ Beyond chatting, a few features are worth setting up early.
 - Settings → Image gen (engine & model)
 - Extensions → Long-term memory
 - The World Books tab at the bottom
-- Settings → theme, language
+- Settings → Appearance
 
 <!-- steps -->
 1. Image generation: configure an engine under "Settings → Image gen (engine & model)" and a generate button appears in the chat input bar; generated images land in the chat gallery.
 2. Long-term memory: turn it on from the Extensions tab so long conversations stop forgetting earlier details.
 3. World books: give a character a setting document and the model picks up those details automatically.
-4. Look and language: switch the accent colour, bubble opacity and interface language from Settings.
+4. Look and language: choose Classic or DSH under Settings → Appearance, and adjust light/dark mode, bubble opacity and interface language there.

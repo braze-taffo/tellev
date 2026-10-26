@@ -1233,4 +1233,23 @@
     <string name="crs_primary_reference">主世界书：%1$s（%2$d 条）</string>
     <string name="crs_aux_reference">辅助参考：%1$s（%2$d 条）</string>
     <string name="crs_create_faction_book">AI 创作通用势力世界书</string>
+
+    <!-- Optional DSH interface -->
+    <string name="dsh_attach_remove">移除附件</string>
+    <string name="chat_drawer_new_session">新会话</string>
+    <string name="chat_drawer_plugins">插件</string>
+    <string name="chat_drawer_settings">设置</string>
+    <string name="chat_drawer_search_sessions">搜索会话</string>
+    <string name="chat_drawer_no_sessions">暂无会话</string>
+    <string name="chat_drawer_expand">展开其余 %1$d 个会话</string>
+    <string name="chat_input_voice">语音输入</string>
+    <string name="chat_input_voice_listening">正在聆听…</string>
+    <string name="chat_attach_image">图片</string>
+    <string name="time_now">刚刚</string>
+    <string name="time_hours_short">%1$d小时</string>
+    <string name="time_days_short">%1$d天</string>
+    <string name="interface_style_title">界面风格</string>
+    <string name="interface_style_classic">经典</string>
+    <string name="interface_style_dsh">DSH</string>
+    <string name="interface_style_hint">切换界面风格后，聊天和角色资料继续保留。</string>
 </resources>

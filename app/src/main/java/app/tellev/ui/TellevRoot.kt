@@ -172,6 +172,7 @@ fun TellevRoot() {
             themeAccentFlow = graph.themeAccentFlow,
             chatBubbleAlphaFlow = graph.chatBubbleAlphaFlow,
             chatFontSizeSpFlow = graph.chatFontSizeSpFlow,
+            interfaceStyleFlow = graph.interfaceStyleFlow,
         ),
     )
 
@@ -347,12 +348,17 @@ fun TellevRoot() {
             // Chat tab - single screen
             appPage(TellevTab.Chat.route) {
                 val bubbleAlpha by graph.chatBubbleAlphaFlow.collectAsState()
+                val interfaceStyle by graph.interfaceStyleFlow.collectAsState()
                 val chatFontSizeSp by graph.chatFontSizeSpFlow.collectAsState()
                 ChatScreen(
                     viewModel = chatViewModel,
                     bottomBarReserve = innerPadding.calculateBottomPadding(),
                     bubbleAlpha = bubbleAlpha,
                     chatFontSizeSp = chatFontSizeSp,
+                    interfaceStyle = interfaceStyle,
+                    onOpenSettings = { navController.navigate(TellevTab.Settings.route) },
+                    onOpenPlugins = { navController.navigate(TellevTab.Extensions.route) },
+                    onOpenProviderSettings = { navController.navigate("settings/providers") },
                 )
             }
 

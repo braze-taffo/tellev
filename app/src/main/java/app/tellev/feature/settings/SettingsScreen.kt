@@ -309,6 +309,7 @@ internal fun SettingsScreen(
                         onSetThemeAccent = viewModel::setThemeAccent,
                         onSetChatBubbleAlpha = viewModel::setChatBubbleAlpha,
                         onSetChatFontSizeSp = viewModel::setChatFontSizeSp,
+                        onSetInterfaceStyle = viewModel::setInterfaceStyle,
                     )
 
                     languageSectionItems(

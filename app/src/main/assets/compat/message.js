@@ -1,5 +1,6 @@
 (function () {
-  const snapshot = () => JSON.parse(TellevMessage.getContext());
+  const snapshot = fields => JSON.parse(Array.isArray(fields) && typeof TellevMessage.getContextFields === 'function'
+    ? TellevMessage.getContextFields(JSON.stringify(fields)) : TellevMessage.getContext());
   const th = window.TavernHelper;
   const expose = (name, fn) => { th[name] = window[name] = fn; };
   const request = window.__tellevRequest;
@@ -13,7 +14,7 @@
   expose('getVariables', (option = {type:'chat'}) => {
     const result = compact({kind:'scope',options:option});
     if (result) return result.value;
-    const c = snapshot(), type = option.type || 'chat';
+    const c = snapshot(['variableScopes','chat']), type = option.type || 'chat';
     if (type !== 'message') return c.variableScopes?.[type] || {};
     let id = option.message_id;
     if (id === undefined || id === 'latest') id = c.chat.findLastIndex(m => !m.is_system);
@@ -25,16 +26,16 @@
   expose('getAllVariables', () => {
     const cached = compact({kind:'all'});
     if (cached) return cached.value;
-    const c = snapshot(), result = Object.assign({}, c.variableScopes?.global,
+    const c = snapshot(['variableScopes','chat']), result = Object.assign({}, c.variableScopes?.global,
       c.variableScopes?.character, c.variableScopes?.chat);
     for (const m of c.chat.slice(0, getCurrentMessageId()+1)) Object.assign(result,m.variables?.[m.swipe_id || 0]);
     return result;
   });
   expose('getLastMessageId', () => {
     const cached = compact({kind:'last'});
-    return cached ? cached.value : snapshot().chat.length-1;
+    return cached ? cached.value : snapshot(['chat']).chat.length-1;
   });
-  expose('getChatMessages', (range,options) => window.__tellevGetChatMessages(snapshot().chat,range,options));
+  expose('getChatMessages', (range,options) => window.__tellevGetChatMessages(snapshot(['chat']).chat,range,options));
   expose('replaceVariables', (variables, options) => request('replaceVariables',{variables,options}));
   expose('updateVariablesWith', async (updater,options) => {
     const variables=await updater(getVariables(options)); await replaceVariables(variables,options); return variables;
@@ -43,10 +44,10 @@
   const storage = (operation,payload) => request('compatibilityStorage',{operation,payload});
   const current = name => { if (name !== 'current') throw new Error('Only current context is supported'); };
   expose('getCharWorldbookNames',(name='current')=> {
-    current(name); const c=snapshot(); return c.characterWorldbookBindings || {primary:null,additional:[]};
+    current(name); const c=snapshot(['characterWorldbookBindings']); return c.characterWorldbookBindings || {primary:null,additional:[]};
   });
   expose('rebindCharWorldbooks',(name,binding)=>storage('rebindCharWorldbooks',{name,binding}));
-  expose('getChatWorldbookName',(chat='current')=> { current(chat); return snapshot().chat_metadata?.world_info || null; });
+  expose('getChatWorldbookName',(chat='current')=> { current(chat); return snapshot(['chat_metadata']).chat_metadata?.world_info || null; });
   expose('rebindChatWorldbook',(chat,name)=>storage('rebindChatWorldbook',{chat,name}));
   expose('getOrCreateChatWorldbook',async(chat,name)=>(await storage('getOrCreateChatWorldbook',{chat,name})).name);
   const listeners=new Map();

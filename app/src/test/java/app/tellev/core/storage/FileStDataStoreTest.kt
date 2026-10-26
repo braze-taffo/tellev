@@ -48,6 +48,24 @@ import kotlin.io.path.writeText
 
 class FileStDataStoreTest {
 
+    @Test fun `unchanged books reuse immutable models and raw edits invalidate body and metadata`() = runBlocking {
+        store.saveWorldBook(WorldBook("cached", "before", emptyList()))
+        val first = store.readWorldBook("cached")
+        org.junit.Assert.assertSame(first, store.readWorldBook("cached"))
+        org.junit.Assert.assertSame(first, store.listWorldBooks().single())
+        assertEquals("before", store.listWorldBookSummaries().single().name)
+        layout.worlds.resolve("cached.json").writeText("""{"name":"after-raw-edit","entries":{},"custom":42}""")
+        val changed = store.readWorldBook("cached")
+        assertEquals("after-raw-edit", changed.name)
+        assertEquals("42", changed.raw["custom"]!!.jsonPrimitive.content)
+        assertEquals("after-raw-edit", store.listWorldBookSummaries().single().name)
+        store.saveWorldBook(changed.copy(name = "after-save"))
+        assertEquals("after-save", store.readWorldBook("cached").name)
+        store.deleteWorldBook("cached")
+        assertTrue(store.listWorldBooks().isEmpty())
+        assertTrue(store.listWorldBookSummaries().isEmpty())
+    }
+
     private lateinit var tempDir: Path
     private lateinit var layout: StDirectoryLayout
     private lateinit var store: FileStDataStore

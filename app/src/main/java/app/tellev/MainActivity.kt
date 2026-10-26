@@ -41,10 +41,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             CompositionLocalProvider(LocalTellevGraph provides graph) {
                 val themeMode by graph.themeModeFlow.collectAsState()
+                val interfaceStyle by graph.interfaceStyleFlow.collectAsState()
                 val themeAccent by graph.themeAccentFlow.collectAsState()
                 TellevTheme(
                     darkTheme = themeMode.isDarkTheme(isSystemInDarkTheme()),
                     accent = themeAccent,
+                    interfaceStyle = interfaceStyle,
                 ) {
                     TellevRoot()
                 }

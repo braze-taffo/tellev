@@ -54,14 +54,15 @@ class WebViewJsExtensionHostContractTest {
     }
 
     @Test
-    fun `context tick cache shares one snapshot per task without recursion`() {
+    fun `context properties project live values with a nonrecursive legacy snapshot fallback`() {
         val tick = WebViewJsExtensionHost.TAVERN_CONTEXT_TICK_CACHE_JS
 
-        // 同一任务内多次属性读取只付一次 bridge + parse。
+        // Legacy bridge keeps its per-task snapshot; current hosts read fields.
         assertTrue(tick.contains("function _getContextTick()"))
         assertTrue(tick.contains("_ctxTickCache.tick===t"))
-        // 定义自身必须调新鲜快照；调自己就是无限递归。
-        assertTrue(tick.contains("var c=_getContext();"))
+        assertTrue(tick.contains("typeof tellevNative.stGetContextFields==='function'"))
+        assertTrue(tick.contains("_readContextFields([String(p)])"))
+        assertTrue(tick.contains(":_getContext();"))
         assertFalse(tick.contains("var c=_getContextTick();"))
         // 推进靠 setTimeout 包裝；同一同步任务内 token 不变，正好共用。
         assertTrue(tick.contains("__tellevCtxTickAdvancer"))

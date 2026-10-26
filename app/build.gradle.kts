@@ -26,8 +26,8 @@ android {
         applicationId = "app.tellev"
         minSdk = 31
         targetSdk = 36
-        versionCode = 48
-        versionName = "1.7.1.6"
+        versionCode = 50
+        versionName = "1.7.1.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -101,6 +101,32 @@ android {
     buildFeatures {
         compose = true
     }
+}
+
+// A release must ship fresh update instructions in every supported language.
+// Keep this gate independent of whether the caller also runs unit tests.
+val verifyUpdateGuides by tasks.registering {
+    val version = android.defaultConfig.versionName ?: error("Missing application versionName")
+    val guides = listOf("zh-CN", "en", "ja", "ko").map {
+        layout.projectDirectory.file("src/main/assets/guide/update/$it.md").asFile
+    }
+    inputs.property("versionName", version)
+    inputs.files(guides)
+    doLast {
+        guides.forEach { guide ->
+            check(guide.isFile) { "Missing update guide: ${guide.name}" }
+            val lines = guide.readLines(Charsets.UTF_8)
+            check("<!-- release-version: $version -->" in lines) {
+                "Update ${guide.name} for $version before publishing this release"
+            }
+            check(lines.firstOrNull { it.startsWith("## ") }?.contains(version) == true) {
+                "The first page of ${guide.name} must identify release $version"
+            }
+        }
+    }
+}
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    dependsOn(verifyUpdateGuides)
 }
 
 dependencies {

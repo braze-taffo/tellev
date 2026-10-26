@@ -74,6 +74,10 @@ internal object ChatTavernAdapter {
             )
         }
 
+        override fun snapshot(fields: Set<String>): JsonObject = buildTavernContext(
+            getCurrentState(), sessionRuntime.runtimeToken?.generation ?: -1, extensionHost, fields = fields,
+        )
+
         override suspend fun setChatMessage(index: Int, field: String, value: String): Boolean =
             onSetChatMessage(index, field, value)
 
@@ -321,6 +325,7 @@ internal object ChatTavernAdapter {
         runtimeGeneration: Long,
         extensionHost: ExtensionHost,
         defaultContextTokens: Int = 1_000_000,
+        fields: Set<String>? = null,
     ): JsonObject {
         val character = state.selectedCharacter
         val session = state.currentSession
@@ -346,13 +351,17 @@ internal object ChatTavernAdapter {
             put("lastMessageId", state.messages.lastIndex)
             put("chatMetadata", session?.metadata ?: buildJsonObject { })
             put("chat_metadata", session?.metadata ?: buildJsonObject { })
-            putJsonArray("chat") {
+            if (fields == null || "chat" in fields) putJsonArray("chat") {
                 for (index in 0 until state.messages.size) {
                     add(state.messages[index].toTavernJson(index))
                 }
             }
             val books = (state.worldBooks + listOfNotNull(character?.characterBook)).distinctBy { it.id }
-            putJsonArray("worldBooks") {
+            // Internal compact projection; keep the public full-context shape unchanged.
+            if (fields?.contains("worldBookNames") == true) putJsonArray("worldBookNames") {
+                books.forEach { add(JsonPrimitive(it.name)) }
+            }
+            if (fields == null || "worldBooks" in fields) putJsonArray("worldBooks") {
                 books.forEach { book ->
                     add(buildJsonObject {
                         put("id", book.id)
@@ -387,16 +396,19 @@ internal object ChatTavernAdapter {
             putJsonArray("globalWorldBooks") {
                 state.worldBooks.filter { it.id !in state.disabledWorldIds }.forEach { add(JsonPrimitive(it.name)) }
             }
-            putJsonArray("characters") {
-                character?.let { add(it.toTavernJson()) }
+            val characterJson = if (fields == null || "characters" in fields || "character" in fields)
+                character?.toTavernJson() else null
+            if (fields == null || "characters" in fields) putJsonArray("characters") {
+                characterJson?.let { add(it) }
             }
             putJsonArray("groups") { }
-            character?.let {
-                put("character", it.toTavernJson())
+            if (fields == null || "character" in fields) characterJson?.let {
+                put("character", it)
             }
             putJsonObject("extensionPrompts") { }
             put("extensionPrompts", buildJsonObject { })
-            val extSettings = extensionHost.snapshotExtensionSettings()
+            val extSettings = if (fields == null || "extensionSettings" in fields || "extension_settings" in fields)
+                extensionHost.snapshotExtensionSettings() else buildJsonObject { }
             put("extensionSettings", extSettings)
             put("extension_settings", extSettings)
             putJsonArray("tags") { }
@@ -413,7 +425,7 @@ internal object ChatTavernAdapter {
             put("textCompletionSettings", buildJsonObject { })
             put("powerUserSettings", buildJsonObject { })
             put("power_user", buildJsonObject { })
-        }
+        }.let { result -> if (fields == null) result else JsonObject(result.filterKeys { it in fields }) }
     }
 
     fun ChatMessage.toTavernJson(index: Int): JsonObject =
@@ -515,12 +527,13 @@ internal object ChatTavernAdapter {
         promptEngine: PromptEngine,
         sessionRuntime: ChatSessionRuntime,
         extensionHost: ExtensionHost,
+        fields: Set<String>? = null,
     ): String {
         sessionRuntime.requireMessageRuntime(token, state.currentSession?.id)
-        val vars = promptEngine.snapshotPromptTemplateVariables()
+        val vars = if (fields == null || "variableScopes" in fields) promptEngine.snapshotPromptTemplateVariables() else null
         return buildJsonObject {
-            buildTavernContext(state, token?.generation ?: -1, extensionHost).forEach { (key, value) -> put(key, value) }
-            putJsonObject("variableScopes") {
+            buildTavernContext(state, token?.generation ?: -1, extensionHost, fields = fields).forEach { (key, value) -> put(key, value) }
+            if (vars != null) putJsonObject("variableScopes") {
                 put("global", vars.global)
                 put("chat", state.currentSession?.metadata?.get("variables") ?: vars.local)
                 put("character", state.selectedCharacter?.let { CharacterTavernHelperScripts.extractCharacterVariables(it) } ?: buildJsonObject {})

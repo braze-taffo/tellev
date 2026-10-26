@@ -140,12 +140,32 @@ internal fun LazyListScope.appearanceSectionItems(
     onSetThemeAccent: (ThemeAccent) -> Unit,
     onSetChatBubbleAlpha: (Float) -> Unit,
     onSetChatFontSizeSp: (Int) -> Unit,
+    onSetInterfaceStyle: (app.tellev.ui.theme.InterfaceStyle) -> Unit,
 ) {
     item(key = "theme_header") {
         SectionHeader(
             icon = Icons.Default.DarkMode,
             title = stringResource(R.string.setapp_title),
         )
+    }
+
+    item(key = "interface_options") {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(stringResource(R.string.interface_style_title), style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.interface_style_hint), style = MaterialTheme.typography.bodySmall)
+            ThemeOption(
+                icon = Icons.Default.PhoneAndroid,
+                label = stringResource(R.string.interface_style_classic),
+                selected = state.interfaceStyle == app.tellev.ui.theme.InterfaceStyle.Classic,
+                onClick = { onSetInterfaceStyle(app.tellev.ui.theme.InterfaceStyle.Classic) },
+            )
+            ThemeOption(
+                icon = Icons.Default.PhoneAndroid,
+                label = stringResource(R.string.interface_style_dsh),
+                selected = state.interfaceStyle == app.tellev.ui.theme.InterfaceStyle.Dsh,
+                onClick = { onSetInterfaceStyle(app.tellev.ui.theme.InterfaceStyle.Dsh) },
+            )
+        }
     }
 
     item(key = "theme_options") {
@@ -171,6 +191,7 @@ internal fun LazyListScope.appearanceSectionItems(
         }
     }
 
+    if (state.interfaceStyle == app.tellev.ui.theme.InterfaceStyle.Classic) {
     item(key = "accent_label") {
         Text(
             text = stringResource(R.string.setapp_accent_label),
@@ -195,6 +216,8 @@ internal fun LazyListScope.appearanceSectionItems(
                 onClick = { onSetThemeAccent(ThemeAccent.Classic) },
             )
         }
+    }
+
     }
 
     item(key = "bubble_alpha") {

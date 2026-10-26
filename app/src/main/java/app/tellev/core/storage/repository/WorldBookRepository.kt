@@ -22,11 +22,18 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.putJsonArray
 import java.util.UUID
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.attribute.BasicFileAttributes
+import java.nio.file.attribute.FileTime
+import java.lang.ref.WeakReference
 import kotlin.io.path.createDirectories
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.nameWithoutExtension
 import kotlin.io.path.readText
+import kotlin.io.path.isDirectory
+import kotlin.io.path.listDirectoryEntries
 
 internal class WorldBookRepository(
     private val layout: StDirectoryLayout,
@@ -34,42 +41,71 @@ internal class WorldBookRepository(
     private val durableFiles: JournaledFileWriter,
     private val worldBookChanges: MutableSharedFlow<String>,
 ) {
+    private data class SummaryStamp(val modified: FileTime, val size: Long, val fileKey: String?)
+    private val summaryCache = mutableMapOf<Path, Pair<SummaryStamp, WorldBookSummary>>()
+    // Reuse immutable models already held by consumers; do not pin book bodies in storage.
+    private val bookCache = mutableMapOf<Path, Pair<SummaryStamp, WeakReference<WorldBook>>>()
+
+    private fun stamp(path: Path): SummaryStamp {
+        val attrs = Files.readAttributes(path, BasicFileAttributes::class.java)
+        return SummaryStamp(attrs.lastModifiedTime(), attrs.size(), attrs.fileKey()?.toString())
+    }
+
+    private fun readBookFile(path: Path): WorldBook = synchronized(summaryCache) {
+        val stamp = stamp(path)
+        bookCache[path]?.takeIf { it.first == stamp }?.second?.get()?.let { return@synchronized it }
+        val raw = json.parseToJsonElement(path.readText()).jsonObject
+        WorldBook(path.nameWithoutExtension, raw["name"]?.jsonPrimitive?.content ?: path.nameWithoutExtension,
+            WorldBookCodec.parseWorldBookEntries(raw), raw).also {
+            bookCache[path] = stamp to WeakReference(it)
+        }
+    }
     suspend fun listWorldBooks(): List<WorldBook> = withContext(Dispatchers.IO) {
-        StorageFileOps.readJsonFiles(layout.worlds, json).map { (path, raw) ->
-            val entries = WorldBookCodec.parseWorldBookEntries(raw)
-            WorldBook(
-                id = path.nameWithoutExtension,
-                name = raw["name"]?.jsonPrimitive?.content ?: path.nameWithoutExtension,
-                entries = entries,
-                raw = raw,
-            )
+        synchronized(summaryCache) {
+            val paths = if (layout.worlds.isDirectory()) layout.worlds.listDirectoryEntries("*.json") else emptyList()
+            bookCache.keys.retainAll(paths.toSet())
+            val existing = paths.toSet()
+            summaryCache.keys.retainAll(existing)
+            bookCache.keys.retainAll(existing)
+            paths.mapNotNull { path ->
+                runCatching { readBookFile(path) }.getOrNull() }
         }
     }
 
     /**
-     * Name and entry count per book. Each file's parsed JSON is transient here: only
-     * the summary survives, so the world book screen no longer keeps every book's
-     * entries and raw tree resident for the whole session.
+     * Cache metadata only, never entry bodies. Re-scan membership and file attributes on
+     * every call so imports, deletions and raw ST edits are visible. Changed files are
+     * parsed one at a time instead of retaining the whole library's JSON trees.
      */
     suspend fun listWorldBookSummaries(): List<WorldBookSummary> = withContext(Dispatchers.IO) {
-        StorageFileOps.readJsonFiles(layout.worlds, json).map { (path, raw) ->
-            WorldBookSummary(
-                id = path.nameWithoutExtension,
-                name = raw["name"]?.jsonPrimitive?.content ?: path.nameWithoutExtension,
-                entryCount = (raw["entries"] as? JsonObject)?.size ?: 0,
-            )
+        synchronized(summaryCache) {
+            val paths = if (layout.worlds.isDirectory()) layout.worlds.listDirectoryEntries("*.json") else emptyList()
+            val existing = paths.toSet()
+            summaryCache.keys.retainAll(existing)
+            bookCache.keys.retainAll(existing)
+            paths.mapNotNull { path ->
+                runCatching {
+                    val stamp = stamp(path)
+                    val cached = summaryCache[path]
+                    if (cached?.first == stamp) cached.second else {
+                        val raw = bookCache[path]?.takeIf { it.first == stamp }?.second?.get()?.raw
+                            ?: json.parseToJsonElement(path.readText()).jsonObject
+                        val summary = WorldBookSummary(
+                            id = path.nameWithoutExtension,
+                            name = raw["name"]?.jsonPrimitive?.content ?: path.nameWithoutExtension,
+                            entryCount = (raw["entries"] as? JsonObject)?.size ?: 0,
+                        )
+                        summaryCache[path] = stamp to summary
+                        summary
+                    }
+                }.getOrNull()
+            }
         }
     }
 
     suspend fun readWorldBook(id: String): WorldBook = withContext(Dispatchers.IO) {
         val path = safeStorageChild(layout.worlds, id, ".json")
-        val raw = json.parseToJsonElement(path.readText()).jsonObject
-        WorldBook(
-            id = id,
-            name = raw["name"]?.jsonPrimitive?.content ?: id,
-            entries = WorldBookCodec.parseWorldBookEntries(raw),
-            raw = raw,
-        )
+        readBookFile(path)
     }
 
     suspend fun saveWorldBook(book: WorldBook): Unit = withContext(Dispatchers.IO) {
@@ -77,6 +113,7 @@ internal class WorldBookRepository(
         layout.worlds.createDirectories()
         val output = WorldBookCodec.serializeWorldBook(book)
         StorageFileOps.durableWriteText(durableFiles, path, json.encodeToString(JsonObject.serializer(), output))
+        synchronized(summaryCache) { summaryCache.remove(path); bookCache.remove(path) }
         worldBookChanges.tryEmit(book.id)
     }
 
@@ -108,7 +145,9 @@ internal class WorldBookRepository(
     }
 
     suspend fun deleteWorldBook(id: String): Unit = withContext(Dispatchers.IO) {
-        safeStorageChild(layout.worlds, id, ".json").deleteIfExists()
+        val path = safeStorageChild(layout.worlds, id, ".json")
+        path.deleteIfExists()
+        synchronized(summaryCache) { summaryCache.remove(path); bookCache.remove(path) }
         val disabled = readDisabledWorldIds() - id
         if (disabled.isEmpty()) {
             layout.worldInfoActivation.deleteIfExists()

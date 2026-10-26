@@ -42,6 +42,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.tellev.R
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 internal data class TavernMessageRuntime(
     val token: app.tellev.core.extension.RuntimeToken?,
@@ -58,6 +61,7 @@ internal data class TavernMessageRuntime(
     val readVariables: ((String) -> String)? = null,
     val sizes: ChatPanelSizes? = null,
     val onScrollEnd: () -> Unit = {},
+    val contextFieldsJson: ((Set<String>) -> String)? = null,
 )
 
 /** How long the message WebView's JS thread waits for a main-thread draft read. */
@@ -222,6 +226,16 @@ internal class TavernMessageBridge(
 
     @JavascriptInterface
     fun getContext(): String = if (closed) "{}" else runtime.contextJson()
+
+    @JavascriptInterface
+    fun getContextFields(payload: String): String {
+        if (closed) return "{}"
+        val fields = kotlinx.serialization.json.Json.parseToJsonElement(payload).jsonArray
+            .map { it.jsonPrimitive.content }.toSet()
+        return runtime.contextFieldsJson?.invoke(fields) ?: kotlinx.serialization.json.JsonObject(
+            kotlinx.serialization.json.Json.parseToJsonElement(runtime.contextJson()).jsonObject.filterKeys { it in fields },
+        ).toString()
+    }
 
     @JavascriptInterface
     fun request(requestId: String, operation: String, payloadJson: String) {
