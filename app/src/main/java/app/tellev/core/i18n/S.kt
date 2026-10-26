@@ -945,12 +945,22 @@ object S {
     const val ext_expand = "ext_expand"
     const val ext_asset_empty_title = "ext_asset_empty_title"
     const val ext_asset_empty_hint = "ext_asset_empty_hint"
+    const val ext_global_regex_title = "ext_global_regex_title"
+    const val ext_global_regex_subtitle = "ext_global_regex_subtitle"
+    const val ext_global_regex_empty = "ext_global_regex_empty"
+    const val ext_global_regex_import = "ext_global_regex_import"
+    const val ext_global_regex_import_cd = "ext_global_regex_import_cd"
+    const val ext_global_regex_read_failed = "ext_global_regex_read_failed"
     const val extvm_load_failed = "extvm_load_failed"
     const val extvm_manifest_not_found = "extvm_manifest_not_found"
     const val extvm_client_version_too_low = "extvm_client_version_too_low"
     const val extvm_toggle_failed = "extvm_toggle_failed"
     const val extvm_regex_script_not_found = "extvm_regex_script_not_found"
     const val extvm_regex_toggle_failed = "extvm_regex_toggle_failed"
+    const val extvm_global_regex_imported = "extvm_global_regex_imported"
+    const val extvm_global_regex_import_failed = "extvm_global_regex_import_failed"
+    const val extvm_global_regex_not_found = "extvm_global_regex_not_found"
+    const val extvm_global_regex_toggle_failed = "extvm_global_regex_toggle_failed"
     const val extvm_permission_request_failed = "extvm_permission_request_failed"
     const val extvm_builtin_th_name = "extvm_builtin_th_name"
     const val extvm_builtin_th_desc = "extvm_builtin_th_desc"
@@ -2139,12 +2149,22 @@ object S {
         "ext_expand" to R.string.ext_expand,
         "ext_asset_empty_title" to R.string.ext_asset_empty_title,
         "ext_asset_empty_hint" to R.string.ext_asset_empty_hint,
+        "ext_global_regex_title" to R.string.ext_global_regex_title,
+        "ext_global_regex_subtitle" to R.string.ext_global_regex_subtitle,
+        "ext_global_regex_empty" to R.string.ext_global_regex_empty,
+        "ext_global_regex_import" to R.string.ext_global_regex_import,
+        "ext_global_regex_import_cd" to R.string.ext_global_regex_import_cd,
+        "ext_global_regex_read_failed" to R.string.ext_global_regex_read_failed,
         "extvm_load_failed" to R.string.extvm_load_failed,
         "extvm_manifest_not_found" to R.string.extvm_manifest_not_found,
         "extvm_client_version_too_low" to R.string.extvm_client_version_too_low,
         "extvm_toggle_failed" to R.string.extvm_toggle_failed,
         "extvm_regex_script_not_found" to R.string.extvm_regex_script_not_found,
         "extvm_regex_toggle_failed" to R.string.extvm_regex_toggle_failed,
+        "extvm_global_regex_imported" to R.string.extvm_global_regex_imported,
+        "extvm_global_regex_import_failed" to R.string.extvm_global_regex_import_failed,
+        "extvm_global_regex_not_found" to R.string.extvm_global_regex_not_found,
+        "extvm_global_regex_toggle_failed" to R.string.extvm_global_regex_toggle_failed,
         "extvm_permission_request_failed" to R.string.extvm_permission_request_failed,
         "extvm_builtin_th_name" to R.string.extvm_builtin_th_name,
         "extvm_builtin_th_desc" to R.string.extvm_builtin_th_desc,
@@ -3334,12 +3354,22 @@ object S {
         "ext_expand" to "展开",
         "ext_asset_empty_title" to "还没有角色卡附带资源",
         "ext_asset_empty_hint" to "导入包含世界书、正则或酒馆助手脚本的角色卡后，会自动显示在这里。",
+        "ext_global_regex_title" to "全局正则",
+        "ext_global_regex_subtitle" to "独立正则对所有聊天生效。可导入 SillyTavern 导出的单个脚本或批量数组。",
+        "ext_global_regex_empty" to "还没有全局正则。",
+        "ext_global_regex_import" to "导入",
+        "ext_global_regex_import_cd" to "导入正则文件",
+        "ext_global_regex_read_failed" to "无法读取正则文件：%1\$s",
         "extvm_load_failed" to "加载扩展资源失败：%1\$s",
         "extvm_manifest_not_found" to "未找到扩展清单：%1\$s",
         "extvm_client_version_too_low" to "扩展 %1\$s 要求客户端版本 ≥ %2\$s，当前 tellev 版本更低",
         "extvm_toggle_failed" to "扩展切换失败：%1\$s",
         "extvm_regex_script_not_found" to "未找到正则脚本：%1\$s",
         "extvm_regex_toggle_failed" to "更新正则开关失败：%1\$s",
+        "extvm_global_regex_imported" to "已导入 %1\$d 条全局正则",
+        "extvm_global_regex_import_failed" to "导入全局正则失败：%1\$s",
+        "extvm_global_regex_not_found" to "未找到全局正则：%1\$s",
+        "extvm_global_regex_toggle_failed" to "更新全局正则开关失败：%1\$s",
         "extvm_permission_request_failed" to "权限请求处理失败：%1\$s",
         "extvm_builtin_th_name" to "酒馆助手兼容",
         "extvm_builtin_th_desc" to "SillyTavern 事件总线、getContext、TavernHelper、fetch /api/* 桥与角色卡脚本运行",

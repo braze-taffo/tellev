@@ -938,12 +938,22 @@
     <string name="ext_expand">Expand</string>
     <string name="ext_asset_empty_title">No character card assets yet</string>
     <string name="ext_asset_empty_hint">Import a character card containing world books, regex or Tavern Helper scripts and they will appear here.</string>
+    <string name="ext_global_regex_title">Global regex</string>
+    <string name="ext_global_regex_subtitle">Standalone regex applies to every chat. Import one SillyTavern script or a bulk array.</string>
+    <string name="ext_global_regex_empty">No global regex yet.</string>
+    <string name="ext_global_regex_import">Import</string>
+    <string name="ext_global_regex_import_cd">Import regex file</string>
+    <string name="ext_global_regex_read_failed">Could not read the regex file: %1$s</string>
     <string name="extvm_load_failed">Failed to load extension assets: %1$s</string>
     <string name="extvm_manifest_not_found">Extension manifest not found: %1$s</string>
     <string name="extvm_client_version_too_low">Extension %1$s requires client version &gt;= %2$s; this tellev build is older</string>
     <string name="extvm_toggle_failed">Failed to toggle extension: %1$s</string>
     <string name="extvm_regex_script_not_found">Regex script not found: %1$s</string>
     <string name="extvm_regex_toggle_failed">Failed to update regex toggle: %1$s</string>
+    <string name="extvm_global_regex_imported">Imported %1$d global regex script(s)</string>
+    <string name="extvm_global_regex_import_failed">Failed to import global regex: %1$s</string>
+    <string name="extvm_global_regex_not_found">Global regex not found: %1$s</string>
+    <string name="extvm_global_regex_toggle_failed">Failed to update global regex toggle: %1$s</string>
     <string name="extvm_permission_request_failed">Failed to handle permission request: %1$s</string>
     <string name="extvm_builtin_th_name">Tavern Helper compatibility</string>
     <string name="extvm_builtin_th_desc">SillyTavern event bus, getContext, TavernHelper, fetch /api/* bridge and character card script runtime</string>

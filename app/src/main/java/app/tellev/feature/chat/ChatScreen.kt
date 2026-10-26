@@ -173,7 +173,10 @@ private fun ChatContentScreen(
         state.selectedPreset, state.providerConfig, globalVariables) { viewModel.messageMacroContext(state) }
     val regexDepths = remember(state.messages) { visibleRegexDepths(state.messages) }
     val runtimeToken = viewModel.currentRuntimeToken(state.currentSession?.id)
-    LaunchedEffect(state.currentSession?.id) { viewModel.refreshMemory() }
+    LaunchedEffect(state.currentSession?.id) {
+        viewModel.refreshMemory()
+        viewModel.refreshGlobalRegexScripts()
+    }
     val listState = key(state.currentSession?.id) {
         // Start at the current end; do not compose old HTML cards at the top only
         // to destroy them immediately when the initial follow effect runs.
@@ -646,6 +649,7 @@ private fun ChatContentScreen(
                                 editTextField = message.content
                             },
                             onDelete = { viewModel.deleteMessage(index) },
+                            globalScripts = state.globalRegexScripts,
                         )
                     }
                 }
@@ -682,6 +686,7 @@ private fun ChatContentScreen(
                                 },
                             ),
                             onHtmlBoundaryDrag = onHtmlBoundaryDrag,
+                            globalScripts = state.globalRegexScripts,
                         )
                     }
                 }

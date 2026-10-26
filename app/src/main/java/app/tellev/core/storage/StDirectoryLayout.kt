@@ -38,8 +38,11 @@ data class StDirectoryLayout(
     // a directory, so it is intentionally absent from allDirectories.
     val worldInfoActivation: Path,
     // Same idea as worldInfoActivation: a single tellev-owned file holding the
-    // per-character set of disabled regex script ids.
+    // per-character set of disabled regex script ids. Legacy sidecar only.
     val regexActivation: Path,
+    // Standalone SillyTavern regex scripts: a JSON array, not an object wrapper.
+    // Each script's own `disabled` field is the switch. Not the legacy sidecar.
+    val globalRegex: Path,
 ) {
     val allDirectories: List<Path> = listOf(
         root,
@@ -110,6 +113,7 @@ data class StDirectoryLayout(
             reasoning = root.resolve("reasoning"),
             worldInfoActivation = root.resolve("world-info-activation.json"),
             regexActivation = root.resolve("regex-activation.json"),
+            globalRegex = root.resolve("global-regex.json"),
         )
     }
 }

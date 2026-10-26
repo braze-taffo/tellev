@@ -16,6 +16,8 @@ import app.tellev.core.model.WorldBook
 import app.tellev.core.model.WorldBookEntry
 import app.tellev.core.model.WorldInfoSettings
 import app.tellev.core.regex.CharacterRegexApplier
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
@@ -29,8 +31,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -466,6 +470,94 @@ class FileStDataStoreTest {
         store.saveDisabledRegexScriptIds(map)
         // An empty set drops the character entry entirely (default-on).
         assertEquals(emptyMap<String, Set<String>>(), store.readDisabledRegexScriptIds())
+    }
+
+    // ---- Global standalone regex ----
+
+    @Test
+    fun `readGlobalRegexScripts returns an empty array when no file exists`() = runBlocking {
+        assertEquals(0, store.readGlobalRegexScripts().size)
+        assertFalse(layout.globalRegex.exists())
+    }
+
+    @Test
+    fun `importGlobalRegexScripts appends objects and arrays and survives reload`() = runBlocking {
+        val first = store.importGlobalRegexScripts(
+            """{"scriptName":"Render","findRegex":"/a/g","replaceString":"b","vendorNote":"kept","placement":[2]}""",
+        )
+        val more = store.importGlobalRegexScripts(
+            """[
+              {"scriptName":"Second","findRegex":"/b/g","replaceString":"c","placement":[1]},
+              {"name":"Hub","regex":"x","flags":"g","replacement":"y"}
+            ]""",
+        )
+
+        assertEquals(1, first.size)
+        assertEquals(2, more.size)
+        val reloaded = FileStDataStore(layout)
+        reloaded.bootstrap()
+        val scripts = reloaded.readGlobalRegexScripts()
+        assertEquals(listOf("Render", "Second", "Hub"), scripts.map { it.jsonObject["scriptName"]!!.jsonPrimitive.content })
+        assertEquals(listOf("/a/g", "/b/g", "/x/g"), scripts.map { it.jsonObject["findRegex"]!!.jsonPrimitive.content })
+        assertEquals("kept", scripts[0].jsonObject["vendorNote"]!!.jsonPrimitive.content)
+        assertEquals("y", scripts[2].jsonObject["replaceString"]!!.jsonPrimitive.content)
+        assertTrue(scripts.map { it.jsonObject["id"]!!.jsonPrimitive.content }.toSet().size == 3)
+        assertFalse(layout.regexActivation.exists())
+        assertEquals(0L, Files.list(layout.characters).use { it.count() })
+        val onDisk = FileStDataStore.defaultJson.parseToJsonElement(layout.globalRegex.readText())
+        assertTrue(onDisk is JsonArray)
+    }
+
+    @Test
+    fun `setGlobalRegexScriptEnabled toggles disabled by id and leaves other scripts`() = runBlocking {
+        store.importGlobalRegexScripts(
+            """[
+              {"id":"old-a","scriptName":"A","findRegex":"/a/g","replaceString":"a","placement":[2]},
+              {"id":"old-b","scriptName":"B","findRegex":"/b/g","replaceString":"b","placement":[2]}
+            ]""",
+        )
+        val ids = store.readGlobalRegexScripts().map { it.jsonObject["id"]!!.jsonPrimitive.content }
+        val target = ids[0]
+        val other = ids[1]
+
+        store.setGlobalRegexScriptEnabled(target, enabled = false)
+        val disabled = store.readGlobalRegexScripts()
+        assertEquals(true, disabled[0].jsonObject["disabled"]!!.jsonPrimitive.booleanOrNull)
+        assertEquals("/a/g", disabled[0].jsonObject["findRegex"]!!.jsonPrimitive.content)
+        assertFalse(disabled[1].jsonObject.containsKey("disabled"))
+
+        store.setGlobalRegexScriptEnabled(target, enabled = true)
+        val enabled = store.readGlobalRegexScripts()
+        assertEquals(false, enabled[0].jsonObject["disabled"]!!.jsonPrimitive.booleanOrNull)
+        assertEquals("B", enabled[1].jsonObject["scriptName"]!!.jsonPrimitive.content)
+        assertEquals(other, enabled[1].jsonObject["id"]!!.jsonPrimitive.content)
+
+        val before = layout.globalRegex.readText()
+        store.setGlobalRegexScriptEnabled("missing", enabled = false)
+        assertEquals(before, layout.globalRegex.readText())
+    }
+
+    @Test
+    fun `global regex import does not clobber a card rejection or a non-array file`() = runBlocking {
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                store.importGlobalRegexScripts(
+                    """{"spec":"chara_card_v3","scriptName":"No","findRegex":"/a/g","data":{"extensions":{"regex_scripts":[]}}}""",
+                )
+            }
+        }
+        assertFalse(layout.globalRegex.exists())
+
+        layout.globalRegex.writeText("""{"scripts":[{"scriptName":"wrapped"}]}""")
+        val before = layout.globalRegex.readText()
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { store.readGlobalRegexScripts() }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { store.importGlobalRegexScripts("""{"scriptName":"A","findRegex":"/a/g"}""") }
+        }
+        assertEquals(before, layout.globalRegex.readText())
+        assertFalse(layout.regexActivation.exists())
     }
 
     // ---- Chat JSONL Tests ----

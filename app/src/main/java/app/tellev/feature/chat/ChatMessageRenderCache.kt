@@ -11,6 +11,7 @@ import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.GenerationPreset
 import app.tellev.core.model.MessageReasoning
 import app.tellev.core.model.MessageRole
+import kotlinx.serialization.json.JsonArray
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +44,7 @@ internal data class RenderInputs(
     val depth: Int,
     val includeNormal: Boolean,
     val macroContext: app.tellev.core.prompt.MacroContext? = null,
+    val globalScripts: JsonArray = JsonArray(emptyList()),
 )
 
 internal enum class MessageRenderPhase { Pending, Ready, Degraded }

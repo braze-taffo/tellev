@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.tellev.R
+import kotlinx.serialization.json.JsonArray
 import app.tellev.core.model.CharacterCard
 import app.tellev.core.model.ChatMessage
 import app.tellev.core.model.GenerationPreset
@@ -100,6 +101,7 @@ internal fun ChatBubble(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     macroContext: app.tellev.core.prompt.MacroContext? = null,
+    globalScripts: JsonArray = JsonArray(emptyList()),
     useDsh: Boolean = false,
 ) {
     val context = LocalContext.current
@@ -214,11 +216,12 @@ internal fun ChatBubble(
         // The regex pipeline (card- and preset-embedded scripts) runs off the
         // compose thread under a budget; catastrophic rules degrade to
         // regex-free text instead of freezing the chat.
-        val renderInputs = remember(parts, message.role, character, preset, userName, depth, message.metadata, macroContext) {
+        val renderInputs = remember(parts, message.role, character, preset, userName, depth, message.metadata, macroContext, globalScripts) {
             RenderInputs(
                 parts, message.role, character, preset, userName, depth,
                 includeNormal = !CharacterRegexApplier.isNormalProcessed(message),
                 macroContext = macroContext,
+                globalScripts = globalScripts,
             )
         }
         val renderState = rememberRenderedSegments(renderInputs, "${tavernRuntime.token}:${message.id}", tavernRuntime.sizes) {
@@ -226,6 +229,7 @@ internal fun ChatBubble(
                 parts, message.role, character, preset, userName, depth,
                 includeNormal = !CharacterRegexApplier.isNormalProcessed(message),
                 macroContext = macroContext,
+                globalScripts = globalScripts,
             )
         }.value
         val renderSegments = renderState.segments
@@ -497,12 +501,14 @@ internal fun StreamingBubble(
     tavernRuntime: TavernMessageRuntime,
     onHtmlBoundaryDrag: (Float) -> Unit,
     macroContext: app.tellev.core.prompt.MacroContext? = null,
+    globalScripts: JsonArray = JsonArray(emptyList()),
 ) {
-    val streamingInputs = remember(text, reasoning, character, preset, userName, macroContext) {
+    val streamingInputs = remember(text, reasoning, character, preset, userName, macroContext, globalScripts) {
         RenderInputs(
             MessageReasoning.fromResponse(text, reasoning), MessageRole.Character,
             character, preset, userName, 0, includeNormal = true,
             macroContext = macroContext,
+            globalScripts = globalScripts,
         )
     }
     val renderState = rememberRenderedSegments(streamingInputs, "${tavernRuntime.token}:streaming", tavernRuntime.sizes) {
@@ -510,6 +516,7 @@ internal fun StreamingBubble(
             MessageReasoning.fromResponse(text, reasoning), MessageRole.Character,
             character, preset, userName, 0, includeNormal = true,
             macroContext = macroContext,
+            globalScripts = globalScripts,
         )
     }.value
     Column(

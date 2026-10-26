@@ -7,6 +7,8 @@ import app.tellev.core.model.MessageRole
 import app.tellev.core.model.Persona
 import app.tellev.core.model.WorldBook
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 
@@ -53,6 +55,9 @@ data class PromptBuildRequest(
     val macroMessages: List<ChatMessage>? = null,
     /** A hook appended floors after the accepted input: history already contains that input in saved order. */
     val inputAlreadyInHistory: Boolean = false,
+    /** Standalone scripts loaded once for this build. Not part of the request fingerprint. */
+    @Transient
+    val globalScripts: JsonArray = JsonArray(emptyList()),
 )
 
 @Serializable

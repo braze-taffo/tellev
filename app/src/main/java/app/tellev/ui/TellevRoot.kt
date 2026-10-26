@@ -183,6 +183,7 @@ fun TellevRoot() {
             permissionManager = graph.permissionManager,
             settingsStore = graph.extensionSettingsStore,
             promptEngine = graph.promptEngine,
+            onGlobalRegexChanged = { chatViewModel.refreshGlobalRegexScripts() },
         ),
     )
 

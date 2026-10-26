@@ -17,6 +17,7 @@ import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.storage.StDataStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,9 +57,11 @@ data class CharacterAssetInfo(
 data class ExtensionsUiState(
     val extensions: List<ExtensionInfo> = emptyList(),
     val characterAssets: List<CharacterAssetInfo> = emptyList(),
+    val globalRegexScripts: List<CharacterRegexApplier.RegexScriptSummary> = emptyList(),
     val disabledRegexScripts: Map<String, Set<String>> = emptyMap(),
     val isLoading: Boolean = false,
     val error: String? = null,
+    val info: String? = null,
     // Built-in compat-module settings
     val ejsTemplateSettings: EjsTemplateSettings = EjsTemplateSettings.DEFAULT,
     val tavernHelperSettings: TavernHelperSettings = TavernHelperSettings.DEFAULT,
@@ -75,6 +78,7 @@ class ExtensionsViewModel(
     private val permissionManager: ExtensionPermissionManager,
     private val settingsStore: ExtensionSettingsStore,
     private val promptEngine: app.tellev.core.prompt.PromptEngine? = null,
+    private val onGlobalRegexChanged: () -> Unit = {},
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ExtensionsUiState())
@@ -99,6 +103,7 @@ class ExtensionsViewModel(
 
     /** Script source for installed extensions, keyed by id. */
     private val installedScripts = mutableMapOf<String, String>()
+    private var loadJob: Job? = null
 
     init {
         observeExtensionEvents()
@@ -116,7 +121,7 @@ class ExtensionsViewModel(
     }
 
     private fun loadExtensions() {
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
                 val assets = withContext(Dispatchers.IO) {
@@ -126,6 +131,7 @@ class ExtensionsViewModel(
                 val disabledRegex = withContext(Dispatchers.IO) {
                     dataStore.readDisabledRegexScriptIds()
                 }
+                val globalRegex = withContext(Dispatchers.IO) { readGlobalRegexSummaries() }
                 val runtimeSnapshot = _uiState.value.runtime
                 val installed = withContext(Dispatchers.IO) { scanInstalledExtensions(runtimeSnapshot) }
                 _uiState.update { state ->
@@ -141,6 +147,7 @@ class ExtensionsViewModel(
                     state.copy(
                         extensions = builtInExtensions() + currentInstalled,
                         characterAssets = assets,
+                        globalRegexScripts = globalRegex,
                         disabledRegexScripts = disabledRegex,
                         isLoading = false,
                     )
@@ -234,8 +241,49 @@ class ExtensionsViewModel(
         }
     }
 
+    /** Flip one standalone script's `disabled` flag and refresh the chat copy. */
+    fun toggleGlobalRegexScript(scriptId: String) {
+        viewModelScope.launch {
+            loadJob?.join()
+            runCatching {
+                val current = _uiState.value.globalRegexScripts.firstOrNull { it.id == scriptId }
+                    ?: error(UiStrings.get(S.extvm_global_regex_not_found, scriptId))
+                dataStore.setGlobalRegexScriptEnabled(scriptId, enabled = !current.enabled)
+                val scripts = readGlobalRegexSummaries()
+                _uiState.update { it.copy(globalRegexScripts = scripts) }
+                onGlobalRegexChanged()
+            }.onFailure { e ->
+                _uiState.update { it.copy(error = UiStrings.get(S.extvm_global_regex_toggle_failed, e.message)) }
+            }
+        }
+    }
+
+    /** Parse a SillyTavern standalone export and append it to global-regex.json. */
+    fun importGlobalRegex(text: String) {
+        viewModelScope.launch {
+            loadJob?.join()
+            runCatching {
+                val imported = dataStore.importGlobalRegexScripts(text)
+                val scripts = readGlobalRegexSummaries()
+                _uiState.update {
+                    it.copy(
+                        globalRegexScripts = scripts,
+                        info = UiStrings.get(S.extvm_global_regex_imported, imported.size),
+                    )
+                }
+                onGlobalRegexChanged()
+            }.onFailure { e ->
+                _uiState.update { it.copy(error = UiStrings.get(S.extvm_global_regex_import_failed, e.message)) }
+            }
+        }
+    }
+
     fun clearError() {
         _uiState.update { it.copy(error = null) }
+    }
+
+    fun clearInfo() {
+        _uiState.update { it.copy(info = null) }
     }
 
     // ── runtime events and permission requests ─────────────────────────
@@ -547,6 +595,9 @@ class ExtensionsViewModel(
         }
     }
 
+    private suspend fun readGlobalRegexSummaries(): List<CharacterRegexApplier.RegexScriptSummary> =
+        CharacterRegexApplier.summarizeScripts(dataStore.readGlobalRegexScripts())
+
     private fun readRegexScriptSummaries(path: Path): List<CharacterRegexApplier.RegexScriptSummary> {
         if (!Files.isRegularFile(path)) return emptyList()
         val array = runCatching { json.parseToJsonElement(path.toFile().readText()) as? JsonArray }
@@ -610,11 +661,14 @@ class ExtensionsViewModelFactory(
     private val permissionManager: ExtensionPermissionManager,
     private val settingsStore: ExtensionSettingsStore,
     private val promptEngine: app.tellev.core.prompt.PromptEngine? = null,
+    private val onGlobalRegexChanged: () -> Unit = {},
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(ExtensionsViewModel::class.java)) {
-            return ExtensionsViewModel(dataStore, extensionHost, permissionManager, settingsStore, promptEngine) as T
+            return ExtensionsViewModel(
+                dataStore, extensionHost, permissionManager, settingsStore, promptEngine, onGlobalRegexChanged,
+            ) as T
         }
         throw IllegalArgumentException("未知 ViewModel 类型：${modelClass.name}")
     }

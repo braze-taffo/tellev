@@ -88,8 +88,9 @@ object CharacterRegexApplier {
         preset: GenerationPreset? = null,
         includeNormal: Boolean = true,
         macroExpander: ((String) -> String)? = null,
+        globalScripts: JsonArray = JsonArray(emptyList()),
     ): String {
-        val context = RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Display, macroExpander = macroExpander)
+        val context = RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Display, globalScripts = globalScripts, macroExpander = macroExpander)
         val normalized = if (includeNormal) apply(text, context.copy(phase = RegexPhase.Normal)) else text
         return apply(normalized, context)
     }
@@ -103,7 +104,8 @@ object CharacterRegexApplier {
         depth: Int = 0,
         isEdit: Boolean = false,
         macroExpander: ((String) -> String)? = null,
-    ): String = apply(text, RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Normal, macroExpander = macroExpander))
+        globalScripts: JsonArray = JsonArray(emptyList()),
+    ): String = apply(text, RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Normal, globalScripts = globalScripts, macroExpander = macroExpander))
 
     fun applyForPrompt(
         text: String,
@@ -115,8 +117,9 @@ object CharacterRegexApplier {
         preset: GenerationPreset? = null,
         includeNormal: Boolean = true,
         macroExpander: ((String) -> String)? = null,
+        globalScripts: JsonArray = JsonArray(emptyList()),
     ): String {
-        val context = RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Prompt, macroExpander = macroExpander)
+        val context = RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Prompt, globalScripts = globalScripts, macroExpander = macroExpander)
         val normalized = if (includeNormal) apply(text, context.copy(phase = RegexPhase.Normal)) else text
         return apply(normalized, context)
     }
@@ -128,9 +131,10 @@ object CharacterRegexApplier {
         depth: Int = 0,
         preset: GenerationPreset? = null,
         macroExpander: ((String) -> String)? = null,
+        globalScripts: JsonArray = JsonArray(emptyList()),
     ): String = apply(
         text,
-        RegexExecutionContext(character, preset, MessageRole.System, userName, depth, false, RegexPhase.Prompt, macroExpander = macroExpander),
+        RegexExecutionContext(character, preset, MessageRole.System, userName, depth, false, RegexPhase.Prompt, globalScripts = globalScripts, macroExpander = macroExpander),
         WORLD_INFO,
     )
 

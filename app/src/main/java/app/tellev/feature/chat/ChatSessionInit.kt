@@ -36,6 +36,7 @@ internal object ChatSessionInit {
         dataStore: StDataStore,
         promptEngine: PromptEngine = DefaultPromptEngine(),
         preset: GenerationPreset? = null,
+        globalScripts: JsonArray? = null,
     ): ChatSession {
         val sessionId = generateSessionId()
         val greetings = character.initialGreetings()
@@ -67,10 +68,11 @@ internal object ChatSessionInit {
             },
         )
 
+        val scripts = globalScripts ?: dataStore.readGlobalRegexScripts()
         val initialized = session.withTavernInitVariables(
             character = character,
             worldBooks = listOfNotNull(character.characterBook),
-        ).withProcessedGreeting(character, personaName, promptEngine, preset)
+        ).withProcessedGreeting(character, personaName, promptEngine, preset, globalScripts = scripts)
         dataStore.saveChatSession(initialized)
         return dataStore.readChatSession(initialized.id)
     }
@@ -142,6 +144,7 @@ internal object ChatSessionInit {
     fun ChatSession.withProcessedGreeting(
         character: CharacterCard, userName: String, promptEngine: PromptEngine,
         preset: GenerationPreset? = null,
+        globalScripts: JsonArray = JsonArray(emptyList()),
     ): ChatSession {
         val first = messages.firstOrNull() ?: return this
         if (first.role != MessageRole.Character && first.role != MessageRole.Assistant) return this
@@ -159,7 +162,8 @@ internal object ChatSessionInit {
                 (messages.size > 1 || (metadata["variables"] as? JsonObject)?.isNotEmpty() == true),
         )
         val processed = promptEngine.processChatText(rawText, first.role, character, preset, context,
-            includeNormal = originalGreeting && !CharacterRegexApplier.isNormalProcessed(first))
+            includeNormal = originalGreeting && !CharacterRegexApplier.isNormalProcessed(first),
+            globalScripts = globalScripts)
         val swipes = first.swipes.toMutableList().apply { if (isNotEmpty()) this[first.swipeIndex] = processed.text }
         while (versions.size <= first.swipeIndex) versions.add(JsonNull)
         versions[first.swipeIndex] = JsonPrimitive(1)

@@ -1100,12 +1100,22 @@ ext_collapse	Collapse	折りたたむ	접기
 ext_expand	Expand	展開	펼치기
 ext_asset_empty_title	No character card assets yet	キャラカード添付リソースはまだありません	캐릭터 카드 첨부 리소스가 아직 없습니다
 ext_asset_empty_hint	Import a character card containing world books, regex or Tavern Helper scripts and they will appear here.	ワールドブック・正規表現・酒館助手スクリプトを含むキャラカードをインポートすると、ここに表示されます。	월드북, 정규식 또는 술관 도우미 스크립트가 포함된 캐릭터 카드를 가져오면 여기에 표시됩니다.
+ext_global_regex_title	Global regex	グローバル正規表現	전역 정규식
+ext_global_regex_subtitle	Standalone regex applies to every chat. Import one SillyTavern script or a bulk array.	独立した正規表現はすべてのチャットに適用されます。SillyTavernの単一スクリプトまたは一括配列をインポートできます。	독립 정규식은 모든 채팅에 적용됩니다. SillyTavern 스크립트 하나 또는 일괄 배열을 가져올 수 있습니다.
+ext_global_regex_empty	No global regex yet.	グローバル正規表現はまだありません。	전역 정규식이 아직 없습니다.
+ext_global_regex_import	Import	インポート	가져오기
+ext_global_regex_import_cd	Import regex file	正規表現ファイルをインポート	정규식 파일 가져오기
+ext_global_regex_read_failed	Could not read the regex file: %1$s	正規表現ファイルを読み取れません：%1$s	정규식 파일을 읽을 수 없습니다: %1$s
 extvm_load_failed	Failed to load extension assets: %1$s	拡張リソースの読み込みに失敗しました：%1$s	확장 리소스 로드 실패: %1$s
 extvm_manifest_not_found	Extension manifest not found: %1$s	拡張マニフェストが見つかりません：%1$s	확장 매니페스트를 찾을 수 없음: %1$s
 extvm_client_version_too_low	Extension %1$s requires client version >= %2$s; this tellev build is older	拡張%1$sはクライアントバージョン%2$s以上を要求します。このtellevはそれより古いです	확장 %1$s은(는) 클라이언트 버전 %2$s 이상이 필요합니다. 현재 tellev 버전은 그보다 낮습니다
 extvm_toggle_failed	Failed to toggle extension: %1$s	拡張の切り替えに失敗しました：%1$s	확장 전환 실패: %1$s
 extvm_regex_script_not_found	Regex script not found: %1$s	正規表現スクリプトが見つかりません：%1$s	정규식 스크립트를 찾을 수 없음: %1$s
 extvm_regex_toggle_failed	Failed to update regex toggle: %1$s	正規表現スイッチの更新に失敗しました：%1$s	정규식 스위치 업데이트 실패: %1$s
+extvm_global_regex_imported	Imported %1$d global regex script(s)	グローバル正規表現を%1$d件インポートしました	전역 정규식 %1$d개를 가져왔습니다
+extvm_global_regex_import_failed	Failed to import global regex: %1$s	グローバル正規表現のインポートに失敗しました：%1$s	전역 정규식 가져오기 실패: %1$s
+extvm_global_regex_not_found	Global regex not found: %1$s	グローバル正規表現が見つかりません：%1$s	전역 정규식을 찾을 수 없음: %1$s
+extvm_global_regex_toggle_failed	Failed to update global regex toggle: %1$s	グローバル正規表現スイッチの更新に失敗しました：%1$s	전역 정규식 스위치 업데이트 실패: %1$s
 extvm_permission_request_failed	Failed to handle permission request: %1$s	権限リクエストの処理に失敗しました：%1$s	권한 요청 처리 실패: %1$s
 extvm_builtin_th_name	Tavern Helper compatibility	酒館助手互換	술관 도우미 호환
 extvm_builtin_th_desc	SillyTavern event bus, getContext, TavernHelper, fetch /api/* bridge and character card script runtime	SillyTavernのイベントバス、getContext、TavernHelper、fetch /api/*ブリッジ、キャラカードスクリプト実行	SillyTavern 이벤트 버스, getContext, TavernHelper, fetch /api/* 브리지 및 캐릭터 카드 스크립트 실행

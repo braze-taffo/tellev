@@ -1,5 +1,8 @@
 package app.tellev.feature.extensions
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.ExtensionOff
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
@@ -52,13 +56,19 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.tellev.R
+import app.tellev.core.regex.CharacterRegexApplier
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -68,6 +78,33 @@ fun ExtensionsScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // */* keeps .json selectable; SAF MIME filters grey it out in many file managers.
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri: Uri? ->
+        uri?.let { selectedUri ->
+            scope.launch {
+                try {
+                    val bytes = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(selectedUri)?.use { it.readBytes() }
+                    }
+                    if (bytes == null) {
+                        snackbarHostState.showSnackbar(
+                            context.getString(R.string.ext_global_regex_read_failed, selectedUri.toString()),
+                        )
+                        return@launch
+                    }
+                    viewModel.importGlobalRegex(bytes.toString(Charsets.UTF_8))
+                } catch (e: Exception) {
+                    snackbarHostState.showSnackbar(
+                        context.getString(R.string.ext_global_regex_read_failed, e.message ?: ""),
+                    )
+                }
+            }
+        }
+    }
 
     // Re-read the regex activation file on entry. ChatViewModel.selectCharacter
     // clears the selected character's disabled regex set (exclusive activation)
@@ -81,6 +118,13 @@ fun ExtensionsScreen(
         state.error?.let {
             snackbarHostState.showSnackbar(it)
             viewModel.clearError()
+        }
+    }
+
+    LaunchedEffect(state.info) {
+        state.info?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearInfo()
         }
     }
 
@@ -134,6 +178,18 @@ fun ExtensionsScreen(
                         onToggle = { viewModel.toggleExtension(extension.id) },
                         onOpenSettings = { viewModel.openSettings(extension.id) },
                         onOpenDebug = { viewModel.openDebug(extension.id) },
+                    )
+                }
+
+                item(key = "global_regex_divider") {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                }
+
+                item(key = "global_regex") {
+                    GlobalRegexCard(
+                        scripts = state.globalRegexScripts,
+                        onToggle = { viewModel.toggleGlobalRegexScript(it) },
+                        onImport = { importLauncher.launch("*/*") },
                     )
                 }
 
@@ -363,6 +419,79 @@ private fun ExtensionCard(
                         label = { Text(stringResource(R.string.ext_auto_enable_chip)) },
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GlobalRegexCard(
+    scripts: List<CharacterRegexApplier.RegexScriptSummary>,
+    onToggle: (String) -> Unit,
+    onImport: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = stringResource(R.string.ext_global_regex_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = stringResource(R.string.ext_global_regex_subtitle),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = onImport) {
+                    Icon(
+                        Icons.Default.FileUpload,
+                        contentDescription = stringResource(R.string.ext_global_regex_import_cd),
+                    )
+                }
+            }
+            if (scripts.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.ext_global_regex_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                Text(
+                    text = stringResource(R.string.ext_regex_scripts_header, scripts.size),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                scripts.forEach { script ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = script.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                        )
+                        Switch(
+                            checked = script.enabled,
+                            onCheckedChange = { onToggle(script.id) },
+                            modifier = Modifier.height(24.dp),
+                        )
+                    }
+                }
+            }
+            OutlinedButton(onClick = onImport) {
+                Text(stringResource(R.string.ext_global_regex_import))
             }
         }
     }
