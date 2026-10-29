@@ -72,6 +72,8 @@ data class MacroContext(
     val globalVariables: JsonObject? = null,
     val variableAccess: MacroVariableAccess? = null,
     val preserveExistingLocalVariables: Boolean = false,
+    /** Immutable regex snapshot owned by this processing/render request. */
+    val globalRegexScripts: JsonArray = JsonArray(emptyList()),
 )
 
 class DefaultMacroEngine : MacroEngine {

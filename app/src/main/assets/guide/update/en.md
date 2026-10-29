@@ -1,39 +1,38 @@
-<!-- release-version: 1.7.1.8 -->
+<!-- release-version: 1.7.1.9 -->
 
-## 1.7.1.8: More stable complex cards
+## 1.7.1.9: Import regex files directly
 
-Repeated script reads and multiple worldbooks use less memory, improving stability on complex character card setup pages.
-
-<!-- where -->
-- Chat → Select a character → Card view
-
-<!-- steps -->
-1. Keep using your existing cards, presets and worldbooks; no reimport is needed.
-2. Open the card interface and use the card's controls to enter information or change options.
-3. The optimization applies automatically without changing scripts or disabling card features.
-
-## Faster worldbook reads
-
-Scripts requesting one worldbook now query that book alone, reducing unrelated text transfers and repeated parsing. Existing entries, bindings and script APIs remain available.
+Import regex JSON exported from SillyTavern without reimporting a character card. Both a single rule and an array of rules are supported.
 
 <!-- where -->
-- Worldbooks → An existing worldbook
-- Chat → A card or script that uses worldbooks
+- Extensions → Import regex
 
 <!-- steps -->
-1. View and edit worldbooks as usual; scripts can read saved changes.
-2. Keep your existing character and chat worldbook bindings without reconfiguring them.
-3. Keep multiple reference books available; full data reads by complex scripts can still take time.
+1. Tap "Import regex", choose a JSON file and review rule names, count and enabled states.
+2. Choose "Global" to use the rules across all characters, or choose "Character" and search for the target character.
+3. Tap "Import". Global rules can be imported even when you have no characters yet.
 
-## AI creation follows your edits
+## Same-name replacement and import checks
 
-The creation assistant edits the requested scope, preserves established details and asks fewer repeated questions. Character drafts read linked references without automatically rewriting worldbook entries.
+Rules with the same name in the selected scope are replaced; other rules are kept. Enabled states come from the file. Duplicate names or invalid entries reject the whole batch with an explanation.
 
 <!-- where -->
-- Characters or Worldbooks → AI Create
-- Settings → About → Update guide
+- Extensions → Import regex → Preview and scope selection
 
 <!-- steps -->
-1. Specify a field or passage to edit, and optionally provide a writing sample or style preferences.
-2. Choose to generate a draft or let AI decide to write from the information available; major conflicts still prompt a question.
-3. In one-entry-at-a-time worldbook discussions, confirm each proposal before it is written. Review the draft before saving.
+1. Check the target scope before importing; same-name replacement affects only that scope.
+2. If duplicate names cannot be matched uniquely in the file or target scope, resolve the conflict and import again.
+3. Check the added and replaced counts after import. Files must be 12 MB or smaller.
+
+## Switch rules on or off, or delete them
+
+Global rules have their own list. Character rules remain in the character asset cards. Rules and their enabled states are included in backups.
+
+<!-- where -->
+- Extensions → Global regex
+- Extensions → Character assets → Expand regex scripts
+
+<!-- steps -->
+1. Use the switch beside a rule to enable or disable it. Rules run in global, preset, then character order.
+2. Tap the delete icon and confirm to remove only that rule.
+3. Display-rule changes refresh the chat. Saved messages do not run normal replacements again.

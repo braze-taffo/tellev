@@ -88,8 +88,9 @@ object CharacterRegexApplier {
         preset: GenerationPreset? = null,
         includeNormal: Boolean = true,
         macroExpander: ((String) -> String)? = null,
+        globalScripts: JsonArray = JsonArray(emptyList()),
     ): String {
-        val context = RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Display, macroExpander = macroExpander)
+        val context = RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Display, macroExpander = macroExpander, globalScripts = globalScripts)
         val normalized = if (includeNormal) apply(text, context.copy(phase = RegexPhase.Normal)) else text
         return apply(normalized, context)
     }
@@ -103,7 +104,8 @@ object CharacterRegexApplier {
         depth: Int = 0,
         isEdit: Boolean = false,
         macroExpander: ((String) -> String)? = null,
-    ): String = apply(text, RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Normal, macroExpander = macroExpander))
+        globalScripts: JsonArray = JsonArray(emptyList()),
+    ): String = apply(text, RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Normal, macroExpander = macroExpander, globalScripts = globalScripts))
 
     fun applyForPrompt(
         text: String,
@@ -115,8 +117,9 @@ object CharacterRegexApplier {
         preset: GenerationPreset? = null,
         includeNormal: Boolean = true,
         macroExpander: ((String) -> String)? = null,
+        globalScripts: JsonArray = JsonArray(emptyList()),
     ): String {
-        val context = RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Prompt, macroExpander = macroExpander)
+        val context = RegexExecutionContext(character, preset, role, userName, depth, isEdit, RegexPhase.Prompt, macroExpander = macroExpander, globalScripts = globalScripts)
         val normalized = if (includeNormal) apply(text, context.copy(phase = RegexPhase.Normal)) else text
         return apply(normalized, context)
     }
@@ -128,9 +131,10 @@ object CharacterRegexApplier {
         depth: Int = 0,
         preset: GenerationPreset? = null,
         macroExpander: ((String) -> String)? = null,
+        globalScripts: JsonArray = JsonArray(emptyList()),
     ): String = apply(
         text,
-        RegexExecutionContext(character, preset, MessageRole.System, userName, depth, false, RegexPhase.Prompt, macroExpander = macroExpander),
+        RegexExecutionContext(character, preset, MessageRole.System, userName, depth, false, RegexPhase.Prompt, macroExpander = macroExpander, globalScripts = globalScripts),
         WORLD_INFO,
     )
 
@@ -306,6 +310,7 @@ object CharacterRegexApplier {
         userName: String,
         escaped: Boolean,
         macroExpander: ((String) -> String)? = null,
+        globalScripts: JsonArray = JsonArray(emptyList()),
     ): String {
         if (macroExpander != null) {
             if (!escaped) return macroExpander(text)
@@ -639,7 +644,7 @@ object CharacterRegexApplier {
      * index-based key so scripts without an id can still be toggled (though
      * such toggles won't survive card reordering).
      */
-    private fun scriptIdentifier(script: JsonObject, index: Int): String =
+    internal fun scriptIdentifier(script: JsonObject, index: Int): String =
         script.stringValue("id")?.takeIf { it.isNotBlank() } ?: "idx:$index"
 
     private fun JsonObject.objectValue(key: String): JsonObject? =

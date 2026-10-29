@@ -38,6 +38,22 @@ class FileStDataStore(
     private val durableFiles: JournaledFileWriter = JournaledFileWriter(layout.root),
 ) : StDataStore {
 
+    private val mutableGlobalRegexChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 32)
+    override val globalRegexChanges = mutableGlobalRegexChanges.asSharedFlow()
+    private val globalRegexPath get() = layout.extensions.resolve("_global-regex.json")
+
+    override suspend fun readGlobalRegexScripts(): kotlinx.serialization.json.JsonArray = withContext(Dispatchers.IO) {
+        if (!java.nio.file.Files.exists(globalRegexPath)) kotlinx.serialization.json.JsonArray(emptyList())
+        else json.parseToJsonElement(java.nio.file.Files.readAllBytes(globalRegexPath).toString(Charsets.UTF_8)) as? kotlinx.serialization.json.JsonArray
+            ?: error("Invalid global regex storage")
+    }
+
+    override suspend fun saveGlobalRegexScripts(scripts: kotlinx.serialization.json.JsonArray): Unit = withContext(Dispatchers.IO) {
+        durableFiles.write(globalRegexPath, scripts.toString().toByteArray(Charsets.UTF_8))
+        mutableGlobalRegexChanges.tryEmit(Unit)
+        Unit
+    }
+
     private val characterImporter = CharacterImporter(json)
     private val chatWrites = Mutex()
 
@@ -319,7 +335,7 @@ class FileStDataStore(
         backupCoordinator.exportBackup(targetZip, includeSecrets)
 
     override suspend fun importBackup(sourceZip: Path): Unit =
-        backupCoordinator.importBackup(sourceZip)
+        backupCoordinator.importBackup(sourceZip).also { mutableGlobalRegexChanges.tryEmit(Unit) }
 
     companion object {
         val defaultJson: Json = Json {

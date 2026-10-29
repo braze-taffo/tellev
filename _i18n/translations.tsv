@@ -1206,3 +1206,27 @@ crs_make_primary_worldbook	Set as primary	メインに設定	주 책으로 설�
 crs_primary_reference	Primary: %1$s (%2$d entries)	メイン：%1$s（%2$d 件）	주 책: %1$s (%2$d개 항목)
 crs_aux_reference	Reference: %1$s (%2$d entries)	補助：%1$s（%2$d 件）	보조 참고: %1$s (%2$d개 항목)
 crs_create_faction_book	Create a reusable faction lorebook with AI	AI で汎用の勢力ロアブックを作成	AI로 범용 세력 세계관 책 만들기
+ri_import	Import regex	正規表現をインポート	정규식 가져오기
+ri_global	Global	グローバル	전역
+ri_character	Character	指定キャラクター	캐릭터 지정
+ri_global_title	Global regex (%1$d)	グローバル正規表現（%1$d）	전역 정규식 (%1$d)
+ri_global_empty	No global rules yet. Imported global rules apply to all characters.	グローバル正規表現はまだありません。インポートすると全キャラクターに適用されます。	전역 규칙이 없습니다. 가져온 전역 규칙은 모든 캐릭터에 적용됩니다.
+ri_preview	Import regex (%1$d rules)	正規表現をインポート（%1$d 件）	정규식 가져오기 (%1$d개)
+ri_rule_enabled	%1$s · Enabled	%1$s · 有効	%1$s · 사용
+ri_rule_disabled	%1$s · Disabled	%1$s · 無効	%1$s · 사용 안 함
+ri_overwrite_hint	Rules with the same name in the selected scope will be replaced, including their enabled state.	選択した範囲の同名ルールは、有効状態も含めて上書きされます。	선택한 범위의 같은 이름 규칙은 사용 상태를 포함하여 덮어씁니다.
+ri_search	Search character name or ID	キャラクター名または ID で検索	캐릭터 이름 또는 ID 검색
+ri_no_matches	No matching characters	一致するキャラクターがありません	일치하는 캐릭터가 없습니다
+ri_no_characters	No characters yet. You can import global rules.	キャラクターがいません。グローバル正規表現としてインポートできます。	캐릭터가 없습니다. 전역 규칙으로 가져올 수 있습니다.
+ri_cancel	Cancel	キャンセル	취소
+ri_confirm	Import	インポート	가져오기
+ri_delete	Delete regex	正規表現を削除	정규식 삭제
+ri_delete_body	Delete “%1$s”? This rule will stop applying.	「%1$s」を削除しますか？このルールは適用されなくなります。	“%1$s”을(를) 삭제할까요? 이 규칙은 더 이상 적용되지 않습니다.
+ri_success	Added %1$d, replaced %2$d · %3$s	追加 %1$d 件、上書き %2$d 件 · %3$s	%1$d개 추가, %2$d개 덮어쓰기 · %3$s
+ri_failed	Regex operation failed: %1$s	正規表現の操作に失敗しました：%1$s	정규식 작업 실패: %1$s
+ri_invalid_json	Select a valid regex JSON object or array	有効な正規表現 JSON オブジェクトまたは配列を選択してください	올바른 정규식 JSON 객체 또는 배열을 선택하세요
+ri_empty	The file contains no regex rules	ファイルに正規表現ルールがありません	파일에 정규식 규칙이 없습니다
+ri_invalid_rule	Rule %1$d has an invalid %2$s field	ルール %1$d の %2$s フィールドが無効です	%1$d번째 규칙의 %2$s 필드가 올바르지 않습니다
+ri_conflict	Duplicate rule names; nothing imported: %1$s	同名ルールが複数あるためインポートしませんでした：%1$s	같은 이름의 규칙이 여러 개 있어 가져오지 않았습니다: %1$s
+ri_too_large	Regex files must be 12 MB or smaller	正規表現ファイルは 12 MB 以下にしてください	정규식 파일은 12 MB 이하여야 합니다
+ri_read_failed	Unable to read the regex file	正規表現ファイルを読み取れません	정규식 파일을 읽을 수 없습니다

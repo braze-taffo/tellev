@@ -53,6 +53,7 @@ data class PromptBuildRequest(
     val macroMessages: List<ChatMessage>? = null,
     /** A hook appended floors after the accepted input: history already contains that input in saved order. */
     val inputAlreadyInHistory: Boolean = false,
+    val globalRegexScripts: kotlinx.serialization.json.JsonArray = kotlinx.serialization.json.JsonArray(emptyList()),
 )
 
 @Serializable

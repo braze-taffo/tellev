@@ -52,6 +52,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 data class ChatUiState(
+    val globalRegexScripts: kotlinx.serialization.json.JsonArray = kotlinx.serialization.json.JsonArray(emptyList()),
     val runtimeGeneration: Long = -1,
     val characters: List<CharacterSummary> = emptyList(),
     // Card file per character id for the character picker list (card = avatar).
@@ -235,6 +236,13 @@ class ChatViewModel(
             ),
         )
 
+        viewModelScope.launch {
+            dataStore.globalRegexChanges.collect {
+                runCatching { dataStore.readGlobalRegexScripts() }
+                    .onSuccess { scripts -> _uiState.update { it.copy(globalRegexScripts = scripts) } }
+                    .onFailure { e -> _uiState.update { it.copy(error = e.message) } }
+            }
+        }
         observeCharacterChanges()
         observePresetChanges()
         observeWorldBookChanges()
@@ -376,12 +384,14 @@ class ChatViewModel(
             try {
                 dataStore.bootstrap()
 
+                val globalRegexScripts = dataStore.readGlobalRegexScripts()
                 val characters = dataStore.listCharacters()
                 val runtime = runtimeResolver.resolve()
                 refreshImageGenAvailability()
 
                 _uiState.update {
                     it.copy(
+                        globalRegexScripts = globalRegexScripts,
                         characters = characters,
                         characterAvatarFiles = ChatSessionAssets.avatarFilesFor(characters, dataStore.layout),
                         personas = runtime.personas,
@@ -425,7 +435,7 @@ class ChatViewModel(
                         val session = if (sessions.isNotEmpty()) {
                             val loaded = dataStore.readChatSession(sessions.first().id)
                             loaded.withCharacterGreetingSwipes(character).withProcessedGreeting(
-                                character, _uiState.value.selectedPersona?.name ?: "User", promptEngine, _uiState.value.selectedPreset,
+                                character, _uiState.value.selectedPersona?.name ?: "User", promptEngine, _uiState.value.selectedPreset, dataStore.readGlobalRegexScripts(),
                             ).let { upgraded ->
                                 if (upgraded != loaded) dataStore.commitChatMutation(loaded, upgraded) else upgraded
                             }
@@ -434,7 +444,7 @@ class ChatViewModel(
                                 character,
                                 _uiState.value.selectedPersona?.name ?: "User",
                                 dataStore,
-                                promptEngine, _uiState.value.selectedPreset,
+                                promptEngine, _uiState.value.selectedPreset, dataStore.readGlobalRegexScripts(),
                             )
                         }
                         val allSessions = (listOf(session.toSummary()) + sessions.filterNot { it.id == session.id })
@@ -512,7 +522,7 @@ class ChatViewModel(
         val character = state.selectedCharacter ?: return null
         val session = state.currentSession ?: return null
         return app.tellev.core.prompt.ChatTextProcessing.context(character, session,
-            state.selectedPersona?.name ?: "User", state.selectedPersona).copy(
+            state.selectedPersona?.name ?: "User", state.selectedPersona, state.globalRegexScripts).copy(
             globalVariables = promptEngine.snapshotPromptTemplateVariables().global,
             modelName = state.providerConfig?.model.orEmpty(),
             maxContextTokens = state.selectedPreset?.maxContextTokens ?: 0,
@@ -555,7 +565,7 @@ class ChatViewModel(
                         character,
                         _uiState.value.selectedPersona?.name ?: "User",
                         dataStore,
-                        promptEngine, _uiState.value.selectedPreset,
+                        promptEngine, _uiState.value.selectedPreset, dataStore.readGlobalRegexScripts(),
                     )
                     val token = sessionRuntime.activateSessionWrites(newSession)
                     val sessions = dataStore.listChatSessionSummaries(characterId = character.id)
@@ -714,7 +724,7 @@ class ChatViewModel(
                     val loaded = dataStore.readChatSession(sessionId)
                     val upgraded = _uiState.value.selectedCharacter?.let { character ->
                         loaded.withCharacterGreetingSwipes(character).withProcessedGreeting(
-                            character, _uiState.value.selectedPersona?.name ?: "User", promptEngine, _uiState.value.selectedPreset,
+                            character, _uiState.value.selectedPersona?.name ?: "User", promptEngine, _uiState.value.selectedPreset, dataStore.readGlobalRegexScripts(),
                         )
                     } ?: loaded
                     val session = if (upgraded != loaded) dataStore.commitChatMutation(loaded, upgraded) else loaded
@@ -963,7 +973,7 @@ class ChatViewModel(
                         val loadedNext = dataStore.readChatSession(remaining.first().id)
                         val upgradedNext = character?.let {
                             loadedNext.withCharacterGreetingSwipes(it).withProcessedGreeting(it,
-                                _uiState.value.selectedPersona?.name ?: "User", promptEngine, _uiState.value.selectedPreset)
+                                _uiState.value.selectedPersona?.name ?: "User", promptEngine, _uiState.value.selectedPreset, dataStore.readGlobalRegexScripts())
                         } ?: loadedNext
                         val next = if (upgradedNext != loadedNext) dataStore.commitChatMutation(loadedNext, upgradedNext) else loadedNext
                         val token = sessionRuntime.activateSessionWrites(next)

@@ -32,6 +32,7 @@ internal fun renderMessageParts(
             character, preset, role, userName, depth,
             phase = CharacterRegexApplier.RegexPhase.Normal,
             macroExpander = expand,
+            globalScripts = base.globalRegexScripts,
         )
         val normal = CharacterRegexApplier.apply(parts.reasoning, context, 6)
         val display = CharacterRegexApplier.apply(normal, context.copy(phase = CharacterRegexApplier.RegexPhase.Display), 6)
@@ -40,6 +41,7 @@ internal fun renderMessageParts(
     val displayBody = CharacterRegexApplier.applyForDisplay(
         parts.body, role, character, userName, depth, preset = preset, includeNormal = includeNormal,
         macroExpander = expand,
+        globalScripts = base.globalRegexScripts,
     )
     // Display rules may create tags, but cannot move body text into the reasoning channel.
     val assistant = role == MessageRole.Character || role == MessageRole.Assistant

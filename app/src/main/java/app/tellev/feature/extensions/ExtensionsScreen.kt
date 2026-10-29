@@ -1,5 +1,8 @@
 package app.tellev.feature.extensions
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -68,6 +71,25 @@ fun ExtensionsScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    var deleteTarget by remember { mutableStateOf<RegexDeleteTarget?>(null) }
+    val regexPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) viewModel.prepareRegexImport(context.applicationContext, uri)
+    }
+    LaunchedEffect(state.notice) {
+        state.notice?.let { snackbarHostState.showSnackbar(it); viewModel.clearNotice() }
+    }
+    RegexImportSheet(state, viewModel)
+    deleteTarget?.let { target ->
+        AlertDialog(onDismissRequest = { deleteTarget = null },
+            title = { Text(stringResource(R.string.ri_delete)) },
+            text = { Text(stringResource(R.string.ri_delete_body, target.name)) },
+            confirmButton = { TextButton(onClick = {
+                viewModel.deleteRegexScript(target.characterId, target.id)
+                deleteTarget = null
+            }, enabled = !state.regexBusy) { Text(stringResource(R.string.ri_delete)) } },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.ri_cancel)) } })
+    }
 
     // Re-read the regex activation file on entry. ChatViewModel.selectCharacter
     // clears the selected character's disabled regex set (exclusive activation)
@@ -90,7 +112,10 @@ fun ExtensionsScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.ext_title)) },
                 actions = {
-                    IconButton(onClick = { viewModel.refreshExtensions() }) {
+                    TextButton(onClick = { regexPicker.launch(arrayOf("application/json", "text/*", "application/octet-stream")) }, enabled = !state.regexBusy) {
+                        Text(stringResource(R.string.ri_import))
+                    }
+                    IconButton(onClick = { viewModel.refreshExtensions() }, enabled = !state.regexBusy) {
                         Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.ext_refresh_cd))
                     }
                 },
@@ -118,6 +143,7 @@ fun ExtensionsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(16.dp),
             ) {
+                item(key = "global_regex") { GlobalRegexCard(state, viewModel) { deleteTarget = it } }
                 item(key = "memory_module") { MemoryExtensionCard() }
 
                 item(key = "built_in_header") {
@@ -156,6 +182,8 @@ fun ExtensionsScreen(
                     items(state.characterAssets, key = { it.characterId }) { asset ->
                         CharacterAssetCard(
                             asset = asset,
+                            regexBusy = state.regexBusy,
+                            onDeleteScript = { id, name -> deleteTarget = RegexDeleteTarget(asset.characterId, id, name) },
                             disabledScriptIds = state.disabledRegexScripts[asset.characterId] ?: emptySet(),
                             onToggleScript = { viewModel.toggleRegexScript(asset.characterId, it) },
                         )
@@ -372,6 +400,8 @@ private fun ExtensionCard(
 @Composable
 private fun CharacterAssetCard(
     asset: CharacterAssetInfo,
+    regexBusy: Boolean,
+    onDeleteScript: (String, String) -> Unit,
     disabledScriptIds: Set<String>,
     onToggleScript: (String) -> Unit,
 ) {
@@ -441,24 +471,9 @@ private fun CharacterAssetCard(
                 }
                 if (regexExpanded) {
                     asset.regexScriptSummaries.forEach { script ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = script.name,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.weight(1f),
-                                maxLines = 1,
-                            )
-                            Switch(
-                                checked = script.enabled,
-                                onCheckedChange = { onToggleScript(script.id) },
-                                modifier = Modifier.height(24.dp),
-                            )
-                        }
+                        RegexRuleRow(script, regexBusy,
+                            onToggle = { onToggleScript(script.id) },
+                            onDelete = { onDeleteScript(script.id, script.name) })
                     }
                 }
             }

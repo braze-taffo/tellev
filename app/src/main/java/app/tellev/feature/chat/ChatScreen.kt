@@ -170,7 +170,7 @@ private fun ChatContentScreen(
 ) {
     val globalVariables = viewModel.messageGlobalVariables()
     val renderMacroContext = remember(state.currentSession, state.selectedCharacter, state.selectedPersona,
-        state.selectedPreset, state.providerConfig, globalVariables) { viewModel.messageMacroContext(state) }
+        state.selectedPreset, state.providerConfig, globalVariables, state.globalRegexScripts) { viewModel.messageMacroContext(state) }
     val regexDepths = remember(state.messages) { visibleRegexDepths(state.messages) }
     val runtimeToken = viewModel.currentRuntimeToken(state.currentSession?.id)
     LaunchedEffect(state.currentSession?.id) { viewModel.refreshMemory() }

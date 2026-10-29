@@ -34,6 +34,10 @@ interface StDataStore {
         get() = emptyFlow()
 
 
+    val globalRegexChanges: Flow<Unit> get() = emptyFlow()
+    suspend fun readGlobalRegexScripts(): kotlinx.serialization.json.JsonArray = kotlinx.serialization.json.JsonArray(emptyList())
+    suspend fun saveGlobalRegexScripts(scripts: kotlinx.serialization.json.JsonArray) { error("Global regex storage unavailable") }
+
     suspend fun bootstrap()
 
     suspend fun listCharacters(): List<CharacterSummary>

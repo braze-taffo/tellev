@@ -131,6 +131,7 @@ internal class ChatGenerationCoordinator(
                 val config = runtime.providerConfig
                 val preset = runtime.preset
                 val runtimeState = state.copy(
+                    globalRegexScripts = dataStore.readGlobalRegexScripts(),
                     selectedProvider = runtime.selectedProviderId,
                     providerConfig = config,
                     presets = runtime.presets,
@@ -166,7 +167,7 @@ internal class ChatGenerationCoordinator(
 
                 val processedInput = if (regenerationInput == null) promptEngine.processChatText(
                     messageText, messageRole, character, preset,
-                    ChatTextProcessing.context(character, initializedSession, runtime.persona?.name ?: "User", runtime.persona),
+                    ChatTextProcessing.context(character, initializedSession, runtime.persona?.name ?: "User", runtime.persona, runtimeState.globalRegexScripts),
                     isEdit = regexIsEdit,
                 ) else null
                 val inputMessage = regenerationInput ?: CharacterRegexApplier.markNormalProcessed(ChatMessage(
@@ -271,6 +272,7 @@ internal class ChatGenerationCoordinator(
                 }
                 val promptRequest = PromptBuildRequest(
                     character = character,
+                    globalRegexScripts = runtimeState.globalRegexScripts,
                     supportingCharacters = supportingCast,
                     persona = runtime.persona,
                     messages = if (isRegeneration) {
@@ -353,7 +355,7 @@ internal class ChatGenerationCoordinator(
                             val parts = MessageReasoning.fromResponse(rawFinalText, chunk.reasoning)
                             val finalBase = uiState.value.currentSession?.takeIf { it.id == updatedSession.id } ?: updatedSession
                             val processedFinal = promptEngine.processChatText(parts.body, MessageRole.Character, character, preset,
-                                ChatTextProcessing.context(character, finalBase, runtime.persona?.name ?: "User", runtime.persona),
+                                ChatTextProcessing.context(character, finalBase, runtime.persona?.name ?: "User", runtime.persona, runtimeState.globalRegexScripts),
                                 expandMacros = false)
                             val finalText = processedFinal.text
                             if (finalText.isBlank()) {
@@ -544,6 +546,7 @@ internal class ChatGenerationCoordinator(
         if (state.streamingText.isNotEmpty() || state.streamingReasoning.isNotEmpty()) {
             val parts = MessageReasoning.fromResponse(state.streamingText, state.streamingReasoning)
             val processedPartial = CharacterRegexApplier.applyNormal(
+                globalScripts = state.globalRegexScripts,
                 text = parts.body,
                 role = MessageRole.Character,
                 character = state.selectedCharacter,
@@ -675,6 +678,7 @@ internal class ChatGenerationCoordinator(
         val preset = ExtensionGenerationOptions.preset(options, runtime.preset, dataStore)
         val config = ExtensionGenerationOptions.config(options, runtime.providerConfig)
         val runtimeState = state.copy(
+            globalRegexScripts = dataStore.readGlobalRegexScripts(),
             selectedProvider = runtime.selectedProviderId,
             providerConfig = runtime.providerConfig,
             presets = runtime.presets,
@@ -708,6 +712,7 @@ internal class ChatGenerationCoordinator(
             val supportingBooks = supportingCast.flatMap { member -> ChatTavernStorage.activeWorldBooks(emptyList(), runtime.worldBooks, member, null) }
             val promptRequest = ExtensionGenerationOptions.promptRequest(options, PromptBuildRequest(
                 character = character,
+                globalRegexScripts = runtimeState.globalRegexScripts,
                 supportingCharacters = supportingCast,
                 persona = runtime.persona,
                 messages = state.messages,

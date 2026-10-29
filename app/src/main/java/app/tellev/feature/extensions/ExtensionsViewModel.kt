@@ -13,6 +13,10 @@ import app.tellev.core.extension.TavernHelperSettings
 import app.tellev.core.i18n.S
 import app.tellev.core.i18n.UiStrings
 import app.tellev.core.prompt.DefaultPromptEngine
+import app.tellev.core.regex.RegexImport
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.CancellationException
 import app.tellev.core.regex.CharacterRegexApplier
 import app.tellev.core.storage.StDataStore
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +58,11 @@ data class CharacterAssetInfo(
 )
 
 data class ExtensionsUiState(
+    val globalRegexScripts: JsonArray = JsonArray(emptyList()),
+    val regexImportPreview: JsonArray? = null,
+    val regexImportCharacters: List<app.tellev.core.model.CharacterSummary> = emptyList(),
+    val regexBusy: Boolean = false,
+    val notice: String? = null,
     val extensions: List<ExtensionInfo> = emptyList(),
     val characterAssets: List<CharacterAssetInfo> = emptyList(),
     val disabledRegexScripts: Map<String, Set<String>> = emptyMap(),
@@ -79,6 +88,7 @@ class ExtensionsViewModel(
 
     private val _uiState = MutableStateFlow(ExtensionsUiState())
     val uiState: StateFlow<ExtensionsUiState> = _uiState.asStateFlow()
+    private val regexWrites = Mutex()
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
@@ -126,6 +136,7 @@ class ExtensionsViewModel(
                 val disabledRegex = withContext(Dispatchers.IO) {
                     dataStore.readDisabledRegexScriptIds()
                 }
+                val globalScripts = dataStore.readGlobalRegexScripts()
                 val runtimeSnapshot = _uiState.value.runtime
                 val installed = withContext(Dispatchers.IO) { scanInstalledExtensions(runtimeSnapshot) }
                 _uiState.update { state ->
@@ -140,6 +151,7 @@ class ExtensionsViewModel(
                     }
                     state.copy(
                         extensions = builtInExtensions() + currentInstalled,
+                        globalRegexScripts = globalScripts,
                         characterAssets = assets,
                         disabledRegexScripts = disabledRegex,
                         isLoading = false,
@@ -210,29 +222,74 @@ class ExtensionsViewModel(
         loadExtensions()
     }
 
-    /** Toggle the card's own regex_scripts[].disabled field and save it losslessly. */
-    fun toggleRegexScript(characterId: String, scriptId: String) {
+    /** All import, switch and deletion mutations share one queue and re-read authoritative storage. */
+    private fun regexOperation(operation: suspend () -> Unit) {
+        if (_uiState.value.regexBusy) return
+        _uiState.update { it.copy(regexBusy = true, error = null) }
         viewModelScope.launch {
-            runCatching {
-                val currentSummary = _uiState.value.characterAssets
-                    .firstOrNull { it.characterId == characterId }
-                    ?.regexScriptSummaries
-                    ?.firstOrNull { it.id == scriptId }
-                    ?: error(UiStrings.get(S.extvm_regex_script_not_found, scriptId))
-                val card = dataStore.readCharacter(characterId)
-                val patched = CharacterRegexApplier.withScriptEnabled(
-                    card = card,
-                    scriptId = scriptId,
-                    enabled = !currentSummary.enabled,
-                )
-                dataStore.saveCharacter(patched)
-                val assets = withContext(Dispatchers.IO) { readCharacterAssets() }
-                _uiState.update { it.copy(characterAssets = assets, disabledRegexScripts = emptyMap()) }
-            }.onFailure { e ->
-                _uiState.update { it.copy(error = UiStrings.get(S.extvm_regex_toggle_failed, e.message)) }
+            try {
+                regexWrites.withLock { withContext(Dispatchers.IO) { operation() } }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                _uiState.update { it.copy(error = UiStrings.get(S.ri_failed, e.message.orEmpty())) }
+            } finally {
+                _uiState.update { it.copy(regexBusy = false) }
             }
         }
     }
+
+    fun prepareRegexImport(context: android.content.Context, uri: android.net.Uri) = regexOperation {
+        val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+            val output = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            var total = 0
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                total += read
+                require(total <= 12_000_000) { UiStrings.get(S.ri_too_large) }
+                output.write(buffer, 0, read)
+            }
+            output.toByteArray()
+        } ?: error(UiStrings.get(S.ri_read_failed))
+        val scripts = RegexImport.parse(bytes.decodeToString(throwOnInvalidSequence = true))
+        val characters = dataStore.listCharacters()
+        _uiState.update { it.copy(regexImportPreview = scripts, regexImportCharacters = characters) }
+    }
+
+    fun dismissRegexImport() {
+        if (!_uiState.value.regexBusy) _uiState.update { it.copy(regexImportPreview = null) }
+    }
+
+    fun confirmRegexImport(characterId: String?) = regexOperation {
+        val incoming = _uiState.value.regexImportPreview ?: return@regexOperation
+        val card = characterId?.let { dataStore.readCharacter(it) }
+        val result = RegexImport.importInto(dataStore, incoming, characterId)
+        _uiState.update { it.copy(regexImportPreview = null) }
+        refreshRegexAssets()
+        _uiState.update { it.copy(notice = UiStrings.get(S.ri_success, result.added, result.replaced,
+            card?.name ?: UiStrings.get(S.ri_global))) }
+    }
+
+    private suspend fun refreshRegexAssets() {
+        val globals = dataStore.readGlobalRegexScripts()
+        val assets = readCharacterAssets()
+        _uiState.update { it.copy(globalRegexScripts = globals, characterAssets = assets, disabledRegexScripts = emptyMap()) }
+    }
+
+    fun toggleRegexScript(characterId: String?, scriptId: String) = mutateRegex(characterId, scriptId, false)
+    fun deleteRegexScript(characterId: String?, scriptId: String) = mutateRegex(characterId, scriptId, true)
+
+    private fun mutateRegex(characterId: String?, scriptId: String, delete: Boolean) = regexOperation {
+        val card = characterId?.let { dataStore.readCharacter(it) }
+        val current = card?.let(RegexImport::scripts) ?: dataStore.readGlobalRegexScripts()
+        val updated = if (delete) RegexImport.delete(current, scriptId) else RegexImport.toggle(current, scriptId)
+        if (card != null) dataStore.saveCharacter(RegexImport.withScripts(card, updated))
+        else dataStore.saveGlobalRegexScripts(updated)
+        refreshRegexAssets()
+    }
+
+    fun clearNotice() { _uiState.update { it.copy(notice = null) } }
 
     fun clearError() {
         _uiState.update { it.copy(error = null) }

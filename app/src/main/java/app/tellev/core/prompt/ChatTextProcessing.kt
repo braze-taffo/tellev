@@ -12,8 +12,9 @@ data class ProcessedChatText(val text: String, val localVariables: JsonObject)
 
 /** Normal regex precedes macro expansion at ST's greeting/user/edit persistence boundary. */
 object ChatTextProcessing {
-    fun context(character: CharacterCard, session: ChatSession, userName: String, persona: Persona? = null): MacroContext {
+    fun context(character: CharacterCard, session: ChatSession, userName: String, persona: Persona? = null, globalScripts: kotlinx.serialization.json.JsonArray = kotlinx.serialization.json.JsonArray(emptyList())): MacroContext {
         return PromptMacroContextBuilder.withChatSnapshot(MacroContext(
+            globalRegexScripts = globalScripts,
             characterName = character.name, userName = userName,
             characterDescription = character.description, characterPersonality = character.personality,
             characterScenario = character.scenario, exampleMessages = character.exampleMessages,
@@ -42,7 +43,7 @@ object ChatTextProcessing {
             maxContextTokens = preset?.maxContextTokens ?: context.maxContextTokens,
             maxPromptTokens = responseTokens, maxResponseTokens = responseTokens)
         val expand: (String) -> String = { macroEngine.expand(it, scoped) }
-        val normal = if (includeNormal) CharacterRegexApplier.applyNormal(text, role, character, preset, context.userName, depth, isEdit, expand) else text
+        val normal = if (includeNormal) CharacterRegexApplier.applyNormal(text, role, character, preset, context.userName, depth, isEdit, expand, context.globalRegexScripts) else text
         return ProcessedChatText(if (expandMacros) expand(normal) else normal, variables.localObject())
     }
 }

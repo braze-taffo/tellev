@@ -36,6 +36,7 @@ internal object ChatSessionInit {
         dataStore: StDataStore,
         promptEngine: PromptEngine = DefaultPromptEngine(),
         preset: GenerationPreset? = null,
+        globalScripts: JsonArray? = null,
     ): ChatSession {
         val sessionId = generateSessionId()
         val greetings = character.initialGreetings()
@@ -70,7 +71,7 @@ internal object ChatSessionInit {
         val initialized = session.withTavernInitVariables(
             character = character,
             worldBooks = listOfNotNull(character.characterBook),
-        ).withProcessedGreeting(character, personaName, promptEngine, preset)
+        ).withProcessedGreeting(character, personaName, promptEngine, preset, globalScripts ?: dataStore.readGlobalRegexScripts())
         dataStore.saveChatSession(initialized)
         return dataStore.readChatSession(initialized.id)
     }
@@ -142,6 +143,7 @@ internal object ChatSessionInit {
     fun ChatSession.withProcessedGreeting(
         character: CharacterCard, userName: String, promptEngine: PromptEngine,
         preset: GenerationPreset? = null,
+        globalScripts: JsonArray = JsonArray(emptyList()),
     ): ChatSession {
         val first = messages.firstOrNull() ?: return this
         if (first.role != MessageRole.Character && first.role != MessageRole.Assistant) return this
@@ -154,7 +156,7 @@ internal object ChatSessionInit {
         // ST also expands imported first bot floors, but does not rerun their
         // creation-time normal regex. Plain custom first floors stay untouched.
         if (!originalGreeting && !rawText.contains("{{")) return this
-        val context = ChatTextProcessing.context(character, this, userName).copy(
+        val context = ChatTextProcessing.context(character, this, userName, globalScripts = globalScripts).copy(
             preserveExistingLocalVariables = versions.isEmpty() &&
                 (messages.size > 1 || (metadata["variables"] as? JsonObject)?.isNotEmpty() == true),
         )
